@@ -149,6 +149,105 @@ class TestTMDBProvider:
                 results = p.search('Fight Club', limit=1)
                 assert len(results) >= 0  # May be empty due to mock chain
 
+    def test_search_type_derives_from_limit_by_default(self):
+        """`search_type` is `phrase` for `limit == 1` and `ngram`
+        otherwise, unless a caller pins it explicitly (see the test below).
+        This is purely a MECHANICAL check of what value is derived and sent
+        -- round-two review of BUG-018 (2026-09) measured live against TMDB
+        v3 that `search_type` has no effect on which results come back or
+        in what order, so neither value should be read as "exact" or
+        "fuzzy" here. What still matters is that the derived value reaches
+        the request, because it is part of the cache key (see the pinning
+        test below and `TheMovieDb.search`'s docstring)."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='mykey'), \
+             patch.object(p, 'isDisabled', return_value=False), \
+             patch('couchpotato.core.media.movie.providers.info.themoviedb.fireEvent',
+                   return_value={'name': 'Fight Club', 'year': 1999}), \
+             patch.object(p, 'request', return_value=None) as mock_request:
+            p.search('Fight Club', limit=1)
+            assert mock_request.call_args[0][1]['search_type'] == 'phrase'
+
+            p.search('Fight Club', limit=5)
+            assert mock_request.call_args[0][1]['search_type'] == 'ngram'
+
+    def test_search_type_can_be_pinned_regardless_of_limit(self):
+        """FIX 6 (round-one review of BUG-018, 0dc9e9a78), corrected by
+        round-two review (2026-09): raising `limit` so a caller sees more
+        results to inspect (the scanner's year-disambiguation fallback
+        wants extra candidates) used to silently flip the derived
+        `search_type` to `ngram` as a side effect. Measured live against
+        TMDB v3, `search_type` does not change matching at all -- it is a
+        TMDB v2.1 parameter that v3 ignores -- so the ONLY thing this
+        pinning buys is a stable cache key: `search_type` is part of the
+        request URL, so without pinning it, that fallback's `limit=5`
+        calls would key their cache entries differently from every other
+        `limit=1` caller in the codebase for no behavioural gain. An
+        explicit `search_type` must win over the `limit`-derived
+        default."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='mykey'), \
+             patch.object(p, 'isDisabled', return_value=False), \
+             patch('couchpotato.core.media.movie.providers.info.themoviedb.fireEvent',
+                   return_value={'name': 'Fight Club', 'year': 1999}), \
+             patch.object(p, 'request', return_value=None) as mock_request:
+            p.search('Fight Club', limit=5, search_type='phrase')
+            assert mock_request.call_args[0][1]['search_type'] == 'phrase', (
+                'limit=5 would normally flip search_type to "ngram", but an '
+                'explicit search_type must win'
+            )
+
+    def test_search_returns_exactly_limit_results_from_a_larger_raw_list(self):
+        """BUG-018 round-two review, FIX 1: `search`'s truncation loop
+        (`if nr == limit: break`) is the ONLY place the requested limit is
+        honoured -- the scanner's year-disambiguation fallback depends on
+        getting back as many candidates as it asks for so it has something
+        to disambiguate between. Every test up to now stubs the scanner
+        side and never drives this loop with more raw results than the
+        limit, so a truncation bug here (e.g. breaking after the first
+        result regardless of what was asked for) would pass the whole
+        suite unnoticed.
+
+        Hand the provider 10 parseable raw results and assert it returns
+        exactly 5 when asked for 5, and exactly 1 when asked for 1."""
+        p = self._make_provider()
+
+        def make_movie(i):
+            return {
+                'id': i, 'title': 'Movie %d' % i, 'original_title': 'Movie %d' % i,
+                'release_date': '2000-01-01', 'overview': 'Test', 'genres': [],
+                'runtime': 100, 'imdb_id': 'tt%07d' % i, 'poster_path': None,
+                'backdrop_path': None, 'belongs_to_collection': None,
+                'alternative_titles': {'titles': []},
+                'casts': {'cast': []}, 'images': {'backdrops': []},
+            }
+
+        raw = [make_movie(i) for i in range(1, 11)]
+
+        with patch.object(p, 'conf', return_value='mykey'), \
+             patch.object(p, 'isDisabled', return_value=False), \
+             patch('couchpotato.core.media.movie.providers.info.themoviedb.fireEvent',
+                   return_value={'name': 'Test', 'year': 2000}):
+
+            # parseMovie issues one further `request` per candidate it is
+            # given (the per-language detail fetch); `p.languages` is []
+            # and `default_language` is 'en', so that is exactly one extra
+            # call per candidate, not per configured language.
+            with patch.object(p, 'request', side_effect=[raw] + raw[:5]):
+                results = p.search('Test', limit=5)
+                assert len(results) == 5, (
+                    'asked for 5 candidates out of 10 available but got %d -- '
+                    'the scanner year-disambiguation fallback needs several '
+                    'candidates to choose between, and a truncation bug here '
+                    'would starve it silently' % len(results)
+                )
+
+            with patch.object(p, 'request', side_effect=[raw] + raw[:1]):
+                results = p.search('Test', limit=1)
+                assert len(results) == 1, (
+                    'asked for 1 candidate but got %d' % len(results)
+                )
+
 
 # ===========================================================================
 # ===========================================================================

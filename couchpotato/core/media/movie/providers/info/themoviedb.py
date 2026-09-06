@@ -66,8 +66,37 @@ class TheMovieDb(MovieProvider):
         if configuration:
             self.configuration = configuration
 
-    def search(self, q, limit = 3):
-        """ Find movie by name """
+    def search(self, q, limit = 3, search_type = None):
+        """ Find movie by name
+
+        `search_type` is normally derived from `limit` (`phrase` for
+        `limit == 1`, `ngram` otherwise), but a caller can pin it
+        explicitly regardless of `limit`.
+
+        Round-two review of BUG-018 (2026-09): `search_type` is a TMDB v2.1
+        parameter. Measured live against TMDB v3 with `search_type` set to
+        `phrase`, `ngram`, absent, and a garbage value, all four returned
+        byte-identical results in the same order -- v3 ignores it entirely.
+        So pinning it does NOT make a search more exact or more fuzzy here;
+        an earlier version of this docstring claimed it did, and that claim
+        was never measured against the live API.
+
+        The one thing pinning it still buys: `search_type` is part of the
+        request URL and therefore the cache key. BUG-018's scanner fallback
+        raises `limit` from 1 to 5 to inspect several candidates for a year
+        match, and without pinning `search_type` explicitly that raised
+        limit would flip the derived value from `phrase` to `ngram`,
+        keying that fallback's cache entries differently from every other
+        `limit=1` caller for no behavioural gain -- purely a cache-key
+        alignment concern, not a matching one (round-one review of
+        0dc9e9a78, FIX 6). The extra per-result detail requests that same
+        review attributed to the `search_type` flip are actually caused by
+        `limit`: `parseMovie` below issues one detail request per result
+        returned PER CONFIGURED LANGUAGE (each entry in `self.languages`,
+        plus the default language if it differs from English, plus the
+        English fetch itself), regardless of `search_type` -- so raising
+        `limit` multiplies the request count by however many languages are
+        configured, not by one per result. """
 
         if self.isDisabled():
             return False
@@ -80,7 +109,7 @@ class TheMovieDb(MovieProvider):
             raw = self.request('search/movie', {
                 'query': name_year.get('name', q),
                 'year': name_year.get('year'),
-                'search_type': 'ngram' if limit > 1 else 'phrase'
+                'search_type': search_type if search_type else ('ngram' if limit > 1 else 'phrase')
             }, return_key = 'results')
         except Exception:
             log.error('Failed searching TMDB for "%s": %s', q, traceback.format_exc())
