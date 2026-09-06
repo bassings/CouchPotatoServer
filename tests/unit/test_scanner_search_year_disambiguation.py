@@ -191,6 +191,26 @@ MEASURED_CASES = [
         'tt6105098',
         id='lion_king_2019_over_1994_remake',
     ),
+    # Round-two review of BUG-018 (FIX 4): every case above puts the
+    # correct film no deeper than second place, so `SEARCH_YEAR_DISAMBIGUATION_LIMIT`
+    # could be lowered all the way to 2 and this suite would not notice --
+    # the constant's own comment claims headroom for candidates further
+    # down the list, and nothing was pinning that claim. Here the correct
+    # film sits fourth (index 3), behind three decoys that all carry the
+    # wrong year, so a limit below 4 truncates it out of the candidate list
+    # before the year preference ever sees it.
+    pytest.param(
+        {'name': 'Some Buried Sequel', 'year': 2020},
+        [
+            {'imdb': 'ttDECOY1', 'year': 2001},
+            {'imdb': 'ttDECOY2', 'year': 2005},
+            {'imdb': 'ttDECOY3', 'year': 2010},
+            {'imdb': 'ttCORRECT', 'year': 2020},
+            {'imdb': 'ttDECOY4', 'year': 2015},
+        ],
+        'ttCORRECT',
+        id='correct_film_buried_at_fourth_position',
+    ),
 ]
 
 
@@ -416,11 +436,17 @@ class TestTheSequelMergesStayUnfixed:
     """Recorded debt item 1 (spec): the two consecutive-year sequel pairs
     (Deathly Hallows Part 1/2, Mockingjay Part 1/2) that motivated round
     one's closest-wins attempt are NOT fixed by reverting to
-    first-within-tolerance. This test documents the known, accepted
-    limitation directly rather than leaving it undiscoverable -- if a
-    future change fixes this case, this test should be UPDATED to expect
-    the correct part, not deleted, since a passing test with the wrong
-    expectation is worse than an honest failing one.
+    first-within-tolerance.
+
+    Round-two review of BUG-018 suggested this read better as
+    `xfail(strict=True)` with the assertion written as the DESIRED answer,
+    so the accepted debt shows up in every run's summary line (as an
+    xfail) instead of hiding among the passes, and still fails loudly
+    (XPASS, which `strict=True` turns into a suite failure) the day someone
+    fixes it -- taken here, since the repo already uses the idiom four
+    times (`test_renamer_mover.py`, `test_operator_route_does_not_forge_its_own_baseline.py`)
+    and it gives this specific debt item better visibility for the same
+    assertion, with no change in what is actually verified.
 
     This is expected behaviour, not a regression: AC-DATA-2's safety
     property (never fewer identifiers than before) still holds -- the group
@@ -428,7 +454,17 @@ class TestTheSequelMergesStayUnfixed:
     pre-BUG-018 code would also have done had it seen Part 1 listed first.
     """
 
-    def test_deathly_hallows_part_2_is_still_filed_as_part_1_when_listed_first(
+    @pytest.mark.xfail(strict=True, reason=(
+        "BUG-018 spec, recorded debt item 1: first-within-tolerance still "
+        "files Part 2 under Part 1's identifier when the provider lists "
+        "Part 1 first (an honest off-by-one on the correct film is "
+        "indistinguishable from an exact-year decoy for the wrong one -- "
+        "see the spec for why closest-wins was tried and reverted). "
+        "strict=True: if this now XPASSes, the sequel-merge case has been "
+        "fixed and the spec's debt item 1 should be closed, not just this "
+        "test updated."
+    ))
+    def test_deathly_hallows_part_2_resolves_to_its_own_identifier_when_listed_first(
         self, scanner, monkeypatch,
     ):
         name_year = {'name': 'Harry Potter Deathly Hallows Part 2', 'year': 2011}
@@ -440,11 +476,13 @@ class TestTheSequelMergesStayUnfixed:
 
         result = scanner.determineMedia(_group())
 
-        assert result.get('identifier') == 'ttHP1', (
-            'this pins the KNOWN, ACCEPTED limitation recorded in the '
-            'spec\'s debt item 1 -- if this now returns \'ttHP2\', the '
-            'sequel-merge case has been fixed and this test should be '
-            'updated (not deleted) to say so, got %r' % result.get('identifier')
+        # Written as the DESIRED answer, not today's actual one (ttHP1).
+        assert result.get('identifier') == 'ttHP2', (
+            'Part 2 should resolve to its own identifier even when the '
+            'provider lists Part 1 first -- got %r. This is the accepted, '
+            'currently-unfixed limitation from the spec\'s debt item 1' % (
+                result.get('identifier'),
+            )
         )
 
 
@@ -603,6 +641,40 @@ class TestAMalformedFilenameDuringTheWarningDoesNotStarveIdentification:
             'candidate -- got %r' % result.get('identifier')
         )
 
+    def test_a_non_string_filename_is_never_logged_verbatim(
+        self, scanner, monkeypatch, caplog,
+    ):
+        """Round-two review of BUG-018 (FIX 5): the comment three lines
+        below the `except TypeError:` branch promises a basename only,
+        citing this project's no-private-paths-in-logs floor -- but the
+        branch itself fell back to `filename` unchanged, so a non-string
+        filename that happens to BE or CONTAIN a private path (a list, for
+        instance, is not str/bytes/PathLike either) was logged raw at
+        WARNING. Only reachable with a non-string filename, which cannot
+        happen today, but the guard should not defeat the promise it sits
+        next to."""
+        name_year = {'name': 'Some Movie', 'year': 2020}
+        candidates = [{'imdb': 'ttAAA', 'year': 1999}, {'imdb': 'ttBBB', 'year': 1950}]
+        _stub_for_site(monkeypatch, scanner, 'primary', name_year, candidates)
+
+        hostile_filename = ['/home/realuser/private/Some.Movie.2020.mkv']
+        group = _group(filename=hostile_filename)
+
+        with caplog.at_level(logging.WARNING):
+            scanner.determineMedia(group)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings, 'setup: expected the mismatched-guess warning to fire'
+        for message in warnings:
+            assert 'realuser' not in message and 'private' not in message, (
+                'the raw non-string filename value leaked into a WARNING log '
+                'line -- got %r' % message
+            )
+            assert 'list' in message, (
+                'expected the type name ("list") to stand in for the '
+                'unloggable filename -- got %r' % message
+            )
+
 
 class TestAHostileCandidateGetIsSkippedNotFatal:
     """FIX 4b (round-two review of 0dc9e9a78). `_imdb`/`_year` inside
@@ -693,10 +765,12 @@ class TestSearchTypePinnedRegardlessOfLimit:
             'cache key TMDB is queried under.' % calls[0].get('search_type')
         )
         assert calls[0].get('limit', 1) > 1, (
-            'the primary movie.search call asked for only %r result(s) -- '
-            'setting SEARCH_YEAR_DISAMBIGUATION_LIMIT back to 1 would make '
-            'this pass too, which is exactly how a full revert of the '
-            'production fix slipped past this suite unnoticed' % calls[0].get('limit')
+            'the primary movie.search call asked for only %r result(s), so '
+            'SEARCH_YEAR_DISAMBIGUATION_LIMIT has been reverted to 1 (or '
+            'never raised) -- the year-disambiguation fallback has nothing '
+            'to disambiguate between when the provider can only ever return '
+            'a single candidate, which is exactly the shape of the bug '
+            'BUG-018 fixed' % calls[0].get('limit')
         )
 
     def test_the_other_search_also_pins_search_type_to_phrase(self, scanner, monkeypatch):
@@ -726,9 +800,10 @@ class TestSearchTypePinnedRegardlessOfLimit:
             '"phrase" -- got %r' % calls[1].get('search_type')
         )
         assert calls[1].get('limit', 1) > 1, (
-            'the "other" movie.search call asked for only %r result(s) -- '
-            'setting SEARCH_YEAR_DISAMBIGUATION_LIMIT back to 1 would make '
-            'this pass too' % calls[1].get('limit')
+            'the "other" movie.search call asked for only %r result(s), so '
+            'SEARCH_YEAR_DISAMBIGUATION_LIMIT has been reverted to 1 (or '
+            'never raised) -- same defect as the primary search, one call '
+            'site later' % calls[1].get('limit')
         )
 
 

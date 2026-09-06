@@ -299,7 +299,22 @@ class TestFolderScannerNeverReducesTheScanResult:
 
         def _fire(event, *args, **kwargs):
             if event == 'movie.search':
-                return list(candidates) if kwargs.get('q') == search_q else []
+                if kwargs.get('q') != search_q:
+                    return []
+                results = list(candidates)
+                # Round-two review of BUG-018 (FIX 2): truncate to `limit`
+                # like the real provider does, matching the sibling stub in
+                # test_scanner_search_year_disambiguation.py. This module's
+                # own assertions only check that SOME identifier came back,
+                # which holds even at limit 1, so this stub being gentler
+                # than production has not yet produced a false green here --
+                # but it must not drift further from the real behaviour, or
+                # the day it does the two files will disagree about what a
+                # limit means.
+                limit = kwargs.get('limit')
+                if limit is not None:
+                    results = results[:limit]
+                return results
             return None
 
         monkeypatch.setattr(folder_scanner_module, 'fireEvent', _fire)

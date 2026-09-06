@@ -92,7 +92,11 @@ class TheMovieDb(MovieProvider):
         0dc9e9a78, FIX 6). The extra per-result detail requests that same
         review attributed to the `search_type` flip are actually caused by
         `limit`: `parseMovie` below issues one detail request per result
-        returned, regardless of `search_type`. """
+        returned PER CONFIGURED LANGUAGE (each entry in `self.languages`,
+        plus the default language if it differs from English, plus the
+        English fetch itself), regardless of `search_type` -- so raising
+        `limit` multiplies the request count by however many languages are
+        configured, not by one per result. """
 
         if self.isDisabled():
             return False

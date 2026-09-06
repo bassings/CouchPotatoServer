@@ -665,7 +665,12 @@ class FolderScannerMixin:
             # the search itself.
             logged_filename = os.path.basename(filename) if filename else filename
         except TypeError:
-            logged_filename = filename
+            # `filename` is not str/bytes/PathLike, so there is no basename
+            # to take -- and the value itself might still be, or contain, a
+            # full path (round-two review of BUG-018, FIX 5). Log only the
+            # type, never the raw value, to honour the basename-only
+            # promise below.
+            logged_filename = type(filename).__name__
         log.warning(
             'No search result for "%s" matched the parsed year %s within '
             'tolerance (years offered: %s) -- taking the first result %s. '

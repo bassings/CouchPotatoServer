@@ -197,6 +197,57 @@ class TestTMDBProvider:
                 'explicit search_type must win'
             )
 
+    def test_search_returns_exactly_limit_results_from_a_larger_raw_list(self):
+        """BUG-018 round-two review, FIX 1: `search`'s truncation loop
+        (`if nr == limit: break`) is the ONLY place the requested limit is
+        honoured -- the scanner's year-disambiguation fallback depends on
+        getting back as many candidates as it asks for so it has something
+        to disambiguate between. Every test up to now stubs the scanner
+        side and never drives this loop with more raw results than the
+        limit, so a truncation bug here (e.g. breaking after the first
+        result regardless of what was asked for) would pass the whole
+        suite unnoticed.
+
+        Hand the provider 10 parseable raw results and assert it returns
+        exactly 5 when asked for 5, and exactly 1 when asked for 1."""
+        p = self._make_provider()
+
+        def make_movie(i):
+            return {
+                'id': i, 'title': 'Movie %d' % i, 'original_title': 'Movie %d' % i,
+                'release_date': '2000-01-01', 'overview': 'Test', 'genres': [],
+                'runtime': 100, 'imdb_id': 'tt%07d' % i, 'poster_path': None,
+                'backdrop_path': None, 'belongs_to_collection': None,
+                'alternative_titles': {'titles': []},
+                'casts': {'cast': []}, 'images': {'backdrops': []},
+            }
+
+        raw = [make_movie(i) for i in range(1, 11)]
+
+        with patch.object(p, 'conf', return_value='mykey'), \
+             patch.object(p, 'isDisabled', return_value=False), \
+             patch('couchpotato.core.media.movie.providers.info.themoviedb.fireEvent',
+                   return_value={'name': 'Test', 'year': 2000}):
+
+            # parseMovie issues one further `request` per candidate it is
+            # given (the per-language detail fetch); `p.languages` is []
+            # and `default_language` is 'en', so that is exactly one extra
+            # call per candidate, not per configured language.
+            with patch.object(p, 'request', side_effect=[raw] + raw[:5]):
+                results = p.search('Test', limit=5)
+                assert len(results) == 5, (
+                    'asked for 5 candidates out of 10 available but got %d -- '
+                    'the scanner year-disambiguation fallback needs several '
+                    'candidates to choose between, and a truncation bug here '
+                    'would starve it silently' % len(results)
+                )
+
+            with patch.object(p, 'request', side_effect=[raw] + raw[:1]):
+                results = p.search('Test', limit=1)
+                assert len(results) == 1, (
+                    'asked for 1 candidate but got %d' % len(results)
+                )
+
 
 # ===========================================================================
 # ===========================================================================
