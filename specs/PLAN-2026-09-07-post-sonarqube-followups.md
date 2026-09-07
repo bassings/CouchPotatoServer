@@ -55,7 +55,7 @@ only one of the two return paths. That guard is T1 below.
       positive with a comment naming those tests, so the dismissal cites
       something enforceable rather than an argument. The project now has ZERO
       blockers. state: merged #319
-- [ ] T2: assess the ~251 MEDIUM+ findings in the rules the first pass never
+- [x] T2: assess the ~251 MEDIUM+ findings in the rules the first pass never
       reached, HIGH first: `javascript:S3776` (7), `python:S1186` (6),
       `python:S8904` (6), `python:S5779` (5), `Web:S7927` (3),
       `python:S1143` (2), `python:S5996` (2), `python:S5797` (2), and the
@@ -230,11 +230,55 @@ only one of the two return paths. That guard is T1 below.
         `html.parser`, which parses malformed provider HTML differently, with
         no error. Naming the parser explicitly is a no-op today and converts
         that silent change into an immediate failure. Cheap, worth doing.
-      REMAINING MEDIUM: 164 findings in ~43 rules, dominated by
-      `typescript:S9332` (21, networkidle waits in tests, same family as the
-      S2925 fixed waits), `python:S5806` (14, builtin shadowing),
-      `python:S1515` (13), `python:S1110` (12). Style and idiom, assessed as a
-      group rather than individually unless something stands out.
+      MEDIUM TAIL CLOSED OUT. The remaining 165 findings in 43 rules now have
+      a recorded disposition rather than the group judgement of "style and
+      idiom", which was defensible triage but not closure: it left nothing
+      saying WHY each was not acted on, so the next session would re-derive it.
+      Where they live decides most of it:
+      - 74 are in `tests/` or `scripts/`. LEFT OPEN. `typescript:S9332` (22,
+        networkidle waits) is the same family as the S2925 fixed waits already
+        fixed in the first plan and deserves the same treatment when someone is
+        next in those specs. `python:S5778` (14), `python:S8997` (8, manual
+        global state where monkeypatch exists) and `python:S9081` (7) are real
+        pytest idiom improvements with no production reach.
+      - 17 are in the unserved legacy layer under `core/**/static/`. LEFT OPEN
+        with T4's expiry from the previous plan: they retire when the files are
+        deleted as each port lands, not by editing dead 2015 JavaScript.
+      - The remaining ~74 are production, and two rules are genuine bug classes
+        rather than style. Both were checked at every site.
+      `python:S1515` (13): LATENT BUG, FIX RECOMMENDED, harmless today.
+        `media/_base/media/main.py:454, :544, :783-785, :793` register API views
+        inside `for media_type in fireEvent(MEDIA_TYPES, merge=True)` using
+        `lambda *args, **kwargs: self.listView(type=media_type, **kwargs)`.
+        Each lambda captures `media_type` BY REFERENCE, so every view would
+        resolve to the LAST value. Measured why it does not bite: only 'movie'
+        is ever declared as a media type (`media/movie/__init__.py:6` and
+        `movie/_base/main.py:94`; base classes declare None), so every iteration
+        binds the same value.
+        TRIGGER CONDITION: adding a second media type activates it silently,
+        and one of the affected registrations is `%s.delete`, so a show delete
+        would route to movies. The fix is one token per lambda, binding it as a
+        default argument, with no behaviour change today. Worth doing precisely
+        because it costs nothing and the failure is silent and destructive.
+        The three at `renamer/main.py:801` are a different shape and benign: the
+        callback is invoked within the same call rather than outliving its
+        iteration.
+      `python:S1871` (4 production), identical branches, the copy-paste
+        signature. Checked: `folder_scanner.py:829` is two branches with the
+        same body that could merge with `or`, behaviour-neutral, in a file with
+        a bad history where a no-op edit buys nothing. LEFT OPEN.
+      - The rest is idiom with no defect behind it: `python:S5806` (14, builtin
+        shadowing), `python:S1110` (12, redundant parentheses), `S3358` (7,
+        nested ternaries), `S8519` (4), and a long tail of singletons. LEFT OPEN
+        as a group, which is now a recorded decision rather than an unexamined
+        one.
+      - `Web:PageWithoutTitleCheck` (1) is a FALSE POSITIVE, the same Jinja
+        blind spot as the Alpine ones: `base.html:6` is
+        `<title>{% block title %}CouchPotato{% endblock %}</title>` and child
+        templates override it.
+      NOTHING IN THE MEDIUM TAIL IS A LIVE DEFECT. That is the honest result and
+      it differs sharply from the HIGH set, which yielded four production bugs
+      from a comparable number of findings. Severity ranking earned its keep.
       NET: of 15 HIGH rules, TWO produced production fixes: `python:S5996`
       via #320 and `Web:S7927` via #322. NOT `Web:S6853`, which is the label
       `for`/`id` association rule, assessed in the MEDIUM tail above as a
@@ -296,7 +340,7 @@ only one of the two return paths. That guard is T1 below.
       `printenv CP_VERSION`, an ARG rather than an ENV and absent from the
       running container, and never a grep for /version/i, which hands you the
       interpreter version as a plausible rollback tag mid-incident.
-- [ ] T4: make SonarQube staleness visible. REFRAMED AFTER REVIEW, because the
+- [x] T4: make SonarQube staleness visible. DONE, merged as #328. REFRAMED AFTER REVIEW, because the
       first draft was unbuildable. It said "run `make sonar` automatically after
       a merge". Every job under `.github/workflows/**` runs on GitHub-hosted
       `ubuntu-latest`, which cannot reach the scanner at a private RFC1918
@@ -342,7 +386,7 @@ only one of the two return paths. That guard is T1 below.
       serves. Anyone configuring Trakt today cannot complete authorisation.
       Port the control into `couchpotato/ui/`, or retire the endpoints if the
       feature is not wanted, state: queued (needs: T5)
-- [ ] T7: issue #314, the folder browser announces `role="listbox"` and keeps
+- [x] T7: DONE, merged as #329. Issue #314, the folder browser announced `role="listbox"` and keeps
       none of it: no arrow keys, no `aria-selected`, no
       `aria-activedescendant`, every folder its own tab stop. Remove the ARIA
       rather than adopt the `<select>` the scanner suggested. Fold in the
