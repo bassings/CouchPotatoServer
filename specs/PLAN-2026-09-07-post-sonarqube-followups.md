@@ -98,9 +98,53 @@ only one of the two return paths. That guard is T1 below.
         KeyboardInterrupt. I suspected an UnboundLocalError on the error path
         and checked: `response` is initialised before the `try` in both cases,
         so there is no crash. Worth tidying, not urgent.
-      REMAINING: `javascript:S3776` (7), `python:S1186` (6), `python:S5779`
-      (5, of which 3 are in `simple_healthcheck.py`, which nothing references),
-      and eight singletons, then the MEDIUM-only tail.
+      ALL 15 HIGH RULES NOW ASSESSED. The remaining nine:
+      - `python:S1186` (6): base-class stubs, `buildUrl`, `search`, `doUpdate`,
+        `getFiles`, all meant to be overridden. The rule wants a comment
+        explaining the emptiness, which is fair and cosmetic. Fix when next in
+        those files.
+      - `python:S5779` (5): three are in `couchpotato/simple_healthcheck.py`, a
+        PYTHON 2 unittest module shipped inside the application package,
+        referenced by nothing, while the real Docker healthcheck is an inline
+        urllib one-liner (`Dockerfile:155`). Deleting it looks obvious and is
+        BLOCKED: an earlier session recorded that it is the only referrer to a
+        deprecated endpoint and its removal waits on AC-OPS-12's production
+        grep. So the actionable item is that grep, not the deletion. One is in
+        a test. The last, `browser.py:158`, uses `assert` as control flow,
+        which would vanish under `python -O` and report every Windows file as
+        hidden. I called that a live bug; it is not. There is no `-O` anywhere
+        in the Dockerfile, compose files or Makefile, so it is latent only.
+      - `javascript:S3735` (1): REJECT, and complying would risk a real
+        regression. `suggestions.html:214` is `void el.offsetHeight;` with the
+        comment "force the pending style/layout flush". That is the canonical
+        idiom for forcing a synchronous reflow before a transition, and the
+        `void` is what stops a minifier discarding an apparently useless
+        property read. The rule is wrong here.
+      - `python:S8415` (1): MOOT. It asks for a 403 to be documented in the
+        `responses` parameter, but `couchpotato/__init__.py:1208` constructs
+        `FastAPI(docs_url=None, redoc_url=None, openapi_url=None)`, so no
+        schema is served at all. The parameter would document something nobody
+        can fetch.
+      - `typescript:S5845` (1): REAL, but it points at the wrong file. The test
+        at `category-editor.spec.ts:90` asserts `form.id` is numeric `0`, which
+        is correct: `category-editor.js:30` uses `?? ''` DELIBERATELY so a
+        numeric `_id=0` survives. The JSDoc at `:24` says `id: string`, and
+        that is the lie. Fix the annotation, not the test.
+      - `python:S6903` (1): REAL and dated. `putio/main.py:99` uses
+        `datetime.utcnow()`, deprecated on Python 3.12+ and this project runs
+        3.14. It currently works, since both sides of the comparison are naive
+        UTC, but it is on a removal path.
+      - `python:S8520` (1): correct but tiny. `sum(..., [])` to flatten
+        subtitle languages is quadratic over a handful of items.
+      - `python:S5727` (1): `itunes.py:44` checks `data is not None` after
+        `XMLTree.fromstring`, which never returns None, so it is always true.
+        It is also the documented ElementTree idiom, since Elements have
+        deprecated truthiness. Defensive rather than wrong. Low value.
+      - `javascript:S4275` (1): in `updater.js`, the unserved legacy layer.
+        Same disposition as T4's 143 findings.
+      NET: of 15 HIGH rules, 3 produced production fixes, 1 was rejected
+      because complying would risk a regression, 1 was moot, and the rest are
+      real-but-low-value or blocked on something else. Next: the MEDIUM tail.
 - [x] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
       REVIEW: the first draft described this defect in the PR body and then
       never scheduled it, so it would have been lost. TWO bugs, and the second
