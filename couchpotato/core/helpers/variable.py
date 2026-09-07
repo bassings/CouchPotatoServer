@@ -171,8 +171,31 @@ def sha256(text):
 
 
 def isLocalIP(ip):
-    ip = ip.lstrip('htps:/')
-    regex = r'/(^127\.)|(^192\.168\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^::1)$/'
+    # Strip a URL scheme prefix if one is present. This used to be
+    # ip.lstrip('htps:/'), but str.lstrip() takes a set of characters, not
+    # a prefix, so it stripped any leading run of h/t/p/s/:/ -- which ate
+    # the leading '::' off IPv6 loopback ('::1' became '1') and would have
+    # truncated any plain hostname starting with h/t/p/s (e.g. 'host.local'
+    # became 'ost.local'). Only http:// and https:// are stripped now.
+    for prefix in ('https://', 'http://'):
+        if ip.startswith(prefix):
+            ip = ip[len(prefix):]
+            break
+
+    # This used to be a JAVASCRIPT regex literal (the wrapping '/../'
+    # marks) pasted directly into Python, where the slashes are literal
+    # characters rather than delimiters. That made two alternatives
+    # unmatchable: a literal '/' can never appear immediately before '^'
+    # (start of string) or immediately after '$' (end of string). The
+    # practical effect was that IPv6 loopback ('::1') was never recognised.
+    #
+    # '::1' and its uncompressed equivalent '0:0:0:0:0:0:0:1' are both
+    # matched deliberately, since a client may hand us either form of the
+    # same address. General IPv6 canonicalisation (case folding, partial
+    # zero-compression, mixed forms) is deliberately out of scope here --
+    # this helper only needs to recognise the loopback address, not parse
+    # arbitrary IPv6.
+    regex = r'(^127\.)|(^192\.168\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^0:0:0:0:0:0:0:1$)|(^::1$)'
     return re.search(regex, ip) is not None or 'localhost' in ip or ip[:4] == '127.'
 
 

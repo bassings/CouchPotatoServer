@@ -8,7 +8,7 @@ import os
 import pytest
 
 from couchpotato.core.helpers.encoding import toUnicode, toSafeString, simplifyString
-from couchpotato.core.helpers.variable import removePyc, tryInt, getImdb
+from couchpotato.core.helpers.variable import removePyc, tryInt, getImdb, isLocalIP
 
 pytestmark = pytest.mark.unit
 
@@ -180,3 +180,88 @@ class TestRemovePyc:
         removePyc(str(tmp_path), show_logs=False)
 
         assert not cache_dir.exists()
+
+
+class TestIsLocalIP:
+    """isLocalIP() used to embed a JAVASCRIPT regex literal (the wrapping
+    '/../' delimiters) directly in a Python re.search() call. In Python
+    those slashes are literal characters, not delimiters, so two of the
+    seven alternatives could never match: one needed a literal '/' before
+    '^' (start of string) and one needed a literal '/' after '$' (end of
+    string). The practical effect was that IPv6 loopback ('::1') was never
+    recognised by the regex -- only the standalone http_client.py caller
+    matters here (couchpotato/core/http_client.py:131, which exempts local
+    hosts from being permanently disabled after repeated failures), so an
+    IPv6-only local service got disabled where the same service on
+    127.0.0.1 would not.
+
+    These tests pin the full table, including the cases that already
+    passed, so the fix cannot regress them.
+    """
+
+    # -- IPv4 loopback and private ranges (already worked before the fix) --
+
+    def test_ipv4_loopback_is_local(self):
+        assert isLocalIP('127.0.0.1') is True
+
+    def test_ipv4_class_c_private_is_local(self):
+        assert isLocalIP('192.168.1.10') is True
+
+    def test_ipv4_class_a_private_is_local(self):
+        assert isLocalIP('10.0.0.5') is True
+
+    def test_hostname_localhost_is_local(self):
+        assert isLocalIP('localhost') is True
+
+    # -- 172.16.0.0/12: the real private range is 172.16.x through 172.31.x --
+
+    def test_172_16_lower_bound_is_local(self):
+        assert isLocalIP('172.16.0.1') is True
+
+    def test_172_20_mid_range_is_local(self):
+        assert isLocalIP('172.20.5.5') is True
+
+    def test_172_31_upper_bound_is_local(self):
+        assert isLocalIP('172.31.255.255') is True
+
+    def test_172_15_just_below_range_is_not_local(self):
+        assert isLocalIP('172.15.0.1') is False
+
+    def test_172_32_just_above_range_is_not_local(self):
+        assert isLocalIP('172.32.0.1') is False
+
+    # -- public addresses stay public --
+
+    def test_public_ip_google_dns_is_not_local(self):
+        assert isLocalIP('8.8.8.8') is False
+
+    def test_arbitrary_public_ip_is_not_local(self):
+        assert isLocalIP('1.2.3.4') is False
+
+    # -- IPv6 loopback: THE BUG. Was False before the fix. --
+
+    def test_ipv6_loopback_shorthand_is_local(self):
+        assert isLocalIP('::1') is True
+
+    def test_ipv6_loopback_full_form_is_local(self):
+        # '0:0:0:0:0:0:0:1' is the same address as '::1' written without
+        # zero-compression. Supported deliberately: a client library is as
+        # likely to hand us one form as the other, and refusing the
+        # uncompressed form would just re-introduce the same class of bug
+        # for a differently-formatted address. Deliberately NOT attempting
+        # general IPv6 canonicalisation (case folding, partial compression
+        # like '0:0:0:0:0:0:0:01', mixed forms) -- that is a much bigger
+        # surface for false positives than this helper's job justifies.
+        assert isLocalIP('0:0:0:0:0:0:0:1') is True
+
+    # -- anchoring: must not match the pattern mid-string --
+
+    def test_public_ip_followed_by_private_looking_text_is_not_local(self):
+        # A careless (unanchored) alternation could match '10.0.0.1'
+        # wherever it appears in the string, not just at the start.
+        assert isLocalIP('8.8.8.8 via 10.0.0.1') is False
+
+    def test_hostname_containing_loopback_looking_text_is_not_local(self):
+        # '127.0.0.1' appears in this string but not at the start, and the
+        # whole thing is a hostname, not a loopback address.
+        assert isLocalIP('not-127.0.0.1.example.com') is False
