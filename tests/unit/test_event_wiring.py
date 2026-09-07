@@ -28,12 +28,23 @@ from couchpotato.core.event import OPTIONAL_EVENTS
 # file list when pytest is invoked from anywhere but the repo root, and every
 # assertion below would then pass trivially -- a guard providing zero coverage
 # while reporting green is worse than no guard.
-SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[2] / 'couchpotato'
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+SOURCE_ROOT = REPO_ROOT / 'couchpotato'
+
+# CouchPotato.py sits at the repo root, outside SOURCE_ROOT, and it both
+# registers and fires events: its SIGINT handler is the only producer of
+# `app.shutdown`, whose consumer runs the clean shutdown that drains plugins
+# before the server dies. Scanning only `couchpotato/` left that dispatch
+# invisible to this audit, so a rename on one side and not the other would
+# have gone unnoticed.
+ENTRY_POINT = REPO_ROOT / 'CouchPotato.py'
 
 
 def _python_files():
     files = [p for p in SOURCE_ROOT.rglob('*.py') if 'lib/' not in str(p)]
     assert files, 'found no source files under %s' % SOURCE_ROOT
+    if ENTRY_POINT.is_file():
+        files.append(ENTRY_POINT)
     return files
 
 
@@ -47,10 +58,42 @@ def _call_name(node):
     return None
 
 
-def _first_string_arg(node):
-    if node.args and isinstance(node.args[0], ast.Constant) \
-            and isinstance(node.args[0].value, str):
-        return node.args[0].value
+def _event_name_constants():
+    """Identifier to value for every constant in couchpotato/core/event_names.py.
+
+    Resolving these is load-bearing, not a convenience. This audit reads event
+    names out of the source, and originally understood only a bare string
+    literal. When SONAR-S1192 replaced 21 literals with constants, all 21
+    silently dropped out of both the fired and the handled set, taking the
+    audit's coverage of the renamer and manage paths with them, and the suite
+    stayed green while doing it. Proved by deleting a handler registration:
+    before this function existed the audit passed, after it the audit fails.
+    """
+    module = SOURCE_ROOT / 'core' / 'event_names.py'
+    if not module.is_file():
+        return {}
+    names = {}
+    for node in ast.walk(ast.parse(module.read_text(errors='replace'))):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                names[target.id] = node.value.value
+    assert names, 'found no event-name constants in %s' % module
+    return names
+
+
+def _first_string_arg(node, constants = None):
+    """The event name of a call, whether written as a literal or a constant."""
+    if not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    if constants is not None and isinstance(first, ast.Name):
+        return constants.get(first.id)
     return None
 
 
@@ -72,6 +115,7 @@ def _collect():
     would still catch anything fired that way.
     """
     fired, handled = {}, set()
+    constants = _event_name_constants()
 
     for path in _python_files():
         tree = ast.parse(path.read_text(errors='replace'))
@@ -93,7 +137,7 @@ def _collect():
                 continue
 
             call = _call_name(node)
-            name = _first_string_arg(node)
+            name = _first_string_arg(node, constants)
             if not name:
                 continue
 

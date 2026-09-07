@@ -30,7 +30,13 @@ import pathlib
 # runs from somewhere other than the repo root, and the assertion below would
 # then pass on zero files scanned: a guard providing no coverage while
 # reporting green is worse than no guard. Mirrors test_event_wiring.py.
-SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[2] / 'couchpotato'
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+SOURCE_ROOT = REPO_ROOT / 'couchpotato'
+
+# CouchPotato.py is outside SOURCE_ROOT and fires `app.shutdown` from its
+# SIGINT handler, so scanning only `couchpotato/` let one real dispatch site
+# escape this guard entirely.
+ENTRY_POINT = REPO_ROOT / 'CouchPotato.py'
 
 # The 21 event names SONAR-S1192 assigns named constants, exactly as they
 # appear in the source today.
@@ -74,6 +80,8 @@ EVENT_CALL_NAMES = ('addEvent', 'fireEvent', 'fireEventAsync')
 def _python_files():
     files = [p for p in SOURCE_ROOT.rglob('*.py') if 'lib/' not in str(p)]
     assert files, 'found no source files under %s' % SOURCE_ROOT
+    if ENTRY_POINT.is_file():
+        files.append(ENTRY_POINT)
     return files
 
 
@@ -98,7 +106,7 @@ def _first_string_arg(node):
 def _find_literal_event_call_sites():
     """(path, lineno, literal) for every addEvent/fireEvent/fireEventAsync
     call whose first positional argument is still a bare string literal
-    matching one of the 24 event names this task assigns a constant.
+    matching one of the 21 event names this task assigns a constant.
 
     Uses the AST rather than a text regex: a regex over source text matches
     its own documentation, so a comment mentioning `fireEvent('media.get')`
@@ -121,12 +129,82 @@ def _find_literal_event_call_sites():
 
 class TestEventNameConstantsReplaceLiterals:
 
+    def test_constant_values_match_what_non_python_consumers_expect(self):
+        """Pin every constant's value against a literal written out here.
+
+        This looks circular, and for a constant used only from Python it would
+        be: renaming both sides together is safe, so a value pin would restate
+        the constant and could never fail for a reason worth catching. That
+        argument does NOT hold for these names, and the difference is the whole
+        point of this test.
+
+        These strings cross out of Python, into places no Python rename will
+        ever reach:
+
+          - `addApiView('app.restart', ...)` and eight more route
+            registrations, which build the HTTP API's URLs
+          - HTML templates that fetch those URLs by hand, for example
+            `couchpotato/ui/templates/partials/settings/scripts.html:579`
+            (`/app.restart/`) and `couchpotato/ui/templates/wanted.html:41`
+            (`/manage.update/?full=1`)
+          - `callApiHandler('media.get', ...)` in `couchpotato/ui/__init__.py`
+          - the legacy JS, which listens for `movie.update` and requests
+            `renamer.scan`
+
+        So a constant's VALUE is a published contract, not an implementation
+        detail. Changing it renames the event on the Python side and leaves the
+        template fetching a URL that no longer exists, with nothing raising.
+        Measured before this test existed: retyping APP_SHUTDOWN, APP_RESTART
+        and MANAGE_UPDATE left the entire unit suite green at 3895 passed.
+        Only MOVIE_UPDATE and RENAMER_SCAN were pinned at all, and only by
+        accident, through unrelated tests that happened to match on the name.
+        """
+        from couchpotato.core import event_names
+
+        expected = {
+            'APP_LOAD': 'app.load',
+            'APP_RESTART': 'app.restart',
+            'APP_SHUTDOWN': 'app.shutdown',
+            'LIBRARY_QUERY': 'library.query',
+            'LIBRARY_RELATED': 'library.related',
+            'LIBRARY_TREE': 'library.tree',
+            'MANAGE_UPDATE': 'manage.update',
+            'MEDIA_GET': 'media.get',
+            'MEDIA_RESTATUS': 'media.restatus',
+            'MEDIA_TYPES': 'media.types',
+            'MEDIA_WITH_STATUS': 'media.with_status',
+            'MOVIE_UPDATE': 'movie.update',
+            'NOTIFY_FRONTEND': 'notify.frontend',
+            'PROFILE_DEFAULT': 'profile.default',
+            'RELEASE_ADD': 'release.add',
+            'RELEASE_FOR_MEDIA': 'release.for_media',
+            'RELEASE_UPDATE_STATUS': 'release.update_status',
+            'RELEASE_WITH_STATUS': 'release.with_status',
+            'RENAMER_SCAN': 'renamer.scan',
+            'SCANNER_NAME_YEAR': 'scanner.name_year',
+            'SEARCHER_PROTOCOLS': 'searcher.protocols',
+        }
+
+        actual = {
+            name: value for name, value in vars(event_names).items()
+            if name.isupper() and isinstance(value, str)
+        }
+
+        assert actual == expected, (
+            'An event-name constant no longer matches the string its '
+            'non-Python consumers use. These values appear in addApiView() '
+            'routes, HTML templates and legacy JS, none of which a Python '
+            'rename updates, so changing one here silently breaks the URL '
+            'the UI fetches. If the rename is deliberate, change every '
+            'consumer and then this table.'
+        )
+
     def test_no_bare_literal_at_event_call_sites(self):
         hits = _find_literal_event_call_sites()
 
         assert not hits, (
             'These addEvent()/fireEvent()/fireEventAsync() calls still pass '
-            'a bare string literal for one of the 24 event names '
+            'a bare string literal for one of the 21 event names '
             'SONAR-S1192 assigns a named constant. A typo here fails '
             'silently in this codebase -- a mistyped addEvent() name '
             'registers a listener nothing calls, a mistyped fireEvent() '
