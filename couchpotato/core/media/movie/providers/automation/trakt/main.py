@@ -4,6 +4,7 @@ import time
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.base import Provider
 from couchpotato.core.media.movie.providers.automation.base import Automation
@@ -90,7 +91,7 @@ class Trakt(Automation, TraktBase):
 
         # Schedule token refresh
         fireEvent('schedule.interval', 'trakt.refresh_token', self.refreshToken, hours=24)
-        addEvent('app.load', self.refreshToken)
+        addEvent(APP_LOAD, self.refreshToken)
 
     def refreshToken(self):
         """Refresh the OAuth token if it's close to expiring."""

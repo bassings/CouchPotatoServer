@@ -3,6 +3,7 @@ import re
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import MEDIA_TYPES, SCANNER_NAME_YEAR, SEARCHER_PROTOCOLS
 from couchpotato.core.helpers.encoding import simplifyString
 from couchpotato.core.helpers.variable import splitString, removeEmpty, removeDuplicate
 from couchpotato.core.helpers.protocol import sort_by_protocol_preference
@@ -17,7 +18,7 @@ class Searcher(SearcherBase):
 
     # noinspection PyMissingConstructor
     def __init__(self):
-        addEvent('searcher.protocols', self.getSearchProtocols)
+        addEvent(SEARCHER_PROTOCOLS, self.getSearchProtocols)
         addEvent('searcher.contains_other_quality', self.containsOtherQuality)
         addEvent('searcher.correct_3d', self.correct3D)
         addEvent('searcher.correct_year', self.correctYear)
@@ -40,7 +41,7 @@ class Searcher(SearcherBase):
     def searchAllView(self):
 
         results = {}
-        for _type in fireEvent('media.types'):
+        for _type in fireEvent(MEDIA_TYPES):
             results[_type] = fireEvent('%s.searcher.all_view' % _type)
 
         return results
@@ -101,7 +102,7 @@ class Searcher(SearcherBase):
         name = nzb['name']
         size = nzb.get('size', 0)
 
-        year_name = fireEvent('scanner.name_year', name, single = True)
+        year_name = fireEvent(SCANNER_NAME_YEAR, name, single = True)
         if len(found) == 0 and movie_year < datetime.datetime.now().year - 3 and not year_name.get('year', None):
             if size > 20000:  # Assume bd50
                 log.info('Quality was missing in name, assuming it\'s a BR-Disk based on the size: %s', size)
@@ -146,7 +147,7 @@ class Searcher(SearcherBase):
         year_name = {}
         for string in haystack:
 
-            year_name = fireEvent('scanner.name_year', string, single = True)
+            year_name = fireEvent(SCANNER_NAME_YEAR, string, single = True)
 
             if year_name and ((year - year_range) <= year_name.get('year') <= (year + year_range)):
                 log.debug('Movie year matches range: %s looking for %s', year_name.get('year'), year)
@@ -168,7 +169,7 @@ class Searcher(SearcherBase):
         except Exception: pass
 
         for check_name in removeDuplicate(check_names):
-            check_movie = fireEvent('scanner.name_year', check_name, single = True)
+            check_movie = fireEvent(SCANNER_NAME_YEAR, check_name, single = True)
 
             try:
                 check_words = removeEmpty(re.split(r'\W+', check_movie.get('name', '')))

@@ -9,6 +9,7 @@ from CodernityDB.index import IndexException, IndexNotFoundException, IndexConfl
 from couchpotato import CPLog
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
+from couchpotato.core.event_names import APP_RESTART
 from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.variable import getImdb, tryInt, randomString
 from couchpotato.core.logger import log_suppressed
@@ -468,7 +469,7 @@ class Database:
                     # Rename .old database to try another migrate
                     os.rename(old_db, old_db[:-4])
 
-                    fireEventAsync('app.restart')
+                    fireEventAsync(APP_RESTART)
                 else:
                     log.error('Migration failed and couldn\'t recover database. Please report on GitHub, with this message.')
 

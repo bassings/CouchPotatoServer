@@ -6,6 +6,7 @@ import traceback
 from couchpotato import get_db
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent, fireEventAsync
+from couchpotato.core.event_names import APP_LOAD, MANAGE_UPDATE, MEDIA_GET, MOVIE_UPDATE, NOTIFY_FRONTEND, RELEASE_ADD
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import splitString, getTitle, tryInt, getIdentifier, getFreeSpace
 from couchpotato.core.logger import CPLog
@@ -32,7 +33,7 @@ class Manage(Plugin):
         # this job with the user's configured library_refresh_interval, and
         # only when it is > 0. Fixing the typo would have forced a hardcoded
         # 2-hour rescan that overrides the user's ability to turn it off.
-        addEvent('manage.update', self.updateLibrary)
+        addEvent(MANAGE_UPDATE, self.updateLibrary)
         addEvent('manage.diskspace', self.getDiskSpace)
 
         # Add files after renaming
@@ -56,9 +57,9 @@ class Manage(Plugin):
         })
 
         if not Env.get('dev') and self.conf('startup_scan'):
-            addEvent('app.load', self.updateLibraryQuick)
+            addEvent(APP_LOAD, self.updateLibraryQuick)
 
-        addEvent('app.load', self.setCrons)
+        addEvent(APP_LOAD, self.setCrons)
 
         # Enable / disable interval
         addEvent('setting.save.manage.library_refresh_interval.after', self.setCrons)
@@ -79,7 +80,7 @@ class Manage(Plugin):
 
     def updateLibraryView(self, full = 1, **kwargs):
 
-        fireEventAsync('manage.update', full = True if full == '1' else False)
+        fireEventAsync(MANAGE_UPDATE, full = True if full == '1' else False)
 
         return {
             'progress': self.in_progress,
@@ -100,7 +101,7 @@ class Manage(Plugin):
             elif self.isDisabled() or (last_update > time.time() - 20):
                 return
             self.in_progress = {}
-        fireEvent('notify.frontend', type = 'manage.updating', data = True)
+        fireEvent(NOTIFY_FRONTEND, type = 'manage.updating', data = True)
 
         try:
 
@@ -151,7 +152,7 @@ class Manage(Plugin):
                     continue
 
                 log.info('Updating manage library: %s', folder)
-                fireEvent('notify.frontend', type = 'manage.update', data = True, message = 'Scanning for movies in "%s"' % folder)
+                fireEvent(NOTIFY_FRONTEND, type = 'manage.update', data = True, message = 'Scanning for movies in "%s"' % folder)
 
                 before = len(added_identifiers)
                 onFound = self.createAddToLibrary(folder, added_identifiers)
@@ -338,7 +339,7 @@ class Manage(Plugin):
 
             time.sleep(1)
 
-        fireEvent('notify.frontend', type = 'manage.updating', data = False)
+        fireEvent(NOTIFY_FRONTEND, type = 'manage.updating', data = False)
         self.in_progress = False
 
     def createAddToLibrary(self, folder, added_identifiers = None):
@@ -358,8 +359,8 @@ class Manage(Plugin):
                 added_identifiers.append(group['identifier'])
 
                 # Add it to release and update the info
-                fireEvent('release.add', group = group, update_info = False)
-                fireEvent('movie.update', identifier = group['identifier'], on_complete = self.createAfterUpdate(folder, group['identifier']))
+                fireEvent(RELEASE_ADD, group = group, update_info = False)
+                fireEvent(MOVIE_UPDATE, identifier = group['identifier'], on_complete = self.createAfterUpdate(folder, group['identifier']))
 
         return addToLibrary
 
@@ -371,10 +372,10 @@ class Manage(Plugin):
                 return
 
             total = self.in_progress[folder]['total']
-            movie_dict = fireEvent('media.get', identifier, single = True)
+            movie_dict = fireEvent(MEDIA_GET, identifier, single = True)
 
             if movie_dict:
-                fireEvent('notify.frontend', type = 'movie.added', data = movie_dict, message = None if total > 5 else 'Added "%s" to manage.' % getTitle(movie_dict))
+                fireEvent(NOTIFY_FRONTEND, type = 'movie.added', data = movie_dict, message = None if total > 5 else 'Added "%s" to manage.' % getTitle(movie_dict))
 
         return afterUpdate
 
@@ -406,9 +407,9 @@ class Manage(Plugin):
             for group in groups.values():
                 if group.get('media'):
                     if release_download and release_download.get('release_id'):
-                        fireEvent('release.add', group = group, update_id = release_download.get('release_id'))
+                        fireEvent(RELEASE_ADD, group = group, update_id = release_download.get('release_id'))
                     else:
-                        fireEvent('release.add', group = group)
+                        fireEvent(RELEASE_ADD, group = group)
 
     def getDiskSpace(self):
         return getFreeSpace(self.directories())

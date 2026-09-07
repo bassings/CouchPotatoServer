@@ -8,6 +8,7 @@ from CodernityDB.database import RecordDeleted
 from couchpotato import get_db
 from couchpotato.api import addApiView, addNonBlockApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD, NOTIFY_FRONTEND
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import tryInt, splitString
 from couchpotato.core.logger import CPLog
@@ -40,7 +41,7 @@ class CoreNotifier(Notification):
         super().__init__()
 
         addEvent('notify', self.notify)
-        addEvent('notify.frontend', self.frontend)
+        addEvent(NOTIFY_FRONTEND, self.frontend)
 
         addApiView('notification.markread', self.markAsRead, docs = {
             'desc': 'Mark notifications as read',
@@ -67,10 +68,10 @@ class CoreNotifier(Notification):
         fireEvent('schedule.interval', 'core.check_messages', self.checkMessages, hours = 12, single = True)
         fireEvent('schedule.interval', 'core.clean_messages', self.cleanMessages, seconds = 15, single = True)
 
-        addEvent('app.load', self.clean)
+        addEvent(APP_LOAD, self.clean)
 
         if not Env.get('dev'):
-            addEvent('app.load', self.checkMessages)
+            addEvent(APP_LOAD, self.checkMessages)
 
         self.messages = []
         self.listeners = []

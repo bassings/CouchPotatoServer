@@ -3,6 +3,7 @@ import traceback
 from couchpotato import get_db, tryInt
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD, MEDIA_WITH_STATUS, PROFILE_DEFAULT
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
@@ -95,7 +96,7 @@ class ProfilePlugin(Plugin):
 
     def __init__(self):
         addEvent('profile.all', self.all)
-        addEvent('profile.default', self.default)
+        addEvent(PROFILE_DEFAULT, self.default)
 
         addApiView('profile.save', self.save)
         addApiView('profile.save_order', self.saveOrder)
@@ -109,7 +110,7 @@ class ProfilePlugin(Plugin):
         })
 
         addEvent('app.initialize', self.fill, priority = 90)
-        addEvent('app.load', self.forceDefaults, priority = 110)
+        addEvent(APP_LOAD, self.forceDefaults, priority = 110)
 
     def forceDefaults(self):
 
@@ -130,7 +131,7 @@ class ProfilePlugin(Plugin):
         # 'active' movie gets -- otherwise a review-gated movie whose profile
         # was deleted would be stuck with an unusable profile_id forever.
         try:
-            medias = fireEvent('media.with_status', ['active', 'downloaded'], single = True)
+            medias = fireEvent(MEDIA_WITH_STATUS, ['active', 'downloaded'], single = True)
 
             profile_ids = [x.get('_id') for x in self.all()]
             default_id = profile_ids[0]

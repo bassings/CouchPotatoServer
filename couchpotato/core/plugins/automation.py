@@ -1,5 +1,6 @@
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD, MEDIA_GET
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
@@ -13,10 +14,10 @@ class Automation(Plugin):
 
     def __init__(self):
 
-        addEvent('app.load', self.setCrons)
+        addEvent(APP_LOAD, self.setCrons)
 
         if not Env.get('dev'):
-            addEvent('app.load', self.addMovies)
+            addEvent(APP_LOAD, self.addMovies)
 
         addApiView('automation.add_movies', self.addMoviesFromApi, docs = {
             'desc': 'Manually trigger the automation scan. Hangs until scan is complete. Useful for webhooks.',
@@ -68,7 +69,7 @@ class Automation(Plugin):
             if self.shuttingDown():
                 break
 
-            movie_dict = fireEvent('media.get', movie_id, single = True)
+            movie_dict = fireEvent(MEDIA_GET, movie_id, single = True)
             if movie_dict:
                 fireEvent('movie.searcher.single', movie_dict)
 

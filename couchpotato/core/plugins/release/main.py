@@ -8,6 +8,7 @@ from couchpotato import md5, get_db
 from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
+from couchpotato.core.event_names import APP_LOAD, MEDIA_RESTATUS, MEDIA_WITH_STATUS, NOTIFY_FRONTEND, RELEASE_ADD, RELEASE_FOR_MEDIA, RELEASE_UPDATE_STATUS, RELEASE_WITH_STATUS
 from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.protocol import sort_by_protocol_preference
 from couchpotato.core.helpers.variable import getTitle, tryFloat, tryInt
@@ -121,19 +122,19 @@ class Release(Plugin):
             }
         })
 
-        addEvent('release.add', self.add)
+        addEvent(RELEASE_ADD, self.add)
         addEvent('release.download', self.download)
         addEvent('release.try_download_result', self.tryDownloadResult)
         addEvent('release.create_from_search', self.createFromSearch)
         addEvent('release.delete', self.delete)
         addEvent('release.clean', self.clean)
-        addEvent('release.update_status', self.updateStatus)
-        addEvent('release.with_status', self.withStatus)
-        addEvent('release.for_media', self.forMedia)
+        addEvent(RELEASE_UPDATE_STATUS, self.updateStatus)
+        addEvent(RELEASE_WITH_STATUS, self.withStatus)
+        addEvent(RELEASE_FOR_MEDIA, self.forMedia)
         addEvent('release.detach_file', self.detachFile)
 
         # Clean releases that didn't have activity in the last week
-        addEvent('app.load', self.cleanDone, priority = 1000)
+        addEvent(APP_LOAD, self.cleanDone, priority = 1000)
         fireEvent('schedule.interval', 'movie.clean_releases', self.cleanDone, hours = 12)
 
     def cleanDone(self):
@@ -237,7 +238,7 @@ class Release(Plugin):
         # review-gated movie's stale/duplicate releases still get cleaned up
         # like a 'done' movie's would -- it's not being searched, but it's
         # not exempt from this stale-release hygiene pass either.
-        medias = fireEvent('media.with_status', ['done', 'active', 'downloaded'], single = True)
+        medias = fireEvent(MEDIA_WITH_STATUS, ['done', 'active', 'downloaded'], single = True)
 
         for media in medias:
             if media.get('last_edit', 0) > (now - week):
@@ -369,7 +370,7 @@ class Release(Plugin):
                     release['copy_id'] = scanned_copy_id
                 db.update(release)
 
-                fireEvent('media.restatus', media['_id'], allowed_restatus = ['done'], single = True)
+                fireEvent(MEDIA_RESTATUS, media['_id'], allowed_restatus = ['done'], single = True)
 
                 return True
             except Exception:
@@ -477,7 +478,7 @@ class Release(Plugin):
             item = release['info']
             movie = db.get('id', release['media_id'])
 
-            fireEvent('notify.frontend', type = 'release.manual_download', data = True, message = 'Snatching "%s"' % item['name'])
+            fireEvent(NOTIFY_FRONTEND, type = 'release.manual_download', data = True, message = 'Snatching "%s"' % item['name'])
 
             # Get matching provider
             provider = fireEvent('provider.belongs_to', item['url'], provider = item.get('provider'), single = True)
@@ -488,7 +489,7 @@ class Release(Plugin):
             success = self.download(data = item, media = movie, manual = True)
 
             if success:
-                fireEvent('notify.frontend', type = 'release.manual_download', data = True, message = 'Successfully snatched "%s"' % item['name'])
+                fireEvent(NOTIFY_FRONTEND, type = 'release.manual_download', data = True, message = 'Successfully snatched "%s"' % item['name'])
 
             return {
                 'success': success == True
@@ -568,7 +569,7 @@ class Release(Plugin):
                             self.updateStatus(rls['_id'], status = 'done')
 
                             # Mark media done
-                            fireEvent('media.restatus', media['_id'], single = True)
+                            fireEvent(MEDIA_RESTATUS, media['_id'], single = True)
 
                             return True
 
@@ -810,7 +811,7 @@ class Release(Plugin):
 
             if wrote is not None:
                 #Update all movie info as there is no release update function
-                fireEvent('notify.frontend', type = 'release.update_status', data = wrote)
+                fireEvent(NOTIFY_FRONTEND, type = 'release.update_status', data = wrote)
 
             return True
         except ConflictError:

@@ -11,6 +11,7 @@ from threading import RLock
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
+from couchpotato.core.event_names import APP_LOAD, APP_RESTART
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import removePyc, tryInt
 from couchpotato.core.logger import CPLog
@@ -40,8 +41,8 @@ class Updater(Plugin):
         else:
             self.updater = SourceUpdater()
 
-        addEvent('app.load', self.logVersion, priority = 10000)
-        addEvent('app.load', self.setCrons)
+        addEvent(APP_LOAD, self.logVersion, priority = 10000)
+        addEvent(APP_LOAD, self.setCrons)
         addEvent('updater.info', self.info)
 
         addApiView('updater.info', self.info, docs = {
@@ -100,7 +101,7 @@ class Updater(Plugin):
                 except Exception:
                     log.error('Failed notifying for update: %s', traceback.format_exc())
 
-                fireEventAsync('app.restart')
+                fireEventAsync(APP_RESTART)
 
                 return True
 
@@ -148,7 +149,7 @@ class Updater(Plugin):
         else:
             success = self.updater.doUpdate()
             if success:
-                fireEventAsync('app.restart')
+                fireEventAsync(APP_RESTART)
 
             # Assume the updater handles things
             if not success:
@@ -664,7 +665,7 @@ class DesktopUpdater(BaseUpdater):
         try:
             def do_restart(e):
                 if e['status'] == 'done':
-                    fireEventAsync('app.restart')
+                    fireEventAsync(APP_RESTART)
                 elif e['status'] == 'error':
                     log.error('Failed updating desktop: %s', e['exception'])
                     self.update_failed = True

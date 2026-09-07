@@ -1,6 +1,7 @@
 import os
 
 from couchpotato.core.event import addEvent
+from couchpotato.core.event_names import APP_LOAD
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
@@ -14,7 +15,7 @@ autoload = 'Custom'
 class Custom(Plugin):
 
     def __init__(self):
-        addEvent('app.load', self.createStructure)
+        addEvent(APP_LOAD, self.createStructure)
 
     def createStructure(self):
 

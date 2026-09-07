@@ -1,4 +1,5 @@
 from couchpotato.core.event import fireEvent, addEvent
+from couchpotato.core.event_names import APP_LOAD, APP_SHUTDOWN
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
@@ -28,10 +29,10 @@ if Env.get('desktop'):
 
             # Events to desktop
             addEvent('app.after_shutdown', desktop.afterShutdown)
-            addEvent('app.load', desktop.onAppLoad, priority = 110)
+            addEvent(APP_LOAD, desktop.onAppLoad, priority = 110)
 
         def onClose(self, event):
-            return fireEvent('app.shutdown', single = True)
+            return fireEvent(APP_SHUTDOWN, single = True)
 
 else:
 

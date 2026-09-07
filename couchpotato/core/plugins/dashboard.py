@@ -5,6 +5,7 @@ from CodernityDB.database import RecordDeleted, RecordNotFound
 from couchpotato import get_db
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent
+from couchpotato.core.event_names import MEDIA_WITH_STATUS, RELEASE_FOR_MEDIA
 from couchpotato.core.helpers.variable import splitString, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
@@ -59,7 +60,7 @@ class Dashboard(Plugin):
             limit = tryInt(splt[0])
 
         # Get all active medias
-        active_ids = [x['_id'] for x in fireEvent('media.with_status', 'active', with_doc = False, single = True)]
+        active_ids = [x['_id'] for x in fireEvent(MEDIA_WITH_STATUS, 'active', with_doc = False, single = True)]
 
         medias = []
 
@@ -119,7 +120,7 @@ class Dashboard(Plugin):
 
                         # Check if it doesn't have any releases
                         if late:
-                            media['releases'] = fireEvent('release.for_media', media['_id'], single = True)
+                            media['releases'] = fireEvent(RELEASE_FOR_MEDIA, media['_id'], single = True)
 
                             for release in media.get('releases', []):
                                 if release.get('status') in ['snatched', 'available', 'seeding', 'downloaded']:

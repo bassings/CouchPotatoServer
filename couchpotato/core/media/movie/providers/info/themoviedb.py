@@ -5,6 +5,7 @@ from base64 import b64decode as bd
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD, SCANNER_NAME_YEAR
 from couchpotato.core.helpers.encoding import toUnicode, ss, tryUrlencode
 from couchpotato.core.helpers.variable import tryInt, splitString
 from couchpotato.core.logger import CPLog
@@ -37,7 +38,7 @@ class TheMovieDb(MovieProvider):
         addEvent('movie.info', self.getInfo, priority = 3)
         addEvent('movie.info_by_tmdb', self.getInfo)
         addEvent('movie.is_movie', self.isMovie)
-        addEvent('app.load', self.config)
+        addEvent(APP_LOAD, self.config)
 
         addApiView('movie.trailer', self.getTrailer)
 
@@ -105,7 +106,7 @@ class TheMovieDb(MovieProvider):
 
         raw = None
         try:
-            name_year = fireEvent('scanner.name_year', q, single = True)
+            name_year = fireEvent(SCANNER_NAME_YEAR, q, single = True)
             raw = self.request('search/movie', {
                 'query': name_year.get('name', q),
                 'year': name_year.get('year'),

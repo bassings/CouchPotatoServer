@@ -1,6 +1,7 @@
 from couchpotato import get_db
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import LIBRARY_QUERY, LIBRARY_RELATED, LIBRARY_TREE, RELEASE_FOR_MEDIA
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.library.base import LibraryBase
 
@@ -10,8 +11,8 @@ log = CPLog(__name__)
 class Library(LibraryBase):
     def __init__(self):
         addEvent('library.title', self.title)
-        addEvent('library.related', self.related)
-        addEvent('library.tree', self.tree)
+        addEvent(LIBRARY_RELATED, self.related)
+        addEvent(LIBRARY_TREE, self.tree)
 
         addEvent('library.root', self.root)
 
@@ -24,7 +25,7 @@ class Library(LibraryBase):
         media = db.get('id', media_id)
 
         return {
-            'result': fireEvent('library.query', media, single = True)
+            'result': fireEvent(LIBRARY_QUERY, media, single = True)
         }
 
     def relatedView(self, media_id, **kwargs):
@@ -32,7 +33,7 @@ class Library(LibraryBase):
         media = db.get('id', media_id)
 
         return {
-            'result': fireEvent('library.related', media, single = True)
+            'result': fireEvent(LIBRARY_RELATED, media, single = True)
         }
 
     def treeView(self, media_id, **kwargs):
@@ -40,12 +41,12 @@ class Library(LibraryBase):
         media = db.get('id', media_id)
 
         return {
-            'result': fireEvent('library.tree', media, single = True)
+            'result': fireEvent(LIBRARY_TREE, media, single = True)
         }
 
     def title(self, library):
         return fireEvent(
-            'library.query',
+            LIBRARY_QUERY,
             library,
 
             condense = False,
@@ -112,14 +113,14 @@ class Library(LibraryBase):
             if key not in keys:
                 keys.append(key)
 
-            result[key][item['_id']] = fireEvent('library.tree', item['doc'], single = True)
+            result[key][item['_id']] = fireEvent(LIBRARY_TREE, item['doc'], single = True)
 
         # Unique children
         for key in keys:
             result[key] = result[key].values()
 
         # Include releases
-        result['releases'] = fireEvent('release.for_media', result['_id'], single = True)
+        result['releases'] = fireEvent(RELEASE_FOR_MEDIA, result['_id'], single = True)
 
         return result
 

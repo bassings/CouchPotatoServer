@@ -8,6 +8,7 @@ import webbrowser
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
+from couchpotato.core.event_names import APP_LOAD, APP_RESTART, APP_SHUTDOWN
 from couchpotato.core.helpers.variable import cleanHost, md5, isSubFolder, compareVersions, hash_password
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
@@ -87,14 +88,14 @@ class Core(Plugin):
             'desc': 'Get version.'
         })
 
-        addEvent('app.shutdown', self.shutdown)
-        addEvent('app.restart', self.restart)
-        addEvent('app.load', self.launchBrowser, priority = 1)
+        addEvent(APP_SHUTDOWN, self.shutdown)
+        addEvent(APP_RESTART, self.restart)
+        addEvent(APP_LOAD, self.launchBrowser, priority = 1)
         addEvent('app.base_url', self.createBaseUrl)
         addEvent('app.api_url', self.createApiUrl)
         addEvent('app.version', self.version)
-        addEvent('app.load', self.checkDataDir)
-        addEvent('app.load', self.cleanUpFolders)
+        addEvent(APP_LOAD, self.checkDataDir)
+        addEvent(APP_LOAD, self.cleanUpFolders)
         addEvent('app.load.after', self.dependencies)
 
         addEvent('setting.save.core.password', self.md5Password)
@@ -502,7 +503,7 @@ class Core(Plugin):
         if Env.get('daemonized'): return
 
         def signal_handler(*args, **kwargs):
-            fireEvent('app.shutdown', single = True)
+            fireEvent(APP_SHUTDOWN, single = True)
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)

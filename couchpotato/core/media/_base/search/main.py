@@ -1,5 +1,6 @@
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
+from couchpotato.core.event_names import APP_LOAD, MEDIA_TYPES
 from couchpotato.core.helpers.variable import mergeDicts, getImdb
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
@@ -25,7 +26,7 @@ class Search(Plugin):
 }"""}
         })
 
-        addEvent('app.load', self.addSingleSearches)
+        addEvent(APP_LOAD, self.addSingleSearches)
 
     def search(self, q = '', types = None, **kwargs):
 
@@ -64,5 +65,5 @@ class Search(Plugin):
 
     def addSingleSearches(self):
 
-        for media_type in fireEvent('media.types', merge = True):
+        for media_type in fireEvent(MEDIA_TYPES, merge = True):
             addApiView('%s.search' % media_type, self.createSingleSearch(media_type))

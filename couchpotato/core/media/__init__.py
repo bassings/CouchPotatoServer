@@ -3,6 +3,7 @@ import traceback
 
 from couchpotato import CPLog, md5
 from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
+from couchpotato.core.event_names import MEDIA_GET, MEDIA_TYPES, NOTIFY_FRONTEND
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import getExt
 from couchpotato.core.plugins.base import Plugin
@@ -16,7 +17,7 @@ class MediaBase(Plugin):
     _type = None
 
     def initType(self):
-        addEvent('media.types', self.getType)
+        addEvent(MEDIA_TYPES, self.getType)
 
     def getType(self):
         return self._type
@@ -25,7 +26,7 @@ class MediaBase(Plugin):
 
         def onComplete():
             try:
-                media = fireEvent('media.get', media_id, single = True)
+                media = fireEvent(MEDIA_GET, media_id, single = True)
                 if media:
                     event_name = '%s.searcher.single' % media.get('type')
                     fireEventAsync(event_name, media, on_complete = self.createNotifyFront(media_id), manual = True)
@@ -38,10 +39,10 @@ class MediaBase(Plugin):
 
         def notifyFront():
             try:
-                media = fireEvent('media.get', media_id, single = True)
+                media = fireEvent(MEDIA_GET, media_id, single = True)
                 if media:
                     event_name = '%s.update' % media.get('type')
-                    fireEvent('notify.frontend', type = event_name, data = media)
+                    fireEvent(NOTIFY_FRONTEND, type = event_name, data = media)
             except Exception:
                 log.error('Failed creating onComplete: %s', traceback.format_exc())
 

@@ -14,6 +14,7 @@ import shutil
 from argparse import ArgumentParser, ArgumentTypeError
 from couchpotato.core.cache import SQLiteCache
 from couchpotato.core.event import fireEventAsync, fireEvent
+from couchpotato.core.event_names import APP_LOAD
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import getDataDir, tryInt, getFreeSpace
 import requests
@@ -624,7 +625,7 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
                       'in the [core] section of config.ini and restart, then '
                       'check the database is writable. %s', traceback.format_exc())
 
-    fireEventAsync('app.load')
+    fireEventAsync(APP_LOAD)
 
     # Run with uvicorn
     _start_uvicorn_or_exit(application, config, debug, log)

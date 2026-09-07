@@ -13,6 +13,7 @@ except ImportError:
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import LIBRARY_QUERY
 from couchpotato.core.helpers.encoding import ss
 from couchpotato.core.helpers.variable import tryFloat, mergeDicts, md5, \
     possibleTitles
@@ -243,7 +244,7 @@ class YarrProvider(Provider):
             self._search(media, quality, results)
         # Search possible titles
         else:
-            media_title = fireEvent('library.query', media, include_year = False, single = True)
+            media_title = fireEvent(LIBRARY_QUERY, media, include_year = False, single = True)
 
             for title in possibleTitles(media_title):
                 self._searchOnTitle(title, media, quality, results)
