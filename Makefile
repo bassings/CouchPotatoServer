@@ -14,7 +14,7 @@
 # it is the target that CREATES the environment.
 PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
 
-.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup coverage sonar sonar-token-check
+.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup coverage sonar sonar-token-check sonar-staleness
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -144,12 +144,21 @@ sonar: sonar-token-check ## Scan into self-hosted SonarQube (reporting only, nev
 	@# shell history. Never pass -Dsonar.token= on the command line.
 	@set -a; . "$(SONAR_TOKEN_FILE)"; set +a; \
 		npx --yes sonarqube-scanner@$(SONAR_SCANNER_VERSION) -Dsonar.host.url=$(SONAR_HOST_URL)
+	@# Record WHICH commit was analysed. A finding's line number describes the
+	@# commit the server last saw, and SonarQube never reports which one that
+	@# was, so without this the dashboard can silently describe a tree weeks
+	@# old. Written only after the scanner succeeds, so a failed upload cannot
+	@# leave a stamp claiming freshness it does not have.
+	@{ git rev-parse HEAD; date -u '+%Y-%m-%dT%H:%M:%SZ'; } > .sonar-last-analysis
 	@echo ""
 	@echo "Scan uploaded. It is a MEASUREMENT, not a verdict:"
 	@echo "  * read findings at the call site before believing them;"
 	@echo "  * never resolve or dismiss one to move a number;"
 	@echo "  * check coverage actually arrived -- a false 0% looks like data."
 	@echo "  $(SONAR_HOST_URL)/dashboard?id=couchpotato"
+
+sonar-staleness: ## Report how far the last SonarQube analysis has drifted from HEAD (never fails)
+	@./scripts/sonar_staleness.sh
 
 check-secrets: ## Secret scan of the working tree (same command CI runs)
 	docker run --rm -v "$(PWD):/repo" -w /repo $(GITLEAKS_IMAGE) \
