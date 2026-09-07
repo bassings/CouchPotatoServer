@@ -144,6 +144,53 @@ class TestPrivacyFilter:
         filt.filter(record)
         assert 'secret' not in record.msg
 
+    def test_filter_returns_truthy_on_the_dev_early_return(self):
+        """S3516: filter() must always return truthy, per the stdlib
+        logging.Filter contract (truthy keeps the record, falsy drops it).
+        A future "fix" of the SonarQube false positive that turns this
+        branch into `return False` would silently delete every log line
+        while Env.get('dev') is true, and none of the nine existing
+        PrivacyFilter test files would notice, because none of them look
+        at the return value. This pins the early return at the top of
+        filter() (logger.py, the `if self._is_develop: return True` line).
+        """
+        filt = PrivacyFilter()
+        filt._is_develop = True
+        filt._api_key = 'mykey123'
+        record = logging.LogRecord('test', logging.INFO, '', 0,
+                                   'accessing mykey123 endpoint', None, None)
+
+        result = filt.filter(record)
+
+        assert result, (
+            'PrivacyFilter.filter() returned falsy on the dev early-return '
+            'path -- this would silently drop the log record'
+        )
+
+    def test_filter_returns_truthy_after_redacting(self):
+        """S3516, the normal (non-dev) redacting path. The message carries
+        a real secret so the redaction code actually runs rather than being
+        skipped, then pins the return at the end of filter() (logger.py,
+        `record.msg = msg; return True`). Same failure mode as the dev-path
+        test above: a falsy return here would silently drop every redacted
+        log line, which is most of production traffic.
+        """
+        filt = PrivacyFilter()
+        filt._is_develop = False
+        filt._api_key = 'mykey123'
+        record = logging.LogRecord('test', logging.INFO, '', 0,
+                                   'url?api_key=secret123&token=mykey123', None, None)
+
+        result = filt.filter(record)
+
+        assert result, (
+            'PrivacyFilter.filter() returned falsy on the redacting path -- '
+            'this would silently drop the log record'
+        )
+        # Confirms the redacting path was genuinely exercised, not skipped.
+        assert 'secret123' not in record.msg
+        assert 'mykey123' not in record.msg
+
 
 class TestSetupLogging:
     """Test setup_logging function."""
