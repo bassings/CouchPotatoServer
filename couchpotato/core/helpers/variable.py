@@ -258,10 +258,16 @@ def isLocalIP(ip):
     # failures, so it must match the literal name and nothing around it.
     # `core` has already had any scheme prefix and trailing `:<port>` removed
     # above, so `localhost:9117` still resolves here.
+    #
+    # `rstrip('.')` accepts the ABSOLUTE DNS spelling `localhost.`, which is a
+    # legitimate way to name the host and which `urlparse` preserves, so
+    # `http://localhost.:9117` stays exempt. Stripping only trailing dots
+    # cannot widen the match: `localhost.evil.com` does not end in a dot, so
+    # it is unaffected and still rejected.
     return (
         _IPV4_LOCAL_RE.match(core) is not None
         or core in _IPV6_LOOPBACK_FORMS
-        or core == 'localhost'
+        or core.rstrip('.') == 'localhost'
     )
 
 

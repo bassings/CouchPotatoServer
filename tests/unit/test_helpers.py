@@ -383,8 +383,18 @@ class TestIsLocalIPLocalhostIsExactNotSubstring:
     def test_a_scheme_prefixed_localhost_is_local(self):
         assert isLocalIP('http://localhost:8080') is True
 
+    @pytest.mark.parametrize('host', ['localhost.', 'localhost.:9117', 'http://localhost.:9117'])
+    def test_the_absolute_dns_spelling_is_local(self, host):
+        """`localhost.` with the root dot is a legitimate way to name the host,
+        and urlparse preserves it, so a service configured that way must keep
+        the exemption. An exact `== 'localhost'` rejected it, which would have
+        disabled a genuinely local endpoint after five transient failures.
+        """
+        assert isLocalIP(host) is True
+
     @pytest.mark.parametrize('host', [
         'localhost.evil.com',
+        'localhost.evil.com.',
         'evil-localhost.com',
         'notlocalhost.net',
         'my.localhost.attacker.io',
