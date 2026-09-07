@@ -45,8 +45,13 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       OPEN, RECORDED, not fixed, and my prior was wrong in an interesting way:
       I guessed "legitimate Alpine component idiom", and there is no Alpine
       here at all. Every one of the 143 is `var self = this` at the top of a
-      MooTools class method, in 19 files under `couchpotato/core/**/static/`,
-      last modified 2015.
+      MooTools class method, in 19 files under `couchpotato/core/**/static/`.
+      CORRECTED after review: I first wrote "last modified 2015", which was
+      checked on ONE file and asserted of all nineteen. The real spread is
+      2014 (1 file), 2015 (7), 2016 (2), 2017 (3) and 2026 (6): `trakt.js`,
+      `wizard.js`, `wanted.js`, `movie.js`, `manage.js` and
+      `movie/_base/search.js`. That is not a rounding error in the argument,
+      it inverts part of it, so see finding 4 below.
       Three findings, each measured rather than assumed:
       1. The layer is not served. `static_dir` is `couchpotato/static`
          (`runner.py:558`), the only mount (`couchpotato/__init__.py:1231`),
@@ -66,6 +71,20 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
          here. The verdict is the same at either extreme.
       3. Zero tests cover the layer, so a 143-site edit could not be shown to
          be behaviour-neutral.
+      4. The layer is not merely dormant, it is still attracting new work,
+         and that is the finding worth keeping. `trakt.js:133`, cited above as
+         a necessary alias, is not old code at all: it came from `9e77d021`,
+         "feat(trakt): Implement direct OAuth 2.0 device code flow", February
+         2026. That commit added `startDeviceAuth` and `pollForToken` to a
+         file nothing serves.
+         The consequence is a live user-facing gap, not tidiness debt.
+         `automation.trakt.device_code` and `automation.trakt.poll_token` are
+         registered as API views (`trakt/main.py:87-88`), and the ONLY caller
+         of either, anywhere in the repository, is `trakt.js:138` and
+         `trakt.js:180`. The new UI contains no reference to Trakt at all.
+         So the backend can start a Trakt device authorisation and nothing in
+         the shipped application can ask it to. Anyone configuring Trakt today
+         has no way to complete OAuth. Raised as a follow-up in its own right.
       The rule is left enabled and every finding left open, because it is
       still doing useful work: there are zero S7740 findings in the live UI,
       so the same idiom written into `couchpotato/ui/` tomorrow would surface
