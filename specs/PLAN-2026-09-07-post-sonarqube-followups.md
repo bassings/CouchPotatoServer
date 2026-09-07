@@ -65,7 +65,9 @@ only one of the two return paths. That guard is T1 below.
       before fixing, fix what should be fixed, leave the rest open with a
       recorded reason and an expiry, dismiss only genuine false positives,
       state: queued (needs: T1)
-      PROGRESS, 6 of the 15 HIGH rules assessed. Two produced production
+      PROGRESS. COUNT CORRECTED after review: the BLOCKER is its own
+      severity, not one of the 15 HIGH rules, and counting it as one made
+      every tally here off by one. Two produced production
       fixes, four produced evidenced "real but not worth acting on" verdicts.
       - `python:S3516` (1, BLOCKER): FALSE POSITIVE, dismissed, and the guard
         that makes the dismissal safe landed first as #319. Zero blockers now.
@@ -79,16 +81,32 @@ only one of the two return paths. That guard is T1 below.
         violations; after clicking to the Library tab it immediately flags a
         real failure that had been sitting there. Most of the settings surface
         has never been scanned by anything.
-      - `python:S8904` (6): REAL BUT CONTAINED, not worth a PR on its own. A
-        `.find(...)` returning None would raise, and in `filmweb.py:26` the
-        try/except covers only the fetch, so it does propagate. But the path is
-        live only via `userscript.add_via_url`, whose caller
-        (`ui/__init__.py:405`) wraps it AND `callApiHandler` already catches
-        every handler exception. So the user sees "Failed getting movie info"
-        rather than anything breaking. The only real cost is a traceback in the
-        log instead of a useful line. I first flagged these as crash risks;
-        that was too alarming and the correction is recorded rather than
-        quietly dropped. Fix opportunistically when next in those files.
+      - `python:S8904` (6): SUPERSEDED BY WORK THAT ALREADY EXISTED, and my
+        first verdict here was wrong in the same way twice over.
+        I assessed ONE site, `filmweb.py`, found it contained by the API
+        dispatcher, and extrapolated "real but contained" to all six. Two
+        errors. The six do not share a route: `filmweb.py` and
+        `filmstarts.py` reach the caller through `userscript.add_via_url`,
+        which is wrapped, but `awesomehd.py` goes through the searcher and is
+        not. And a proper per-site assessment ALREADY EXISTED at
+        `specs/REMEDIATION-2026-08.md:1643-1679`, which I never looked for
+        before writing a worse one.
+        That assessment is the record. It checked each site: THREE are real
+        and unguarded (`awesomehd.py:40`, `filmweb.py:25`,
+        `filmstarts.py:26`), two are guarded by an enclosing condition the
+        rule did not follow (`awesomehd.py:37`, `bithdtv.py:83`), and one is
+        tolerated because its own try/except leaves the parse continuing
+        (`thepiratebay.py:71`). It also found a site the scan never flagged,
+        `filmstarts.py:21`, taking `table` from an unguarded `find` two lines
+        above. Its impact call is the right one: these are provider scrapers
+        parsing a third party's markup, and the searcher tolerates a provider
+        raising, so the blast radius is a dead provider rather than a crashed
+        scan. Critical by rule, not urgent by impact.
+        THE PROCESS LESSON, which cost more than the finding: grep `specs/`
+        for a rule ID before assessing it. This is the second time today I
+        assessed one instance and generalised to the rule; the first was
+        claiming `movie.snatched` and `movie.downloaded` were dead.
+
       - `python:S5797` (2): NOISE. `while True and not self.shuttingDown()` is
         provably identical to `while not self.shuttingDown()`. Redundant rather
         than wrong, and the file is `folder_scanner.py`, which has a bad
