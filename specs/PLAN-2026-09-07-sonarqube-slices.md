@@ -71,8 +71,8 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
   mine. First, I delegated T2 into the SHARED checkout instead of a worktree,
   so its branch switch removed the plan file from the working tree and the
   Stop hook blocked me: the contract says worktree for exactly this reason and
-  three sessions share that directory. T3 is running in
-  /Volumes/Storage/home/scott.b/repos/.wt-sonar-s9073 instead. Second, a
+  three sessions share that directory. T3 is running in a
+  dedicated git worktree instead. Second, a
   memory note of mine asserted the legacy asset layer was still live; verified
   in the repo, it is not, and the note is corrected. Armed: T3 implementer.
   Next wake expects a shape-by-shape assessment of python:S9073.
