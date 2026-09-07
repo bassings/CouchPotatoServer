@@ -235,9 +235,13 @@ only one of the two return paths. That guard is T1 below.
       S2925 fixed waits), `python:S5806` (14, builtin shadowing),
       `python:S1515` (13), `python:S1110` (12). Style and idiom, assessed as a
       group rather than individually unless something stands out.
-      NET: of 15 HIGH rules, TWO produced production fixes, `python:S5996`
-      via #320 and `Web:S6853`/`Web:S7927` via #322. CORRECTED after review,
-      for the SECOND time in this plan: I counted `python:S3516` as a third,
+      NET: of 15 HIGH rules, TWO produced production fixes: `python:S5996`
+      via #320 and `Web:S7927` via #322. NOT `Web:S6853`, which is the label
+      `for`/`id` association rule, assessed in the MEDIUM tail above as a
+      static false positive and never touched. I introduced that conflation
+      IN THE EDIT THAT WAS FIXING THE PREVIOUS MISCOUNT, which is the third
+      tally error in this one entry. CORRECTED after review, for the SECOND
+      time in this plan: I counted `python:S3516` as a third,
       but it is a BLOCKER, a separate severity, and its change added tests
       rather than fixing code. Folding the blocker into the HIGH tally is the
       same category error the reviewer caught earlier, made again. (The S5996
