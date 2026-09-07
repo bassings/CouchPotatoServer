@@ -55,7 +55,7 @@ only one of the two return paths. That guard is T1 below.
       positive with a comment naming those tests, so the dismissal cites
       something enforceable rather than an argument. The project now has ZERO
       blockers. state: merged #319
-- [ ] T2: assess the ~251 MEDIUM+ findings in the rules the first pass never
+- [x] T2: assess the ~251 MEDIUM+ findings in the rules the first pass never
       reached, HIGH first: `javascript:S3776` (7), `python:S1186` (6),
       `python:S8904` (6), `python:S5779` (5), `Web:S7927` (3),
       `python:S1143` (2), `python:S5996` (2), `python:S5797` (2), and the
@@ -64,7 +64,7 @@ only one of the two return paths. That guard is T1 below.
       Then the MEDIUM-only remainder. Same discipline as the first pass: assess
       before fixing, fix what should be fixed, leave the rest open with a
       recorded reason and an expiry, dismiss only genuine false positives,
-      state: queued (needs: T1)
+      state: DONE, every MEDIUM+ finding now has a recorded disposition
       PROGRESS. COUNT CORRECTED after review: the BLOCKER is its own
       severity, not one of the 15 HIGH rules, and counting it as one made
       every tally here off by one. Two produced production
@@ -180,8 +180,10 @@ only one of the two return paths. That guard is T1 below.
       MEDIUM TAIL STARTED. Re-scanned first against `30fad16b0`, because the
       previous scan's line numbers no longer matched `variable.py` after three
       merges to it, which is the staleness trap recorded earlier today.
-      Fresh totals: 1127 open, ZERO blockers, 441 MEDIUM of which 210 sit in 48
-      rules not already judged at HIGH.
+      Fresh totals: 1127 open, ZERO blockers, 441 MEDIUM of which 230 are in
+      rules already judged at HIGH and 211 are not (46 in the three clusters
+      below, 165 in the remaining 43 rules). An earlier draft said 210, which
+      did not reconcile against the dispositions; re-counted from the scan.
       - Accessibility cluster, `Web:S6850` (7), `Web:S6853` (4), `Web:S6847`
         (4): ALL 15 ARE STATIC FALSE POSITIVES, and the reason is uniform. The
         analyser cannot evaluate an Alpine binding. `wizard.html:314` reports a
@@ -230,11 +232,81 @@ only one of the two return paths. That guard is T1 below.
         `html.parser`, which parses malformed provider HTML differently, with
         no error. Naming the parser explicitly is a no-op today and converts
         that silent change into an immediate failure. Cheap, worth doing.
-      REMAINING MEDIUM: 164 findings in ~43 rules, dominated by
-      `typescript:S9332` (21, networkidle waits in tests, same family as the
-      S2925 fixed waits), `python:S5806` (14, builtin shadowing),
-      `python:S1515` (13), `python:S1110` (12). Style and idiom, assessed as a
-      group rather than individually unless something stands out.
+      MEDIUM TAIL CLOSED OUT. The remaining 165 findings in 43 rules now have
+      a recorded disposition rather than the group judgement of "style and
+      idiom", which was defensible triage but not closure: it left nothing
+      saying WHY each was not acted on, so the next session would re-derive it.
+      Where they live decides most of it:
+      - 74 are in `tests/` or `scripts/`. LEFT OPEN. `typescript:S9332` (22,
+        networkidle waits) is the same family as the S2925 fixed waits already
+        fixed in the first plan and deserves the same treatment when someone is
+        next in those specs. `python:S5778` (14), `python:S8997` (8, manual
+        global state where monkeypatch exists) and `python:S9081` (7) are real
+        pytest idiom improvements with no production reach.
+      - 17 are in the unserved legacy layer under `core/**/static/`. LEFT OPEN
+        with T4's expiry from the previous plan: they retire when the files are
+        deleted as each port lands, not by editing dead 2015 JavaScript.
+      - The remaining ~74 are production, and two rules are genuine bug classes
+        rather than style. Both were checked at every site.
+      `python:S1515` (13): LATENT BUG, FIX RECOMMENDED, harmless today.
+        `media/_base/media/main.py:454, :544, :783-785, :793` register API views
+        inside `for media_type in fireEvent(MEDIA_TYPES, merge=True)` using
+        `lambda *args, **kwargs: self.listView(type=media_type, **kwargs)`.
+        Each lambda captures `media_type` BY REFERENCE, so every view would
+        resolve to the LAST value. Measured why it does not bite: only 'movie'
+        is ever declared as a media type (`media/movie/__init__.py:6` and
+        `movie/_base/main.py:94`; base classes declare None), so every iteration
+        binds the same value.
+        TRIGGER CONDITION: adding a second media type activates it silently.
+        CORRECTED AFTER REVIEW, and the correction lowers the priority. I wrote
+        that `%s.delete` would route a show delete to movies. That is FALSE on
+        two counts: the route KEY is formatted per iteration, so `show.delete`
+        registers under the right name, and `deleteView(self, id='', **kwargs)`
+        at `media/main.py:633` takes `type` into `**kwargs` and NEVER READS IT,
+        deleting by id directly. So this closure cannot cause a cross-type
+        delete and there is no data-loss path here.
+        What it does affect is every callback that DOES consume `type`: list,
+        character and watch-history filtering would silently filter by the
+        wrong media type. A wrong-results bug, not a destructive one. Still
+        worth the one-token fix, since binding it as a default argument costs
+        nothing and changes no behaviour today, but not for the reason I first
+        gave. This is the second time in this session I overstated a data-loss
+        risk without following the argument into the function that receives it.
+        The three at `renamer/main.py:801` are a different shape and benign: the
+        callback is invoked within the same call rather than outliving its
+        iteration.
+      `python:S1871` (4 production), identical branches, the copy-paste
+        signature. Checked: `folder_scanner.py:829` is two branches with the
+        same body that could merge with `or`, behaviour-neutral, in a file with
+        a bad history where a no-op edit buys nothing. LEFT OPEN.
+      - The rest is idiom with no defect behind it. Grouped by family rather
+        than listed one by one, because the reason and the expiry really are
+        shared within each family; a per-finding restatement would be padding,
+        not rigour:
+        `python:S5806` (14) builtin shadowing, and `python:S1110` (12)
+          redundant parentheses. Pure readability, no behaviour. EXPIRES when
+          a formatter or lint rule is adopted that enforces either, at which
+          point they are fixed mechanically rather than by hand.
+        `python:S3358` (5) and `javascript:S3358` (2 production) nested
+          ternaries, `python:S1066` (3) collapsible ifs, `python:S8519` (4)
+          `list(...)[0]`, `python:S6395` (3), `python:S8517` (2),
+          `python:S3457` (2), `python:S6035` (2), `Web:S1827` (2). Local
+          rewrites with no caller-visible effect. EXPIRES when someone is
+          editing the enclosing function for another reason; doing them
+          standalone means touching working code for no behavioural gain.
+        `python:S112` (2) generic exceptions raised, `python:S125` (1)
+          commented-out code, `python:S1045` (1), `python:S1854` (1) dead
+          store, `python:S8513` (1), `python:S8900` (1), `Web:S5254`,
+          `Web:S6821`, `Web:S6845`, `Web:S6807` (1 each). Singletons, each
+          genuine and each trivial. EXPIRES on the same condition: fix in
+          passing, not as a sweep.
+      - `Web:PageWithoutTitleCheck` (1) is a FALSE POSITIVE, the same Jinja
+        blind spot as the Alpine ones: `base.html:6` is
+        `<title>{% block title %}CouchPotato{% endblock %}</title>` and child
+        templates override it.
+      NOTHING IN THE MEDIUM TAIL IS A LIVE DEFECT. That is the honest result and
+      it differs sharply from the HIGH set, which yielded four production bugs
+      from a comparable number of findings. Severity ranking earned its keep.
       NET: of 15 HIGH rules, TWO produced production fixes: `python:S5996`
       via #320 and `Web:S7927` via #322. NOT `Web:S6853`, which is the label
       `for`/`id` association rule, assessed in the MEDIUM tail above as a
@@ -249,7 +321,9 @@ only one of the two return paths. That guard is T1 below.
       `localhost` substring hole of exactly the class it had just closed), 1
       was rejected
       because complying would risk a regression, 1 was moot, and the rest are
-      real-but-low-value or blocked on something else. Next: the MEDIUM tail.
+      real-but-low-value or blocked on something else.
+      The MEDIUM tail that this line once pointed forward to is closed out
+      above, in the MEDIUM TAIL CLOSED OUT block. Nothing in T2 is outstanding.
 - [x] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
       REVIEW: the first draft described this defect in the PR body and then
       never scheduled it, so it would have been lost. TWO bugs, and the second
@@ -296,7 +370,8 @@ only one of the two return paths. That guard is T1 below.
       `printenv CP_VERSION`, an ARG rather than an ENV and absent from the
       running container, and never a grep for /version/i, which hands you the
       interpreter version as a plausible rollback tag mid-incident.
-- [ ] T4: make SonarQube staleness visible. REFRAMED AFTER REVIEW, because the
+      state: removed from this plan, released separately
+- [x] T4: make SonarQube staleness visible. DONE, merged as #328. REFRAMED AFTER REVIEW, because the
       first draft was unbuildable. It said "run `make sonar` automatically after
       a merge". Every job under `.github/workflows/**` runs on GitHub-hosted
       `ubuntu-latest`, which cannot reach the scanner at a private RFC1918
@@ -312,7 +387,7 @@ only one of the two return paths. That guard is T1 below.
       whatever prompts a human to run `make sonar`. It must never fail a build,
       per the standing rule that a scan which can fail a build creates pressure
       to make the number green rather than the code better,
-      state: queued
+      state: merged #328
 
 - [ ] T5: issue #312, event wiring is guarded in one direction only.
       `test_event_wiring.py` catches an event fired with no listener, and
@@ -342,13 +417,21 @@ only one of the two return paths. That guard is T1 below.
       serves. Anyone configuring Trakt today cannot complete authorisation.
       Port the control into `couchpotato/ui/`, or retire the endpoints if the
       feature is not wanted, state: queued (needs: T5)
-- [ ] T7: issue #314, the folder browser announces `role="listbox"` and keeps
+- [x] T7: DONE, merged as #329. Issue #314, the folder browser announced `role="listbox"` and keeps
       none of it: no arrow keys, no `aria-selected`, no
       `aria-activedescendant`, every folder its own tab stop. Remove the ARIA
       rather than adopt the `<select>` the scanner suggested. Fold in the
       known keyboard-escape and focus-trap gap in the same modal, and consider
       the eight deferred `Web:S6819` dialog findings here since a native
-      `<dialog>` solves that half properly, state: queued (needs: T6)
+      `<dialog>` solves that half properly.
+      CORRECTED: this entry claimed the
+      modal has no keyboard escape and no focus trap. It has BOTH,
+      `modals.html:53` closes on Escape and `:55-66` is a working focus trap
+      with shift-tab cycling. That claim came from a summary carried into the
+      session and was repeated without opening the file.
+      The `needs: T6` this entry carried is dropped: T7 merged as #329 while T6
+      was still open, so the dependency was never real.
+      state: merged #329
 - [ ] T8: five films identified earlier today that are still not added to the
       library. Data task, no PR, state: queued (needs: T7)
 
