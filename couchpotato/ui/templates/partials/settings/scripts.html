@@ -715,6 +715,128 @@ function buttonField(section, opt) {
   };
 }
 
+/* ── Trakt device authorisation (issue #311) ──
+   Bespoke, not a generalisation of buttonField above: that helper is
+   single-shot (fetch once, show a message, refresh the panel), and this
+   flow needs a start call followed by a bounded poll loop with its own
+   expiry and a "still waiting" state in between, which buttonField cannot
+   express without turning it into something else entirely. */
+function traktDeviceAuth() {
+  return {
+    authorising: false,
+    polling: false,
+    userCode: '',
+    verificationUrl: '',
+    statusText: '',
+    statusClass: 'text-cp-muted',
+    error: false,
+    expiresAt: 0,
+    pollTimer: null,
+
+    async start() {
+      // Re-entry guard, since the button stays focusable/clickable
+      // (aria-disabled, not disabled) while a request or a poll is live.
+      if (this.authorising || this.polling) return;
+
+      this.clearPoll();
+      this.authorising = true;
+      this.error = false;
+      this.userCode = '';
+      this.verificationUrl = '';
+      this.statusText = '';
+
+      try {
+        const resp = await fetch(CP.apiBase + '/automation.trakt.device_code/');
+        const data = await resp.json();
+
+        if (data.success) {
+          this.userCode = data.user_code || '';
+          this.verificationUrl = data.verification_url || '';
+          this.expiresAt = Date.now() + (Number(data.expires_in) || 600) * 1000;
+          this.statusText = 'Waiting for authorisation…';
+          this.statusClass = 'text-cp-muted';
+          this.polling = true;
+          this.poll(Number(data.interval) || 5);
+        } else {
+          this.showError(data.error || 'Failed to start authorisation.');
+        }
+      } catch (e) {
+        this.showError('Request failed: ' + e.message);
+      }
+
+      this.authorising = false;
+    },
+
+    async poll(intervalSeconds) {
+      if (Date.now() > this.expiresAt) {
+        this.showError('Authorisation code expired. Please start again.');
+        return;
+      }
+
+      try {
+        const resp = await fetch(CP.apiBase + '/automation.trakt.poll_token/');
+        const data = await resp.json();
+
+        if (data.success) {
+          this.showSuccess(data.message || 'Authorisation successful.');
+          return;
+        }
+
+        if (data.pending) {
+          const next = Number(data.interval) || intervalSeconds;
+          this.pollTimer = setTimeout(() => this.poll(next), next * 1000);
+          return;
+        }
+
+        // Any non-pending, non-success response is terminal (expired,
+        // invalid code, denied, unexpected status): stop and report it.
+        this.showError(data.error || 'Authorisation failed.');
+      } catch (e) {
+        this.showError('Request failed: ' + e.message);
+      }
+    },
+
+    showSuccess(message) {
+      this.clearPoll();
+      this.polling = false;
+      this.userCode = '';
+      this.verificationUrl = '';
+      this.statusText = message;
+      this.statusClass = 'text-cp-success';
+
+      // Same re-init approach as buttonField.execute() above, so the now
+      // populated token fields (password inputs, rendered from `values`)
+      // reflect what the server actually stored.
+      const panel = this.getPanel();
+      if (panel) setTimeout(() => panel.init(), 500);
+    },
+
+    showError(message) {
+      this.clearPoll();
+      this.polling = false;
+      this.userCode = '';
+      this.verificationUrl = '';
+      this.statusText = message;
+      this.statusClass = 'text-cp-danger';
+      this.error = true;
+    },
+
+    clearPoll() {
+      if (this.pollTimer) {
+        clearTimeout(this.pollTimer);
+        this.pollTimer = null;
+      }
+    },
+
+    getPanel() {
+      let el = this.$el;
+      while (el && !el.__x_panel) el = el.parentElement;
+      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
+      return el ? Alpine.$data(el) : null;
+    },
+  };
+}
+
 /* ── Combined field (multi-row entries) ── */
 function combinedField(section, opt) {
   return {
