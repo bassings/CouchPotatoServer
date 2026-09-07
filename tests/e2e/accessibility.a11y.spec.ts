@@ -324,6 +324,51 @@ test.describe('Accessibility', () => {
    * the only assertion that can fail again if a future edit reintroduces
    * padding that keeps the substring but buries the lead word.
    */
+  /**
+   * The folder browser announced itself as a listbox and kept none of the
+   * promise: no arrow-key navigation, no aria-selected, no
+   * aria-activedescendant, and every folder its own tab stop. A screen reader
+   * read out "listbox" and a position within it, and none of the interaction
+   * that implies worked.
+   *
+   * The fix was to REMOVE the ARIA rather than build the full listbox pattern.
+   * The entries are ordinary buttons and already work with Tab and Enter; no
+   * ARIA is better than ARIA that lies. See issue #314.
+   *
+   * This asserts the absence, because the defect was a promise the widget did
+   * not keep, and the only way that regresses is someone adding the roles back
+   * without the keyboard behaviour.
+   */
+  test('the folder browser does not claim to be a listbox it has not implemented (#314)', async ({ page }) => {
+    await page.goto('/settings/');
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Library' }).click();
+    await page.getByRole('heading', { name: 'Movie Library' }).click();
+
+    const addFolderBtn = page.locator('button', { hasText: '+ Add folder' });
+    await expect(addFolderBtn, 'the "+ Add folder" button never rendered').toBeVisible();
+    await addFolderBtn.click();
+    await page.getByRole('button', { name: 'Browse for folder 1' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog, 'the folder browser dialog never opened').toBeVisible();
+
+    // If either role comes back, it must come back WITH arrow keys,
+    // aria-selected and a single tab stop. Until then, absence is correct.
+    await expect(dialog.locator('[role="listbox"]'),
+      'the directory list claims role="listbox" without implementing one: no arrow keys, no aria-selected, no aria-activedescendant, every entry its own tab stop')
+      .toHaveCount(0);
+    await expect(dialog.locator('[role="option"]'),
+      'directory entries claim role="option" without aria-selected, which tells a screen reader they are options of which none is ever selected')
+      .toHaveCount(0);
+
+    // And the entries must still be reachable as ordinary buttons, so the
+    // removal has not taken the keyboard path away with the false promise.
+    await expect(dialog.locator('button').first(),
+      'the dialog has no buttons at all, so removing the ARIA has broken the control rather than corrected it')
+      .toBeVisible();
+  });
+
   test('settings folder/row "Add" buttons and the folder browser "Up" button lead with their visible text (WCAG 2.5.3)', async ({ page }) => {
     await page.goto('/settings/');
     await page.waitForLoadState('networkidle');

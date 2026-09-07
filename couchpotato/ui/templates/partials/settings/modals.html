@@ -90,7 +90,15 @@
     </div>
     
     <!-- Directory list -->
-    <div class="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]" role="listbox" aria-label="Folders">
+    {#- No role="listbox" here, deliberately. It used to claim one and kept
+        none of the promise: no arrow-key navigation, no aria-selected, no
+        aria-activedescendant, and every folder its own tab stop. A screen
+        reader announced a listbox and a position within it while none of the
+        implied interaction worked, which is worse than plain buttons.
+        The entries below are ordinary buttons and already work with Tab and
+        Enter. If a real listbox is ever wanted, it needs the whole pattern,
+        not the role. See issue #314. -#}
+    <div class="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]" aria-label="Folders">
       <!-- Loading -->
       <div x-show="browserLoading" class="flex items-center justify-center py-8" role="status">
         <svg aria-hidden="true" class="w-4 h-4 animate-spin text-cp-muted" viewBox="0 0 24 24" fill="none">
@@ -107,8 +115,7 @@
       
       <!-- Directory items -->
       <template x-for="dir in browserDirs" :key="dir">
-        <button @click="selectDirectory(dir)" 
-                role="option"
+        <button @click="selectDirectory(dir)"
                 class="w-full px-4 py-2 text-left text-xs hover:bg-white/[0.04] flex items-center gap-2 border-b border-white/[0.02]">
           <svg aria-hidden="true" class="w-4 h-4 text-cp-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
