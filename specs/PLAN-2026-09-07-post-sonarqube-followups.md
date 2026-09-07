@@ -35,11 +35,16 @@ the same value", against `PrivacyFilter.filter()`. It is a FALSE POSITIVE.
 filter must keep every record; the code's own comment says a filter that
 swallows the line removes the reason the line was logged. Both return paths
 correctly return True.
-BUT engaging with it found a real gap: **no test asserts that return value.**
-Nine test files exercise `PrivacyFilter` and none checks that the record
-survives, so anyone "fixing" this finding by returning False on some branch
-would silently stop log output with a green suite. That guard is T1 below, and
-the dismissal is only safe once it exists.
+BUT engaging with it found a gap worth closing, though NOT as bad as first
+recorded. CORRECTED after measuring instead of asserting: no test asserts that
+return value EXPLICITLY, which is true, but the suite does not stay green.
+Mutating the final `return True` to `return False` fails TWO tests, and the
+second is pre-existing: `test_privacy_filter_applied_via_child_logger` asserts
+a redacted message reaches the log, and a falsy return means no record reaches
+the log at all. So the danger was overstated. The explicit guard is still worth
+having, because an incidental failure in a redaction test does not tell the
+next person that the RETURN VALUE is the contract they broke, and it covers
+only one of the two return paths. That guard is T1 below.
 
 ## Tasks
 
