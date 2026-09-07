@@ -17,7 +17,13 @@
 # THIS NEVER FAILS. It exits 0 whatever it finds. A scan that can fail a build
 # creates pressure to make the number green rather than the code better, which
 # is the one thing the project's standards are explicit about avoiding.
-set -uo pipefail
+#
+# That property comes from handling every fallible command explicitly, NOT from
+# omitting `set -e`. An earlier version dropped the `-e` to get the same effect
+# and the repo's own trap check rejected it, correctly: a script without it can
+# sail past a failure it did not expect. Every command below that can fail
+# either has an explicit fallback or sits inside a conditional.
+set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -32,8 +38,8 @@ if [ ! -r "$STAMP" ]; then
     exit 0
 fi
 
-ANALYSED_SHA="$(head -n1 "$STAMP" | tr -d '[:space:]')"
-ANALYSED_AT="$(sed -n '2p' "$STAMP" | tr -d '\r')"
+ANALYSED_SHA="$( { head -n1 "$STAMP" || true; } | tr -d '[:space:]')"
+ANALYSED_AT="$( { sed -n '2p' "$STAMP" || true; } | tr -d '\r')"
 
 if [ "$ANALYSED_SHA" = "$HEAD_SHA" ]; then
     echo "SonarQube: analysis matches HEAD (${HEAD_SHA:0:12}), recorded ${ANALYSED_AT:-unknown}."
@@ -49,8 +55,10 @@ if ! git cat-file -e "$ANALYSED_SHA^{commit}" 2>/dev/null; then
 fi
 
 BEHIND="$(git rev-list --count "$ANALYSED_SHA..$HEAD_SHA" 2>/dev/null || echo '?')"
-# Only files SonarQube actually analyses matter for line drift.
-CHANGED="$(git diff --name-only "$ANALYSED_SHA..$HEAD_SHA" -- '*.py' '*.js' '*.ts' '*.html' 2>/dev/null | wc -l | tr -d ' ')"
+# Only files SonarQube actually analyses matter for line drift. The `|| true`
+# is load bearing under `set -o pipefail`: a git failure anywhere in the
+# pipeline would otherwise abort a script whose whole contract is not to.
+CHANGED="$( { git diff --name-only "$ANALYSED_SHA..$HEAD_SHA" -- '*.py' '*.js' '*.ts' '*.html' 2>/dev/null || true; } | wc -l | tr -d ' ')"
 
 echo "SonarQube: STALE by $BEHIND commit(s)."
 echo "  analysed : ${ANALYSED_SHA:0:12}  ${ANALYSED_AT:-unknown}"
