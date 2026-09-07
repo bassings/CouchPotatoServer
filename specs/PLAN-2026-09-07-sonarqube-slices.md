@@ -41,10 +41,37 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
 - [ ] T3: assess and fix `python:S9073`, composite assertions in tests (59).
       Splitting them gives better failure messages, which this repo has needed
       repeatedly today, state: queued (needs: T2)
-- [ ] T4: assess `javascript:S7740`, variables assigned `this` (143). Largest
-      single rule. Suspect many are legitimate Alpine component idiom; the
-      deliverable may be mostly a dismissal with evidence, state: queued
-      (needs: T3)
+- [x] T4: assess `javascript:S7740`, variables assigned `this` (143). LEFT
+      OPEN, RECORDED, not fixed, and my prior was wrong in an interesting way:
+      I guessed "legitimate Alpine component idiom", and there is no Alpine
+      here at all. Every one of the 143 is `var self = this` at the top of a
+      MooTools class method, in 19 files under `couchpotato/core/**/static/`,
+      last modified 2015.
+      Three findings, each measured rather than assumed:
+      1. The layer is not served. `static_dir` is `couchpotato/static`
+         (`runner.py:558`), the only mount (`couchpotato/__init__.py:1231`),
+         and it contains only new-UI scripts and vendor bundles: no MooTools,
+         no combined legacy bundle. `clientscript.py`, which used to build
+         those bundles, is deleted. `/old/*` is a redirect catch-all
+         (`couchpotato/__init__.py:1693`). Nothing outside the tree references
+         it. This is the same dead layer as T2, reached independently.
+      2. The rule's premise does not hold for this code. S7740 exists because
+         arrow functions capture `this` lexically, making the alias
+         unnecessary. These files contain zero arrow functions. Many sites are
+         provably necessary even so: `trakt.js:133` aliases `this` and then
+         reads `self` inside an `Api.request` callback, where ES5 `this` would
+         be wrong. A heuristic pass suggested a large share might be
+         technically redundant, but spot-checking showed the heuristic itself
+         was wrong on its first three candidates, so no split is recorded
+         here. The verdict is the same at either extreme.
+      3. Zero tests cover the layer, so a 143-site edit could not be shown to
+         be behaviour-neutral.
+      The rule is left enabled and every finding left open, because it is
+      still doing useful work: there are zero S7740 findings in the live UI,
+      so the same idiom written into `couchpotato/ui/` tomorrow would surface
+      as finding 144. Expiry: delete each file when its port lands
+      (UI-CLEANUP-02), which retires these findings without editing dead code.
+      state: merged
 - [ ] T5: assess and fix `python:S1192`, duplicated string literals (72), where
       extraction aids clarity rather than just satisfying the rule, state:
       queued (needs: T4)
