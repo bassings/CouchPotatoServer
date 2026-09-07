@@ -116,7 +116,24 @@ only one of the two return paths. That guard is T1 below.
         KeyboardInterrupt. I suspected an UnboundLocalError on the error path
         and checked: `response` is initialised before the `try` in both cases,
         so there is no crash. Worth tidying, not urgent.
-      ALL 15 HIGH RULES NOW ASSESSED. The remaining nine:
+      ALL 15 HIGH RULES NOW ASSESSED. CORRECTED after review: an earlier
+      version of this line claimed that while listing only FOURTEEN. The
+      missing one was `javascript:S3776`, which is the LARGEST HIGH rule by
+      count, so the claim of completeness was wrong in the least excusable
+      direction. Assessed below rather than quietly renumbering.
+      - `javascript:S3776` (7): SPLIT. Three are in the unserved legacy layer
+        (`movie.js:188`, `list.js:648`, `wizard.js:117`) and take T4's
+        disposition. Four are in the LIVE new UI:
+        `settings/scripts.html:231, :293, :423` at complexity 19, 29 and 17,
+        and `wizard.html:1168` at complexity 94.
+        Same verdict as `python:S3776` in the previous plan, and for the same
+        reason: the metric is an accurate risk map and its implied remedy,
+        restructure until the number falls, is the wrong response. The
+        difference here is that the live four have real E2E coverage, including
+        the wizard label tests added earlier today, so an extraction driven by
+        a genuine need could be verified rather than hoped at. The 94 in the
+        first-run wizard is the one to look at first if anyone does.
+      The remaining nine:
       - `python:S1186` (6): base-class stubs, `buildUrl`, `search`, `doUpdate`,
         `getFiles`, all meant to be overridden. The rule wants a comment
         explaining the emptiness, which is fair and cosmetic. Fix when next in
@@ -160,7 +177,10 @@ only one of the two return paths. That guard is T1 below.
         deprecated truthiness. Defensive rather than wrong. Low value.
       - `javascript:S4275` (1): in `updater.js`, the unserved legacy layer.
         Same disposition as T4's 143 findings.
-      NET: of 15 HIGH rules, 3 produced production fixes, 1 was rejected
+      NET: of 15 HIGH rules, 3 produced production fixes (and one of those,
+      T2b, then needed two further rounds: a caller-shape miss and a
+      `localhost` substring hole of exactly the class it had just closed), 1
+      was rejected
       because complying would risk a regression, 1 was moot, and the rest are
       real-but-low-value or blocked on something else. Next: the MEDIUM tail.
 - [x] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
