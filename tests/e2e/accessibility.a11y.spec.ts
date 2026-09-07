@@ -362,11 +362,23 @@ test.describe('Accessibility', () => {
       'directory entries claim role="option" without aria-selected, which tells a screen reader they are options of which none is ever selected')
       .toHaveCount(0);
 
-    // And the entries must still be reachable as ordinary buttons, so the
-    // removal has not taken the keyboard path away with the false promise.
-    await expect(dialog.locator('button').first(),
-      'the dialog has no buttons at all, so removing the ARIA has broken the control rather than corrected it')
+    // The DIRECTORY ENTRIES specifically must still be ordinary, reachable
+    // buttons, so removing the ARIA has not taken the keyboard path away along
+    // with the false promise.
+    //
+    // Scoped deliberately. An earlier version asserted on
+    // dialog.locator('button').first(), which resolves to the header's "Close
+    // folder browser" control. That button, and Up, Cancel and Select This
+    // Folder, all render unconditionally, so the assertion passed even if every
+    // directory entry vanished or stopped being a button. It could not fail for
+    // the thing it claimed to guard.
+    const entries = dialog.locator('button.w-full.px-4.py-2.text-left');
+    await expect(entries.first(),
+      'no directory ENTRY button is present, so the folder list is either empty or its entries are no longer buttons; removing the ARIA has broken the control rather than corrected it')
       .toBeVisible();
+    await expect(entries.first(),
+      'a directory entry is not keyboard focusable, so the keyboard path was removed along with the false listbox promise')
+      .toBeEnabled();
   });
 
   test('settings folder/row "Add" buttons and the folder browser "Up" button lead with their visible text (WCAG 2.5.3)', async ({ page }) => {

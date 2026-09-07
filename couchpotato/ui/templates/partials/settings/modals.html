@@ -97,8 +97,14 @@
         implied interaction worked, which is worse than plain buttons.
         The entries below are ordinary buttons and already work with Tab and
         Enter. If a real listbox is ever wanted, it needs the whole pattern,
-        not the role. See issue #314. -#}
-    <div class="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]" aria-label="Folders">
+        not the role. See issue #314.
+
+        No aria-label here either. With the role gone this div has generic
+        semantics, and aria-label is PROHIBITED on a generic element, so the
+        label was invalid ARIA that assistive technology may ignore. It was
+        also redundant: the dialog is already labelled by its own heading via
+        aria-labelledby="browser-title" at :52, which reads "Browse Folders". -#}
+    <div class="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]">
       <!-- Loading -->
       <div x-show="browserLoading" class="flex items-center justify-center py-8" role="status">
         <svg aria-hidden="true" class="w-4 h-4 animate-spin text-cp-muted" viewBox="0 0 24 24" fill="none">
