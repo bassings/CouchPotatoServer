@@ -53,11 +53,8 @@ only one of the two return paths. That guard is T1 below.
       proven by mutating that path to `return False` and watching that specific
       test fail, restored byte-identical. `python:S3516` then marked false
       positive with a comment naming those tests, so the dismissal cites
-      something enforceable. The project now has ZERO blockers. The guard must fail if any path returns a falsy value. Prove it
-      by making one path return False and watching it fail. Only then mark
-      `python:S3516` false positive, with the guard named in the comment so the
-      dismissal cites something enforceable rather than an argument, state:
-      queued
+      something enforceable rather than an argument. The project now has ZERO
+      blockers. state: merged #319
 - [ ] T2: assess the ~251 MEDIUM+ findings in the rules the first pass never
       reached, HIGH first: `javascript:S3776` (7), `python:S1186` (6),
       `python:S8904` (6), `python:S5779` (5), `Web:S7927` (3),
@@ -79,7 +76,15 @@ only one of the two return paths. That guard is T1 below.
       the bug. The same line mangled any hostname starting with h, t, p or s.
       Its one caller, `http_client.py:131`, exempts local hosts from being
       permanently disabled after repeated failures, so an IPv6-only local
-      service is disabled where `127.0.0.1` would not be, state: in-flight
+      service is disabled where `127.0.0.1` would not be.
+      FIX ROUND 2, because review found the first fix does not fix the bug.
+      `http_client.py:203` passes `hostname:port`, not a bare address, so
+      `http://[::1]:9117/api` yields `::1:9117` and the end-anchored IPv6
+      alternatives never match. That is the common shape, since a self-hosted
+      local service almost always has an explicit port. All 15 tests passed
+      because every one used a hand-written bare address, so the suite was
+      green while the real path stayed broken. Knowing where the boundary was
+      did not help; nothing tested ACROSS it. state: in-flight, fix round 2
 - [ ] T3: production promotion. Fourteen commits have merged since v3.77.0 and
       none are in production, including BUG-018, where the scanner filed every
       remake under the original film, and the Docker CVE pin.
