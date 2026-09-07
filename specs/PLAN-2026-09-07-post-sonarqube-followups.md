@@ -367,4 +367,6 @@ only one of the two return paths. That guard is T1 below.
 - [ ] T8: five films identified earlier today that are still not added to the
       library. Data task, no PR, state: queued (needs: T7)
 
+status: blocked-on-human: proceed with the T3 production promotion now, or hold it until the owner is around? Fourteen commits are unreleased including the BUG-018 scanner fix and the Docker CVE pin. The owner agreed to this promotion earlier, but review has since caught nine errors in this session's work, three in work already declared verified and two after merge, and a promotion is the one task here that a later commit cannot undo. T4 and the release-name length cap are both available and touch nothing in production.
+
 ## Conductor log
