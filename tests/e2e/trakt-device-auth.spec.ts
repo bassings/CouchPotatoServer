@@ -187,8 +187,17 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     });
 
     await startButton.click();
-    await expect(status).toContainText('ABCD-1234');
 
+    // Deliberately NOT asserting the device code appears here. It is only on
+    // screen between device_code returning and the first poll succeeding, and
+    // this test's mock answers that poll with success immediately, so the
+    // window is vanishingly small. That assertion passed when this spec ran
+    // alone and failed inside the full gate on a loaded machine, which is the
+    // worst kind of test: green until it matters.
+    // The code display has its own test above ('starting authorisation
+    // displays the code and URL...'), which mocks a PENDING poll on a 30s
+    // interval so the code is genuinely stable while it is asserted. This test
+    // is about the success path, so it asserts only that.
     await expect(status).toContainText('Authorization successful! Trakt is now connected.', { timeout: 8000 });
     // The device code is no longer relevant once authorisation succeeded.
     await expect(status).not.toContainText('ABCD-1234');
