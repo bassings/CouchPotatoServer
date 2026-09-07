@@ -441,41 +441,50 @@ def isSubFolder(sub_folder, base_folder):
     return False
 
 
-# A legitimate release name is well under this length (ordinary names
-# measured at 30-60 chars). re.findall retries from every start position,
-# so parsing a run of brackets below is quadratic in input length: measured
-# 124 ms for 8000 unclosed '[' and 496 ms for 16000. A provider controls
-# both the length of a candidate name and how many results one search
-# response contains (sceneScore() in score/main.py runs this per result),
-# so this cap bounds the parse cost regardless of what the provider sends.
-#
-# 1000 rather than something tighter, because the cap is a hard behavioural
-# cliff: a legitimate name whose only bracketed group sits past it silently
-# loses that candidate, and this function decides which releases match, so a
-# false negative is the worse failure. Measured worst case, 200 results of
-# nothing but open brackets: 0.037s at a 300 cap, 0.40s at 1000, 1.59s at
-# 2000. 1000 keeps the attack bounded to well under a second while putting the
-# cliff out of reach of any real release name, which measure 88 to 94 chars in
-# practice and are unusual past 250.
-BRACKETED_NAME_PARSE_LIMIT = 1000
+def _bracketedGroups(name):
+    r"""Every '[...]' group in *name*, left to right, non-overlapping.
+
+    A linear left-to-right scan, not a regex. `re.findall(r'[^[]*\[([^]]*)\]',
+    name)` retries from every start position, which makes it quadratic in
+    the length of a run of brackets (measured: 543 ms for 16000 unclosed
+    '[', 8626 ms for 64000) -- and a provider controls both the length of a
+    candidate name and how many results one search response contains
+    (sceneScore() in score/main.py runs this per result), so that cost was
+    reachable by a hostile response with no single name large enough to look
+    suspicious.
+
+    A capped-length version of the regex was tried first and rejected: the
+    cap does not just drop a candidate past the limit, it can pick the
+    WRONG one. For a name with a short bracket before the cap and the true
+    longest bracket after it, a capped parse returns the short group
+    silently, with no exception -- and that wrong group is what release
+    matching then scores against. This scan has no such failure mode: it
+    is linear regardless of input length, so nothing needs capping.
+    """
+    groups = []
+    i = 0
+    while True:
+        open_at = name.find('[', i)
+        if open_at == -1:
+            break
+        close_at = name.find(']', open_at + 1)
+        if close_at == -1:
+            break
+        groups.append(name[open_at + 1:close_at])
+        i = close_at + 1
+    return groups
 
 
 def longestBracketedName(name):
     """Return the longest '[...]' bracketed group in *name*, stripped.
 
-    Equivalent, for input at or under BRACKETED_NAME_PARSE_LIMIT, to:
+    Equivalent to
         max(re.findall(r'[^[]*\\[([^]]*)\\]', name), key = len).strip()
-    including raising when there is no bracketed group at all -- callers
-    are expected to catch that, same as with the expression this replaces.
-
-    Input longer than the limit is parsed from a capped prefix rather than
-    rejected outright, so a merely long (not pathological) name still
-    scores; only the cost of the parse is bounded, not the acceptance of
-    long input.
+    for every input, including raising when there is no bracketed group at
+    all -- callers are expected to catch that, same as with the expression
+    this replaces.
     """
-    if len(name) > BRACKETED_NAME_PARSE_LIMIT:
-        name = name[:BRACKETED_NAME_PARSE_LIMIT]
-    return max(re.findall(r'[^[]*\[([^]]*)\]', name), key = len).strip()
+    return max(_bracketedGroups(name), key = len).strip()
 
 
 # From SABNZBD

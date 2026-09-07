@@ -462,8 +462,8 @@ def _old_bracketed_name_expression(name):
 
 class TestLongestBracketedNameEquivalence:
     """`longestBracketedName` must match the old inline expression exactly
-    for ordinary, at-or-under-the-cap input -- this is the searcher and the
-    scorer, so a behaviour change here changes which releases match.
+    for every input -- this is the searcher and the scorer, so a behaviour
+    change here changes which releases match.
     """
 
     ORDINARY_NAMES = [
@@ -478,6 +478,12 @@ class TestLongestBracketedNameEquivalence:
         'Trailing [ bracket has no closer',
         'Movie [empty][also empty][third]',
         '][][][',
+        # The decoy that broke a length-capped version of this parse: a
+        # short group early, the true longest group nearly 3000 chars in.
+        # A cap that truncates before the second group would silently
+        # return the short one instead of raising or finding the long one
+        # -- pinned here so that regression can never come back unnoticed.
+        '[a]' + 'X' * 1000 + '[' + 'B' * 2000 + ']',
     ]
 
     @pytest.mark.parametrize('name', ORDINARY_NAMES)
@@ -511,26 +517,46 @@ class TestLongestBracketedNameEquivalence:
         name = 'Movie [  padded group  ]'
         assert longestBracketedName(name) == 'padded group'
 
+    def test_a_short_early_group_does_not_hide_a_longer_later_one(self):
+        # The specific defect a length-capped version of this parse had: a
+        # short bracketed group early in the name, and the true longest
+        # group far enough in that a cap would have already truncated the
+        # string. The correct answer is the long group, found and picked
+        # over the short one, not a silent wrong answer and not a raise.
+        name = '[a]' + 'X' * 1000 + '[' + 'B' * 2000 + ']'
+        result = longestBracketedName(name)
+        assert result == 'B' * 2000
+        assert result != 'a'
 
-class TestLongestBracketedNamePerformanceCap:
+
+class TestLongestBracketedNamePerformance:
     """The DoS: re.findall retries from every start position, so a run of
     unclosed '[' is quadratic in length. Measured on this machine against
-    the OLD expression: 8000 unclosed brackets ~124 ms, 16000 ~496 ms, and
-    sceneScore() (score/main.py:66) runs this per search RESULT, so a
-    hostile provider controls both the length of each name and how many
-    results one response contains.
+    the OLD regex-based expression: 16000 unclosed brackets ~543 ms, 64000
+    ~8626 ms. sceneScore() (score/main.py:66) runs this per search RESULT,
+    so a hostile provider controls both the length of each name and how
+    many results one response contains.
+
+    The fix is a linear left-to-right scan (`_bracketedGroups`), not a
+    length cap -- a cap was tried and rejected because it can pick the
+    WRONG group rather than merely miss one (see
+    TestLongestBracketedNameEquivalence.test_a_short_early_group_does_not_hide_a_longer_later_one).
+    There is therefore no cliff to test at: the scan is linear at any
+    length, so this asserts a LARGER pathological input than the old
+    regex-based bound used, to show there is no ceiling being quietly
+    relied on.
     """
 
-    def test_pathological_input_is_bounded(self):
-        pathological = '[' * 16000
+    def test_pathological_input_is_fast_at_a_scale_the_old_code_could_not_finish(self):
+        pathological = '[' * 64000
 
         # Absolute, not relative-to-baseline: the property under test is
-        # "a 16000-char adversarial input does not cost anywhere near its
-        # unbounded ~496 ms", and the cap makes the cost independent of
-        # input length, so there is no meaningful baseline to be relative
-        # to. The margin is wide (50 ms, ~8x a cold/loaded run of the
-        # capped-prefix parse) so this does not flake on a busy machine --
-        # the unpatched code is ~10x slower than even this generous bound.
+        # "a 64000-char adversarial input costs nowhere near the old
+        # regex's ~8626 ms", and a linear scan's cost has no baseline worth
+        # being relative to. The margin is wide (50 ms against a measured
+        # ~0.006 ms) so this does not flake on a busy machine -- the old
+        # regex-based code is roughly a thousand times slower than even
+        # this generous bound.
         started = time.perf_counter()
         try:
             longestBracketedName(pathological)
@@ -539,15 +565,8 @@ class TestLongestBracketedNamePerformanceCap:
         elapsed = time.perf_counter() - started
 
         assert elapsed < 0.05, (
-            'longestBracketedName took %.4f s on a 16000-char adversarial '
-            'input; the input length must be capped before parsing so a '
-            'provider-supplied release name cannot make this quadratic-cost '
-            'regex run against tens of thousands of characters' % elapsed
+            'longestBracketedName took %.4f s on a 64000-char adversarial '
+            'input; the bracket parse must stay linear so a '
+            'provider-supplied release name cannot make it run quadratic '
+            'cost against tens of thousands of characters' % elapsed
         )
-
-    def test_capped_prefix_still_finds_a_bracket_within_the_limit(self):
-        # A merely long (not pathological) name with its bracket inside the
-        # capped prefix must still score -- capping bounds cost, it must not
-        # blanket-reject anything over the limit.
-        name = 'A' * 100 + ' [group] ' + 'B' * 500
-        assert longestBracketedName(name) == 'group'
