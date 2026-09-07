@@ -1,4 +1,5 @@
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 
@@ -28,7 +29,7 @@ class SearcherBase(Plugin):
             fireEvent('schedule.cron', '%s.searcher.all' % _type, self.searchAll,
                       day = self.conf('cron_day'), hour = self.conf('cron_hour'), minute = self.conf('cron_minute'))
 
-        addEvent('app.load', setCrons)
+        addEvent(APP_LOAD, setCrons)
         addEvent('setting.save.%s_searcher.cron_day.after' % _type, setCrons)
         addEvent('setting.save.%s_searcher.cron_hour.after' % _type, setCrons)
         addEvent('setting.save.%s_searcher.cron_minute.after' % _type, setCrons)

@@ -2,6 +2,7 @@ import re
 import traceback
 
 from couchpotato.core.event import fireEvent
+from couchpotato.core.event_names import SCANNER_NAME_YEAR
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.userscript.base import UserscriptBase
 
@@ -28,7 +29,7 @@ class RottenTomatoes(UserscriptBase):
         try:
             title = re.findall("<title>(.*)</title>", data)
             title = title[0].split(' - Rotten')[0].replace('&nbsp;', ' ').decode('unicode_escape')
-            name_year = fireEvent('scanner.name_year', title, single = True)
+            name_year = fireEvent(SCANNER_NAME_YEAR, title, single = True)
 
             name = name_year.get('name')
             year = name_year.get('year')

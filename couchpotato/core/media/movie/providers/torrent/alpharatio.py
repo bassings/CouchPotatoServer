@@ -1,4 +1,5 @@
 from couchpotato.core.event import fireEvent
+from couchpotato.core.event_names import LIBRARY_QUERY
 from couchpotato.core.helpers.encoding import tryUrlencode
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.torrent.alpharatio import Base
@@ -29,7 +30,7 @@ class AlphaRatio(MovieProvider, Base):
     cat_backup_id = 8
 
     def buildUrl(self, media, quality):
-        query = (tryUrlencode(fireEvent('library.query', media, single = True)),
+        query = (tryUrlencode(fireEvent(LIBRARY_QUERY, media, single = True)),
                  self.getSceneOnly(),
                  self.getCatId(quality)[0])
         return query

@@ -124,9 +124,49 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       It is related to issue #311, where the same unreachable layer silently
       swallowed a February 2026 feature.
       state: merged
-- [ ] T5: assess and fix `python:S1192`, duplicated string literals (72), where
-      extraction aids clarity rather than just satisfying the rule, state:
-      queued (needs: T4)
+- [x] T5: assess and fix `python:S1192`, duplicated string literals (72).
+      SPLIT VERDICT: 21 fixed, 36 left open with reasons. All 72 are in live
+      production Python, zero in tests.
+      FIXED: 21 event names, across 186 call sites, replaced with constants in
+      a new `couchpotato/core/event_names.py`. The value is defect prevention,
+      not tidiness: event wiring here fails silently in BOTH directions, and a
+      mistyped name raises nothing. An import that does not resolve does.
+      LEFT OPEN: API schema descriptions (a constant makes the schema harder to
+      read where it is defined), generic format strings (`'Failed: %s'`, too
+      generic to share without coupling unrelated call sites), the embedded
+      truth table at `file.py:230-243` where the repetition IS the table, and
+      single-file downloader messages. Plus `updater.check`, recorded with its
+      real risk: it is a scheduler job id passed to both `schedule.remove` and
+      `schedule.interval`, so drift silently leaves a stale job.
+      THREE CORRECTIONS TO MY OWN INSTRUCTIONS, all found by review and all
+      proven by measurement rather than argument:
+      1. The spec said 24 event names. Three were not events. I had built the
+         list by matching dotted-lowercase strings in the scanner output
+         instead of checking how each string is USED: `couchpotato.db` is the
+         SQLite filename. Classifying by the shape of a string rather than its
+         use is the same mistake as asserting on a proxy.
+      2. I instructed that the value-pinning test be SKIPPED as vacuous. It is
+         not, because these strings leave Python: they are typed by hand into
+         `addApiView()` routes, into HTML templates that fetch `/app.restart/`
+         and `/manage.update/?full=1`, and into the legacy JS. Review proved
+         the gap by retyping three constants and watching all 3895 tests pass.
+      3. The change BLINDED the pre-existing `test_event_wiring.py` audit for
+         all 21 names, which reads names from source and understood only bare
+         literals. Fired names visible fell 108 to 87 and handled 142 to 121.
+         So a change sold as making event wiring safer measurably reduced the
+         tree's ability to detect a dead handler, which is the failure this
+         project has actually suffered. Fixed at the mechanism: the audit now
+         resolves constants, and scans the repo-root entry point.
+      REWORK COUNT: 2 fix rounds. Round 2 was triggered by the circuit-breaker
+      condition, a review finding a defect that round 1's fix had introduced:
+      my resolver handled `ast.Assign` but not `ast.AnnAssign`, so annotating a
+      constant would have re-armed the same blindness silently. Continued
+      rather than escalating because the approach was proven sound by mutation
+      and the defect was one unhandled node type, but the trip is recorded
+      because "the next fix is small" is exactly the reasoning the rule exists
+      to stop.
+      3896 passed, 2 skipped, 5 xfailed, up from 3894 by the two new guards.
+      state: merged
 - [ ] T6: assess `Web:S6819`, ARIA role where a semantic tag exists (44). Real
       accessibility, same family as A11Y-001, state: queued (needs: T5)
 - [ ] T7: assess `python:S1172`, unused function parameters (25). Some will be
@@ -142,6 +182,41 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       dismissed and deliberately left open, state: queued (needs: T8)
 
 ## Conductor log
+
+- Tick 3: T3 merged (#309) and its worktree disposed. T4 merged (#310) after
+  two fix rounds from review: the file dates were checked on one file and
+  asserted of nineteen, the S7740 rationale had the rule backwards, and the
+  recorded expiry pointed at UI-CLEANUP-02, which had already landed and so
+  could never fire. T5 delivered under `/tdd-task` with RED verified
+  independently, then two review rounds. Two user-facing bugs found while
+  assessing, raised as #311 (Trakt OAuth device flow has no reachable UI) and
+  #312 (38 events registered but never fired, of which `movie.snatched` and
+  `movie.downloaded` are confirmed dead). Next: T6, `Web:S6819`.
+
+- Tick 2, 2026-09-07. #305 and #306 merged (T1 done, plan file now on master,
+  which also fixes the broken active-plan pointer at its root). T2 assessed and
+  merged as #307 with a LEFT OPEN disposition, not a fix: see the task line for
+  the evidence. Fix rounds on any task: 0. Two corrections this tick, both
+  mine. First, I delegated T2 into the SHARED checkout instead of a worktree,
+  so its branch switch removed the plan file from the working tree and the
+  Stop hook blocked me: the contract says worktree for exactly this reason and
+  three sessions share that directory. T3 is running in a
+  dedicated git worktree instead. Second, a
+  memory note of mine asserted the legacy asset layer was still live; verified
+  in the repo, it is not, and the note is corrected. Armed: T3 implementer.
+  Next wake expects a shape-by-shape assessment of python:S9073.
+
+- Tick 1, 2026-09-07. First invocation, running under /loop dynamic pacing.
+  Armed `.claude/active-plan`. Reconciled by measurement rather than memory:
+  T1 is PR #305, MERGEABLE, 5 checks pending, none failed, so its state is
+  awaiting-ci, not merged as the plan file had optimistically recorded.
+  Corrected. Plan file itself raised as #306 (docs only). T2 has no `needs:`
+  edge so it is started this tick rather than waiting on T1. Fix rounds on
+  any task so far: 0. Deliberately NOT fanning out beyond one implementation
+  track: this machine is 2.4 GB into swap with five Claude sessions and a
+  3.9 GB VM resident, and concurrent E2E suites already destroyed two runs
+  today. Armed: CI watches on #305 and #306, and the T2 implementer. Next
+  wake expects #305 and #306 green and T2 reporting an assessment.
 
 - Tick 2, 2026-09-07. #305 and #306 merged (T1 done, plan file now on master,
   which also fixes the broken active-plan pointer at its root). T2 assessed and

@@ -2,6 +2,7 @@ import re
 import traceback
 
 from couchpotato.core.event import fireEvent
+from couchpotato.core.event_names import SCANNER_NAME_YEAR
 from couchpotato.core.helpers.encoding import simplifyString
 from couchpotato.core.helpers.variable import tryInt
 from couchpotato.core.logger import CPLog
@@ -83,7 +84,7 @@ def namePositionScore(nzb_name, movie_name):
     except Exception:
         pass
 
-    name_year = fireEvent('scanner.name_year', nzb_name, single = True)
+    name_year = fireEvent(SCANNER_NAME_YEAR, nzb_name, single = True)
 
     # Give points for movies beginning with the correct name
     split_by = simplifyString(movie_name)

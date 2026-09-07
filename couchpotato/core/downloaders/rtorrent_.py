@@ -13,6 +13,7 @@ import rtorrent_rpc
 
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.event import addEvent
+from couchpotato.core.event_names import APP_LOAD
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost, splitString
 from couchpotato.core.logger import CPLog
@@ -279,7 +280,7 @@ class rTorrent(DownloaderBase):
     def __init__(self):
         super().__init__()
 
-        addEvent('app.load', self.migrate)
+        addEvent(APP_LOAD, self.migrate)
         addEvent('setting.save.rtorrent.*.after', self.settingsChanged)
 
     def migrate(self):

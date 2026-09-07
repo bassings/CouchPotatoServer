@@ -6,6 +6,7 @@ from CodernityDB.database import RecordNotFound
 from couchpotato import get_db
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD, PROFILE_DEFAULT, SCANNER_NAME_YEAR
 from couchpotato.core.helpers.encoding import toUnicode, ss
 from couchpotato.core.helpers.variable import mergeDicts, getExt, tryInt, splitString, tryFloat
 from couchpotato.core.logger import CPLog
@@ -70,7 +71,7 @@ class QualityPlugin(Plugin):
 
         addEvent('app.initialize', self.deduplicateCoreProfiles, priority = 5)
         addEvent('app.initialize', self.fill, priority = 10)
-        addEvent('app.load', self.fillBlank, priority = 120)
+        addEvent(APP_LOAD, self.fillBlank, priority = 120)
 
         addEvent('app.test', self.doTest)
 
@@ -325,7 +326,7 @@ class QualityPlugin(Plugin):
 
         for cur_file in files:
             words = re.split(r'\W+', cur_file.lower())
-            name_year = fireEvent('scanner.name_year', cur_file, file_name = cur_file, single = True)
+            name_year = fireEvent(SCANNER_NAME_YEAR, cur_file, file_name = cur_file, single = True)
             threed_words = words
             if name_year and name_year.get('name'):
                 split_name = splitString(name_year.get('name'), ' ')
@@ -630,7 +631,7 @@ class QualityPlugin(Plugin):
 
     def isHigher(self, quality, compare_with, profile = None):
         if not isinstance(profile, dict) or not profile.get('qualities'):
-            profile = fireEvent('profile.default', single = True)
+            profile = fireEvent(PROFILE_DEFAULT, single = True)
 
         # Try to find quality in profile, if not found: a quality we do not want is lower than anything else
         try:

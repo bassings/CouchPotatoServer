@@ -4,6 +4,7 @@ import traceback
 
 from couchpotato import get_db
 from couchpotato.core.event import fireEvent
+from couchpotato.core.event_names import RELEASE_UPDATE_STATUS, RELEASE_WITH_STATUS
 from couchpotato.core.helpers.encoding import ss
 from couchpotato.core.helpers.variable import sp, getImdb, getIdentifier, isSubFolder
 from couchpotato.core.logger import CPLog
@@ -24,7 +25,7 @@ class ScannerMixin:
         try:
             db = get_db()
 
-            rels = list(fireEvent('release.with_status', ['snatched', 'seeding', 'missing'], single=True))
+            rels = list(fireEvent(RELEASE_WITH_STATUS, ['snatched', 'seeding', 'missing'], single=True))
 
             if not rels:
                 self.checking_snatched = False
@@ -83,7 +84,7 @@ class ScannerMixin:
 
                     if not isinstance(download_info, dict):
                         log.error('Faulty release found without any info, ignoring.')
-                        fireEvent('release.update_status', rel.get('_id'), status='ignored', single=True)
+                        fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status='ignored', single=True)
                         continue
 
                     if not download_info.get('id') or not download_info.get('downloader'):
@@ -111,17 +112,17 @@ class ScannerMixin:
                         if rel.get('status') == 'missing':
                             if rel.get('last_edit') < int(time.time()) - 7 * 24 * 60 * 60:
                                 log.info('%s not found in downloaders after 7 days, setting status to ignored', nzbname)
-                                fireEvent('release.update_status', rel.get('_id'), status='ignored', single=True)
+                                fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status='ignored', single=True)
                         else:
                             log.info('%s not found in downloaders, setting status to missing', nzbname)
-                            fireEvent('release.update_status', rel.get('_id'), status='missing', single=True)
+                            fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status='missing', single=True)
                         continue
 
                     timeleft = 'N/A' if release_download['timeleft'] == -1 else release_download['timeleft']
                     log.debug('Found %s: %s, time to go: %s', release_download['name'], release_download['status'].upper(), timeleft)
 
                     if release_download['status'] == 'busy':
-                        fireEvent('release.update_status', rel.get('_id'), status='snatched', single=True)
+                        fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status='snatched', single=True)
                         if self.movieInFromFolder(release_download['folder']):
                             self.tagRelease(release_download=release_download, tag='downloading')
 
@@ -133,10 +134,10 @@ class ScannerMixin:
                             scan_releases.append(release_download)
                         else:
                             log.debug('%s is seeding with ratio: %s', release_download['name'], release_download['seed_ratio'])
-                            fireEvent('release.update_status', rel.get('_id'), status='seeding', single=True)
+                            fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status='seeding', single=True)
 
                     elif release_download['status'] == 'failed':
-                        fireEvent('release.update_status', rel.get('_id'), status='failed', single=True)
+                        fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status='failed', single=True)
                         fireEvent('download.remove_failed', release_download, single=True)
                         if self.conf('next_on_failed'):
                             fireEvent('movie.searcher.try_next_release', media_id=rel.get('media_id'))
@@ -146,14 +147,14 @@ class ScannerMixin:
                         if self.statusInfoComplete(release_download):
                             if rel.get('status') == 'seeding':
                                 if self.conf('file_action') != 'move':
-                                    fireEvent('release.update_status', rel.get('_id'), status='downloaded', single=True)
+                                    fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status='downloaded', single=True)
                                     release_download.update({'pause': False, 'scan': False, 'process_complete': True})
                                     scan_releases.append(release_download)
                                 else:
                                     release_download.update({'pause': False, 'scan': True, 'process_complete': True})
                                     scan_releases.append(release_download)
                             else:
-                                fireEvent('release.update_status', rel.get('_id'), status='snatched', single=True)
+                                fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status='snatched', single=True)
                                 self.untagRelease(release_download=release_download, tag='downloading')
                                 release_download.update({'pause': False, 'scan': True, 'process_complete': True})
                                 scan_releases.append(release_download)

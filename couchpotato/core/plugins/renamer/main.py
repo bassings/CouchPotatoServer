@@ -9,6 +9,7 @@ import uuid
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD, MEDIA_GET, RELEASE_ADD, RELEASE_FOR_MEDIA, RELEASE_UPDATE_STATUS, RENAMER_SCAN
 from couchpotato.core.helpers.variable import sp, symlink
 from couchpotato.core.logger import CPLog, log_suppressed, without_paths
 from couchpotato.core.media_lock import media_lock
@@ -221,10 +222,10 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 },
             )
 
-        addEvent('renamer.scan', self.scan)
+        addEvent(RENAMER_SCAN, self.scan)
         addEvent('renamer.check_snatched', self.checkSnatched)
 
-        addEvent('app.load', self.startCrons)
+        addEvent(APP_LOAD, self.startCrons)
 
     def startCrons(self):
         """Set up periodic scanning cron jobs."""
@@ -250,7 +251,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         base_folder = kwargs.get('base_folder')
         media_folder = kwargs.get('media_folder')
 
-        fireEvent('renamer.scan', base_folder=base_folder,
+        fireEvent(RENAMER_SCAN, base_folder=base_folder,
                   media_folder=media_folder, operator_forced=True,
                   async_call=True)
 
@@ -976,7 +977,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             return []
         if '_cp_releases' not in group:
             group['_cp_releases'] = fireEvent(
-                'release.for_media', media_id, require_complete=True, single=True,
+                RELEASE_FOR_MEDIA, media_id, require_complete=True, single=True,
             )
         return group['_cp_releases']
 
@@ -1359,7 +1360,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             # exceptions too -- so the try/except below never sees the
             # ordinary failure. The result has to be read.
             updated = fireEvent(
-                'release.update_status', superseded['_id'], status = 'ignored',
+                RELEASE_UPDATE_STATUS, superseded['_id'], status = 'ignored',
                 single = True,
             )
         except Exception as error:
@@ -1569,7 +1570,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         result.
         """
         releases = fireEvent(
-            'release.for_media', media_id, require_complete=True, single=True,
+            RELEASE_FOR_MEDIA, media_id, require_complete=True, single=True,
         ) or []
         outcome, existing_release = decide_operator_replacement(releases)
 
@@ -1706,7 +1707,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             return OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, None
 
         releases = fireEvent(
-            'release.for_media', media_id, require_complete=True, single=True,
+            RELEASE_FOR_MEDIA, media_id, require_complete=True, single=True,
         ) or []
         outcome, existing_release = decide_operator_replacement(releases)
         if outcome != OPERATOR_REPLACE:
@@ -1822,7 +1823,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             size=expected_source_size / 1024 / 1024, single=True,
         ) or {}
 
-        media_doc = fireEvent('media.get', media_id, single=True) or {}
+        media_doc = fireEvent(MEDIA_GET, media_id, single=True) or {}
         group = {
             'media': {'_id': media_id},
             'identifier': media_doc.get('identifier') or media_id,
@@ -1895,7 +1896,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # `release.add` first: without a release claiming the placed file
         # at its detected quality the media is permanently
         # `declined_no_owner` on every later decision (owner decision 4).
-        fireEvent('release.add', group, single=True)
+        fireEvent(RELEASE_ADD, group, single=True)
         self._supersedeRelease(existing_release, group, destination)
 
         # Owner decision 3: the operator's source is ALWAYS consumed now,

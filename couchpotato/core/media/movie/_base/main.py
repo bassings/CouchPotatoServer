@@ -8,6 +8,7 @@ from couchpotato import get_db
 from couchpotato.api import addApiView
 from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.event import fireEvent, fireEventAsync, addEvent
+from couchpotato.core.event_names import MEDIA_GET, MEDIA_RESTATUS, MOVIE_UPDATE, NOTIFY_FRONTEND, PROFILE_DEFAULT, RELEASE_FOR_MEDIA, RELEASE_UPDATE_STATUS
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, getTitle, getImdb, getIdentifier
 from couchpotato.core.logger import CPLog
@@ -138,7 +139,7 @@ class MovieBase(MovieTypeBase):
         })
 
         addEvent('movie.add', self.add)
-        addEvent('movie.update', self.update)
+        addEvent(MOVIE_UPDATE, self.update)
         addEvent('movie.update_release_dates', self.updateReleaseDate)
         addEvent('movie.restore_to_wanted', self.restoreToWanted)
 
@@ -284,7 +285,7 @@ class MovieBase(MovieTypeBase):
             if not resolved_profile_id:
                 # profile.default returns the DOC, so keep it -- re-fetching by
                 # id would be a second read of the same thing.
-                resolved_profile = fireEvent('profile.default', single = True)
+                resolved_profile = fireEvent(PROFILE_DEFAULT, single = True)
                 resolved_profile_id = resolved_profile.get('_id') if resolved_profile else None
 
             if not resolved_profile_id:
@@ -445,9 +446,9 @@ class MovieBase(MovieTypeBase):
             # restatus moves the movie straight back out of Wanted, after the
             # UI has told the user it worked. Surface it instead.
             unset_aside = []
-            for rel in fireEvent('release.for_media', media_id, single = True) or []:
+            for rel in fireEvent(RELEASE_FOR_MEDIA, media_id, single = True) or []:
                 if rel.get('status') in ('done', 'seeding', 'downloaded'):
-                    ok = fireEvent('release.update_status', rel.get('_id'),
+                    ok = fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'),
                                     status = 'ignored', single = True)
                     if ok is False:
                         unset_aside.append(rel.get('_id'))
@@ -461,7 +462,7 @@ class MovieBase(MovieTypeBase):
                 }
 
             fireEvent('media.tag', media_id, 'recent', update_edited = True, single = True)
-            fireEvent('notify.frontend', type = 'movie.update', data = media)
+            fireEvent(NOTIFY_FRONTEND, type = 'movie.update', data = media)
 
             return {'success': True, 'media': media}
         except Exception:
@@ -477,7 +478,7 @@ class MovieBase(MovieTypeBase):
         if not params.get('identifier'):
             msg = 'Can\'t add movie without imdb identifier.'
             log.error(msg)
-            fireEvent('notify.frontend', type = 'movie.is_tvshow', message = msg)
+            fireEvent(NOTIFY_FRONTEND, type = 'movie.is_tvshow', message = msg)
             return False
         elif not params.get('info'):
             try:
@@ -485,7 +486,7 @@ class MovieBase(MovieTypeBase):
                 if not is_movie:
                     msg = 'Can\'t add movie, seems to be a TV show.'
                     log.error(msg)
-                    fireEvent('notify.frontend', type = 'movie.is_tvshow', message = msg)
+                    fireEvent(NOTIFY_FRONTEND, type = 'movie.is_tvshow', message = msg)
                     return False
             except Exception:
                 pass
@@ -521,7 +522,7 @@ class MovieBase(MovieTypeBase):
         # Default profile and category
         default_profile = {}
         if (not params.get('profile_id') and status != 'done') or params.get('ignore_previous', False):
-            default_profile = fireEvent('profile.default', single = True)
+            default_profile = fireEvent(PROFILE_DEFAULT, single = True)
         cat_id = params.get('category_id')
 
         try:
@@ -628,10 +629,10 @@ class MovieBase(MovieTypeBase):
             elif force_readd:
 
                 # Clean snatched history
-                for release in fireEvent('release.for_media', m['_id'], single = True):
+                for release in fireEvent(RELEASE_FOR_MEDIA, m['_id'], single = True):
                     if release.get('status') in ['downloaded', 'snatched', 'seeding', 'done']:
                         if params.get('ignore_previous', False):
-                            fireEvent('release.update_status', release['_id'], status = 'ignored')
+                            fireEvent(RELEASE_UPDATE_STATUS, release['_id'], status = 'ignored')
                         else:
                             fireEvent('release.delete', release['_id'], single = True)
 
@@ -651,14 +652,14 @@ class MovieBase(MovieTypeBase):
             # Trigger update info
             if added and update_after:
                 # Do full update to get images etc
-                fireEventAsync('movie.update', m['_id'], default_title = params.get('title'), on_complete = onComplete)
+                fireEventAsync(MOVIE_UPDATE, m['_id'], default_title = params.get('title'), on_complete = onComplete)
 
             # Remove releases
-            for rel in fireEvent('release.for_media', m['_id'], single = True):
+            for rel in fireEvent(RELEASE_FOR_MEDIA, m['_id'], single = True):
                 if rel['status'] == 'available':
                     db.delete(rel)
 
-            movie_dict = fireEvent('media.get', m['_id'], single = True)
+            movie_dict = fireEvent(MEDIA_GET, m['_id'], single = True)
             if not movie_dict:
                 log.debug('Failed adding media, can\'t find it anymore')
                 return False
@@ -677,7 +678,7 @@ class MovieBase(MovieTypeBase):
                         message = 'Successfully added "%s" to your wanted list.' % title
                     else:
                         message = 'Successfully added to your wanted list.'
-                fireEvent('notify.frontend', type = 'movie.added', data = movie_dict, message = message)
+                fireEvent(NOTIFY_FRONTEND, type = 'movie.added', data = movie_dict, message = message)
 
             return movie_dict
         except Exception:
@@ -708,7 +709,7 @@ class MovieBase(MovieTypeBase):
                         m['category_id'] = cat_id if len(cat_id) > 0 else m['category_id']
 
                     # Remove releases
-                    for rel in fireEvent('release.for_media', m['_id'], single = True):
+                    for rel in fireEvent(RELEASE_FOR_MEDIA, m['_id'], single = True):
                         if rel['status'] == 'available':
                             db.delete(rel)
 
@@ -718,11 +719,11 @@ class MovieBase(MovieTypeBase):
 
                     db.update(m)
 
-                    fireEvent('media.restatus', m['_id'], single = True)
+                    fireEvent(MEDIA_RESTATUS, m['_id'], single = True)
 
                     m = db.get('id', media_id)
 
-                    movie_dict = fireEvent('media.get', m['_id'], single = True)
+                    movie_dict = fireEvent(MEDIA_GET, m['_id'], single = True)
                     fireEventAsync('movie.searcher.single', movie_dict, on_complete = self.createNotifyFront(media_id))
 
                 except Exception:

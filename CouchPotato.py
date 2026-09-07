@@ -89,7 +89,8 @@ class Loader:
 
     def onExit(self, signal, frame):
         from couchpotato.core.event import fireEvent
-        fireEvent('app.shutdown', single=True)
+        from couchpotato.core.event_names import APP_SHUTDOWN
+        fireEvent(APP_SHUTDOWN, single=True)
 
     def run(self):
 

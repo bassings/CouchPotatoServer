@@ -1,4 +1,5 @@
 from couchpotato.core.event import fireEvent
+from couchpotato.core.event_names import SCANNER_NAME_YEAR
 from couchpotato.core.helpers.variable import splitString
 from couchpotato.core.media._base.providers.userscript.base import UserscriptBase
 
@@ -15,6 +16,6 @@ class Reddit(UserscriptBase):
         if name.startswith('ijw_'):
             name = name[4:]
 
-        year_name = fireEvent('scanner.name_year', name, single = True)
+        year_name = fireEvent(SCANNER_NAME_YEAR, name, single = True)
 
         return self.search(year_name.get('name'), year_name.get('year'))

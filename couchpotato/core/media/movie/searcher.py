@@ -11,6 +11,7 @@ from couchpotato import get_db
 from couchpotato.api import addApiView
 from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
+from couchpotato.core.event_names import APP_LOAD, MEDIA_GET, MEDIA_RESTATUS, MEDIA_WITH_STATUS, MOVIE_UPDATE, NOTIFY_FRONTEND, PROFILE_DEFAULT, RELEASE_FOR_MEDIA, RELEASE_UPDATE_STATUS, SEARCHER_PROTOCOLS
 from couchpotato.core.helpers.encoding import simplifyString
 from couchpotato.core.helpers.variable import getTitle, possibleTitles, getImdb, getIdentifier, tryInt
 from couchpotato.core.logger import CPLog
@@ -79,7 +80,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         })
 
         if self.conf('run_on_launch'):
-            addEvent('app.load', self.searchAll)
+            addEvent(APP_LOAD, self.searchAll)
 
     def searchAllView(self, **kwargs):
 
@@ -94,12 +95,12 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         with self._progress_lock:
             if self.in_progress:
                 log.info('Search already in progress')
-                fireEvent('notify.frontend', type = 'movie.searcher.already_started', data = True, message = 'Full search already in progress')
+                fireEvent(NOTIFY_FRONTEND, type = 'movie.searcher.already_started', data = True, message = 'Full search already in progress')
                 return
             self.in_progress = True
-        fireEvent('notify.frontend', type = 'movie.searcher.started', data = True, message = 'Full search started')
+        fireEvent(NOTIFY_FRONTEND, type = 'movie.searcher.started', data = True, message = 'Full search started')
 
-        medias = [x['_id'] for x in fireEvent('media.with_status', 'active', types = 'movie', with_doc = False, single = True)]
+        medias = [x['_id'] for x in fireEvent(MEDIA_WITH_STATUS, 'active', types = 'movie', with_doc = False, single = True)]
         random.shuffle(medias)
 
         total = len(medias)
@@ -109,11 +110,11 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         }
 
         try:
-            search_protocols = fireEvent('searcher.protocols', single = True)
+            search_protocols = fireEvent(SEARCHER_PROTOCOLS, single = True)
 
             for media_id in medias:
 
-                media = fireEvent('media.get', media_id, single = True)
+                media = fireEvent(MEDIA_GET, media_id, single = True)
                 if not media: continue
 
                 try:
@@ -127,7 +128,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                     self.single(media, search_protocols, manual = manual, bypass_cache = False)
                 except IndexError:
                     log.error('Forcing library update for %s, if you see this often, please report: %s', getIdentifier(media), traceback.format_exc())
-                    fireEvent('movie.update', media_id)
+                    fireEvent(MOVIE_UPDATE, media_id)
                 except Exception:
                     log.error('Search failed for %s: %s', getIdentifier(media), traceback.format_exc())
 
@@ -162,7 +163,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # Find out search type
         try:
             if not search_protocols:
-                search_protocols = fireEvent('searcher.protocols', single = True)
+                search_protocols = fireEvent(SEARCHER_PROTOCOLS, single = True)
         except SearchSetupError:
             return
 
@@ -184,7 +185,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # entirely local.
         if (not movie['profile_id'] and not list_only) or (movie['status'] in ('done', 'downloaded') and not manual and not list_only):
             log.debug('Movie doesn\'t have a profile, is already done, or is awaiting review, assuming in manage tab.')
-            fireEvent('media.restatus', movie['_id'], single = True)
+            fireEvent(MEDIA_RESTATUS, movie['_id'], single = True)
             return
 
         default_title = getTitle(movie)
@@ -214,7 +215,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # state. The automatic path is untouched.
         skip_restatus = list_only and not movie.get('profile_id')
         restatus_result = None if skip_restatus else fireEvent(
-            'media.restatus', movie['_id'], single = True)
+            MEDIA_RESTATUS, movie['_id'], single = True)
         if restatus_result == 'done':
             log.debug('No better quality found, marking movie %s as done.', default_title)
         elif restatus_result == 'downloaded':
@@ -232,7 +233,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         ignore_eta = manual
         total_result_count = 0
 
-        fireEvent('notify.frontend', type = 'movie.searcher.started', data = {'_id': movie['_id']}, message = 'Searching for "%s"' % default_title)
+        fireEvent(NOTIFY_FRONTEND, type = 'movie.searcher.started', data = {'_id': movie['_id']}, message = 'Searching for "%s"' % default_title)
 
         # Ignore eta once every 7 days
         if not always_search:
@@ -252,7 +253,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # `movie` or persisted (AC2 -- a list-only search stays read-only).
         profile_id = movie['profile_id']
         if not profile_id:
-            default_profile = fireEvent('profile.default', single = True)
+            default_profile = fireEvent(PROFILE_DEFAULT, single = True)
             profile_id = (default_profile or {}).get('_id')
 
         try:
@@ -266,7 +267,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             # default profile sat unused.
             if not list_only:
                 raise
-            default_profile = fireEvent('profile.default', single = True)
+            default_profile = fireEvent(PROFILE_DEFAULT, single = True)
             fallback_id = (default_profile or {}).get('_id')
             if not fallback_id:
                 log.debug('Profile %s is missing and no default exists; nothing to search.', profile_id)
@@ -313,7 +314,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             # nothing at all -- which is exactly the case the feature is for.
             if has_better_quality > 0 and not list_only:
                 log.info('Better quality (%s) already available or snatched for %s', q_identifier, default_title)
-                fireEvent('media.restatus', movie['_id'], single = True)
+                fireEvent(MEDIA_RESTATUS, movie['_id'], single = True)
                 break
 
             quality = fireEvent('quality.single', identifier = q_identifier, single = True)
@@ -328,7 +329,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             results = fireEvent('searcher.search', search_protocols, movie, quality, manual = bypass_cache, single = True) or []
 
             # Check if movie isn't deleted while searching
-            if not fireEvent('media.get', movie.get('_id'), single = True):
+            if not fireEvent(MEDIA_GET, movie.get('_id'), single = True):
                 break
 
             # Add them to this movie releases list
@@ -395,7 +396,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 if not manual:
                     fireEvent('media.available', message = message, data = {})
 
-        fireEvent('notify.frontend', type = 'movie.searcher.ended', data = {'_id': movie['_id']})
+        fireEvent(NOTIFY_FRONTEND, type = 'movie.searcher.ended', data = {'_id': movie['_id']})
 
         return ret
 
@@ -623,7 +624,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         profile = _resolve(profile_id)
 
         if profile is None:
-            default_profile = fireEvent('profile.default', single = True)
+            default_profile = fireEvent(PROFILE_DEFAULT, single = True)
             used_id = (default_profile or {}).get('_id')
             profile = _resolve(used_id)
 
@@ -641,7 +642,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
           - searched, found nothing  -> {'success': True,  'searched': True,  'found': 0}
           - could not search         -> {'success': False, 'searched': False, 'found': 0, 'reason': <str>}
         """
-        media = fireEvent('media.get', media_id, single = True)
+        media = fireEvent(MEDIA_GET, media_id, single = True)
         if not media:
             return {'success': False, 'searched': False, 'found': 0,
                      'reason': 'This movie no longer exists'}
@@ -685,7 +686,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # search that never happened, which is the exact defect FEAT-008 exists
         # to remove; this is simply its most common trigger.
         try:
-            protocols = fireEvent('searcher.protocols', single = True)
+            protocols = fireEvent(SEARCHER_PROTOCOLS, single = True)
         except SearchSetupError:
             protocols = None
         if not protocols:
@@ -729,7 +730,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         self.single(media, manual = True, list_only = True)
 
         # Re-read so the count reflects what was just stored.
-        media = fireEvent('media.get', media_id, single = True) or media
+        media = fireEvent(MEDIA_GET, media_id, single = True) or media
         after = _available(media)
 
         return {
@@ -751,13 +752,13 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         try:
 
-            rels = fireEvent('release.for_media', media_id, single = True)
+            rels = fireEvent(RELEASE_FOR_MEDIA, media_id, single = True)
 
             for rel in rels:
                 if rel.get('status') in ['snatched', 'done']:
-                    fireEvent('release.update_status', rel.get('_id'), status = 'ignored')
+                    fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status = 'ignored')
 
-            media = fireEvent('media.get', media_id, single = True)
+            media = fireEvent(MEDIA_GET, media_id, single = True)
             if media:
                 log.info('Trying next release for: %s', getTitle(media))
                 self.single(media, manual = manual, force_download = force_download)
@@ -836,14 +837,14 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
             # Movie is now 'active'. NOW fail the landed release(s) -- only
             # reached because the reset actually succeeded.
-            for rel in fireEvent('release.for_media', media_id, single = True) or []:
+            for rel in fireEvent(RELEASE_FOR_MEDIA, media_id, single = True) or []:
                 if rel.get('status') in ('downloaded', 'snatched', 'seeding', 'done'):
-                    fireEvent('release.update_status', rel.get('_id'), status = 'failed', single = True)
+                    fireEvent(RELEASE_UPDATE_STATUS, rel.get('_id'), status = 'failed', single = True)
 
             # Re-fetch the fully-enriched doc (with 'releases' attached) via
             # the same event tryNextRelease uses, so single() sees the
             # just-updated 'failed' status and 'active' movie status.
-            media = fireEvent('media.get', media_id, single = True)
+            media = fireEvent(MEDIA_GET, media_id, single = True)
             if not media:
                 return False
 

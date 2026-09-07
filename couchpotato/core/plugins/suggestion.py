@@ -12,6 +12,7 @@ from base64 import b64decode as bd
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event_names import APP_LOAD
 from couchpotato.core.helpers.encoding import tryUrlencode
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
@@ -63,7 +64,7 @@ class Suggestion(Plugin):
             'return': {'type': 'object: {"success": true}'},
         })
 
-        addEvent('app.load', self._loadIgnored)
+        addEvent(APP_LOAD, self._loadIgnored)
 
     def _loadIgnored(self):
         """Load the set of ignored suggestion IDs from properties."""
