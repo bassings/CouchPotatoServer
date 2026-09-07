@@ -285,14 +285,14 @@ only one of the two return paths. That guard is T1 below.
       ways in the first draft and the corrections are the useful part:
       `./scripts/backup.sh --retain 14`, NOT the bare form, or every promotion
       adds another full database copy to the volume holding the live database
-      (`development-process.md:751-756`). Verify the snapshot with `PRAGMA
+      (`docs/development-process.md:751-756`). Verify the snapshot with `PRAGMA
       integrity_check` printing `ok`, `PRAGMA foreign_key_check` returning NO
       rows, and a readable `config.ini`, because `backup.sh` warns and exits 0
       when settings are absent, so both PRAGMAs can pass on a snapshot with no
-      settings in it (`:758-775`). Capture BOTH `docker inspect couchpotato
+      settings in it (`docs/development-process.md:758-775`). Capture BOTH `docker inspect couchpotato
       --format '{{.Config.Image}} {{.Image}}'` and `docker exec couchpotato cat
       /app/version.py` BEFORE anything moves, since the host pulls `:latest`
-      and the old target cannot be reconstructed afterwards (`:391-418`). Not
+      and the old target cannot be reconstructed afterwards (`docs/development-process.md:390-418`, the digest capture is at `:408-418`). Not
       `printenv CP_VERSION`, an ARG rather than an ENV and absent from the
       running container, and never a grep for /version/i, which hands you the
       interpreter version as a plausible rollback tag mid-incident.
