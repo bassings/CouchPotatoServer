@@ -48,8 +48,12 @@ only one of the two return paths. That guard is T1 below.
 
 ## Tasks
 
-- [ ] T1: pin `PrivacyFilter.filter()` returning truthy, then dismiss the
-      BLOCKER. The guard must fail if any path returns a falsy value. Prove it
+- [x] T1: pin `PrivacyFilter.filter()` returning truthy, then dismiss the
+      BLOCKER. DONE. Merged as #319, two tests pinning both return paths, each
+      proven by mutating that path to `return False` and watching that specific
+      test fail, restored byte-identical. `python:S3516` then marked false
+      positive with a comment naming those tests, so the dismissal cites
+      something enforceable. The project now has ZERO blockers. The guard must fail if any path returns a falsy value. Prove it
       by making one path return False and watching it fail. Only then mark
       `python:S3516` false positive, with the guard named in the comment so the
       dismissal cites something enforceable rather than an argument, state:
@@ -64,29 +68,91 @@ only one of the two return paths. That guard is T1 below.
       before fixing, fix what should be fixed, leave the rest open with a
       recorded reason and an expiry, dismiss only genuine false positives,
       state: queued (needs: T1)
+- [ ] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
+      REVIEW: the first draft described this defect in the PR body and then
+      never scheduled it, so it would have been lost. TWO bugs, and the second
+      is the one that matters: the regex is a JavaScript literal pasted into
+      Python so its delimiters are literal characters, AND the preceding
+      `ip.lstrip('htps:/')` takes a CHARACTER SET rather than a prefix, so
+      `'::1'.lstrip('htps:/')` returns `'1'` and eats the loopback marker
+      before the regex ever runs. Fixing only the regex would not have fixed
+      the bug. The same line mangled any hostname starting with h, t, p or s.
+      Its one caller, `http_client.py:131`, exempts local hosts from being
+      permanently disabled after repeated failures, so an IPv6-only local
+      service is disabled where `127.0.0.1` would not be, state: in-flight
 - [ ] T3: production promotion. Fourteen commits have merged since v3.77.0 and
       none are in production, including BUG-018, where the scanner filed every
-      remake under the original film, and the Docker CVE pin. The backup
-      trigger is a mechanical test, and it says TAKE ONE: 47 non-exempt files
-      have changed since the last stable tag. So `./scripts/backup.sh` first,
-      verify the snapshot exists and is non-empty, then promote the tested
-      beta byte-for-byte. Owner has agreed to THIS promotion; a later one for
-      the fixes below needs its own agreement, state: queued
-- [ ] T4: run `make sonar` automatically after a merge to master. The pass
-      found this project had not been analysed since 2026-08-10, so every line
-      number in the dashboard described a tree a month stale, and that nearly
-      produced a dismissal justifying the wrong function. MUST NOT be a
-      blocking gate and must never fail a build: the standards are explicit
-      that a scan which can fail a build creates pressure to make the number
-      green rather than the code better, state: queued
+      remake under the original film, and the Docker CVE pin.
+      CORRECTED AFTER REVIEW. The first draft said "backup.sh first, verify the
+      snapshot exists and is non-empty". That is not the documented procedure
+      and it is not sufficient. Three separate findings, all real:
+      1. Use `./scripts/backup.sh --retain 14`, NOT the bare form.
+         `docs/development-process.md:751-756`: without retention, every risky
+         promotion adds one more full database plus settings snapshot, forever,
+         to the volume that also holds the live database. That is a slow way to
+         reproduce the disk-full failure the snapshots exist to survive.
+      2. "Exists and non-empty" is exactly the check that passes on a useless
+         snapshot. `docs/development-process.md:758-775` requires three things:
+         `PRAGMA integrity_check` must print `ok`; `PRAGMA foreign_key_check`
+         must return NO ROWS, because integrity_check does not check foreign
+         keys and this schema declares them, so an orphaned row passes the
+         first check and fails recovery; and `config.ini` must be readable,
+         because `backup.sh` deliberately WARNS and exits 0 when it cannot find
+         the settings file. Both PRAGMAs can pass on a snapshot containing no
+         settings at all, and the database alone does not restore a working
+         install. If `sqlite3` is absent on the host, use the Python
+         interpreter fallback the script itself uses.
+      3. Record what is running BEFORE restarting, or there is no rollback
+         target. `docs/development-process.md:391-418`: the host pulls
+         `:latest` and promotion moves that tag, so the old target cannot be
+         reconstructed afterwards. Capture BOTH
+         `docker inspect couchpotato --format '{{.Config.Image}} {{.Image}}'`
+         and `docker exec couchpotato cat /app/version.py`. NOT
+         `printenv CP_VERSION`, which is an ARG rather than an ENV and is
+         absent from the running container, and never a grep for /version/i,
+         which returns PYTHON_VERSION and hands you the interpreter version as
+         a rollback tag, silently and plausibly, mid-incident.
+      Only then promote the tested beta byte-for-byte. Owner has agreed to THIS
+      promotion; a later one for the fixes below needs its own agreement,
+      state: queued
+
+- [ ] T4: make SonarQube staleness visible. REFRAMED AFTER REVIEW, because the
+      first draft was unbuildable. It said "run `make sonar` automatically after
+      a merge". Every job under `.github/workflows/**` runs on GitHub-hosted
+      `ubuntu-latest`, which cannot reach the scanner at a private RFC1918
+      address, and it needs `$HOME/.sonar-token`. `CLAUDE.md:66` also states the
+      scan must NEVER run in CI. So a conventional post-merge workflow can
+      neither reach the service nor be allowed to.
+      The actual requirement is narrower than "automate the scan": the
+      dashboard must not SILENTLY describe a stale commit. It was a month stale
+      today and nothing said so, which nearly attached a false-positive
+      justification to the wrong function.
+      Deliverable: a local, non-blocking staleness check that compares the
+      project's last analysed revision against HEAD and says so out loud, plus
+      whatever prompts a human to run `make sonar`. It must never fail a build,
+      per the standing rule that a scan which can fail a build creates pressure
+      to make the number green rather than the code better,
+      state: queued
+
 - [ ] T5: issue #312, event wiring is guarded in one direction only.
       `test_event_wiring.py` catches an event fired with no listener, and
       nothing catches a listener with no sender, which is the direction that
       has actually cost this project. 38 registered names are never fired.
       Deliverable is the reverse guard plus an adjudication of the 38, with an
       allowlist that fails in both directions so it cannot become a dumping
-      ground. Confirmed dead so far: `movie.snatched` and `movie.downloaded`
-      (no notification on grab or completion), `media.mark_watched`, and
+      ground. CORRECTED AFTER REVIEW: I listed `movie.snatched` and
+      `movie.downloaded` as confirmed dead. THEY ARE NOT. Both are dispatched
+      with a runtime-built name, `release/main.py:554` fires
+      `'%s.snatched' % data['type']` and `media/main.py:873` fires
+      `'%s.downloaded' % m.get('type','movie')`, which resolve to exactly those
+      names for a movie. I hand-checked by grepping the literal string, a method
+      that by construction cannot match a templated name, and which this very
+      plan had already recorded as insufficient. Issue #312 is corrected.
+      That RAISES the bar for this task: any reverse guard MUST resolve
+      templated dispatch, or it will report working notifications as dead and
+      send someone rewiring a feature that already works, which is worse than
+      the gap it closes. Still orphaned after re-checking against templated
+      dispatch: `media.mark_watched`, and
       `app.test`, which has four listeners including a 12-case path-safety
       table for `isSubFolder` that has not run since the FastAPI migration,
       state: queued (needs: T1)
@@ -95,15 +161,15 @@ only one of the two return paths. That guard is T1 below.
       registered API views whose only caller is `trakt.js`, which nothing
       serves. Anyone configuring Trakt today cannot complete authorisation.
       Port the control into `couchpotato/ui/`, or retire the endpoints if the
-      feature is not wanted, state: queued (needs: T6)
+      feature is not wanted, state: queued (needs: T5)
 - [ ] T7: issue #314, the folder browser announces `role="listbox"` and keeps
       none of it: no arrow keys, no `aria-selected`, no
       `aria-activedescendant`, every folder its own tab stop. Remove the ARIA
       rather than adopt the `<select>` the scanner suggested. Fold in the
       known keyboard-escape and focus-trap gap in the same modal, and consider
       the eight deferred `Web:S6819` dialog findings here since a native
-      `<dialog>` solves that half properly, state: queued (needs: T4)
+      `<dialog>` solves that half properly, state: queued (needs: T6)
 - [ ] T8: five films identified earlier today that are still not added to the
-      library. Data task, no PR, state: queued (needs: T5)
+      library. Data task, no PR, state: queued (needs: T7)
 
 ## Conductor log
