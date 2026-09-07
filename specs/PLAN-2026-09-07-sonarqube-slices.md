@@ -167,8 +167,60 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       to stop.
       3896 passed, 2 skipped, 5 xfailed, up from 3894 by the two new guards.
       state: merged
-- [ ] T6: assess `Web:S6819`, ARIA role where a semantic tag exists (44). Real
-      accessibility, same family as A11Y-001, state: queued (needs: T5)
+- [x] T6: assess `Web:S6819`, ARIA role where a semantic tag exists (44). ALL
+      44 LEFT OPEN, none fixed, and the plan's own prediction, "real
+      accessibility, same family as A11Y-001", was wrong in the most useful
+      way: unlike T2 and T4 these ARE all in the live UI, so the stakes were
+      real, and the rule's advice is still mostly wrong FOR THIS CODEBASE.
+      Following it would reduce accessibility in two places.
+      1. 19 of 44: `role="status"` to `<output>`. REJECT. Both map to the same
+         accessibility-tree role, and every one of these already carries an
+         explicit `aria-live="polite"` as well, so there is no difference for
+         assistive technology. axe-core 4.13.0, the standard this project
+         enforces as tests, has ZERO rules on the subject (verified by
+         enumerating `axe.getRules()`). Against no gain there is real cost:
+         four E2E tests locate these elements by the attribute selector
+         `[role="status"]` (`categories.spec.ts:144,309`,
+         `add-via-url.spec.ts:83,100`), which an `<output>` would not match.
+      2. 6 of 44: `role="list"`/`role="listitem"` to `<ul>`/`<li>`. REJECT, and
+         this one is an accessibility REGRESSION, not a neutral change. The UI
+         loads Tailwind (`base.html:19`) whose preflight sets
+         `list-style: none`, and Safari with VoiceOver strips list semantics
+         from a list styled that way. The documented workaround is to put
+         `role="list"` back explicitly, which is exactly what this rule
+         objects to. So complying either loses the semantics or produces
+         `<ul role="list">`, which the rule flags again.
+      3. 8 of 44: `role="dialog"` to `<dialog>`. DEFER, genuinely worth doing.
+         A native `<dialog>` brings a real focus trap, Escape handling and an
+         inert backdrop, and the folder browser modal currently has no
+         keyboard way out at all. But it is a behaviour change requiring
+         `showModal()` and interacting with Alpine's `x-show`, not a markup
+         swap, so it belongs in its own task with its own tests.
+      4. 4 of 44 `region` to `<section>`: identical semantics, no gain, live
+         templates. REJECT as noise.
+      5. 3 of 44 `group` to `<fieldset>` in the wizard: REJECT. The label is
+         bound dynamically (`:aria-label="tracker.name"`), which a `<legend>`
+         does not express, and the container is `class="grid grid-cols-2"`,
+         a layout `<fieldset>` has a long history of handling badly.
+      6. 1 `progressbar` to `<progress>`: REJECT. The existing markup carries a
+         written explanation for deliberately omitting `aria-valuenow`, since
+         `pct` is a synthetic easing curve rather than real completion. The
+         current form is the considered one.
+      7. 1 `radio`: REJECT. `movie_detail.html:482` is a correctly implemented
+         radiogroup already, with arrow-key handling and bound `aria-checked`.
+      8. 1 `listbox` plus 1 `option`: THE RULE POINTED AT A REAL BUG AND
+         MISDIAGNOSED IT. `modals.html:93` declares the folder browser a
+         listbox and keeps none of that promise: no arrow keys, no
+         `aria-selected`, no `aria-activedescendant`, every folder its own tab
+         stop. A screen reader announces a listbox and a position, and none of
+         the implied interaction works. The fix is NOT the suggested
+         `<select>`, which cannot hold the icon and nested markup and is
+         populated dynamically; it is to REMOVE the ARIA and let them be the
+         plain buttons they already are. Raised as issue #314.
+      The wider lesson for this plan: a rule can be correct in general and
+      wrong for a specific codebase, and the deciding evidence was the
+      project's own enforced standard plus its own tests, not the rule's
+      rationale. state: merged
 - [ ] T7: assess `python:S1172`, unused function parameters (25). Some will be
       interface contracts that must stay; expect a split verdict, state:
       queued (needs: T6)
@@ -191,7 +243,8 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
   independently, then two review rounds. Two user-facing bugs found while
   assessing, raised as #311 (Trakt OAuth device flow has no reachable UI) and
   #312 (38 events registered but never fired, of which `movie.snatched` and
-  `movie.downloaded` are confirmed dead). Next: T6, `Web:S6819`.
+  `movie.downloaded` are confirmed dead). T5 merged (#313) after a rebase for a plan-file conflict. T6 assessed, all 44
+  left open, one real bug raised as #314. Next: T7, `python:S1172`.
 
 - Tick 2, 2026-09-07. #305 and #306 merged (T1 done, plan file now on master,
   which also fixes the broken active-plan pointer at its root). T2 assessed and
