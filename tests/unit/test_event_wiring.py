@@ -43,8 +43,12 @@ ENTRY_POINT = REPO_ROOT / 'CouchPotato.py'
 def _python_files():
     files = [p for p in SOURCE_ROOT.rglob('*.py') if 'lib/' not in str(p)]
     assert files, 'found no source files under %s' % SOURCE_ROOT
-    if ENTRY_POINT.is_file():
-        files.append(ENTRY_POINT)
+    assert ENTRY_POINT.is_file(), (
+        'the entry point is missing from %s. Skipping it silently would stop '
+        'this guard scanning the only dispatch site outside couchpotato/.'
+        % ENTRY_POINT
+    )
+    files.append(ENTRY_POINT)
     return files
 
 
@@ -70,17 +74,35 @@ def _event_name_constants():
     before this function existed the audit passed, after it the audit fails.
     """
     module = SOURCE_ROOT / 'core' / 'event_names.py'
-    if not module.is_file():
-        return {}
+    # Assert rather than return an empty map. Returning {} would silently drop
+    # this audit back to literals only, which is the exact zero-coverage-while-
+    # green failure the header comment above warns about, and it would be
+    # inconsistent with the `assert names` below: an EMPTY constants file would
+    # fail loudly while a MISSING one passed quietly.
+    assert module.is_file(), (
+        'the event-name constants module is missing from %s. This audit '
+        'resolves names through it, so without it every constant-ised event '
+        'silently drops out of view and this guard reports green on no '
+        'coverage.' % module
+    )
     names = {}
     for node in ast.walk(ast.parse(module.read_text(errors='replace'))):
-        if not isinstance(node, ast.Assign):
+        # AnnAssign as well as Assign. Matching only Assign meant that adding a
+        # type annotation, `SEARCHER_PROTOCOLS: str = '...'`, removed that name
+        # from this map and re-blinded the audit for it, silently, one constant
+        # per annotation. A routine typing pass would have done it and nothing
+        # in the gate would have questioned the commit.
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
             continue
-        if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
             continue
-        for target in node.targets:
+        for target in targets:
             if isinstance(target, ast.Name):
-                names[target.id] = node.value.value
+                names[target.id] = value.value
     assert names, 'found no event-name constants in %s' % module
     return names
 

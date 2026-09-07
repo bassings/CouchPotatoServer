@@ -80,8 +80,12 @@ EVENT_CALL_NAMES = ('addEvent', 'fireEvent', 'fireEventAsync')
 def _python_files():
     files = [p for p in SOURCE_ROOT.rglob('*.py') if 'lib/' not in str(p)]
     assert files, 'found no source files under %s' % SOURCE_ROOT
-    if ENTRY_POINT.is_file():
-        files.append(ENTRY_POINT)
+    assert ENTRY_POINT.is_file(), (
+        'the entry point is missing from %s. Skipping it silently would stop '
+        'this guard scanning the only dispatch site outside couchpotato/.'
+        % ENTRY_POINT
+    )
+    files.append(ENTRY_POINT)
     return files
 
 
