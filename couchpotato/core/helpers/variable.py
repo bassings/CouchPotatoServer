@@ -448,7 +448,16 @@ def isSubFolder(sub_folder, base_folder):
 # both the length of a candidate name and how many results one search
 # response contains (sceneScore() in score/main.py runs this per result),
 # so this cap bounds the parse cost regardless of what the provider sends.
-BRACKETED_NAME_PARSE_LIMIT = 300
+#
+# 1000 rather than something tighter, because the cap is a hard behavioural
+# cliff: a legitimate name whose only bracketed group sits past it silently
+# loses that candidate, and this function decides which releases match, so a
+# false negative is the worse failure. Measured worst case, 200 results of
+# nothing but open brackets: 0.037s at a 300 cap, 0.40s at 1000, 1.59s at
+# 2000. 1000 keeps the attack bounded to well under a second while putting the
+# cliff out of reach of any real release name, which measure 88 to 94 chars in
+# practice and are unusual past 250.
+BRACKETED_NAME_PARSE_LIMIT = 1000
 
 
 def longestBracketedName(name):
