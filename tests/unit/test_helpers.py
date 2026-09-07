@@ -4,6 +4,7 @@ Tests encoding helpers (toUnicode, toSafeString, simplifyString)
 and variable helpers (tryInt, tryFloat, getImdb, etc.).
 """
 import os
+from urllib.parse import urlparse
 
 import pytest
 
@@ -265,3 +266,140 @@ class TestIsLocalIP:
         # '127.0.0.1' appears in this string but not at the start, and the
         # whole thing is a hostname, not a loopback address.
         assert isLocalIP('not-127.0.0.1.example.com') is False
+
+
+class TestIsLocalIPWithPortAndBrackets:
+    """The first round of this fix pinned isLocalIP() against bare
+    addresses only ('::1', '127.0.0.1'). Review found the only real
+    caller never sends a bare address: couchpotato/core/http_client.py:131
+    calls isLocalIP(host) where host is built at http_client.py:203 as
+
+        host = f'{parsed_url.hostname}{(":" + str(parsed_url.port)) if parsed_url.port else ""}'
+
+    urlparse() strips brackets from an IPv6 host, so for a URL like
+    'http://[::1]:9117/api' this produces the string '::1:9117' -- and the
+    end-anchored '::1$' alternative from round one cannot match that,
+    because the port defeats the anchor. So the bug this task exists to
+    fix (IPv6-only local services get permanently disabled where the same
+    service on 127.0.0.1 would not) was still live for essentially every
+    real IPv6 deployment, since a self-hosted service almost always has an
+    explicit port.
+
+    These tests pin the host:port and bracketed shapes directly, plus a
+    set of hostile inputs designed to prove the fix does not widen the
+    match to catch strings that merely *contain* a private-looking prefix
+    or suffix.
+    """
+
+    # -- IPv4 with an explicit port: must still recognise the address --
+
+    def test_ipv4_loopback_with_port_is_local(self):
+        assert isLocalIP('127.0.0.1:9117') is True
+
+    def test_ipv4_private_with_port_is_local(self):
+        assert isLocalIP('192.168.1.5:8080') is True
+
+    def test_public_ipv4_with_port_is_not_local(self):
+        assert isLocalIP('8.8.8.8:443') is False
+
+    # -- bare (unbracketed) IPv6 loopback with a port. THE BUG. --
+    #
+    # Deliberate rule: 'addr:port' is genuinely ambiguous for a bare IPv6
+    # address (unlike IPv4, IPv6 addresses themselves contain colons), so
+    # a trailing ':<digits>' is read as a port ONLY when stripping it
+    # leaves one of the two recognised loopback forms. Anything else is
+    # used exactly as given -- it is not a false "host:port" guess, it is
+    # the address, and it only matches if it IS a loopback address.
+
+    def test_bare_ipv6_loopback_with_port_is_local(self):
+        assert isLocalIP('::1:9117') is True
+
+    def test_bare_ipv6_loopback_full_form_with_port_is_local(self):
+        assert isLocalIP('0:0:0:0:0:0:0:1:9117') is True
+
+    def test_public_ipv6_documentation_address_is_not_local(self):
+        # 2001:db8::/32 is the IPv6 documentation range. It is not a
+        # loopback address before OR after stripping a trailing number, so
+        # the ambiguous-port rule must not touch it.
+        assert isLocalIP('2001:db8::1') is False
+
+    def test_public_ipv6_documentation_address_with_port_is_not_local(self):
+        # Same address as above with a trailing ':9117'. A careless rule
+        # ("if it ends in :digits, strip and treat the rest as the
+        # address") would wrongly read this as address '2001:db8::1',
+        # which is itself not a loopback address either -- but a rule that
+        # instead always keeps the STRIPPED form would need checking too.
+        # Neither the stripped nor the unstripped form is a loopback
+        # address, so this must stay False either way.
+        assert isLocalIP('2001:db8::1:9117') is False
+
+    # -- bracketed IPv6, the standard URL host form: unambiguous --
+
+    def test_bracketed_ipv6_loopback_is_local(self):
+        assert isLocalIP('[::1]') is True
+
+    def test_bracketed_ipv6_loopback_with_port_is_local(self):
+        assert isLocalIP('[::1]:9117') is True
+
+    # -- must not widen: string CONTAINS a private prefix/suffix, isn't one --
+
+    def test_hostname_with_colon_port_that_looks_like_an_ip_suffix_is_not_local(self):
+        # The 'port' half of this host:port split is not digits, so it
+        # must not be treated as a port at all -- and the whole string
+        # must not be mistaken for the address '127.0.0.1' it contains.
+        assert isLocalIP('evil.com:127.0.0.1') is False
+
+    def test_private_ip_followed_by_non_digit_text_after_colon_is_not_local(self):
+        # The single-colon split must only ever be treated as 'address:port'
+        # when what follows the colon really is a port (all digits). If that
+        # check were dropped, a private-looking address with a colon and
+        # arbitrary text after it -- not a real port -- would be quietly
+        # reduced down to just the address and wrongly recognised as local.
+        assert isLocalIP('127.0.0.1:evil') is False
+
+    def test_hostname_with_loopback_looking_prefix_and_real_suffix_is_not_local(self):
+        # Starts with '127.0.0.1' but is not that address -- it is a
+        # hostname with more labels after it. The IPv4 patterns must be
+        # end-anchored, not just start-anchored, or this slips through.
+        assert isLocalIP('127.0.0.1.evil.com') is False
+
+
+class TestIsLocalIPMatchesHttpClientHostShape:
+    """http_client.py:203 builds the host string isLocalIP() actually
+    receives from urlparse(), not by hand. Every isLocalIP test above
+    (and every one from round one) asserts on a hand-written address
+    string, so the suite stayed green while the real call path -- an
+    IPv6 URL with an explicit port -- was still broken. These tests
+    replicate http_client.py:203's own construction from a real URL via
+    urlparse, so a future change to either side that breaks the pairing
+    is caught here rather than only in production.
+    """
+
+    @staticmethod
+    def _host_from_url(url):
+        # Deliberately duplicates http_client.py:203's host construction
+        # rather than importing http_client (which pulls in the wider
+        # client machinery for one two-line expression). Keep this in
+        # sync with that line if it changes.
+        parsed_url = urlparse(url)
+        return f'{parsed_url.hostname}{(":" + str(parsed_url.port)) if parsed_url.port else ""}'
+
+    def test_ipv6_loopback_url_with_port_is_local(self):
+        host = self._host_from_url('http://[::1]:9117/api')
+        assert host == '::1:9117'  # pin the exact shape the bug report measured
+        assert isLocalIP(host) is True
+
+    def test_ipv6_loopback_url_without_port_is_local(self):
+        host = self._host_from_url('http://[::1]/api')
+        assert host == '::1'
+        assert isLocalIP(host) is True
+
+    def test_ipv4_loopback_url_with_port_is_local(self):
+        host = self._host_from_url('http://127.0.0.1:9117/')
+        assert host == '127.0.0.1:9117'
+        assert isLocalIP(host) is True
+
+    def test_public_host_url_with_port_is_not_local(self):
+        host = self._host_from_url('http://example.com:8443/')
+        assert host == 'example.com:8443'
+        assert isLocalIP(host) is False

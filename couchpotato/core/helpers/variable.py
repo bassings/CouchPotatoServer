@@ -170,7 +170,37 @@ def sha256(text):
     return hashlib.sha256(ss(text)).hexdigest()
 
 
+# Fully end-anchored so a match has to be the WHOLE candidate address, not
+# just a recognised prefix -- a start-only anchor let '127.0.0.1.evil.com'
+# through, because '^127\.' is satisfied by the first four characters
+# regardless of what follows.
+_IPV4_LOCAL_RE = re.compile(
+    r'^(?:'
+    r'127(?:\.\d{1,3}){3}'
+    r'|192\.168(?:\.\d{1,3}){2}'
+    r'|10(?:\.\d{1,3}){3}'
+    r'|172\.(?:1[6-9]|2[0-9]|3[0-1])(?:\.\d{1,3}){2}'
+    r')$'
+)
+
+# The two forms of IPv6 loopback we recognise: shorthand and its
+# uncompressed equivalent. See the comment in isLocalIP() for why only
+# these two, not general IPv6 canonicalisation.
+_IPV6_LOOPBACK_FORMS = ('::1', '0:0:0:0:0:0:0:1')
+
+
 def isLocalIP(ip):
+    """Return True if ip names a loopback or RFC 1918 private address, or
+    the literal hostname 'localhost'.
+
+    The only caller (http_client.py's failure-tracking logic, which exempts
+    local hosts from being permanently disabled after repeated failures)
+    passes either a bare hostname/address or 'host:port', built from
+    urlparse() as f'{hostname}{":"+port if port else ""}'. urlparse()
+    strips brackets from an IPv6 host, so an IPv6 URL with a port arrives
+    here as e.g. '::1:9117', not '[::1]:9117'. Bracketed forms are also
+    handled in case another caller passes a raw URL-style host string.
+    """
     # Strip a URL scheme prefix if one is present. This used to be
     # ip.lstrip('htps:/'), but str.lstrip() takes a set of characters, not
     # a prefix, so it stripped any leading run of h/t/p/s/:/ -- which ate
@@ -182,21 +212,48 @@ def isLocalIP(ip):
             ip = ip[len(prefix):]
             break
 
-    # This used to be a JAVASCRIPT regex literal (the wrapping '/../'
-    # marks) pasted directly into Python, where the slashes are literal
-    # characters rather than delimiters. That made two alternatives
-    # unmatchable: a literal '/' can never appear immediately before '^'
-    # (start of string) or immediately after '$' (end of string). The
-    # practical effect was that IPv6 loopback ('::1') was never recognised.
-    #
-    # '::1' and its uncompressed equivalent '0:0:0:0:0:0:0:1' are both
-    # matched deliberately, since a client may hand us either form of the
-    # same address. General IPv6 canonicalisation (case folding, partial
-    # zero-compression, mixed forms) is deliberately out of scope here --
-    # this helper only needs to recognise the loopback address, not parse
-    # arbitrary IPv6.
-    regex = r'(^127\.)|(^192\.168\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^0:0:0:0:0:0:0:1$)|(^::1$)'
-    return re.search(regex, ip) is not None or 'localhost' in ip or ip[:4] == '127.'
+    core = ip
+    colon_count = core.count(':')
+
+    if core.startswith('[') and ']' in core:
+        # Bracketed IPv6 ('[addr]' or '[addr]:port'), the standard URL host
+        # form. Unambiguous: the brackets delimit the address, so there is
+        # no need to guess where a port might start.
+        core = core[1:core.index(']')]
+
+    elif colon_count == 1:
+        # Exactly one colon is a hostname/IPv4 'host:port' shape
+        # ('127.0.0.1:9117', 'localhost:9117') -- never a bare IPv6
+        # address, since even the shortest valid IPv6 form ('::1') has two
+        # colons. Only split off the port if what follows really is one.
+        host_part, _, port_part = core.rpartition(':')
+        if port_part.isdigit():
+            core = host_part
+
+    elif colon_count >= 2:
+        # Bare, unbracketed, and IPv6-shaped. 'addr:port' is genuinely
+        # ambiguous here: does '::1:9117' mean loopback address '::1' with
+        # port 9117, or is '::1:9117' the address in its own right? This is
+        # exactly the shape http_client.py's host string produces for an
+        # IPv6 host with a port, since urlparse().hostname strips brackets.
+        #
+        # Deliberate rule: read a trailing ':<digits>' as a port ONLY if
+        # stripping it leaves one of the two recognised loopback forms.
+        # That resolves '::1:9117' to loopback + port (True), while
+        # '2001:db8::1:9117' and '2001:db8::1' -- neither of which is a
+        # loopback address before OR after stripping a trailing number --
+        # are left as-is and correctly stay unmatched (False). Anything
+        # else with two or more colons is used exactly as given: it
+        # matches only if it IS one of the loopback forms.
+        host_part, _, port_part = core.rpartition(':')
+        if port_part.isdigit() and host_part in _IPV6_LOOPBACK_FORMS:
+            core = host_part
+
+    return (
+        _IPV4_LOCAL_RE.match(core) is not None
+        or core in _IPV6_LOOPBACK_FORMS
+        or 'localhost' in core
+    )
 
 
 def getExt(filename):
