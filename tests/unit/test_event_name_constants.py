@@ -32,13 +32,22 @@ import pathlib
 # reporting green is worse than no guard. Mirrors test_event_wiring.py.
 SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[2] / 'couchpotato'
 
-# The 24 event names SONAR-S1192 assigns named constants, exactly as they
-# appear in the spec and in the source today.
+# The 21 event names SONAR-S1192 assigns named constants, exactly as they
+# appear in the source today.
+#
+# The spec originally listed 24. Three were wrong, and the error is worth
+# recording because of how it was made: the list was built by matching
+# dotted-lowercase strings in the scanner output, never by checking how
+# each string is USED. `couchpotato.db` is the SQLite filename passed to
+# os.path.join(); `updater.check` and `release.manual_download` are
+# addApiView() route names. None is dispatched as an event, so none
+# belongs in a module called event_names, and a constant nobody imports
+# is worse than no constant: it tells the next reader that
+# `couchpotato.db` is an event.
 EVENT_NAMES = frozenset({
     'app.load',
     'app.restart',
     'app.shutdown',
-    'couchpotato.db',
     'library.query',
     'library.related',
     'library.tree',
@@ -52,13 +61,11 @@ EVENT_NAMES = frozenset({
     'profile.default',
     'release.add',
     'release.for_media',
-    'release.manual_download',
     'release.update_status',
     'release.with_status',
     'renamer.scan',
     'scanner.name_year',
     'searcher.protocols',
-    'updater.check',
 })
 
 EVENT_CALL_NAMES = ('addEvent', 'fireEvent', 'fireEventAsync')

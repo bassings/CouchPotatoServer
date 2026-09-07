@@ -36,16 +36,3 @@ RELEASE_WITH_STATUS = 'release.with_status'
 RENAMER_SCAN = 'renamer.scan'
 SCANNER_NAME_YEAR = 'scanner.name_year'
 SEARCHER_PROTOCOLS = 'searcher.protocols'
-
-# The spec's 24-name group also includes these three, but none of them is
-# actually a bare literal at an addEvent()/fireEvent()/fireEventAsync() call
-# site today -- COUCHPOTATO_DB is the SQLite filename passed to
-# os.path.join(), UPDATER_CHECK is an addApiView() route name and the second
-# positional argument to fireEvent('schedule.remove'/'schedule.interval', ...),
-# and RELEASE_MANUAL_DOWNLOAD is an addApiView() route name and the
-# notify.frontend `type=` value. Defined here for completeness against the
-# spec's 24, but left unsubstituted at those call sites: rewiring them is a
-# different, out-of-scope change from renaming a bare event-name literal.
-COUCHPOTATO_DB = 'couchpotato.db'
-UPDATER_CHECK = 'updater.check'
-RELEASE_MANUAL_DOWNLOAD = 'release.manual_download'

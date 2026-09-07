@@ -9,7 +9,19 @@ others. This spec records the split and fixes only the half that earns it.
 
 ## The split, measured from the scan
 
-**24 of the 57 distinct literals are event names** (dotted lowercase, passed to
+**21 of the 57 distinct literals are event names.** CORRECTED DURING
+IMPLEMENTATION: this spec first said 24, and the error is worth recording
+because of how it was made. The list was built by matching dotted-lowercase
+strings in the scanner output, and never by checking how each string is USED.
+Three were not events at all: `couchpotato.db` is the SQLite filename passed
+to `os.path.join()` (`runner.py:259`), and `updater.check` and
+`release.manual_download` are `addApiView()` route names. Classifying by the
+shape of a string rather than by its use is the same mistake as asserting on
+a proxy instead of the thing itself. The three are not defined as constants:
+a constant nobody imports, in a module called `event_names`, would tell the
+next reader that `couchpotato.db` is an event.
+
+The original list, minus those three, was (dotted lowercase, passed to
 `addEvent` / `fireEvent` / `fireEventAsync`):
 
     app.load, app.restart, app.shutdown, couchpotato.db, library.query,
