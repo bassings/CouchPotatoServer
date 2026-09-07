@@ -111,7 +111,8 @@ class TestLoginPageRendersDesignSystem:
     def test_login_page_has_submit_button(self, client):
         resp = client.get('/login/')
         text = resp.text.lower()
-        assert '<button' in text and 'type="submit"' in text
+        assert '<button' in text, 'no button element on the login page'
+        assert 'type="submit"' in text, 'the login page button is not type="submit"'
 
     def test_login_page_form_posts_to_same_url(self, client):
         resp = client.get('/login/')

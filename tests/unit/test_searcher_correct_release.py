@@ -269,7 +269,8 @@ class TestSizeBoundsGuardedAgainstAPartialDoc:
         QualityPlugin.fill() writes has both) must not KeyError. It is
         rejected rather than silently accepted: 0MB is never a real file."""
         quality = _real_quality_missing_size(tmp_path, 'qpartial', 'dvdrip')
-        assert 'size_min' not in quality and 'size_max' not in quality
+        assert 'size_min' not in quality, quality
+        assert 'size_max' not in quality, quality
 
         nzb = _nzb(size=1500)
         media = _media()

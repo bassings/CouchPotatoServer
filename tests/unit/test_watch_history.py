@@ -113,7 +113,10 @@ def test_mark_watched_conflict_error_after_retries_returns_failure_and_logs_warn
         result = plugin.markWatched(id='movie-1', watched_by='Scott')
 
     assert result['success'] is False
-    assert isinstance(result['error'], str) and result['error']
+    assert isinstance(result['error'], str), (
+        f"result['error'] must be a string, got {type(result['error'])!r}"
+    )
+    assert result['error'], "result['error'] must not be empty"
     fire_event.assert_not_called()
 
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -136,7 +139,10 @@ def test_mark_unwatched_conflict_error_after_retries_returns_failure_and_logs_wa
         result = plugin.markUnwatched(id='movie-1')
 
     assert result['success'] is False
-    assert isinstance(result['error'], str) and result['error']
+    assert isinstance(result['error'], str), (
+        f"result['error'] must be a string, got {type(result['error'])!r}"
+    )
+    assert result['error'], "result['error'] must not be empty"
     fire_event.assert_not_called()
 
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]

@@ -508,8 +508,9 @@ class TestForMediaHonoursRequireComplete:
         monkeypatch.setattr(release_main, 'get_db', lambda: db)
 
         result = plugin.forMedia('m', require_complete=True)
-        assert result is not None and len(result) == 1, (
-            'a deleted row made the whole set look unreadable'
+        assert result is not None, 'a deleted row made the whole set look unreadable'
+        assert len(result) == 1, (
+            'a deleted row changed the size of the readable set'
         )
         from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
         assert result is not INCOMPLETE_RELEASE_SET
@@ -527,7 +528,10 @@ class TestForMediaHonoursRequireComplete:
         monkeypatch.setattr(release_main, 'get_db', lambda: db)
 
         result = plugin.forMedia('m', require_complete=True)
-        assert result is not None and len(result) == 1
+        assert result is not None, 'a deleted document made the whole set look unreadable'
+        assert len(result) == 1, (
+            'a deleted document changed the size of the readable set'
+        )
 
     def test_a_corrupt_document_counts_as_incomplete(self, monkeypatch):
         import couchpotato.core.plugins.release.main as release_main

@@ -201,7 +201,8 @@ class TestAnUnchangedDeclinedGroupIsNotRescanned:
         # "Already decided" must never become "already done" (AC-QA-12):
         # both the library file and the download must survive, byte for
         # byte, no matter how many times an unchanged scan runs.
-        assert world['dst'] and open(world['dst'], 'rb').read() == world['original_dst_bytes'], (
+        assert world['dst'], 'the collided scan reported no destination path at all'
+        assert open(world['dst'], 'rb').read() == world['original_dst_bytes'], (
             'the collided library file was modified by a scan that should '
             'only ever have refused'
         )

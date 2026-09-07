@@ -457,7 +457,8 @@ class TestLinkFallback:
         result = _move(plugin, tmp_path, str(old), str(dest))
 
         assert result is True
-        assert os.path.exists(old) and not os.path.islink(old), 'old must remain a real file'
+        assert os.path.exists(old), 'old must still exist'
+        assert not os.path.islink(old), 'old must remain a real file, not a symlink'
         assert Path(old).read_bytes() == DOWNLOAD
         assert dest.read_bytes() == DOWNLOAD
         assert not os.path.islink(dest)
@@ -587,7 +588,8 @@ class TestT18DataLossFixes:
         result = _move(plugin, tmp_path, str(old), str(dest))
 
         assert result is True, 'this branch still degrades to a plain copy and reports success'
-        assert os.path.exists(old) and not os.path.islink(old), (
+        assert os.path.exists(old), 'old must still exist'
+        assert not os.path.islink(old), (
             'old must remain the real file -- never unlinked ahead of the replace'
         )
         assert Path(old).read_bytes() == DOWNLOAD
@@ -949,7 +951,8 @@ class TestCallerLevelDataLossGuards:
         )
 
         assert deleted == [], 'source folder must not be cleaned up when nothing moved'
-        assert old.exists() and old.read_bytes() == DOWNLOAD, 'the download must survive'
+        assert old.exists(), 'the download must survive'
+        assert old.read_bytes() == DOWNLOAD, 'the download must survive unmodified'
 
     def test_fix_b_a_failed_hardlink_fallback_replace_leaves_no_stray_link_via_the_real_caller(self, tmp_path, monkeypatch):
         """AC-DATA-12 / AC-QA-15 / AC-QA-17 at the caller level. Unlike (a) and
@@ -1033,7 +1036,8 @@ class TestCallerLevelDataLossGuards:
         )
 
         assert deleted == [], 'the source folder must not be cleaned up when the move never happened'
-        assert old.exists() and old.read_bytes() == DOWNLOAD, 'the download must survive'
+        assert old.exists(), 'the download must survive'
+        assert old.read_bytes() == DOWNLOAD, 'the download must survive unmodified'
         assert not os.path.exists(dest), 'nothing reached the destination either'
 
 

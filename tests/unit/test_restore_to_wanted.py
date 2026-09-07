@@ -199,7 +199,10 @@ class TestRestoreToWantedProfileResolution:
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is False
-        assert isinstance(result.get('error'), str) and result['error']
+        assert isinstance(result.get('error'), str), (
+            f"result['error'] must be a string, got {type(result.get('error'))!r}"
+        )
+        assert result['error'], "result['error'] must not be empty"
         assert movie['status'] == 'done', 'a refused restore must not touch the movie at all'
         assert not db.update_with_retry.called, (
             'a refused restore must never write to the movie -- that would '

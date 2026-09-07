@@ -270,9 +270,14 @@ class TestTheLabelMatchesWhatTheButtonDoes:
         assert laptop.get('/').status_code == 200
         assert phone.post('/logout/').status_code in (302, 303)
         after = laptop.get('/')
-        assert after.status_code == 302 and 'login' in after.headers.get('location', ''), (
+        assert after.status_code == 302, (
             'the second client kept its session, so this test would happily '
             'accept a label promising "all devices" from a route that ends one'
+        )
+        assert 'login' in after.headers.get('location', ''), (
+            'the second client was redirected but not to the login page, so '
+            'this test would happily accept a label promising "all devices" '
+            'from a route that ends one'
         )
 
         lowered = label.lower()

@@ -271,9 +271,11 @@ class TestDetachFileDoesNotLogTheLibraryPath:
         assert secret not in messages, (
             'the library path reached the log through the exception: %s' % messages
         )
-        assert '/mnt/nas' not in messages and 'Some Movie' not in messages
+        assert '/mnt/nas' not in messages, messages
+        assert 'Some Movie' not in messages, messages
         # The bound must not cost the diagnosis.
-        assert 'Permission denied' in messages and '13' in messages
+        assert 'Permission denied' in messages, messages
+        assert '13' in messages, messages
         assert rel['_id'] in messages
 
 
@@ -322,7 +324,8 @@ class TestDetachFileActuallyDetaches:
         rel = self._with_files(db, 'm-1', {'movie': [str(a), str(b)]})
         # Read it back rather than trusting insert()'s return value.
         before = db.get('id', rel['_id']).get('copy_id')
-        assert before and ',' in before, (
+        assert before, 'the fixture stored no copy_id at all'
+        assert ',' in before, (
             'the fixture did not store a two-file identity: %r' % before
         )
 
@@ -414,7 +417,8 @@ class TestWithoutPathsNeverStringifiesAnOSError:
         from couchpotato.core.logger import without_paths
 
         rendered = without_paths(PermissionError(13, 'Permission denied', '/x/y.mkv'))
-        assert '13' in rendered and 'Permission denied' in rendered
+        assert '13' in rendered, rendered
+        assert 'Permission denied' in rendered, rendered
         assert '/x/y.mkv' not in rendered
 
     def test_a_non_OSError_keeps_its_message(self):

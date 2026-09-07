@@ -2452,7 +2452,8 @@ def test_a_hyphenated_custom_element_is_not_a_script_block(tmp_path):
         '<script>\nconst a = "</script-loader>";\nconst broken = (;\n</script>\n'
     )
     findings = findings_for(early_close)
-    assert findings and findings[0][0] == 3, (
+    assert findings, "expected the early-closed script block to be flagged at all"
+    assert findings[0][0] == 3, (
         "expected the real error at line 3, got %r -- the block was closed early "
         "by a string" % findings
     )
@@ -2494,7 +2495,8 @@ def test_a_commented_out_script_element_is_not_parsed(tmp_path):
         "<!--\n<script>\nignored (;\n</script>\n-->\n<script>\nconst broken = (;\n</script>\n"
     )
     findings = findings_for(both)
-    assert findings and findings[0][0] == 7, (
+    assert findings, "expected the real block after the comment to be flagged at all"
+    assert findings[0][0] == 7, (
         "the real block after a comment must still be checked, at its own line; got %r"
         % findings
     )
@@ -2742,7 +2744,8 @@ def test_a_killed_parser_is_reported_as_could_not_run(tmp_path, monkeypatch):
     path = tmp_path / "x.html"
     path.write_text("<script>\nconst x = 1;\n</script>\n")
     findings = findings_for(path)
-    assert findings and "could not run" in findings[0][1], findings
+    assert findings, "expected the killed parser to be reported as a finding"
+    assert "could not run" in findings[0][1], findings
 
 
 @requires_node

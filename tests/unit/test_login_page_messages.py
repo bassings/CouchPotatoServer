@@ -552,8 +552,8 @@ class TestTheSignOutFailurePage:
         role, text = region
         assert role == 'alert', role
         lowered = text.lower()
-        assert 'still' in lowered and ('signed in' in lowered or 'valid' in lowered
-                                       or 'active' in lowered), text
+        assert 'still' in lowered, text
+        assert 'signed in' in lowered or 'valid' in lowered or 'active' in lowered, text
         for banned in FORBIDDEN_IN_COPY:
             assert banned not in lowered, (banned, text)
 
@@ -691,7 +691,8 @@ class TestACorrectPasswordThatCannotStartASessionSaysSo:
         response = self._login_with_a_broken_store(client, monkeypatch, settings)
 
         body = response.text.lower()
-        assert 'incorrect' not in body and 'not recognised' not in body, body[:400]
+        assert 'incorrect' not in body, body[:400]
+        assert 'not recognised' not in body, body[:400]
 
     def test_it_sets_no_cookie(self, client, monkeypatch, settings):
         """Fail closed is unchanged: no secret, no session."""

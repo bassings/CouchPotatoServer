@@ -677,7 +677,8 @@ class TestEnablingAuthenticationRefusesARealDataDirectory:
 
         assert parser.get('core', 'auth_required') == '1'
         stored = parser.get('core', 'password')
-        assert stored and stored != 'hunter2', 'the plaintext was stored'
+        assert stored, 'no password was stored at all'
+        assert stored != 'hunter2', 'the plaintext was stored'
         assert check_password(md5('hunter2'), stored), (
             'the stored password is not the form login_post compares against '
             '(bcrypt over md5 of the plaintext), so the seeded instance would '

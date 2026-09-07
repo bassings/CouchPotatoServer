@@ -267,7 +267,8 @@ class TestTheRateLimitedResponseIsUsable:
         message = ' '.join(re.sub(r'<[^>]+>', ' ', match.group(1)).split()).lower()
 
         assert 'username' not in message, message
-        assert 'was wrong' not in message and 'incorrect' not in message, message
+        assert 'was wrong' not in message, message
+        assert 'incorrect' not in message, message
         assert 'not accepted' not in message, message
 
     def test_it_leaks_no_mechanism(self, client):

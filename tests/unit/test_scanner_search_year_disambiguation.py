@@ -666,7 +666,11 @@ class TestAMalformedFilenameDuringTheWarningDoesNotStarveIdentification:
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert warnings, 'setup: expected the mismatched-guess warning to fire'
         for message in warnings:
-            assert 'realuser' not in message and 'private' not in message, (
+            assert 'realuser' not in message, (
+                'the raw non-string filename value leaked into a WARNING log '
+                'line -- got %r' % message
+            )
+            assert 'private' not in message, (
                 'the raw non-string filename value leaked into a WARNING log '
                 'line -- got %r' % message
             )

@@ -393,8 +393,11 @@ class TestASavedPasswordIsNeverEchoedBack:
                                     '$2b$12$abcdefghijklmnopqrstuv', 'password')
 
         assert stored == '$2b$12$abcdefghijklmnopqrstuv', 'the hash was not stored'
-        assert 'value' not in result and 'submitted' not in result, (
-            'the save response echoed a password-typed option: %r' % (result,)
+        assert 'value' not in result, (
+            'the save response echoed a password-typed option value: %r' % (result,)
+        )
+        assert 'submitted' not in result, (
+            'the save response echoed a password-typed option submission: %r' % (result,)
         )
         assert not any(str(v).startswith('$2b$') for v in result.values()), (
             'a bcrypt hash reached the response body: %r' % (result,)
@@ -530,7 +533,8 @@ class TestTheMaskWithholdsForAnUnregisteredOption:
             'an UNREGISTERED password option echoed its value: %r' % (result,)
         )
         blob = repr(result)
-        assert 'hunter2' not in blob and '$2b$' not in blob
+        assert 'hunter2' not in blob, blob
+        assert '$2b$' not in blob, blob
 
     def test_a_registered_ordinary_string_still_echoes(self):
         """Anti-vacuity: withholding must not become "withhold everything"."""

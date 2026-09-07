@@ -133,4 +133,5 @@ class TestTwoCandidatesRefuseRatherThanPickingOne:
         outcome_ab, existing_ab = decide_operator_replacement([a, b])
         outcome_ba, existing_ba = decide_operator_replacement([b, a])
         assert outcome_ab == outcome_ba == OPERATOR_DECLINED_AMBIGUOUS_FILE
-        assert existing_ab is None and existing_ba is None
+        assert existing_ab is None, 'a-then-b order left a stray existing release'
+        assert existing_ba is None, 'b-then-a order left a stray existing release'
