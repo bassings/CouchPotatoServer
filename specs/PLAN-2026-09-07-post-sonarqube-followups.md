@@ -293,7 +293,9 @@ only one of the two return paths. That guard is T1 below.
       `localhost` substring hole of exactly the class it had just closed), 1
       was rejected
       because complying would risk a regression, 1 was moot, and the rest are
-      real-but-low-value or blocked on something else. Next: the MEDIUM tail.
+      real-but-low-value or blocked on something else.
+      The MEDIUM tail that this line once pointed forward to is closed out
+      above, in the MEDIUM TAIL CLOSED OUT block. Nothing in T2 is outstanding.
 - [x] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
       REVIEW: the first draft described this defect in the PR body and then
       never scheduled it, so it would have been lost. TWO bugs, and the second
