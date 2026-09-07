@@ -210,9 +210,8 @@
         </button>
       </div>
     </template>
-    <button @click="addDir()" 
-            class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors" 
-            aria-label="Add another folder">+ Add folder</button>
+    <button @click="addDir()"
+            class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add folder</button>
     <p x-show="buildDescription()" class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
     <template x-if="hasLearnMore()">
       <details class="mt-2 text-[10px]">
@@ -273,9 +272,9 @@
       </div>
     </template>
     
-    <button @click="addRow()" 
+    <button @click="addRow()"
             class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors"
-            aria-label="Add another row">+ Add</button>
+            aria-label="Add row">+ Add</button>
     <p x-show="buildDescription()" class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
     <template x-if="hasLearnMore()">
       <details class="mt-2 text-[10px]">

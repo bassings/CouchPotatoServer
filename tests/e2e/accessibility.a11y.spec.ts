@@ -295,6 +295,86 @@ test.describe('Accessibility', () => {
   });
 
   /*
+   * WCAG-253: three controls in the settings panels fail (or defeat the
+   * point of) 2.5.3 Label in Name, which requires a control's accessible
+   * name to contain its visible text. None of them are caught by the sweep
+   * above, and that is NOT because axe-core's `label-content-name-mismatch`
+   * rule (enabled, tagged wcag21a/wcag253, selected by the tag list
+   * checkA11y uses) fails to recognise the pattern -- confirmed by scanning
+   * with that rule once each control is actually reached: it flags the
+   * clear failure (the "Add folder" button) the moment the Library tab's
+   * group is open. It never fires above because `currentGroups` -- what
+   * settings.html's x-for actually iterates -- holds only the ACTIVE tab's
+   * groups (scripts.html's `updateCurrentGroups()`); a tab you have not
+   * clicked contributes no DOM at all, not merely a hidden one. The Up
+   * button lives inside a `x-show="browserOpen"` dialog that starts closed,
+   * so it is hidden rather than absent, but axe skips display:none
+   * elements just the same. Either way: unreachable is the whole story for
+   * why these three shipped.
+   *
+   * It is NOT the whole story for whether the axe rule alone would keep
+   * them fixed. Once reached, the rule stays silent on the other two
+   * (measured: scanning the open Newznab row and the open browser dialog
+   * with `label-content-name-mismatch` returns zero violations for either).
+   * That is because the rule's bar is "the accessible name contains the
+   * visible word somewhere", and "Add another row" / "Go up one folder" both
+   * clear it -- "row"'s and "folder"'s case aside, "add" and (for row) "up"
+   * do appear. So this test does not lean on axe for two of the three: it
+   * pins the exact accessible name each control must resolve to, which is
+   * the only assertion that can fail again if a future edit reintroduces
+   * padding that keeps the substring but buries the lead word.
+   */
+  test('settings folder/row "Add" buttons and the folder browser "Up" button lead with their visible text (WCAG 2.5.3)', async ({ page }) => {
+    await page.goto('/settings/');
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+
+    // --- Control 1: "+ Add folder" in the Movie Library directory list.
+    // Not on the default tab -- switch to it, then open the (enabler-gated,
+    // closed-by-default) group so the button actually renders.
+    await page.getByRole('tab', { name: 'Library' }).click();
+    await page.getByRole('heading', { name: 'Movie Library' }).click();
+
+    const addFolderBtn = page.locator('button', { hasText: '+ Add folder' });
+    await expect(addFolderBtn, 'the "+ Add folder" button never rendered -- Library tab/group did not open as expected').toBeVisible();
+    await expect.soft(addFolderBtn, 'control 1: accessible name for "+ Add folder" must lead with its own visible text, not a different phrase ("Add another folder")')
+      .toHaveAccessibleName('+ Add folder');
+
+    // --- Control 3: "↑ Up" inside the folder browser dialog. Reachable from
+    // control 1's row: adding a folder gives it a "Browse" button.
+    await addFolderBtn.click();
+    await page.getByRole('button', { name: 'Browse for folder 1' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog, 'the folder browser dialog never opened').toBeVisible();
+
+    const upBtn = dialog.locator('button', { hasText: '↑ Up' });
+    await expect.soft(upBtn, 'control 3: accessible name for "↑ Up" must be pinned to the fixed value, not "Go up one folder"')
+      .toHaveAccessibleName('Up one folder');
+    await page.keyboard.press('Escape');
+
+    // --- Control 2: "+ Add" in the Newznab combined host/key rows. Newznab
+    // defaults to enabled, so its group is open without an extra click --
+    // only the tab switch is needed. Scoped to the Newznab card specifically:
+    // torrentpotato's own combined "+ Add" button is also in the DOM on this
+    // tab (collapsed via x-show, not absent, since it defaults disabled), so
+    // an unscoped locator would hit Playwright's strict-mode multiple-match
+    // error rather than a clean pass/fail on the control this test targets.
+    await page.getByRole('tab', { name: 'Searchers' }).click();
+    const newznabCard = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
+    await expect(newznabCard, 'the Newznab provider card never rendered on the Searchers tab').toBeVisible();
+
+    const addRowBtn = newznabCard.locator('button', { hasText: '+ Add' });
+    await expect(addRowBtn, 'the "+ Add" row button never rendered under Newznab').toBeVisible();
+    // A leading-word check ("starts with Add") is NOT a valid guard here:
+    // "Add another row" already starts with "Add", so it would pass today
+    // even though the padding still buries which control "row" is which
+    // when several look alike. The exact pin is the only assertion that
+    // actually distinguishes the fixed name from the current one.
+    await expect.soft(addRowBtn, 'control 2: accessible name for "+ Add" must be pinned to the fixed value, not "Add another row"')
+      .toHaveAccessibleName('Add row');
+  });
+
+  /*
    * T1.4b/AC-A11Y-10: every page-level checkA11y sweep above runs in the
    * LIGHT theme. With no localStorage seeded, base.html's own init leaves
    * `document.documentElement` without the `light` class removed --
