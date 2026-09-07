@@ -1075,7 +1075,8 @@ class TestCollisionWarningIsAlsoBounded:
             'unbounded collision warnings: %d lines from one archive' % len(per_entry)
         )
         summary = [m for m in messages if 'collided on the same destination' in m]
-        assert summary and '1000' in summary[0], (
+        assert summary, 'no collision-total summary line was logged at all'
+        assert '1000' in summary[0], (
             'the collision total was not reported, so the cap hides the scale'
         )
 
@@ -1255,7 +1256,8 @@ class TestUnreadableEntryLoggingIsAlsoBounded:
             'archive' % len(per_entry)
         )
         summary = [m for m in messages if 'could not be read in total' in m]
-        assert summary and '1000' in summary[0], (
+        assert summary, 'no unreadable-total summary line was logged at all'
+        assert '1000' in summary[0], (
             'the unreadable total was not reported, so the cap hides the scale'
         )
         assert extracted == [], 'nothing was extractable, so the list must be empty'
@@ -1355,7 +1357,8 @@ class TestOverlongNameLoggingIsAlsoBounded:
         )
         summary = [m for m in messages if 'could not be written' in m
                    and 'in total' in m]
-        assert summary and '1000' in summary[0], (
+        assert summary, 'no unwritable-total summary line was logged at all'
+        assert '1000' in summary[0], (
             'the unwritable total was not reported, so the cap hides the scale'
         )
         assert extracted == []
@@ -1463,7 +1466,8 @@ class TestTheSummarySurvivesAnAbortedArchive:
 
         summary = [r.getMessage() for r in caplog.records
                    if 'refused in total' in r.getMessage()]
-        assert summary and '6' in summary[0], (
+        assert summary, 'no refused-in-total summary line was logged at all'
+        assert '6' in summary[0], (
             'the archive aborted and took its own diagnostic counts with it, '
             'which is the case the summary exists for'
         )
@@ -1726,7 +1730,8 @@ class TestEntryHardCapLoggingIsAlsoBounded:
         )
         summary = [m for m in messages
                    if 'per-entry size ceiling' in m and 'in total' in m]
-        assert summary and '1000' in summary[0], (
+        assert summary, 'no oversized-entry-total summary line was logged at all'
+        assert '1000' in summary[0], (
             'the oversized-entry total was not reported, so the cap hides '
             'the scale'
         )

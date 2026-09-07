@@ -191,7 +191,8 @@ class TestTheSubmitButtonLabel:
 
         fg, _ = _resolve(classes, 'text', palette)
         bg, _ = _resolve(classes, 'bg', palette)
-        assert fg and bg, (classes, sorted(palette))
+        assert fg, ('no foreground colour resolved', classes, sorted(palette))
+        assert bg, ('no background colour resolved', classes, sorted(palette))
         ratio = contrast_ratio(fg, bg)
 
         assert ratio >= MIN_TEXT_RATIO, (
@@ -267,8 +268,11 @@ class TestTheStatusMessage:
 
         fg, _ = _resolve(classes, 'text', palette)
         tint, alpha = _resolve(classes, 'bg', palette)
-        assert fg and tint, (classes, sorted(palette))
-        assert alpha is not None and alpha < 1.0, (
+        assert fg, ('no foreground colour resolved', classes, sorted(palette))
+        assert tint, ('no background tint resolved', classes, sorted(palette))
+        assert alpha is not None, (
+            'the panel background carries no alpha channel at all: %s' % classes)
+        assert alpha < 1.0, (
             'the panel is an opaque fill rather than a tint of an existing '
             'token: %s' % classes)
 

@@ -272,7 +272,8 @@ class TestTheRecordNamesTheMediaNotThePath:
         assert replaced, 'the replacement was not recorded at all'
         assert world['dst'] not in replaced[0]
         assert 'media-1' in replaced[0]
-        assert '720p' in replaced[0] and '2160p' in replaced[0]
+        assert '720p' in replaced[0], replaced[0]
+        assert '2160p' in replaced[0], replaced[0]
 
 
 class TestAFailedSupersedeDoesNotUndoASuccessfulSwap:
@@ -641,7 +642,8 @@ class TestNoFilesystemPathReachesTheLogDuringAReplacement:
         ]
         assert announced
         assert 'media-1' in announced[0]
-        assert '720p' in announced[0] and '2160p' in announced[0]
+        assert '720p' in announced[0], announced[0]
+        assert '2160p' in announced[0], announced[0]
 
 
 class TestAGuessedMovieIdentityNeverAuthorisesDestruction:
@@ -1307,7 +1309,8 @@ class TestRedactingAnExceptionKeepsItsDiagnosis:
         error = PermissionError(13, 'Permission denied', '/mnt/nas/Some Movie.mkv')
         rendered = plugin._withoutPaths(error)
 
-        assert '13' in rendered and 'Permission denied' in rendered
+        assert '13' in rendered, rendered
+        assert 'Permission denied' in rendered, rendered
         assert '/mnt/nas' not in rendered
         assert 'Some Movie' not in rendered
 

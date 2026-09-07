@@ -133,8 +133,11 @@ class TestItLogsAtErrorNamingTheDocument:
             database.reportCorrupted('doc-123', traceback_error='ValueError: bad json')
 
         message = _error_records(caplog)[0].getMessage().lower()
-        assert 'not' in message and 'delet' in message, (
+        assert 'not' in message, (
             'the message must say plainly the document was NOT deleted: %r' % message
+        )
+        assert 'delet' in message, (
+            'the message must say plainly the document was not DELETED: %r' % message
         )
 
     def test_the_traceback_error_is_included(self, database, caplog):

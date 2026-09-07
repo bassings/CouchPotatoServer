@@ -85,7 +85,8 @@ def test_stale_ignore_snapshot_cannot_be_persisted_last(monkeypatch):
     thread_b.start()
     thread_a.join(timeout=5)
     thread_b.join(timeout=5)
-    assert not thread_a.is_alive() and not thread_b.is_alive()
+    assert not thread_a.is_alive(), 'thread A did not finish within the join timeout'
+    assert not thread_b.is_alive(), 'thread B did not finish within the join timeout'
 
     persisted = set(stored['suggestion.ignored'].split(','))
     assert persisted == {'aaa', 'bbb'}, (

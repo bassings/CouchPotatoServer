@@ -186,7 +186,8 @@ class TestNonGitVariablesAreUntouched:
         # function -- the strongest available check that the strip has not
         # eaten something load-bearing well outside the GIT_* namespace.
         env = sanitized_git_env()
-        assert 'PATH' in env and env['PATH']
+        assert 'PATH' in env, 'PATH was stripped entirely'
+        assert env['PATH'], 'PATH survived but was emptied'
 
 
 class TestTheTemplateDirEscapeIsClosed:
@@ -239,7 +240,11 @@ class TestTheTemplateDirEscapeIsClosed:
             'hook either way: %s' % commit.stderr
         )
         head = git('rev-parse', 'HEAD')
-        assert head.returncode == 0 and head.stdout.strip(), (
+        assert head.returncode == 0, (
+            'rev-parse itself failed -- the test setup is broken, '
+            'not just the assertion under test: %s' % head.stderr
+        )
+        assert head.stdout.strip(), (
             'no commit was actually created -- the test setup is broken, '
             'not just the assertion under test'
         )

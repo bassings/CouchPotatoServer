@@ -472,7 +472,8 @@ class TestMigrationFailureModes:
         )
         # The reassurance is load-bearing: an operator who thinks the source
         # was damaged may go looking for a backup they do not need.
-        assert 'source is' in message and 'untouched' in message, message
+        assert 'source is' in message, message
+        assert 'untouched' in message, message
 
     def test_the_remedy_differs_by_where_the_clash_actually_is(self, tmp_path):
         """Three states, and each issues a DIFFERENT destructive instruction.
@@ -502,7 +503,9 @@ class TestMigrationFailureModes:
 
         found, text = _describe_identifier_collision(source_clash)
         assert found is True
-        assert 'imdb=tt1' in text and 'a' in text and 'b' in text
+        assert 'imdb=tt1' in text, text
+        assert 'a' in text, text
+        assert 'b' in text, text
 
         found, _text = _describe_identifier_collision(no_clash)
         assert found is False

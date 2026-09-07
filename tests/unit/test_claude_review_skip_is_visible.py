@@ -404,7 +404,11 @@ class TestTheStepBehavesWhenRun:
             'the notice never says the review did not happen, so it reads like '
             'any other automated comment. Body:\n%s' % body
         )
-        assert 'green' in low and ('not' in low or 'does not' in low), (
+        assert 'green' in low, (
+            'the notice never mentions the green check it is warning about. '
+            'Body:\n%s' % body
+        )
+        assert 'not' in low or 'does not' in low, (
             'the notice does not tell the reader that the green check is not a '
             'passed review, which is the single thing it exists to say. '
             'Body:\n%s' % body

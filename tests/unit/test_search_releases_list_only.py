@@ -775,7 +775,10 @@ class TestSearchReleasesThreeWayOutcome:
         assert result['success'] is False
         assert result['searched'] is False
         assert result['found'] == 0
-        assert isinstance(result.get('reason'), str) and result['reason'], (
+        assert isinstance(result.get('reason'), str), (
+            f"result['reason'] must be a string, got {type(result.get('reason'))!r}"
+        )
+        assert result['reason'], (
             'a could-not-search outcome must name a reason the UI can show'
         )
 
@@ -1223,7 +1226,11 @@ class TestADatabaseFaultIsNotReportedAsAMissingProfile:
         assert result['searched'] is False
         assert single.called is False
         reason = result.get('reason', '').lower()
-        assert 'read' in reason and 'profile' in reason, (
+        assert 'read' in reason, (
+            'a database fault must not be reported as a configuration problem: %r'
+            % result.get('reason')
+        )
+        assert 'profile' in reason, (
             'a database fault must not be reported as a configuration problem: %r'
             % result.get('reason')
         )

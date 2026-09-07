@@ -840,11 +840,19 @@ class TestTemplateRendering:
         done_window = html[max(0, pos_done - 400):pos_done + 100]
         failed_window = html[max(0, pos_failed - 400):pos_failed + 100]
 
-        assert 'bg-cp-success/10' in done_window and 'text-cp-success' in done_window, (
-            'Mark Done must use the success token'
+        assert 'bg-cp-success/10' in done_window, (
+            'Mark Done must use the success background token'
         )
-        assert 'bg-cp-danger/10' in failed_window and 'text-cp-danger' in failed_window, (
-            'Mark Failed must use the danger token, matching movie_detail.html:283'
+        assert 'text-cp-success' in done_window, (
+            'Mark Done must use the success text token'
+        )
+        assert 'bg-cp-danger/10' in failed_window, (
+            'Mark Failed must use the danger background token, matching '
+            'movie_detail.html:283'
+        )
+        assert 'text-cp-danger' in failed_window, (
+            'Mark Failed must use the danger text token, matching '
+            'movie_detail.html:283'
         )
         assert 'bg-cp-danger' not in done_window, (
             'Mark Done must not also carry the danger token'

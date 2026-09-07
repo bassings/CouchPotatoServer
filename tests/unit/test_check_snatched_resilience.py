@@ -139,7 +139,8 @@ class TestCreateNzbName:
         with patch.object(type(plugin), 'cpTag', return_value='', create=True):
             name = plugin.createNzbName({}, {'identifiers': {'imdb': 'tt1234567'}})
 
-        assert name and 'None' not in name
+        assert name, 'expected a fallback name to be produced'
+        assert 'None' not in name, name
 
 
 class TestCheckSnatchedIsolatesBadReleases:

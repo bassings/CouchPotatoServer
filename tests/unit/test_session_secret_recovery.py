@@ -293,7 +293,8 @@ class TestTheRegenerationIsAnnounced:
             % log_text(env)
         )
         joined = '\n'.join(warnings).lower()
-        assert 'session' in joined and 'secret' in joined, warnings
+        assert 'session' in joined, warnings
+        assert 'secret' in joined, warnings
         # The TRIGGER, not just the fact. "A new secret was created" is what
         # the INFO on a first boot already says.
         assert 'no longer in the database' in joined, warnings

@@ -674,7 +674,10 @@ class TestPutIO:
         # delete_after_download=...)` (bound off the `_File` resource class in
         # 8.8.0) must still accept `dest` and `delete_after_download`.
         file_cls = getattr(putiopy, '_File', None) or getattr(putiopy, 'File', None)
-        assert file_cls is not None and hasattr(file_cls, 'download'), (
+        assert file_cls is not None, (
+            'putiopy no longer exposes a File resource class at all'
+        )
+        assert hasattr(file_cls, 'download'), (
             'putiopy no longer exposes a File resource class with a download() '
             'method'
         )
@@ -688,7 +691,10 @@ class TestPutIO:
         # Transfer.add_url, called as
         # `client.Transfer.add_url(url, callback_url=..., parent_id=...)`.
         transfer_cls = getattr(putiopy, '_Transfer', None) or getattr(putiopy, 'Transfer', None)
-        assert transfer_cls is not None and hasattr(transfer_cls, 'add_url'), (
+        assert transfer_cls is not None, (
+            'putiopy no longer exposes a Transfer resource class at all'
+        )
+        assert hasattr(transfer_cls, 'add_url'), (
             'putiopy no longer exposes a Transfer resource class with an '
             'add_url() method'
         )
@@ -2216,7 +2222,12 @@ class TestRTorrentDownload:
         # info_hash (2nd positional arg) is now passed to load_torrent
         # directly, instead of load_torrent re-deriving it internally.
         assert call_args[1] == expected_hash
-        assert isinstance(call_args[1], str) and len(call_args[1]) == 40
+        assert isinstance(call_args[1], str), (
+            f'info_hash must be passed as a str, got {type(call_args[1])!r}'
+        )
+        assert len(call_args[1]) == 40, (
+            f'info_hash must be a 40-char sha1 hex digest, got {call_args[1]!r}'
+        )
         mock_torrent.set_custom.assert_called_once_with(1, 'movies')
         mock_torrent.start.assert_called_once()
         assert result['id'] == expected_hash

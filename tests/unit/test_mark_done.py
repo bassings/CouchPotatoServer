@@ -69,7 +69,10 @@ def test_mark_done_conflict_error_after_retries_returns_failure_and_logs_warning
         result = plugin.markDone(id='movie-1')
 
     assert result['success'] is False
-    assert isinstance(result['error'], str) and result['error']
+    assert isinstance(result['error'], str), (
+        f"result['error'] must be a string, got {type(result['error'])!r}"
+    )
+    assert result['error'], "result['error'] must not be empty"
 
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
     error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]

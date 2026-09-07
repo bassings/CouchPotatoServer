@@ -163,8 +163,12 @@ def test_the_trigger_override_is_present_and_readable():
         % (sorted(set(rules.keys()) - set(TRIGGER_KEYS)), sorted(TRIGGER_KEYS))
     )
     for key in TRIGGER_KEYS:
-        assert isinstance(rules.get(key), list) and rules[key], (
-            'harness-triggers.json is missing a non-empty "%s" glob list; the '
+        assert isinstance(rules.get(key), list), (
+            'harness-triggers.json["%s"] is missing or not a list; the '
+            'installed workflow reads exactly these keys.' % key
+        )
+        assert rules[key], (
+            'harness-triggers.json["%s"] is an empty glob list; the '
             'installed workflow reads exactly these keys.' % key
         )
 
@@ -202,14 +206,21 @@ def test_harness_triggers_json_matches_the_agents_md_table():
         table_globs = table.get(key, set())
         only_in_json = json_globs - table_globs
         only_in_table = table_globs - json_globs
-        assert not only_in_json and not only_in_table, (
+        assert not only_in_json, (
             'harness-triggers.json["%s"] and the AGENTS.md trigger table have '
             'drifted.\n'
             'In harness-triggers.json but not in the AGENTS.md table: %s\n'
+            'Change both together; see AGENTS.md, "Multi-lens harness: path '
+            'triggers and precedence".'
+            % (key, sorted(only_in_json))
+        )
+        assert not only_in_table, (
+            'harness-triggers.json["%s"] and the AGENTS.md trigger table have '
+            'drifted.\n'
             'In the AGENTS.md table but not in harness-triggers.json: %s\n'
             'Change both together; see AGENTS.md, "Multi-lens harness: path '
             'triggers and precedence".'
-            % (key, sorted(only_in_json), sorted(only_in_table))
+            % (key, sorted(only_in_table))
         )
 
     assert 'couchpotato/api.py' in rules['architecture']

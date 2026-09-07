@@ -410,8 +410,11 @@ class TestFanartTVProvider:
         p = self._make_provider()
         assert getattr(p, 'ak', None), 'the shipped fanart.tv key is gone'
         decoded = b64decode(p.ak).decode()
-        assert len(decoded) == 32 and all(c in '0123456789abcdef' for c in decoded), (
-            f'shipped key is not a 32-char hex API key: {decoded!r}'
+        assert len(decoded) == 32, (
+            f'shipped key is not 32 characters long: {decoded!r}'
+        )
+        assert all(c in '0123456789abcdef' for c in decoded), (
+            f'shipped key is not hex-encoded: {decoded!r}'
         )
 
     def test_trimDiscs_bluray_only(self):
