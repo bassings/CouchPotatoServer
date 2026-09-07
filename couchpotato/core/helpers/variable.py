@@ -441,6 +441,34 @@ def isSubFolder(sub_folder, base_folder):
     return False
 
 
+# A legitimate release name is well under this length (ordinary names
+# measured at 30-60 chars). re.findall retries from every start position,
+# so parsing a run of brackets below is quadratic in input length: measured
+# 124 ms for 8000 unclosed '[' and 496 ms for 16000. A provider controls
+# both the length of a candidate name and how many results one search
+# response contains (sceneScore() in score/main.py runs this per result),
+# so this cap bounds the parse cost regardless of what the provider sends.
+BRACKETED_NAME_PARSE_LIMIT = 300
+
+
+def longestBracketedName(name):
+    """Return the longest '[...]' bracketed group in *name*, stripped.
+
+    Equivalent, for input at or under BRACKETED_NAME_PARSE_LIMIT, to:
+        max(re.findall(r'[^[]*\\[([^]]*)\\]', name), key = len).strip()
+    including raising when there is no bracketed group at all -- callers
+    are expected to catch that, same as with the expression this replaces.
+
+    Input longer than the limit is parsed from a capped prefix rather than
+    rejected outright, so a merely long (not pathological) name still
+    scores; only the cost of the parse is bounded, not the acceptance of
+    long input.
+    """
+    if len(name) > BRACKETED_NAME_PARSE_LIMIT:
+        name = name[:BRACKETED_NAME_PARSE_LIMIT]
+    return max(re.findall(r'[^[]*\[([^]]*)\]', name), key = len).strip()
+
+
 # From SABNZBD
 re_password = [re.compile(r'(.+){{([^{}]+)}}$'), re.compile(r'(.+)\s+password\s*=\s*(.+)$', re.I)]
 

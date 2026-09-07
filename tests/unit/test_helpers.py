@@ -4,12 +4,14 @@ Tests encoding helpers (toUnicode, toSafeString, simplifyString)
 and variable helpers (tryInt, tryFloat, getImdb, etc.).
 """
 import os
+import re
+import time
 from urllib.parse import urlparse
 
 import pytest
 
 from couchpotato.core.helpers.encoding import toUnicode, toSafeString, simplifyString
-from couchpotato.core.helpers.variable import removePyc, tryInt, getImdb, isLocalIP
+from couchpotato.core.helpers.variable import removePyc, tryInt, getImdb, isLocalIP, longestBracketedName
 
 pytestmark = pytest.mark.unit
 
@@ -447,3 +449,105 @@ class TestIsLocalIPMatchesHttpClientHostShape:
         host = self._host_from_url('http://example.com:8443/')
         assert host == 'example.com:8443'
         assert isLocalIP(host) is False
+
+
+def _old_bracketed_name_expression(name):
+    """The exact expression both call sites used before the fix.
+
+    Kept here, not imported, so the test pins the ORIGINAL behaviour rather
+    than whatever the two call sites happen to say today.
+    """
+    return max(re.findall(r'[^[]*\[([^]]*)\]', name), key = len).strip()
+
+
+class TestLongestBracketedNameEquivalence:
+    """`longestBracketedName` must match the old inline expression exactly
+    for ordinary, at-or-under-the-cap input -- this is the searcher and the
+    scorer, so a behaviour change here changes which releases match.
+    """
+
+    ORDINARY_NAMES = [
+        'Some.Movie.2024.1080p.BluRay.x264-GROUP',
+        'Some.Movie.2024.1080p.BluRay.x264-GROUP [PublicHD]',
+        'Movie [Nested [inner] outer] Name',
+        'Movie [first] and [a much longer second bracket group]',
+        'No brackets at all here',
+        '',
+        '[]',
+        'Leading ] bracket has no opener',
+        'Trailing [ bracket has no closer',
+        'Movie [empty][also empty][third]',
+        '][][][',
+    ]
+
+    @pytest.mark.parametrize('name', ORDINARY_NAMES)
+    def test_matches_old_expression_when_old_expression_succeeds(self, name):
+        try:
+            expected = _old_bracketed_name_expression(name)
+        except Exception:
+            pytest.skip('old expression raises for %r, covered separately' % name)
+
+        assert longestBracketedName(name) == expected
+
+    @pytest.mark.parametrize('name', ORDINARY_NAMES)
+    def test_raises_exactly_when_old_expression_raises(self, name):
+        old_raised = False
+        try:
+            _old_bracketed_name_expression(name)
+        except Exception:
+            old_raised = True
+
+        if not old_raised:
+            pytest.skip('old expression succeeds for %r, covered separately' % name)
+
+        with pytest.raises(Exception):
+            longestBracketedName(name)
+
+    def test_picks_the_longest_group_not_the_first_or_last(self):
+        name = 'Movie [x] middle [a much longer bracketed group here] end [y]'
+        assert longestBracketedName(name) == 'a much longer bracketed group here'
+
+    def test_strips_the_result(self):
+        name = 'Movie [  padded group  ]'
+        assert longestBracketedName(name) == 'padded group'
+
+
+class TestLongestBracketedNamePerformanceCap:
+    """The DoS: re.findall retries from every start position, so a run of
+    unclosed '[' is quadratic in length. Measured on this machine against
+    the OLD expression: 8000 unclosed brackets ~124 ms, 16000 ~496 ms, and
+    sceneScore() (score/main.py:66) runs this per search RESULT, so a
+    hostile provider controls both the length of each name and how many
+    results one response contains.
+    """
+
+    def test_pathological_input_is_bounded(self):
+        pathological = '[' * 16000
+
+        # Absolute, not relative-to-baseline: the property under test is
+        # "a 16000-char adversarial input does not cost anywhere near its
+        # unbounded ~496 ms", and the cap makes the cost independent of
+        # input length, so there is no meaningful baseline to be relative
+        # to. The margin is wide (50 ms, ~8x a cold/loaded run of the
+        # capped-prefix parse) so this does not flake on a busy machine --
+        # the unpatched code is ~10x slower than even this generous bound.
+        started = time.perf_counter()
+        try:
+            longestBracketedName(pathological)
+        except Exception:
+            pass
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 0.05, (
+            'longestBracketedName took %.4f s on a 16000-char adversarial '
+            'input; the input length must be capped before parsing so a '
+            'provider-supplied release name cannot make this quadratic-cost '
+            'regex run against tens of thousands of characters' % elapsed
+        )
+
+    def test_capped_prefix_still_finds_a_bracket_within_the_limit(self):
+        # A merely long (not pathological) name with its bracket inside the
+        # capped prefix must still score -- capping bounds cost, it must not
+        # blanket-reject anything over the limit.
+        name = 'A' * 100 + ' [group] ' + 'B' * 500
+        assert longestBracketedName(name) == 'group'

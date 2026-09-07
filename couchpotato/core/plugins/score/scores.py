@@ -4,7 +4,7 @@ import traceback
 from couchpotato.core.event import fireEvent
 from couchpotato.core.event_names import SCANNER_NAME_YEAR
 from couchpotato.core.helpers.encoding import simplifyString
-from couchpotato.core.helpers.variable import tryInt
+from couchpotato.core.helpers.variable import longestBracketedName, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 
@@ -205,7 +205,7 @@ def sceneScore(nzb_name):
     except Exception: pass
 
     # Match longest name between []
-    try: check_names.append(max(re.findall(r'[^[]*\[([^]]*)\]', nzb_name), key = len).strip())
+    try: check_names.append(longestBracketedName(nzb_name))
     except Exception: pass
 
     for name in check_names:
