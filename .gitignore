@@ -89,3 +89,4 @@ coverage/
 # ignored via .git/info/exclude, which is per-machine and travels with nobody,
 # so a fresh clone that runs the harness could commit it.
 .claude/harness-ledger.jsonl
+.sonar-last-analysis
