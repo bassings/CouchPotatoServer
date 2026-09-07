@@ -65,7 +65,43 @@ only one of the two return paths. That guard is T1 below.
       before fixing, fix what should be fixed, leave the rest open with a
       recorded reason and an expiry, dismiss only genuine false positives,
       state: queued (needs: T1)
-- [ ] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
+      PROGRESS, 6 of the 15 HIGH rules assessed. Two produced production
+      fixes, four produced evidenced "real but not worth acting on" verdicts.
+      - `python:S3516` (1, BLOCKER): FALSE POSITIVE, dismissed, and the guard
+        that makes the dismissal safe landed first as #319. Zero blockers now.
+      - `python:S5996` (2): FIXED as #320, and it was THREE bugs rather than
+        the one reported. See T2b.
+      - `Web:S7927` (3): FIXED as #322. Real WCAG 2.5.3 failures in the live
+        settings UI. The bigger finding is #321: the settings accessibility
+        scan only ever sees the ACTIVE tab, because `settings.html` renders
+        only `currentGroups`, so an unclicked tab contributes NO DOM at all.
+        Measured: the axe rule against the page as loaded reports 0
+        violations; after clicking to the Library tab it immediately flags a
+        real failure that had been sitting there. Most of the settings surface
+        has never been scanned by anything.
+      - `python:S8904` (6): REAL BUT CONTAINED, not worth a PR on its own. A
+        `.find(...)` returning None would raise, and in `filmweb.py:26` the
+        try/except covers only the fetch, so it does propagate. But the path is
+        live only via `userscript.add_via_url`, whose caller
+        (`ui/__init__.py:405`) wraps it AND `callApiHandler` already catches
+        every handler exception. So the user sees "Failed getting movie info"
+        rather than anything breaking. The only real cost is a traceback in the
+        log instead of a useful line. I first flagged these as crash risks;
+        that was too alarming and the correction is recorded rather than
+        quietly dropped. Fix opportunistically when next in those files.
+      - `python:S5797` (2): NOISE. `while True and not self.shuttingDown()` is
+        provably identical to `while not self.shuttingDown()`. Redundant rather
+        than wrong, and the file is `folder_scanner.py`, which has a bad
+        history, so a no-op edit there buys nothing.
+      - `python:S1143` (2): REAL SMELL, NOT A CRASH. A `return` inside
+        `finally` in `synology.py` swallows in-flight exceptions including
+        KeyboardInterrupt. I suspected an UnboundLocalError on the error path
+        and checked: `response` is initialised before the `try` in both cases,
+        so there is no crash. Worth tidying, not urgent.
+      REMAINING: `javascript:S3776` (7), `python:S1186` (6), `python:S5779`
+      (5, of which 3 are in `simple_healthcheck.py`, which nothing references),
+      and eight singletons, then the MEDIUM-only tail.
+- [x] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
       REVIEW: the first draft described this defect in the PR body and then
       never scheduled it, so it would have been lost. TWO bugs, and the second
       is the one that matters: the regex is a JavaScript literal pasted into
@@ -84,7 +120,12 @@ only one of the two return paths. That guard is T1 below.
       local service almost always has an explicit port. All 15 tests passed
       because every one used a hand-written bare address, so the suite was
       green while the real path stayed broken. Knowing where the boundary was
-      did not help; nothing tested ACROSS it. state: in-flight, fix round 2
+      did not help; nothing tested ACROSS it. MERGED as #320 after two rounds. Round two found a THIRD bug while
+      writing the required must-stay-False cases: the IPv4 alternatives were
+      only start-anchored, so `127.0.0.1.evil.com`, a registerable domain, was
+      classified as LOCAL. That predates all of this and no scanner reported
+      it. Verified on master across 25 cases including the caller shape.
+      state: merged #320
 - [ ] T3: production promotion. Fourteen commits have merged since v3.77.0 and
       none are in production, including BUG-018, where the scanner filed every
       remake under the original film, and the Docker CVE pin.
