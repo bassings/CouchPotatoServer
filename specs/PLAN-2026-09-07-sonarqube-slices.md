@@ -38,9 +38,16 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       files; the one grep hit is a code comment). Zero tests on that layer, so
       a 57-site rewrite could not be proven behaviour-neutral. Expiry: delete
       each file when its port lands.
-- [ ] T3: assess and fix `python:S9073`, composite assertions in tests (59).
+- [x] T3: assess and fix `python:S9073`, composite assertions in tests (59).
       Splitting them gives better failure messages, which this repo has needed
-      repeatedly today, state: queued (needs: T2)
+      repeatedly today. FIXED, all 59, the opposite verdict to T2 and for a
+      reason specific to this codebase: `assert a and b` reports only that the
+      assertion failed, while two assertions name which half moved. Two outer
+      ANDs wrapping an inner OR-group were split at the AND only, leaving the
+      OR intact, because splitting the OR would have turned "any acceptable
+      phrasing" into "all three required". 32 test files, no production code,
+      unit count unchanged at 3894 passed / 2 skipped / 5 xfailed.
+      state: merged #309 (needs: T2)
 - [x] T4: assess `javascript:S7740`, variables assigned `this` (143). LEFT
       OPEN, RECORDED, not fixed, and my prior was wrong in an interesting way:
       I guessed "legitimate Alpine component idiom", and there is no Alpine
@@ -60,15 +67,27 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
          those bundles, is deleted. `/old/*` is a redirect catch-all
          (`couchpotato/__init__.py:1693`). Nothing outside the tree references
          it. This is the same dead layer as T2, reached independently.
-      2. The rule's premise does not hold for this code. S7740 exists because
-         arrow functions capture `this` lexically, making the alias
-         unnecessary. These files contain zero arrow functions. Many sites are
-         provably necessary even so: `trakt.js:133` aliases `this` and then
-         reads `self` inside an `Api.request` callback, where ES5 `this` would
-         be wrong. A heuristic pass suggested a large share might be
-         technically redundant, but spot-checking showed the heuristic itself
-         was wrong on its first three candidates, so no split is recorded
-         here. The verdict is the same at either extreme.
+      2. The rule applies, and its remedy is a refactor this layer cannot
+         support. CORRECTED after review: I first argued that "these files
+         contain zero arrow functions, so the rule's premise is absent". That
+         was wrong, and it inverted the rule. S7740 does not require an arrow
+         function to already be present. It flags the alias precisely so the
+         nested traditional function can be REWRITTEN as an arrow function
+         that captures the surrounding `this`. Zero arrows is therefore
+         evidence that the refactor has not been done, not that the rule does
+         not apply.
+         The honest statement is narrower, and being about risk rather than
+         applicability it is also the stronger one: the finding is real, and
+         complying with it means converting ES5 callbacks to arrow functions
+         across 143 sites in code with zero test coverage. `trakt.js:133`
+         shows why each site needs individual judgement rather than a sweep.
+         It aliases `this` and then reads `self` inside an `Api.request`
+         callback, so the alias is load-bearing UNTIL that callback becomes
+         an arrow function and wrong afterwards. That is a behaviour-changing
+         edit, not a rename.
+         A heuristic pass suggested a large share of the 143 might be
+         technically redundant, but spot-checking showed the heuristic was
+         wrong on its first three candidates, so no split is recorded here.
       3. Zero tests cover the layer, so a 143-site edit could not be shown to
          be behaviour-neutral.
       4. The layer is not merely dormant, it is still attracting new work,
@@ -88,8 +107,22 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       The rule is left enabled and every finding left open, because it is
       still doing useful work: there are zero S7740 findings in the live UI,
       so the same idiom written into `couchpotato/ui/` tomorrow would surface
-      as finding 144. Expiry: delete each file when its port lands
-      (UI-CLEANUP-02), which retires these findings without editing dead code.
+      as finding 144.
+      Expiry, CORRECTED after review: I first wrote "UI-CLEANUP-02", which had
+      ALREADY LANDED. It deleted the userscript embed, `clientscript.py`, the
+      four compiled bundles, `index.html` and `static/fonts/**`
+      (`specs/UI-MIGRATION.md:50-64`), and it did NOT delete these 19 files.
+      An expiry pointing at a finished task can never fire, which is exactly
+      the accepted-debt-with-no-exit the standards forbid, so it is replaced.
+      The real condition is the still-open UI migration criterion, "No
+      references to `/old` or the legacy stack remain in code or docs"
+      (`specs/UI-MIGRATION.md:69`), reached as each of the 18 audited features
+      lands in the new UI (`specs/UI-MIGRATION.md:32`).
+      Naming the gap rather than papering over it: NO task currently owns
+      deleting `couchpotato/core/**/static/`. Until one does, this expiry has
+      a condition but no owner, which is the weakest part of this disposition.
+      It is related to issue #311, where the same unreachable layer silently
+      swallowed a February 2026 feature.
       state: merged
 - [ ] T5: assess and fix `python:S1192`, duplicated string literals (72), where
       extraction aids clarity rather than just satisfying the rule, state:
