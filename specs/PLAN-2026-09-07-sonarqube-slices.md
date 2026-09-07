@@ -221,9 +221,53 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       wrong for a specific codebase, and the deciding evidence was the
       project's own enforced standard plus its own tests, not the rule's
       rationale. state: merged
-- [ ] T7: assess `python:S1172`, unused function parameters (25). Some will be
-      interface contracts that must stay; expect a split verdict, state:
-      queued (needs: T6)
+- [x] T7: assess `python:S1172`, unused function parameters (25). SPLIT
+      VERDICT as predicted, but far more lopsided than expected: 24 must stay,
+      1 fixed. That ratio is not the rule failing, it is what an entirely
+      plugin-polymorphic codebase looks like under this rule.
+      MUST STAY, verified per family rather than assumed:
+      - 6x `quality` in search providers. `providers/base.py:250` calls
+        `self._searchOnTitle(title, media, quality, results)` POSITIONALLY,
+        and 5 providers implement it. A provider that ignores `quality` still
+        has to accept it.
+      - 6x `path` in `scripts/check_test_traps.py`. Ten `check_*(path, text)`
+        functions dispatched from one place (`:1676-1684`). Trimming the six
+        that ignore `path` would force the dispatcher to know which is which.
+      - 2x in `notifications/base.py:53`. That is the base `notify()` stub,
+        dispatched as `self.notify(*args, **kwargs)` and overridden by 19
+        notifiers.
+      - 4x in `providers/base.py`: `loginSuccess(output)`,
+        `loginCheckSuccess(output)` and the `nzb_id` download hooks, all base
+        implementations overridden by providers that do read them.
+      - the remainder are the same shape: `getAllDownloadStatus(ids)` has 9
+        definitions, `correctProxy(data)` 2, `getNfoName(name, root, i)` is a
+        metadata base hook.
+      THE TWO RENAMER FINDINGS ARE NOT NOISE, AND DELETING THEM WOULD DESTROY
+      EVIDENCE. `_processGroup(group, media_folder, release_download)` at
+      `renamer/main.py:2231` never reads `release_download`, yet `scan()`
+      threads it the whole way down (`:455, :521, :577, :601`). `renamer.after`
+      and `renamer.before` appear ZERO times in that file. So the parameter is
+      the last in-code marker of where the unported event chain was meant to
+      fire, which is the known reason subtitles, trailers, notifications and
+      metadata are all silently dead. Removing it to satisfy a linter would
+      erase the signpost to a real missing feature. Related to #312.
+      `_replacementOutcome(src, dst, group)` at `:2129` ignores `src` while
+      deciding what upgrade replacement would do with that very file. Ten tests
+      pass it explicitly. Left open as a question worth answering, not a
+      parameter worth deleting: should that decision depend on the source file?
+      FIXED, 1 of 25: `_fetch_and_cache(url, cache_key, cache_key_md5,
+      use_cache, **kwargs)` in `plugins/base.py:279` took a pre-computed hash,
+      never read it, and delegated to `setCache()`, which recomputes exactly
+      the same value from `cache_key` (`:299`). Two call sites, both in that
+      file, one of which already passed `None`. Genuinely dead, and misleading:
+      a reader could reasonably think passing `None` changed caching
+      behaviour. It does not. Caching is gated by `use_cache`, which is a
+      separate parameter and works correctly. I did suspect a real caching bug
+      here and checked: there is none.
+      Proof the 9 passing cache tests are real coverage rather than decoration:
+      disabling the cache write inside that function fails
+      `test_positive_cache_timeout_still_stores_fresh_result`. Restored
+      byte-identical. state: merged
 - [ ] T8: adjudicate `python:S1542` naming convention (70) and
       `python:S3776` cognitive complexity (139) WITHOUT bulk-fixing either.
       S3776 concentrates in the renamer and scanner, which have destroyed or
@@ -244,7 +288,8 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
   assessing, raised as #311 (Trakt OAuth device flow has no reachable UI) and
   #312 (38 events registered but never fired, of which `movie.snatched` and
   `movie.downloaded` are confirmed dead). T5 merged (#313) after a rebase for a plan-file conflict. T6 assessed, all 44
-  left open, one real bug raised as #314. Next: T7, `python:S1172`.
+  left open, one real bug raised as #314. T6 merged (#315). T7 assessed: 24 kept, 1 fixed. Next: T8, the adjudication
+  with no diff, then T9's re-scan.
 
 - Tick 2, 2026-09-07. #305 and #306 merged (T1 done, plan file now on master,
   which also fixes the broken active-plan pointer at its root). T2 assessed and
