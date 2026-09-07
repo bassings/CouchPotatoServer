@@ -177,8 +177,75 @@ only one of the two return paths. That guard is T1 below.
         deprecated truthiness. Defensive rather than wrong. Low value.
       - `javascript:S4275` (1): in `updater.js`, the unserved legacy layer.
         Same disposition as T4's 143 findings.
-      NET: of 15 HIGH rules, 3 produced production fixes (and one of those,
-      T2b, then needed two further rounds: a caller-shape miss and a
+      MEDIUM TAIL STARTED. Re-scanned first against `30fad16b0`, because the
+      previous scan's line numbers no longer matched `variable.py` after three
+      merges to it, which is the staleness trap recorded earlier today.
+      Fresh totals: 1127 open, ZERO blockers, 441 MEDIUM of which 210 sit in 48
+      rules not already judged at HIGH.
+      - Accessibility cluster, `Web:S6850` (7), `Web:S6853` (4), `Web:S6847`
+        (4): ALL 15 ARE STATIC FALSE POSITIVES, and the reason is uniform. The
+        analyser cannot evaluate an Alpine binding. `wizard.html:314` reports a
+        label pointing at nothing, but the input at `:334` carries
+        `:id="'wizard-tracker-' + tracker.id + '-' + field.name"`, the exact
+        expression the label's `:for` binds to; that is the one bound pair
+        among the 61 labels fixed in A11Y-001. All four `S6847` sites are
+        `onerror` on an `<img>`, falling back to a placeholder poster, and the
+        rule is about mouse and keyboard handlers on non-interactive elements,
+        which a resource-load event is not.
+        BUT THE HEADINGS CARRY A REAL QUESTION the static rule only gestures
+        at. Four are safe: two are ternaries always yielding a literal, two
+        have explicit fallbacks. Three have none: `combined_basics_card.html:7`
+        (`group.label`), `:13` (`subGroup._subLabel`, an underscore-prefixed
+        internal field) and `settings.html:50`. If that data is ever missing
+        the heading renders EMPTY, which a screen reader announces as a heading
+        with no text. Whether it is reachable depends on the settings data
+        shape. Worth a follow-up, not a blind fix.
+        Note the correlation: these cluster in the settings templates, the
+        surface #321 established has never been scanned.
+      - `python:S8786` (15), super-linear regex: MEASURED rather than argued.
+        Five are in `scripts/check_test_traps.py`, a dev script whose input is
+        repo files. The production pair that matters is the identical
+        `r'[^[]*\[([^]]*)\]'` in `scores.py` and `searcher/main.py`, applied
+        to PROVIDER-SUPPLIED release names. Timed: an ordinary name is 0.00ms,
+        8000 unclosed brackets 124ms, 16000 of them 496ms. Growth is
+        QUADRATIC, not exponential, so the rule is right that it is
+        super-linear and wrong that it is catastrophic.
+        CORRECTED after review, and the correction matters: I measured ONE
+        call and reasoned from it, but `sceneScore()` runs PER CANDIDATE
+        (`score/main.py:66`), and a provider controls BOTH the number of
+        results and the length of each name. So the exposure is the aggregate,
+        not the single call. Measured over one search response:
+        100 results x 8000-char names is 13.9 SECONDS; 200 x 8000 is 27.5s.
+        100 results with ordinary names is 0.0000s.
+        My "needs a ~100KB name" framing understated it. You do not need one
+        enormous name, you need a hundred unremarkable-looking 8KB ones, which
+        is both more plausible and less conspicuous. That moves this from
+        "fix opportunistically" to WORTH FIXING. The fix is unchanged and
+        still cheap: a length cap on release names, far above any legitimate
+        one, costs nothing because realistic responses measure zero.
+      - `python:S8905` (16), BeautifulSoup with no parser: REAL BUT MITIGATED.
+        `lxml==6.1.2` is pinned in `requirements.txt` and the same file builds
+        the image, so the parser is deterministic today. The risk is a silent
+        one: if lxml ever fails to build on Alpine, BeautifulSoup falls back to
+        `html.parser`, which parses malformed provider HTML differently, with
+        no error. Naming the parser explicitly is a no-op today and converts
+        that silent change into an immediate failure. Cheap, worth doing.
+      REMAINING MEDIUM: 164 findings in ~43 rules, dominated by
+      `typescript:S9332` (21, networkidle waits in tests, same family as the
+      S2925 fixed waits), `python:S5806` (14, builtin shadowing),
+      `python:S1515` (13), `python:S1110` (12). Style and idiom, assessed as a
+      group rather than individually unless something stands out.
+      NET: of 15 HIGH rules, TWO produced production fixes: `python:S5996`
+      via #320 and `Web:S7927` via #322. NOT `Web:S6853`, which is the label
+      `for`/`id` association rule, assessed in the MEDIUM tail above as a
+      static false positive and never touched. I introduced that conflation
+      IN THE EDIT THAT WAS FIXING THE PREVIOUS MISCOUNT, which is the third
+      tally error in this one entry. CORRECTED after review, for the SECOND
+      time in this plan: I counted `python:S3516` as a third,
+      but it is a BLOCKER, a separate severity, and its change added tests
+      rather than fixing code. Folding the blocker into the HIGH tally is the
+      same category error the reviewer caught earlier, made again. (The S5996
+      fix then needed two further rounds: a caller-shape miss and a
       `localhost` substring hole of exactly the class it had just closed), 1
       was rejected
       because complying would risk a regression, 1 was moot, and the rest are
@@ -299,5 +366,7 @@ only one of the two return paths. That guard is T1 below.
       `<dialog>` solves that half properly, state: queued (needs: T6)
 - [ ] T8: five films identified earlier today that are still not added to the
       library. Data task, no PR, state: queued (needs: T7)
+
+status: blocked-on-human: proceed with the T3 production promotion now, or hold it until the owner is around? Fourteen commits are unreleased including the BUG-018 scanner fix and the Docker CVE pin. The owner agreed to this promotion earlier, but review has since caught nine errors in this session's work, three in work already declared verified and two after merge, and a promotion is the one task here that a later commit cannot undo. T4 and the release-name length cap are both available and touch nothing in production.
 
 ## Conductor log
