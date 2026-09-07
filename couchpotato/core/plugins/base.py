@@ -267,16 +267,16 @@ class Plugin:
                         cache = Env.get('cache').get(cache_key_md5)
                         if cache:
                             return cache
-                    return self._fetch_and_cache(url, cache_key, cache_key_md5, use_cache, **kwargs)
+                    return self._fetch_and_cache(url, cache_key, use_cache, **kwargs)
                 finally:
                     lock.release()
                     self._remove_cache_lock(cache_key_md5)
             else:
-                return self._fetch_and_cache(url, cache_key, None, use_cache, **kwargs)
+                return self._fetch_and_cache(url, cache_key, use_cache, **kwargs)
 
         return '' if use_cache else None
 
-    def _fetch_and_cache(self, url, cache_key, cache_key_md5, use_cache, **kwargs):
+    def _fetch_and_cache(self, url, cache_key, use_cache, **kwargs):
         """Fetch URL data and optionally cache the result."""
         try:
             cache_timeout = 300
