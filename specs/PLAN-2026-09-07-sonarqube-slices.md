@@ -268,14 +268,105 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       disabling the cache write inside that function fails
       `test_positive_cache_timeout_still_stores_fresh_result`. Restored
       byte-identical. state: merged
-- [ ] T8: adjudicate `python:S1542` naming convention (70) and
-      `python:S3776` cognitive complexity (139) WITHOUT bulk-fixing either.
-      S3776 concentrates in the renamer and scanner, which have destroyed or
-      nearly destroyed data three times in one session; restructuring them to
-      satisfy a metric is the trade the standards warn against. Deliverable is
-      a recorded decision per cluster, not a diff, state: queued (needs: T7)
-- [ ] T9: re-scan, and record the honest before/after with what was fixed,
-      dismissed and deliberately left open, state: queued (needs: T8)
+- [x] T8: adjudicate `python:S1542` naming (70) and `python:S3776` cognitive
+      complexity (139). NO DIFF, by design. Two different verdicts, and the
+      second is not the one the task anticipated.
+      S1542, camelCase function names, 70 findings: REJECT, and the number
+      that decides it is the blast radius. Nine of the seventy names alone
+      account for 1232 call sites (`fireEvent` 411, `addEvent` 262, `addApiView`
+      156, `toUnicode` 136, `tryInt` 108, `splitString` 63, `getIdentifier` 39,
+      `getTitle` 35, `fireEventAsync` 22). Renaming them is a four-figure
+      diff with zero behaviour change, across a fork whose upstream convention
+      is camelCase, which would make every future upstream comparison harder.
+      It would also break the plugin API for anyone running a custom plugin.
+      And, concretely from this same plan: T5's event-wiring audit matches on
+      the bare names `addEvent`/`fireEvent`/`fireEventAsync`, so renaming them
+      silently blinds that guard, which is exactly the defect T5 spent two fix
+      rounds closing.
+      S3776, cognitive complexity, 139 findings: THE METRIC IS RIGHT AND THE
+      REMEDY IS WRONG. This is the more interesting half. The plan predicted
+      "restructuring them to satisfy a metric is the trade the standards warn
+      against", which stands, but understated the finding. Re-measured against
+      the fresh scan, the eight most complex functions are very nearly a list
+      of every serious incident in this project's history:
+
+      | complexity | function | what it did |
+      |---|---|---|
+      | 189 | `database.py:487 migrate` | the migration itself |
+      | 137 | `folder_scanner.py:81 scan` | library scan |
+      | 132 | `manage.py:93 updateLibrary` | BUG-017, deletes media, releases, library entries, watch state |
+      | 132 | `sqlite_adapter.py:658 _query_index` | two critical bugs, caused duplicate entries and corrupt data after migration |
+      | 131 | `__init__.py:1192 create_app` | app wiring |
+      | 110 | `renamer/scanner.py:18 checkSnatched` | renamer path |
+      | 88 | `movie/searcher.py:146 single` | search |
+      | 81 | `folder_scanner.py:400 determineMedia` | BUG-018, three data-loss designs in one session |
+
+      That correspondence is not a coincidence and it is not noise. The metric
+      is an accurate risk map of this codebase, independently confirmed by
+      incidents that happened before anyone looked at the metric.
+      So the disposition is NOT "complexity does not matter here". It is that
+      the rule's implied remedy, restructure until the number falls, is the
+      most dangerous possible response: it means editing the delete path, the
+      migration and the scanner for no behaviour change, in code where this
+      session alone produced three designs that would have destroyed a user's
+      library. The correct response to "this function is dangerous" is
+      characterisation tests around its current behaviour, then extraction
+      driven by a real need, one function at a time. Recorded as the ranked
+      list above, which is the actionable form of these 139 findings.
+      state: merged
+- [x] T9: re-scan and record the honest before/after. Scan run against
+      `18c455238`. The project had NOT been analysed since 2026-08-10, so every
+      line number in the old data described a tree a month stale. That is a
+      finding in its own right, see below.
+
+      | | before | after | delta |
+      |---|---|---|---|
+      | total open | 1267 | 1145 | -122 |
+      | critical | 246 | 216 | -30 |
+      | major | 692 | 600 | -92 |
+      | minor | 326 | 326 | 0 |
+
+      | rule | before | after | disposition |
+      |---|---|---|---|
+      | `python:S9073` | 59 | 0 | all fixed |
+      | `typescript:S2925` | 80 | 48 | 32 fixed |
+      | `python:S1192` | 72 | 42 | 21 event names extracted |
+      | `python:S1172` | 25 | 24 | 1 dead parameter removed |
+      | `javascript:S7740` | 143 | 143 | left open, dead layer |
+      | `python:S3776` | 139 | 139 | left open, deliberately |
+      | `python:S1542` | 70 | 70 | left open |
+      | `javascript:S1121` | 57 | 57 | left open, dead layer |
+      | `Web:S6819` | 44 | 44 | left open, complying would regress |
+
+      NOTHING WAS DISMISSED, RESOLVED OR ACCEPTED TO MOVE A NUMBER, AND NO RULE
+      WAS DISABLED. About a 10 percent reduction is the honest yield from
+      working through roughly 450 findings. Marking the 143 dead-code findings
+      alone would have taken the total under 1000 in one action and made the
+      dashboard look twice as good with the codebase unchanged.
+      S1192 fell by 30 rather than the predicted 21, because a finding covers a
+      literal duplicated N times, so clearing all instances of 21 literals
+      closes more findings than names extracted.
+      TWO METHOD FINDINGS worth more than the counts:
+      1. A finding's line number describes the commit last analysed, and the
+         server never says which commit that was. `renamer/main.py:2129` in the
+         old data is a blank line today; walking back from it lands in
+         `_warnAboutTheDeadSetting` while the finding belongs to
+         `_replacementOutcome` at 2130. A per-site dismissal written from that
+         would have justified unrelated code. Re-scan, re-fetch, then act.
+         `make sonar` belongs in the merge flow so this cannot recur.
+      2. `/api/issues/search` facets return only the top 100 rules, so a
+         count-of-one rule can appear to be new when it merely re-entered the
+         list. `Web:ImgWithoutAltCheck` looked like a regression I had caused
+         and was created 2026-08-08. It is also a genuine false positive: the
+         flagged `<img>` at `base.html:404` is inside a Jinja comment
+         explaining why `/logout/` must be POST-only.
+      THE REAL OUTPUT OF THIS PLAN WAS NOT THE 122. It was four user-facing
+      defects found by reading the code properly while assessing findings that
+      mostly did not need fixing: #311 Trakt OAuth has no reachable UI, #312
+      thirty-eight events registered and never fired including
+      `movie.snatched` and `movie.downloaded`, #314 the folder browser
+      announces a listbox it does not implement, and the `app.test` self-tests
+      that have not run since the FastAPI migration. state: merged
 
 ## Conductor log
 
@@ -288,8 +379,8 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
   assessing, raised as #311 (Trakt OAuth device flow has no reachable UI) and
   #312 (38 events registered but never fired, of which `movie.snatched` and
   `movie.downloaded` are confirmed dead). T5 merged (#313) after a rebase for a plan-file conflict. T6 assessed, all 44
-  left open, one real bug raised as #314. T6 merged (#315). T7 assessed: 24 kept, 1 fixed. Next: T8, the adjudication
-  with no diff, then T9's re-scan.
+  left open, one real bug raised as #314. T6 merged (#315). T7 assessed: 24 kept, 1 fixed. T7 merged (#316). T8 and T9 complete: 1267 to 1145 open findings, nothing
+  dismissed, and the plan's real yield was four user-facing bugs. PLAN COMPLETE.
 
 - Tick 2, 2026-09-07. #305 and #306 merged (T1 done, plan file now on master,
   which also fixes the broken active-plan pointer at its root). T2 assessed and
