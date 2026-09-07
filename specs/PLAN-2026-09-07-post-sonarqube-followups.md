@@ -275,42 +275,27 @@ only one of the two return paths. That guard is T1 below.
       classified as LOCAL. That predates all of this and no scanner reported
       it. Verified on master across 25 cases including the caller shape.
       state: merged #320
-- [ ] T3: production promotion. Fourteen commits have merged since v3.77.0 and
-      none are in production, including BUG-018, where the scanner filed every
-      remake under the original film, and the Docker CVE pin.
-      CORRECTED AFTER REVIEW. The first draft said "backup.sh first, verify the
-      snapshot exists and is non-empty". That is not the documented procedure
-      and it is not sufficient. Three separate findings, all real:
-      1. Use `./scripts/backup.sh --retain 14`, NOT the bare form.
-         `docs/development-process.md:751-756`: without retention, every risky
-         promotion adds one more full database plus settings snapshot, forever,
-         to the volume that also holds the live database. That is a slow way to
-         reproduce the disk-full failure the snapshots exist to survive.
-      2. "Exists and non-empty" is exactly the check that passes on a useless
-         snapshot. `docs/development-process.md:758-775` requires three things:
-         `PRAGMA integrity_check` must print `ok`; `PRAGMA foreign_key_check`
-         must return NO ROWS, because integrity_check does not check foreign
-         keys and this schema declares them, so an orphaned row passes the
-         first check and fails recovery; and `config.ini` must be readable,
-         because `backup.sh` deliberately WARNS and exits 0 when it cannot find
-         the settings file. Both PRAGMAs can pass on a snapshot containing no
-         settings at all, and the database alone does not restore a working
-         install. If `sqlite3` is absent on the host, use the Python
-         interpreter fallback the script itself uses.
-      3. Record what is running BEFORE restarting, or there is no rollback
-         target. `docs/development-process.md:391-418`: the host pulls
-         `:latest` and promotion moves that tag, so the old target cannot be
-         reconstructed afterwards. Capture BOTH
-         `docker inspect couchpotato --format '{{.Config.Image}} {{.Image}}'`
-         and `docker exec couchpotato cat /app/version.py`. NOT
-         `printenv CP_VERSION`, which is an ARG rather than an ENV and is
-         absent from the running container, and never a grep for /version/i,
-         which returns PYTHON_VERSION and hands you the interpreter version as
-         a rollback tag, silently and plausibly, mid-incident.
-      Only then promote the tested beta byte-for-byte. Owner has agreed to THIS
-      promotion; a later one for the fixes below needs its own agreement,
-      state: queued
-
+- [~] T3: production promotion. REMOVED FROM THIS PLAN by the owner's
+      decision, 2026-09-08. Not cancelled and not completed: the fourteen
+      commits merged since v3.77.0 remain unreleased, including BUG-018, where
+      the scanner filed every remake under the original film, and the Docker
+      CVE pin. It will be released separately rather than as a task of this
+      plan, and nothing else here depends on it.
+      The corrected procedure is preserved below because it was wrong in three
+      ways in the first draft and the corrections are the useful part:
+      `./scripts/backup.sh --retain 14`, NOT the bare form, or every promotion
+      adds another full database copy to the volume holding the live database
+      (`development-process.md:751-756`). Verify the snapshot with `PRAGMA
+      integrity_check` printing `ok`, `PRAGMA foreign_key_check` returning NO
+      rows, and a readable `config.ini`, because `backup.sh` warns and exits 0
+      when settings are absent, so both PRAGMAs can pass on a snapshot with no
+      settings in it (`:758-775`). Capture BOTH `docker inspect couchpotato
+      --format '{{.Config.Image}} {{.Image}}'` and `docker exec couchpotato cat
+      /app/version.py` BEFORE anything moves, since the host pulls `:latest`
+      and the old target cannot be reconstructed afterwards (`:391-418`). Not
+      `printenv CP_VERSION`, an ARG rather than an ENV and absent from the
+      running container, and never a grep for /version/i, which hands you the
+      interpreter version as a plausible rollback tag mid-incident.
 - [ ] T4: make SonarQube staleness visible. REFRAMED AFTER REVIEW, because the
       first draft was unbuildable. It said "run `make sonar` automatically after
       a merge". Every job under `.github/workflows/**` runs on GitHub-hosted
@@ -366,7 +351,5 @@ only one of the two return paths. That guard is T1 below.
       `<dialog>` solves that half properly, state: queued (needs: T6)
 - [ ] T8: five films identified earlier today that are still not added to the
       library. Data task, no PR, state: queued (needs: T7)
-
-status: blocked-on-human: proceed with the T3 production promotion now, or hold it until the owner is around? Fourteen commits are unreleased including the BUG-018 scanner fix and the Docker CVE pin. The owner agreed to this promotion earlier, but review has since caught nine errors in this session's work, three in work already declared verified and two after merge, and a promotion is the one task here that a later commit cannot undo. T4 and the release-name length cap are both available and touch nothing in production.
 
 ## Conductor log
