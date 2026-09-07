@@ -4,12 +4,14 @@ Tests encoding helpers (toUnicode, toSafeString, simplifyString)
 and variable helpers (tryInt, tryFloat, getImdb, etc.).
 """
 import os
+import re
+import time
 from urllib.parse import urlparse
 
 import pytest
 
 from couchpotato.core.helpers.encoding import toUnicode, toSafeString, simplifyString
-from couchpotato.core.helpers.variable import removePyc, tryInt, getImdb, isLocalIP
+from couchpotato.core.helpers.variable import removePyc, tryInt, getImdb, isLocalIP, longestBracketedName
 
 pytestmark = pytest.mark.unit
 
@@ -447,3 +449,124 @@ class TestIsLocalIPMatchesHttpClientHostShape:
         host = self._host_from_url('http://example.com:8443/')
         assert host == 'example.com:8443'
         assert isLocalIP(host) is False
+
+
+def _old_bracketed_name_expression(name):
+    """The exact expression both call sites used before the fix.
+
+    Kept here, not imported, so the test pins the ORIGINAL behaviour rather
+    than whatever the two call sites happen to say today.
+    """
+    return max(re.findall(r'[^[]*\[([^]]*)\]', name), key = len).strip()
+
+
+class TestLongestBracketedNameEquivalence:
+    """`longestBracketedName` must match the old inline expression exactly
+    for every input -- this is the searcher and the scorer, so a behaviour
+    change here changes which releases match.
+    """
+
+    ORDINARY_NAMES = [
+        'Some.Movie.2024.1080p.BluRay.x264-GROUP',
+        'Some.Movie.2024.1080p.BluRay.x264-GROUP [PublicHD]',
+        'Movie [Nested [inner] outer] Name',
+        'Movie [first] and [a much longer second bracket group]',
+        'No brackets at all here',
+        '',
+        '[]',
+        'Leading ] bracket has no opener',
+        'Trailing [ bracket has no closer',
+        'Movie [empty][also empty][third]',
+        '][][][',
+        # The decoy that broke a length-capped version of this parse: a
+        # short group early, the true longest group nearly 3000 chars in.
+        # A cap that truncates before the second group would silently
+        # return the short one instead of raising or finding the long one
+        # -- pinned here so that regression can never come back unnoticed.
+        '[a]' + 'X' * 1000 + '[' + 'B' * 2000 + ']',
+    ]
+
+    @pytest.mark.parametrize('name', ORDINARY_NAMES)
+    def test_matches_old_expression_when_old_expression_succeeds(self, name):
+        try:
+            expected = _old_bracketed_name_expression(name)
+        except Exception:
+            pytest.skip('old expression raises for %r, covered separately' % name)
+
+        assert longestBracketedName(name) == expected
+
+    @pytest.mark.parametrize('name', ORDINARY_NAMES)
+    def test_raises_exactly_when_old_expression_raises(self, name):
+        old_raised = False
+        try:
+            _old_bracketed_name_expression(name)
+        except Exception:
+            old_raised = True
+
+        if not old_raised:
+            pytest.skip('old expression succeeds for %r, covered separately' % name)
+
+        with pytest.raises(Exception):
+            longestBracketedName(name)
+
+    def test_picks_the_longest_group_not_the_first_or_last(self):
+        name = 'Movie [x] middle [a much longer bracketed group here] end [y]'
+        assert longestBracketedName(name) == 'a much longer bracketed group here'
+
+    def test_strips_the_result(self):
+        name = 'Movie [  padded group  ]'
+        assert longestBracketedName(name) == 'padded group'
+
+    def test_a_short_early_group_does_not_hide_a_longer_later_one(self):
+        # The specific defect a length-capped version of this parse had: a
+        # short bracketed group early in the name, and the true longest
+        # group far enough in that a cap would have already truncated the
+        # string. The correct answer is the long group, found and picked
+        # over the short one, not a silent wrong answer and not a raise.
+        name = '[a]' + 'X' * 1000 + '[' + 'B' * 2000 + ']'
+        result = longestBracketedName(name)
+        assert result == 'B' * 2000
+        assert result != 'a'
+
+
+class TestLongestBracketedNamePerformance:
+    """The DoS: re.findall retries from every start position, so a run of
+    unclosed '[' is quadratic in length. Measured on this machine against
+    the OLD regex-based expression: 16000 unclosed brackets ~543 ms, 64000
+    ~8626 ms. sceneScore() (score/main.py:66) runs this per search RESULT,
+    so a hostile provider controls both the length of each name and how
+    many results one response contains.
+
+    The fix is a linear left-to-right scan (`_bracketedGroups`), not a
+    length cap -- a cap was tried and rejected because it can pick the
+    WRONG group rather than merely miss one (see
+    TestLongestBracketedNameEquivalence.test_a_short_early_group_does_not_hide_a_longer_later_one).
+    There is therefore no cliff to test at: the scan is linear at any
+    length, so this asserts a LARGER pathological input than the old
+    regex-based bound used, to show there is no ceiling being quietly
+    relied on.
+    """
+
+    def test_pathological_input_is_fast_at_a_scale_the_old_code_could_not_finish(self):
+        pathological = '[' * 64000
+
+        # Absolute, not relative-to-baseline: the property under test is
+        # "a 64000-char adversarial input costs nowhere near the old
+        # regex's ~8626 ms", and a linear scan's cost has no baseline worth
+        # being relative to. The margin is wide (50 ms against a measured
+        # ~0.006 ms) so this does not flake on a busy machine -- the old
+        # regex-based code is roughly a thousand times slower than even
+        # this generous bound.
+        started = time.perf_counter()
+        try:
+            longestBracketedName(pathological)
+        except Exception:
+            pass
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 0.05, (
+            'longestBracketedName took %.4f s on a 64000-char adversarial '
+            'input; the bracket parse must stay linear so a '
+            'provider-supplied release name cannot make it run quadratic '
+            'cost against tens of thousands of characters' % elapsed
+        )

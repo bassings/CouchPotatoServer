@@ -5,7 +5,7 @@ from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.event_names import MEDIA_TYPES, SCANNER_NAME_YEAR, SEARCHER_PROTOCOLS
 from couchpotato.core.helpers.encoding import simplifyString
-from couchpotato.core.helpers.variable import splitString, removeEmpty, removeDuplicate
+from couchpotato.core.helpers.variable import splitString, removeEmpty, removeDuplicate, longestBracketedName
 from couchpotato.core.helpers.protocol import sort_by_protocol_preference
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.searcher.base import SearcherBase
@@ -165,7 +165,7 @@ class Searcher(SearcherBase):
         except Exception: pass
 
         # Match longest name between []
-        try: check_names.append(max(re.findall(r'[^[]*\[([^]]*)\]', check_name), key = len).strip())
+        try: check_names.append(longestBracketedName(check_name))
         except Exception: pass
 
         for check_name in removeDuplicate(check_names):
