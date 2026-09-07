@@ -364,6 +364,40 @@ class TestIsLocalIPWithPortAndBrackets:
         assert isLocalIP('127.0.0.1.evil.com') is False
 
 
+class TestIsLocalIPLocalhostIsExactNotSubstring:
+    """`localhost` must match the literal hostname, never as a substring.
+
+    This was the SAME defect as the start-anchored IPv4 alternatives, sitting
+    one clause below them, and fixing only those left it open. A hostname is
+    attacker-chosen and `isLocalIP` decides which hosts are exempt from being
+    disabled after repeated failures, so anything containing the word must not
+    inherit that exemption.
+    """
+
+    def test_the_literal_hostname_is_local(self):
+        assert isLocalIP('localhost') is True
+
+    def test_the_literal_hostname_with_a_port_is_local(self):
+        assert isLocalIP('localhost:9117') is True
+
+    def test_a_scheme_prefixed_localhost_is_local(self):
+        assert isLocalIP('http://localhost:8080') is True
+
+    @pytest.mark.parametrize('host', [
+        'localhost.evil.com',
+        'evil-localhost.com',
+        'notlocalhost.net',
+        'my.localhost.attacker.io',
+        'localhost.attacker.io:443',
+    ])
+    def test_a_hostname_merely_containing_localhost_is_not_local(self, host):
+        assert isLocalIP(host) is False, (
+            '%r contains "localhost" but is an ordinary registerable hostname. '
+            'Treating it as local would exempt an attacker-chosen host from '
+            'the failure-disable path.' % host
+        )
+
+
 class TestIsLocalIPMatchesHttpClientHostShape:
     """http_client.py:203 builds the host string isLocalIP() actually
     receives from urlparse(), not by hand. Every isLocalIP test above

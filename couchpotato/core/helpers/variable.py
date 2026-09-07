@@ -249,10 +249,19 @@ def isLocalIP(ip):
         if port_part.isdigit() and host_part in _IPV6_LOOPBACK_FORMS:
             core = host_part
 
+    # `core == 'localhost'`, NOT `'localhost' in core`. The substring form was
+    # the same defect as the start-anchored IPv4 alternatives it sat beside,
+    # and closing only those left this one open: it exempted ANY hostname
+    # containing the word, so `localhost.evil.com`, `evil-localhost.com` and
+    # `notlocalhost.net` all read as local. A hostname is attacker-chosen, and
+    # this function decides which hosts skip being disabled after repeated
+    # failures, so it must match the literal name and nothing around it.
+    # `core` has already had any scheme prefix and trailing `:<port>` removed
+    # above, so `localhost:9117` still resolves here.
     return (
         _IPV4_LOCAL_RE.match(core) is not None
         or core in _IPV6_LOOPBACK_FORMS
-        or 'localhost' in core
+        or core == 'localhost'
     )
 
 
