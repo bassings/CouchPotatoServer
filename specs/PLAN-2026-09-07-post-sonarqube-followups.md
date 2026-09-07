@@ -65,7 +65,125 @@ only one of the two return paths. That guard is T1 below.
       before fixing, fix what should be fixed, leave the rest open with a
       recorded reason and an expiry, dismiss only genuine false positives,
       state: queued (needs: T1)
-- [ ] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
+      PROGRESS. COUNT CORRECTED after review: the BLOCKER is its own
+      severity, not one of the 15 HIGH rules, and counting it as one made
+      every tally here off by one. Two produced production
+      fixes, four produced evidenced "real but not worth acting on" verdicts.
+      - `python:S3516` (1, BLOCKER): FALSE POSITIVE, dismissed, and the guard
+        that makes the dismissal safe landed first as #319. Zero blockers now.
+      - `python:S5996` (2): FIXED as #320, and it was THREE bugs rather than
+        the one reported. See T2b.
+      - `Web:S7927` (3): FIXED as #322. Real WCAG 2.5.3 failures in the live
+        settings UI. The bigger finding is #321: the settings accessibility
+        scan only ever sees the ACTIVE tab, because `settings.html` renders
+        only `currentGroups`, so an unclicked tab contributes NO DOM at all.
+        Measured: the axe rule against the page as loaded reports 0
+        violations; after clicking to the Library tab it immediately flags a
+        real failure that had been sitting there. Most of the settings surface
+        has never been scanned by anything.
+      - `python:S8904` (6): SUPERSEDED BY WORK THAT ALREADY EXISTED, and my
+        first verdict here was wrong in the same way twice over.
+        I assessed ONE site, `filmweb.py`, found it contained by the API
+        dispatcher, and extrapolated "real but contained" to all six. Two
+        errors. The six do not share a route: `filmweb.py` and
+        `filmstarts.py` reach the caller through `userscript.add_via_url`,
+        which is wrapped, but `awesomehd.py` goes through the searcher and is
+        not. And a proper per-site assessment ALREADY EXISTED at
+        `specs/REMEDIATION-2026-08.md:1643-1679`, which I never looked for
+        before writing a worse one.
+        That assessment is the record. It checked each site: THREE are real
+        and unguarded (`awesomehd.py:40`, `filmweb.py:25`,
+        `filmstarts.py:26`), two are guarded by an enclosing condition the
+        rule did not follow (`awesomehd.py:37`, `bithdtv.py:83`), and one is
+        tolerated because its own try/except leaves the parse continuing
+        (`thepiratebay.py:71`). It also found a site the scan never flagged,
+        `filmstarts.py:21`, taking `table` from an unguarded `find` two lines
+        above. Its impact call is the right one: these are provider scrapers
+        parsing a third party's markup, and the searcher tolerates a provider
+        raising, so the blast radius is a dead provider rather than a crashed
+        scan. Critical by rule, not urgent by impact.
+        THE PROCESS LESSON, which cost more than the finding: grep `specs/`
+        for a rule ID before assessing it. This is the second time today I
+        assessed one instance and generalised to the rule; the first was
+        claiming `movie.snatched` and `movie.downloaded` were dead.
+
+      - `python:S5797` (2): NOISE. `while True and not self.shuttingDown()` is
+        provably identical to `while not self.shuttingDown()`. Redundant rather
+        than wrong, and the file is `folder_scanner.py`, which has a bad
+        history, so a no-op edit there buys nothing.
+      - `python:S1143` (2): REAL SMELL, NOT A CRASH. A `return` inside
+        `finally` in `synology.py` swallows in-flight exceptions including
+        KeyboardInterrupt. I suspected an UnboundLocalError on the error path
+        and checked: `response` is initialised before the `try` in both cases,
+        so there is no crash. Worth tidying, not urgent.
+      ALL 15 HIGH RULES NOW ASSESSED. CORRECTED after review: an earlier
+      version of this line claimed that while listing only FOURTEEN. The
+      missing one was `javascript:S3776`, which is the LARGEST HIGH rule by
+      count, so the claim of completeness was wrong in the least excusable
+      direction. Assessed below rather than quietly renumbering.
+      - `javascript:S3776` (7): SPLIT. Three are in the unserved legacy layer
+        (`movie.js:188`, `list.js:648`, `wizard.js:117`) and take T4's
+        disposition. Four are in the LIVE new UI:
+        `settings/scripts.html:231, :293, :423` at complexity 19, 29 and 17,
+        and `wizard.html:1168` at complexity 94.
+        Same verdict as `python:S3776` in the previous plan, and for the same
+        reason: the metric is an accurate risk map and its implied remedy,
+        restructure until the number falls, is the wrong response. The
+        difference here is that the live four have real E2E coverage, including
+        the wizard label tests added earlier today, so an extraction driven by
+        a genuine need could be verified rather than hoped at. The 94 in the
+        first-run wizard is the one to look at first if anyone does.
+      The remaining nine:
+      - `python:S1186` (6): base-class stubs, `buildUrl`, `search`, `doUpdate`,
+        `getFiles`, all meant to be overridden. The rule wants a comment
+        explaining the emptiness, which is fair and cosmetic. Fix when next in
+        those files.
+      - `python:S5779` (5): three are in `couchpotato/simple_healthcheck.py`, a
+        PYTHON 2 unittest module shipped inside the application package,
+        referenced by nothing, while the real Docker healthcheck is an inline
+        urllib one-liner (`Dockerfile:155`). Deleting it looks obvious and is
+        BLOCKED: an earlier session recorded that it is the only referrer to a
+        deprecated endpoint and its removal waits on AC-OPS-12's production
+        grep. So the actionable item is that grep, not the deletion. One is in
+        a test. The last, `browser.py:158`, uses `assert` as control flow,
+        which would vanish under `python -O` and report every Windows file as
+        hidden. I called that a live bug; it is not. There is no `-O` anywhere
+        in the Dockerfile, compose files or Makefile, so it is latent only.
+      - `javascript:S3735` (1): REJECT, and complying would risk a real
+        regression. `suggestions.html:214` is `void el.offsetHeight;` with the
+        comment "force the pending style/layout flush". That is the canonical
+        idiom for forcing a synchronous reflow before a transition, and the
+        `void` is what stops a minifier discarding an apparently useless
+        property read. The rule is wrong here.
+      - `python:S8415` (1): MOOT. It asks for a 403 to be documented in the
+        `responses` parameter, but `couchpotato/__init__.py:1208` constructs
+        `FastAPI(docs_url=None, redoc_url=None, openapi_url=None)`, so no
+        schema is served at all. The parameter would document something nobody
+        can fetch.
+      - `typescript:S5845` (1): REAL, but it points at the wrong file. The test
+        at `category-editor.spec.ts:90` asserts `form.id` is numeric `0`, which
+        is correct: `category-editor.js:30` uses `?? ''` DELIBERATELY so a
+        numeric `_id=0` survives. The JSDoc at `:24` says `id: string`, and
+        that is the lie. Fix the annotation, not the test.
+      - `python:S6903` (1): REAL and dated. `putio/main.py:99` uses
+        `datetime.utcnow()`, deprecated on Python 3.12+ and this project runs
+        3.14. It currently works, since both sides of the comparison are naive
+        UTC, but it is on a removal path.
+      - `python:S8520` (1): correct but tiny. `sum(..., [])` to flatten
+        subtitle languages is quadratic over a handful of items.
+      - `python:S5727` (1): `itunes.py:44` checks `data is not None` after
+        `XMLTree.fromstring`, which never returns None, so it is always true.
+        It is also the documented ElementTree idiom, since Elements have
+        deprecated truthiness. Defensive rather than wrong. Low value.
+      - `javascript:S4275` (1): in `updater.js`, the unserved legacy layer.
+        Same disposition as T4's 143 findings.
+      NET: of 15 HIGH rules, 3 produced production fixes (and one of those,
+      T2b, then needed two further rounds: a caller-shape miss and a
+      `localhost` substring hole of exactly the class it had just closed), 1
+      was rejected
+      because complying would risk a regression, 1 was moot, and the rest are
+      real-but-low-value or blocked on something else. Next: the MEDIUM tail.
+- [x] T2b: `isLocalIP()` recognises neither IPv6 loopback form. RAISED IN
       REVIEW: the first draft described this defect in the PR body and then
       never scheduled it, so it would have been lost. TWO bugs, and the second
       is the one that matters: the regex is a JavaScript literal pasted into
@@ -84,7 +202,12 @@ only one of the two return paths. That guard is T1 below.
       local service almost always has an explicit port. All 15 tests passed
       because every one used a hand-written bare address, so the suite was
       green while the real path stayed broken. Knowing where the boundary was
-      did not help; nothing tested ACROSS it. state: in-flight, fix round 2
+      did not help; nothing tested ACROSS it. MERGED as #320 after two rounds. Round two found a THIRD bug while
+      writing the required must-stay-False cases: the IPv4 alternatives were
+      only start-anchored, so `127.0.0.1.evil.com`, a registerable domain, was
+      classified as LOCAL. That predates all of this and no scanner reported
+      it. Verified on master across 25 cases including the caller shape.
+      state: merged #320
 - [ ] T3: production promotion. Fourteen commits have merged since v3.77.0 and
       none are in production, including BUG-018, where the scanner filed every
       remake under the original film, and the Docker CVE pin.
