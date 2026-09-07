@@ -27,10 +27,17 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
 
 ## Tasks
 
-- [ ] T1: `typescript:S2925` fixed waits, in the two files already touched (32
-      of 80), state: awaiting-ci #305
-- [ ] T2: assess and fix `javascript:S1121`, assignments inside sub-expressions
-      (57). Genuinely error-prone; expect mostly fix, state: queued
+- [x] T1: `typescript:S2925` fixed waits, in the two files already touched (32
+      of 80), state: merged #305
+- [x] T2: `javascript:S1121`, assignments inside sub-expressions (57), state:
+      merged #307. LEFT OPEN, RECORDED, not fixed. My prior ("expect mostly
+      fix") was wrong and the evidence overturned it: all 57 are one MooTools
+      builder-chain shape, none in a boolean condition so the rule's actual
+      hazard does not apply, and the code is DEAD (clientscript.py deleted by
+      UI-CLEANUP-02; no route, template or config references any of the 12
+      files; the one grep hit is a code comment). Zero tests on that layer, so
+      a 57-site rewrite could not be proven behaviour-neutral. Expiry: delete
+      each file when its port lands.
 - [ ] T3: assess and fix `python:S9073`, composite assertions in tests (59).
       Splitting them gives better failure messages, which this repo has needed
       repeatedly today, state: queued (needs: T2)
@@ -56,6 +63,19 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       dismissed and deliberately left open, state: queued (needs: T8)
 
 ## Conductor log
+
+- Tick 2, 2026-09-07. #305 and #306 merged (T1 done, plan file now on master,
+  which also fixes the broken active-plan pointer at its root). T2 assessed and
+  merged as #307 with a LEFT OPEN disposition, not a fix: see the task line for
+  the evidence. Fix rounds on any task: 0. Two corrections this tick, both
+  mine. First, I delegated T2 into the SHARED checkout instead of a worktree,
+  so its branch switch removed the plan file from the working tree and the
+  Stop hook blocked me: the contract says worktree for exactly this reason and
+  three sessions share that directory. T3 is running in
+  /Volumes/Storage/home/scott.b/repos/.wt-sonar-s9073 instead. Second, a
+  memory note of mine asserted the legacy asset layer was still live; verified
+  in the repo, it is not, and the note is corrected. Armed: T3 implementer.
+  Next wake expects a shape-by-shape assessment of python:S9073.
 
 - Tick 1, 2026-09-07. First invocation, running under /loop dynamic pacing.
   Armed `.claude/active-plan`. Reconciled by measurement rather than memory:
