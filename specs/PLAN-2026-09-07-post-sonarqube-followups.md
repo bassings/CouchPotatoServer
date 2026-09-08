@@ -416,7 +416,18 @@ only one of the two return paths. That guard is T1 below.
       registered API views whose only caller is `trakt.js`, which nothing
       serves. Anyone configuring Trakt today cannot complete authorisation.
       Port the control into `couchpotato/ui/`, or retire the endpoints if the
-      feature is not wanted, state: queued (needs: T5)
+      feature is not wanted.
+      BUILT AS A BESPOKE PARTIAL, not a mode on the shared `buttonField`
+      helper: that helper is single-shot (fetch, show a message, refresh) and
+      this flow needs a start call followed by a bounded poll loop with its
+      own expiry and a waiting state in between.
+      The `needs: T5` this entry carried is DROPPED, and it was never real.
+      T5 is a test guard over event wiring and has no bearing on whether a
+      settings control can be built. I worked T6 first without noticing the
+      plan said I could not, so the order was right and the declaration was
+      wrong. Second phantom dependency in this plan after T7's, both written
+      down and never checked.
+      state: pr-open
 - [x] T7: DONE, merged as #329. Issue #314, the folder browser announced `role="listbox"` and keeps
       none of it: no arrow keys, no `aria-selected`, no
       `aria-activedescendant`, every folder its own tab stop. Remove the ARIA
@@ -436,3 +447,39 @@ only one of the two return paths. That guard is T1 below.
       library. Data task, no PR, state: queued (needs: T7)
 
 ## Conductor log
+
+- 2026-09-08 T2/T4/T7 closeout merged as #331. Five review findings, all mine,
+  the largest being a data-loss claim that was not one: `deleteView` takes
+  `type` into `**kwargs` and never reads it, so the late-bound closure cannot
+  route a show deletion to movies. It is a wrong-results bug in list and
+  watch-history filtering. Merge was blocked with every check green because
+  `master` requires review threads to be RESOLVED, not merely replied to,
+  which surfaces only as `BLOCKED` with no reason.
+- 2026-09-08 T6 built, then two review passes on the branch, run in parallel
+  and independently. Both found the same top defect by different routes: the
+  poll loop outlived the component that owned it, so switching settings tabs
+  mid-authorisation and clicking Start again ran two loops, and when the user
+  finished authorising, one consumed the code and the other reported "no
+  device code" into the visible status. The user was told authorisation had
+  failed at the moment it succeeded.
+- 2026-09-08 The more valuable finding was that the tests could not SEE that
+  defect. Setting the code box to never display, so no user could ever read
+  the code they are told to type in, left all seven specs passing, including
+  the one named "displays the code and URL". Assertions read `textContent`,
+  which is present while hidden, and the accessibility scan skips hidden
+  subtrees, so "zero violations" had quietly become "nothing was scanned".
+- 2026-09-08 Three fix rounds on T6, which is the circuit-breaker limit, so
+  the last two items were finished directly rather than dispatched a fourth
+  time. Round two's teardown looked complete and closed half the hole: a
+  request already in flight still resolved on the destroyed component and
+  restarted the chain. Proven by restoring round two's version verbatim, at
+  which point the navigate-away test passes and the in-flight test fails with
+  Expected 2, Received 4.
+- 2026-09-08 One item cut from T6's scope and raised as #332 instead: four
+  copies of a lookup on `__x_panel`, which is read four times in the whole
+  repository and written zero times, so the walk always fails and the
+  fallback always fires. Real, but pre-existing, working today, and not this
+  branch's code.
+- 2026-09-08 T8 cannot proceed as written: it names five films and records
+  none of their titles, and they appear nowhere in the repository. Blocked on
+  the owner for the list rather than on any work.
