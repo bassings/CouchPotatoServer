@@ -500,6 +500,46 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     await expect.poll(() => pollRequests, { timeout: 5000 }).toBeGreaterThanOrEqual(requestsAtError + 1);
   });
 
+  test('leaving within the refresh delay after success does not refetch settings on a dead component', async ({ page }) => {
+    const startButton = await openTraktGroup(page);
+
+    // finish() schedules a panel re-init 500ms after success, so the newly
+    // stored token fields render. Leaving the tab inside that window used to
+    // fire it on a torn-down component: a settings refetch nobody asked for,
+    // landing on whichever tab the user had moved to, plus a duplicate
+    // watcher. It is the one timer whose callback does NOT re-check the run
+    // itself, so later() is its only guard.
+    await page.route(DEVICE_CODE_ROUTE, (route) =>
+      route.fulfill(deviceCodeResponse({ interval: 1 })));
+    await page.route(POLL_ROUTE, (route) => route.fulfill(pollSuccessResponse()));
+
+    // '**/settings/' is what panel.init() actually fetches. An earlier draft
+    // of this test matched settings.all|settings.view, which nothing
+    // requests, so the counter stayed at zero and the assertion below could
+    // not fail no matter what the code did.
+    let settingsReloads = 0;
+    await page.route('**/settings/', async (route) => {
+      settingsReloads++;
+      await route.continue();
+    });
+
+    await startButton.click();
+    const message = page.locator('[data-testid="trakt-auth-message"]');
+    await expect(message).toBeVisible({ timeout: 8000 });
+    await expect(message).toContainText('Authorisation successful');
+
+    // Leave immediately, well inside the 500ms refresh delay.
+    const reloadsAtDeparture = settingsReloads;
+    await page.getByRole('tab', { name: /general/i }).click();
+    await expect(page.locator('[data-testid="trakt-start-auth"]')).toHaveCount(0);
+
+    // Read after the delay has comfortably passed, not at the instant of
+    // leaving: a refetch that has not happened yet looks the same as one
+    // that never will.
+    await page.waitForTimeout(1500);
+    expect(settingsReloads).toBe(reloadsAtDeparture);
+  });
+
   test('H1: navigating away mid-poll stops the poll loop instead of orphaning it', async ({ page }) => {
     // Regression pin for the security review's H1: switching settings tabs
     // tears down this group's x-data (settings.html's x-for is keyed on
