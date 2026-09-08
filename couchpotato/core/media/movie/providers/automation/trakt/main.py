@@ -1,4 +1,5 @@
 import json
+import math
 import traceback
 import time
 
@@ -12,6 +13,60 @@ from couchpotato.environment import Env
 
 
 log = CPLog(__name__)
+
+
+# M1: bounds for the device-auth poll interval and code expiry Trakt hands
+# back. Both are relayed to the browser's poll loop and stored for the next
+# poll, and both were previously trusted unchecked -- an interval of -1 or
+# 1e9 (which overflows setTimeout's 32-bit millisecond limit and so fires
+# immediately) drove hundreds of poll requests in a few seconds, each one
+# taking a per-route lock and a blocking 30s outbound call from the server's
+# thread pool. Interval bounds mirror Trakt's own documented range; expiry
+# bounds keep a legitimate-looking but absurd value from either expiring the
+# flow instantly or leaving stale device-code state around for a day.
+MIN_POLL_INTERVAL_SECONDS = 5
+MAX_POLL_INTERVAL_SECONDS = 60
+DEFAULT_POLL_INTERVAL_SECONDS = 5
+
+MIN_DEVICE_EXPIRY_SECONDS = 60
+MAX_DEVICE_EXPIRY_SECONDS = 1800
+DEFAULT_DEVICE_EXPIRY_SECONDS = 600
+
+# H2: verification_url is bound as an href in trakt_auth.html (`:href`). The
+# vendored Alpine does no scheme filtering on x-bind and there is no CSP, so
+# anything other than a genuine https:// URL is clickable script or local
+# file access if a response is ever forged or intercepted.
+DEFAULT_VERIFICATION_URL = 'https://trakt.tv/activate'
+
+
+def _clamp_seconds(value, low, high, default):
+    """Coerce an untrusted numeric field into `[low, high]`, falling back to
+    `default` for anything that is not a genuine, finite number: missing,
+    non-numeric, boolean (a Python bool is an int subclass, so `True` would
+    otherwise sail through as 1), NaN or infinite.
+
+    A value inside the bound the wire actually offered is clamped to the
+    nearer edge rather than forced to `default`, since that is still a
+    number Trakt asked for -- only the shape of the value, not its size,
+    decides whether it gets a default instead of a clamp.
+    """
+    if isinstance(value, bool):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return int(min(max(number, low), high))
+
+
+def _safe_verification_url(url):
+    """Refuse anything that is not an https:// URL, falling back to the
+    documented device-auth activation page."""
+    if isinstance(url, str) and url.startswith('https://'):
+        return url
+    return DEFAULT_VERIFICATION_URL
 
 
 class TraktBase(Provider):
@@ -206,17 +261,33 @@ class Trakt(Automation, TraktBase):
 
             if response.status_code == 200:
                 data = response.json()
+                # H2/M1: none of these are trustworthy as-is -- clamp the
+                # numeric fields and validate the URL scheme before either
+                # storing them for the next poll or handing them to the
+                # browser.
+                interval = _clamp_seconds(
+                    data.get('interval'),
+                    MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS,
+                    DEFAULT_POLL_INTERVAL_SECONDS,
+                )
+                expires_in = _clamp_seconds(
+                    data.get('expires_in'),
+                    MIN_DEVICE_EXPIRY_SECONDS, MAX_DEVICE_EXPIRY_SECONDS,
+                    DEFAULT_DEVICE_EXPIRY_SECONDS,
+                )
+                verification_url = _safe_verification_url(data.get('verification_url'))
+
                 # Store device code for polling
                 self._device_code = data.get('device_code')
-                self._device_expires = time.time() + data.get('expires_in', 600)
-                self._poll_interval = data.get('interval', 5)
+                self._device_expires = time.time() + expires_in
+                self._poll_interval = interval
 
                 return {
                     'success': True,
                     'user_code': data.get('user_code'),
-                    'verification_url': data.get('verification_url'),
-                    'expires_in': data.get('expires_in'),
-                    'interval': data.get('interval'),
+                    'verification_url': verification_url,
+                    'expires_in': expires_in,
+                    'interval': interval,
                 }
             else:
                 log.error('Failed to get device code: HTTP %s - %s', response.status_code, response.text)
@@ -311,8 +382,14 @@ class Trakt(Automation, TraktBase):
                 return {'success': False, 'error': 'Authorization denied by user.'}
 
             elif response.status_code == 429:
-                # Slow down
-                self._poll_interval = min(self._poll_interval * 2, 30)
+                # Slow down. Same clamp as startDeviceAuth: doubling an
+                # already-stored interval must not walk it past the same
+                # ceiling a hostile initial value was bounded to.
+                self._poll_interval = _clamp_seconds(
+                    self._poll_interval * 2,
+                    MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS,
+                    DEFAULT_POLL_INTERVAL_SECONDS,
+                )
                 return {
                     'success': False,
                     'pending': True,

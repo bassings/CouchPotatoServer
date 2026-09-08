@@ -828,6 +828,16 @@ function traktDeviceAuth() {
       }
     },
 
+    // Alpine 3 calls destroy() when the element is removed (e.g. switching
+    // settings tabs, which re-keys currentGroups' x-for and drops this
+    // group out of it); without it the pending setTimeout in poll() keeps
+    // firing on a detached scope, so a second "Start Authorisation" click
+    // after returning races the orphaned chain instead of finding it gone.
+    destroy() {
+      this.clearPoll();
+      this.polling = false;
+    },
+
     getPanel() {
       let el = this.$el;
       while (el && !el.__x_panel) el = el.parentElement;

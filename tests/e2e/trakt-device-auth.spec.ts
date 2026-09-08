@@ -99,6 +99,35 @@ async function openTraktGroup(page: Page) {
 }
 
 test.describe('Trakt device authorisation (FEAT #311)', () => {
+  // L2: both endpoints are mocked per test below, which is discipline, not a
+  // guard -- a forgotten mock (or a future edit that calls Trakt directly
+  // from the browser) must fail loudly rather than making a real, slow
+  // outbound call during a test run.
+  test.beforeEach(async ({ page }) => {
+    await page.route('**://api.trakt.tv/**', (route) => route.abort());
+  });
+
+  test('L2: a browser-issued call to the real Trakt API is blocked rather than reaching the network', async ({ page }) => {
+    // Both specs mock CouchPotato's own device_code/poll_token routes per
+    // test, but that is discipline, not a guard -- nothing stops a future
+    // edit (or a test that forgets to mock) from making the browser talk to
+    // Trakt directly. This pins the beforeEach guard below: it must turn a
+    // real outbound call into a loud, immediate failure rather than a slow
+    // real network round trip inside a test run.
+    await page.goto('/settings/');
+
+    const outcome = await page.evaluate(async () => {
+      try {
+        await fetch('https://api.trakt.tv/oauth/device/code', { method: 'POST' });
+        return 'reached-the-network';
+      } catch (e) {
+        return 'blocked: ' + (e as Error).message;
+      }
+    });
+
+    expect(outcome).not.toBe('reached-the-network');
+  });
+
   test('starting authorisation displays the code and URL inside a persistent live region', async ({ page }) => {
     const startButton = await openTraktGroup(page);
 
@@ -229,8 +258,15 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     });
 
     await startButton.click();
-    await expect(status).toContainText('ABCD-1234');
 
+    // Deliberately NOT asserting the device code appears here, same
+    // reasoning as the success test above (217872c0c): this test's mock
+    // answers the poll with an error immediately, so the window where
+    // 'ABCD-1234' is on screen before showError() clears it is often too
+    // short to land -- reproduced failing 2 of 5 runs in isolation, not
+    // just under gate load. The code display has its own stable-window test
+    // above, which mocks a PENDING poll on a 30s interval. This test is
+    // about the error path, so it asserts only that.
     await expect(status).toContainText('Device code expired. Please start authorization again.', { timeout: 8000 });
     await expect(status).not.toContainText('ABCD-1234');
 
@@ -252,5 +288,52 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     await startButton.click();
     await expect.poll(() => deviceCodeRequests, { timeout: 5000 }).toBe(2);
     await expect.poll(() => pollRequests, { timeout: 5000 }).toBeGreaterThanOrEqual(requestsAtError + 1);
+  });
+
+  test('H1: navigating away mid-poll stops the poll loop instead of orphaning it', async ({ page }) => {
+    // Regression pin for the security review's H1: switching settings tabs
+    // tears down this group's x-data (settings.html's x-for is keyed on
+    // currentGroups, which is recomputed on tab change and no longer
+    // includes this group), but the pending setTimeout inside poll() used
+    // to survive the teardown because clearPoll() was only ever called
+    // from start()/showSuccess()/showError(). A second "Start Authorisation"
+    // click back on this tab then raced the orphaned chain: whichever one
+    // consumed the device code on trakt.tv's side succeeded, and the other
+    // read back "No device code. Start authorization first." -- reporting
+    // failure to a user whose authorisation had actually succeeded.
+    const startButton = await openTraktGroup(page);
+    const status = page.locator('[data-testid="trakt-auth-status"]');
+
+    await page.route(DEVICE_CODE_ROUTE, (route) => route.fulfill(deviceCodeResponse({ interval: 1 })));
+
+    let pollRequests = 0;
+    await page.route(POLL_ROUTE, (route) => {
+      pollRequests++;
+      return route.fulfill(pollPendingResponse(1));
+    });
+
+    await startButton.click();
+    await expect(status).toContainText('ABCD-1234');
+
+    // Arm the counter and let at least one real poll land before the trigger,
+    // so the wait below is measuring the loop stopping, not merely a request
+    // that was already in flight.
+    await expect.poll(() => pollRequests, { timeout: 5000 }).toBeGreaterThanOrEqual(1);
+
+    // Navigate away: switch to a different settings tab, which removes this
+    // group from currentGroups and tears its component down.
+    const generalTab = page.getByRole('tab', { name: /^general$/i });
+    await generalTab.click();
+    await expect(page.locator('[data-testid="trakt-start-auth"]')).not.toBeAttached();
+
+    const countAtNavigation = pollRequests;
+
+    // Wait long enough for at least two more 1s poll intervals to have
+    // elapsed. Read only after the bounded wait, not at the same instant as
+    // the navigation -- a request already in flight at navigation time would
+    // otherwise be misread as the loop continuing.
+    await page.waitForTimeout(3000);
+
+    expect(pollRequests).toBe(countAtNavigation);
   });
 });

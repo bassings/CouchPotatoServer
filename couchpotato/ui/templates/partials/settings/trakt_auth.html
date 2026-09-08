@@ -10,7 +10,7 @@
             type="button"
             :aria-disabled="(authorising || polling) ? 'true' : 'false'"
             :class="(authorising || polling) ? 'opacity-50 cursor-not-allowed' : ''"
-            class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors"
+            class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors"
             data-testid="trakt-start-auth">
       <span x-show="!authorising">Start Trakt Authorisation</span>
       <span x-show="authorising" class="flex items-center gap-2">
