@@ -2,6 +2,7 @@ import json
 import math
 import traceback
 import time
+from urllib.parse import urlsplit
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
@@ -77,11 +78,40 @@ def _safe_verification_url(url):
     trakt.tv/activate, and the user would type a real device code into it.
     The host is knowable and fixed, so pin it. This is the page we send people
     to; there is no legitimate reason for it to live anywhere else.
+
+    Parsed with `urlsplit`, not by hand. The hand-rolled version split on '/'
+    to drop the path, which does nothing when there is no '/' before a query
+    or fragment, so `https://evil.example?x=fake.trakt.tv` computed a "host"
+    of `evil.example?x=fake.trakt.tv`, which genuinely ends in `.trakt.tv`,
+    and was returned unchanged. The browser would have navigated to
+    evil.example. Reproduced before fixing. A real parser also handles
+    userinfo, port, fragment and case correctly, none of which is worth
+    re-deriving here, and getting one of them wrong is what happened.
     """
-    if not isinstance(url, str) or not url.startswith('https://'):
+    if not isinstance(url, str):
         return DEFAULT_VERIFICATION_URL
 
-    host = url[len('https://'):].split('/', 1)[0].split('@')[-1].split(':')[0].lower()
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or '').lower()
+        # Bound, not merely touched: `.port` is the accessor that validates
+        # the port, and it raises here rather than returning. A bare
+        # `parts.port` statement reads as dead code and gets tidied away,
+        # which would silently remove this check. An out-of-range port makes
+        # a link the browser cannot follow; the host may be genuinely
+        # Trakt's, so this is not about phishing, it is that sending someone
+        # to a URL that cannot resolve is worse than the documented page.
+        validated_port = parts.port
+    except ValueError:
+        return DEFAULT_VERIFICATION_URL
+
+    if parts.scheme != 'https':
+        return DEFAULT_VERIFICATION_URL
+
+    if validated_port is not None and validated_port not in (443, 80):
+        # A Trakt link on an unexpected port is not a link we published.
+        return DEFAULT_VERIFICATION_URL
+
     if host == 'trakt.tv' or host.endswith('.trakt.tv'):
         return url
     return DEFAULT_VERIFICATION_URL

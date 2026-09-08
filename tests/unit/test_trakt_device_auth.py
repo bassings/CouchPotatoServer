@@ -199,6 +199,21 @@ class TestStartDeviceAuthRejectsUnsafeVerificationUrl:
         # way to make a hostile URL read as a friendly one.
         'https://trakt.tv@evil.example/activate',
         'https://trakt.tv:pass@evil.example/activate',
+        # No '/' before the query or fragment, so nothing separates the host
+        # from the rest. The first version of this check dropped the path by
+        # splitting on '/', which does nothing here, computed a host of
+        # 'evil.example?x=fake.trakt.tv', found it genuinely ends in
+        # '.trakt.tv' and returned the URL unchanged. The browser navigates
+        # to evil.example. Reproduced against the shipped code before the
+        # fix, which is why these are here rather than in a comment.
+        'https://evil.example?x=fake.trakt.tv',
+        'https://evil.example#fake.trakt.tv',
+        'https://evil.example?a=.trakt.tv',
+        'https://evil.example#.trakt.tv',
+        'https://evil.example?x=trakt.tv',
+        # Malformed enough that a parser raises rather than returns.
+        'https://[oops/activate',
+        'https://trakt.tv:99999999/activate',
     ])
     def test_falls_back_to_documented_url(self, provider, monkeypatch, hostile_url):
         payload = {
