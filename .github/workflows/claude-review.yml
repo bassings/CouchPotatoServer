@@ -54,7 +54,24 @@ jobs:
         # CLAUDE_CODE_OAUTH_TOKEN as a separate Dependabot secret isn't wanted.
         # Moved here from the job's `if:` -- see the note above `steps:`.
         if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
-        uses: anthropics/claude-code-action@v1
+        # PINNED, deliberately, not tracking @v1.
+        #
+        # v1.0.218 (published 2026-09-08T20:39Z) broke this job: the SDK
+        # aborts with "Claude Code native binary not found at
+        # /home/runner/.local/bin/claude", so the action fails before it
+        # reviews anything. Nothing in this repository changed; @v1 simply
+        # moved under us.
+        #
+        # Evidence for 217 being the last good one: five runs between 02:14
+        # and 06:25 on 2026-09-08 succeeded, all against v1.0.217 (published
+        # 09-06). The first run after 218 landed, at 22:24, failed, and
+        # failed again on a re-run.
+        #
+        # This job is a REQUIRED check on master, so an upstream release can
+        # block every merge in the repository with no warning and no change
+        # here. That is the real reason for the pin rather than this one
+        # regression. Bump it deliberately, when someone can watch the run.
+        uses: anthropics/claude-code-action@v1.0.217
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Keep one updating summary comment per PR (visible verdict even when
