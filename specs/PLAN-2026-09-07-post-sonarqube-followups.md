@@ -389,7 +389,7 @@ only one of the two return paths. That guard is T1 below.
       to make the number green rather than the code better,
       state: merged #328
 
-- [ ] T5: issue #312, event wiring is guarded in one direction only.
+- [~] T5: IN PROGRESS on `fix/T5-event-wiring-reverse-guard`. Issue #312, event wiring is guarded in one direction only.
       `test_event_wiring.py` catches an event fired with no listener, and
       nothing catches a listener with no sender, which is the direction that
       has actually cost this project. 38 registered names are never fired.
@@ -411,7 +411,7 @@ only one of the two return paths. That guard is T1 below.
       `app.test`, which has four listeners including a 12-case path-safety
       table for `isSubFolder` that has not run since the FastAPI migration,
       state: queued (needs: T1)
-- [ ] T6: issue #311, the Trakt OAuth device flow has no reachable UI.
+- [x] T6: DONE, merged as #333. Issue #311, the Trakt OAuth device flow has no reachable UI.
       `automation.trakt.device_code` and `automation.trakt.poll_token` are
       registered API views whose only caller is `trakt.js`, which nothing
       serves. Anyone configuring Trakt today cannot complete authorisation.
@@ -427,7 +427,7 @@ only one of the two return paths. That guard is T1 below.
       plan said I could not, so the order was right and the declaration was
       wrong. Second phantom dependency in this plan after T7's, both written
       down and never checked.
-      state: pr-open
+      state: merged #333
 - [x] T7: DONE, merged as #329. Issue #314, the folder browser announced `role="listbox"` and keeps
       none of it: no arrow keys, no `aria-selected`, no
       `aria-activedescendant`, every folder its own tab stop. Remove the ARIA
@@ -446,9 +446,23 @@ only one of the two return paths. That guard is T1 below.
 - [ ] T8: five films identified earlier today that are still not added to the
       library. Data task, no PR, state: queued (needs: T7)
 
-status: blocked-on-human: T6 tripped the rework circuit breaker at round 8. A fix of mine introduced a defect (the re-entry flag was claimed after an await, so a double click ran two authorisation flows), which is the one self-inflicted regression the rule says to escalate on rather than spend another round. Fixed and guarded, Expected 1 Received 2 against the regression. The decision is whether to land T6 now with each known variant guarded, or spend one deliberate pass restructuring start() and poll() so the class of defect becomes impossible rather than individually guarded. Every round has found another variant of the same shared-state-across-await problem, which reads as a design smell rather than bad luck.
-
 ## Conductor log
+
+- 2026-09-09 T6 merged as #333 after the owner chose to restructure rather
+  than land with each variant guarded. The restructure replaced five pieces
+  of state, each needing to be correct at six suspension points, with one run
+  token. Evidence it is structural rather than a better guard: reintroducing
+  the exact defect that broke the old code, the flag claimed after the await,
+  now leaves the double-click test passing. A late review round then found a
+  real bypass of the verification-URL host pin: no slash before a query
+  string meant `https://evil.example?x=fake.trakt.tv` computed a host ending
+  in `.trakt.tv` and was returned unchanged. Fixed with a real URL parser.
+- 2026-09-09 A `status: blocked-on-human` marker was committed to this file
+  by accident: it was written onto the Trakt branch and merged with it, so
+  the hourly status alert reported the plan as awaiting a decision that had
+  already been made and acted on. The marker is a working-copy device and
+  must not be committed. Noticed by the owner from the alert, not by me.
+
 
 - 2026-09-08 T2/T4/T7 closeout merged as #331. Five review findings, all mine,
   the largest being a data-loss claim that was not one: `deleteView` takes
