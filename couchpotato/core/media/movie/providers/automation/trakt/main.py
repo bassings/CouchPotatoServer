@@ -68,9 +68,21 @@ def _clamp_seconds(value, low, high, default):
 
 
 def _safe_verification_url(url):
-    """Refuse anything that is not an https:// URL, falling back to the
-    documented device-auth activation page."""
-    if isinstance(url, str) and url.startswith('https://'):
+    """Refuse anything that is not an https:// URL on Trakt's own host,
+    falling back to the documented device-auth activation page.
+
+    The scheme check alone stops a forged response becoming clickable script.
+    It does not stop it becoming a phishing page: an attacker who can forge
+    this field could point it at their own https:// site dressed as
+    trakt.tv/activate, and the user would type a real device code into it.
+    The host is knowable and fixed, so pin it. This is the page we send people
+    to; there is no legitimate reason for it to live anywhere else.
+    """
+    if not isinstance(url, str) or not url.startswith('https://'):
+        return DEFAULT_VERIFICATION_URL
+
+    host = url[len('https://'):].split('/', 1)[0].split('@')[-1].split(':')[0].lower()
+    if host == 'trakt.tv' or host.endswith('.trakt.tv'):
         return url
     return DEFAULT_VERIFICATION_URL
 
@@ -295,6 +307,15 @@ class Trakt(Automation, TraktBase):
                 )
                 verification_url = _safe_verification_url(data.get('verification_url'))
 
+                # user_code goes to the DOM through x-text, which sets
+                # textContent, so there is no injection path. It is coerced
+                # anyway: every other field off this response is validated,
+                # and a non-string here would reach the template as whatever
+                # json gave us. Cheaper to be uniform than to leave one field
+                # explained only by a comment nobody reads.
+                user_code = data.get('user_code')
+                user_code = user_code if isinstance(user_code, str) else ''
+
                 # Store device code for polling
                 self._device_code = data.get('device_code')
                 self._device_expires = time.time() + expires_in
@@ -302,7 +323,7 @@ class Trakt(Automation, TraktBase):
 
                 return {
                     'success': True,
-                    'user_code': data.get('user_code'),
+                    'user_code': user_code,
                     'verification_url': verification_url,
                     'expires_in': expires_in,
                     'interval': interval,

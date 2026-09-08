@@ -263,6 +263,80 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     expect(deviceCodeRequests).toBe(1);
   });
 
+  test('the first poll waits for the interval instead of firing immediately', async ({ page }) => {
+    const startButton = await openTraktGroup(page);
+
+    // Trakt's interval is the MINIMUM gap between token requests, and the
+    // user cannot have typed a code that appeared a moment ago, so an
+    // immediate first poll is guaranteed to fail. It also invites the 429
+    // slow-down, which doubles the interval for every later poll, making the
+    // one request that could never succeed slow down the rest of the flow.
+    await page.route(DEVICE_CODE_ROUTE, (route) =>
+      route.fulfill(deviceCodeResponse({ interval: 3 })));
+
+    let pollRequests = 0;
+    await page.route(POLL_ROUTE, (route) => {
+      pollRequests++;
+      return route.fulfill(pollPendingResponse(3));
+    });
+
+    await startButton.click();
+    await expectCodeShown(page);
+
+    // The code is on screen and no poll has gone out yet. Read after a
+    // bounded wait well inside the interval, not at the instant of the click:
+    // asserting at the same moment cannot tell "not yet" from "never".
+    await page.waitForTimeout(1200);
+    expect(pollRequests).toBe(0);
+
+    // And it does start, so this is a delay rather than a wall.
+    await expect.poll(() => pollRequests, { timeout: 8000 }).toBeGreaterThanOrEqual(1);
+  });
+
+  test('a credential typed a moment ago is saved before authorisation starts', async ({ page }) => {
+    const startButton = await openTraktGroup(page);
+
+    // Settings save on a 500ms debounce. Someone setting Trakt up types the
+    // secret and clicks Start, well inside that window, so without a flush
+    // the device code is requested using whatever the server had BEFORE the
+    // edit: reported as missing while visibly on screen.
+    let sawSecretSave = false;
+    let secretSavedBeforeDeviceCode = false;
+    let deviceCodeRequested = false;
+
+    await page.route(/settings\.save/, async (route) => {
+      const body = route.request().postData() || route.request().url();
+      if (body.includes('automation_client_secret')) {
+        sawSecretSave = true;
+        if (!deviceCodeRequested) secretSavedBeforeDeviceCode = true;
+      }
+      return route.continue();
+    });
+    await page.route(DEVICE_CODE_ROUTE, (route) => {
+      deviceCodeRequested = true;
+      return route.fulfill(deviceCodeResponse({ interval: 30 }));
+    });
+    await page.route(POLL_ROUTE, (route) => route.fulfill(pollPendingResponse(30)));
+
+    // Password fields carry no name attribute; they are reached by their
+    // accessible label (field_types.html binds :aria-label from opt.label),
+    // and they save on @change, which fires on blur, so the click below is
+    // what commits the edit and starts the 500ms debounce.
+    const secretField = page.getByLabel('Client Secret', { exact: true });
+    await expect(secretField).toBeVisible({ timeout: 10000 });
+    await secretField.fill('typed-just-now-secret');
+
+    // Immediately, inside the debounce window. That is the whole point.
+    await startButton.click();
+
+    await expect.poll(() => deviceCodeRequested, { timeout: 8000 }).toBe(true);
+    expect(sawSecretSave, 'the typed secret was never saved').toBe(true);
+    expect(
+      secretSavedBeforeDeviceCode,
+      'the device code was requested before the typed credential reached the server',
+    ).toBe(true);
+  });
+
   test('a pending poll response keeps the control polling', async ({ page }) => {
     const startButton = await openTraktGroup(page);
     const status = page.locator('[data-testid="trakt-auth-status"]');

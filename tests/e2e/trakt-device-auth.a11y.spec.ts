@@ -22,7 +22,17 @@ import { type Page } from '@playwright/test';
 const DEVICE_CODE_ROUTE = /automation\.trakt\.device_code/;
 const POLL_ROUTE = /automation\.trakt\.poll_token/;
 
-function deviceCodeResponse() {
+/**
+ * The interval is a parameter because the FIRST poll now waits for it, the
+ * same as every later one: an immediate first poll could never succeed (the
+ * user has not seen the code yet) and invited Trakt's 429, which doubles the
+ * interval for the rest of the flow.
+ *
+ * So a state that needs no poll uses a long interval to hold the code on
+ * screen without churn, and a state reached THROUGH a poll must use a short
+ * one or it simply never arrives.
+ */
+function deviceCodeResponse(interval = 30) {
   return {
     status: 200,
     contentType: 'application/json',
@@ -31,7 +41,7 @@ function deviceCodeResponse() {
       user_code: 'ABCD-1234',
       verification_url: 'https://trakt.tv/activate',
       expires_in: 600,
-      interval: 30,
+      interval,
     }),
   };
 }
@@ -98,8 +108,9 @@ async function openTraktGroupInState(
   page: Page,
   pollResponse: ReturnType<typeof pollPendingResponse>,
   expectedStatus: string,
+  interval = 30,
 ) {
-  await page.route(DEVICE_CODE_ROUTE, (route) => route.fulfill(deviceCodeResponse()));
+  await page.route(DEVICE_CODE_ROUTE, (route) => route.fulfill(deviceCodeResponse(interval)));
   await page.route(POLL_ROUTE, (route) => route.fulfill(pollResponse));
 
   await page.goto('/settings/');
@@ -142,11 +153,11 @@ async function openTraktGroupWithCodeDisplayed(page: Page) {
 }
 
 async function openTraktGroupWithSuccess(page: Page) {
-  await openTraktGroupInState(page, pollSuccessResponse(), 'Authorisation successful! Trakt is now connected.');
+  await openTraktGroupInState(page, pollSuccessResponse(), 'Authorisation successful! Trakt is now connected.', 1);
 }
 
 async function openTraktGroupWithError(page: Page) {
-  await openTraktGroupInState(page, pollErrorResponse(), 'Device code expired. Please start authorisation again.');
+  await openTraktGroupInState(page, pollErrorResponse(), 'Device code expired. Please start authorisation again.', 1);
 }
 
 /**

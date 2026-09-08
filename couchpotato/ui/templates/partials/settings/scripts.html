@@ -110,6 +110,7 @@ function settingsPanel() {
     currentGroups: [],
     lastSaved: false,
     saveTimers: {},
+    pendingSaves: {},
     version: '',
     updateAvailable: null,
 
@@ -417,10 +418,37 @@ function settingsPanel() {
     debounceSave(section, name, value) {
       const key = section + '.' + name;
       if (this.saveTimers[key]) clearTimeout(this.saveTimers[key]);
+      this.pendingSaves[key] = { section, name, value };
       this.saveTimers[key] = setTimeout(() => this.saveSingle(section, name, value), 500);
     },
 
+    /**
+     * Run every debounced save NOW and wait for all of them.
+     *
+     * For a control that acts on a setting the user has only just typed. The
+     * 500ms debounce is right for keystrokes and wrong the moment something
+     * READS the saved value: Trakt authorisation asked the server for a
+     * device code using whichever credentials the server had before the edit
+     * had landed, which on first setup is none of them.
+     *
+     * Safe to call when nothing is pending: it resolves immediately.
+     */
+    async flushPendingSaves() {
+      const pending = Object.entries(this.pendingSaves);
+      if (!pending.length) return;
+
+      this.pendingSaves = {};
+      await Promise.all(pending.map(([key, s]) => {
+        if (this.saveTimers[key]) {
+          clearTimeout(this.saveTimers[key]);
+          delete this.saveTimers[key];
+        }
+        return this.saveSingle(s.section, s.name, s.value);
+      }));
+    },
+
     async saveSingle(section, name, value) {
+      delete this.pendingSaves[section + '.' + name];
       this.saving = true;
       this.lastSaved = false;
       try {
@@ -744,6 +772,19 @@ function traktDeviceAuth() {
       // (aria-disabled, not disabled) while a request or a poll is live.
       if (this.authorising || this.polling) return;
 
+      // Credentials are written through setVal(), which debounces the save by
+      // 500ms. Clicking Start straight after typing a Client ID or Secret,
+      // which is exactly what someone setting this up does, would otherwise
+      // ask Trakt for a code using whatever the server had BEFORE the edit:
+      // reported as missing when it is visibly on screen, or worse, a code
+      // issued for the old client and polled for with the new one. Flush
+      // first, and wait for it.
+      const panel = this.getPanel();
+      if (panel && typeof panel.flushPendingSaves === 'function') {
+        await panel.flushPendingSaves();
+        if (this.destroyed) return;
+      }
+
       this.clearPoll();
       this.authorising = true;
       this.error = false;
@@ -769,7 +810,15 @@ function traktDeviceAuth() {
           this.statusText = 'Waiting for authorisation…';
           this.statusClass = 'text-cp-muted';
           this.polling = true;
-          this.poll(Number(data.interval) || 5);
+          // Wait the interval before the FIRST poll too. Trakt's interval is
+          // the minimum gap between token requests, and the user cannot
+          // possibly have typed a code that appeared a moment ago, so an
+          // immediate poll is guaranteed to be wasted. Worse than wasted: it
+          // can draw the 429 slow-down, which doubles the interval for every
+          // later poll, so the one request that could never succeed makes the
+          // rest of the flow slower.
+          const firstDelay = Number(data.interval) || 5;
+          this.pollTimer = setTimeout(() => this.poll(firstDelay), firstDelay * 1000);
         } else {
           this.showError(data.error || 'Failed to start authorisation.');
         }

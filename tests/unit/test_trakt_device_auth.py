@@ -186,6 +186,19 @@ class TestStartDeviceAuthRejectsUnsafeVerificationUrl:
         '',
         None,
         123,
+        # Host pinning. A scheme check alone stops a forged response becoming
+        # clickable script, not it becoming a phishing page: these are all
+        # genuine https:// URLs, and a user sent to one would type a real
+        # device code into an attacker's page dressed as trakt.tv/activate.
+        'https://evil.example/activate',
+        'https://trakt.tv.evil.example/activate',
+        'https://nottrakt.tv/activate',
+        'https://eviltrakt.tv/activate',
+        'https://evil.example/?x=https://trakt.tv/activate',
+        # Userinfo, which puts the real host after the @ and is the classic
+        # way to make a hostile URL read as a friendly one.
+        'https://trakt.tv@evil.example/activate',
+        'https://trakt.tv:pass@evil.example/activate',
     ])
     def test_falls_back_to_documented_url(self, provider, monkeypatch, hostile_url):
         payload = {
@@ -204,8 +217,9 @@ class TestStartDeviceAuthRejectsUnsafeVerificationUrl:
         assert result['verification_url'] == 'https://trakt.tv/activate', (
             f'startDeviceAuth() returned verification_url='
             f'{result["verification_url"]!r} for hostile input {hostile_url!r}; '
-            f'a value that is not https:// is clickable script/local-file '
-            f'access once bound with :href in trakt_auth.html'
+            f'a value that is not an https:// URL on Trakt\'s own host is '
+            f'either clickable script or a phishing page once bound with '
+            f':href in trakt_auth.html'
         )
 
     def test_a_genuine_https_url_passes_through_unchanged(self, provider, monkeypatch):
@@ -336,3 +350,62 @@ class TestStartDeviceAuthRequiresBothCredentials:
 
         assert result['success'] is True
         assert result['user_code'] == 'ABCD-1234'
+
+
+class TestStartDeviceAuthCoercesUserCode:
+    """The one field off the Trakt response that was never checked, while
+    interval, expiry and the URL all were.
+
+    Not exploitable: `user_code` reaches the DOM through `x-text`, which sets
+    textContent. This is uniformity, so the next reader does not have to work
+    out whether the omission was reasoned or missed.
+    """
+
+    @pytest.mark.parametrize('raw, expected', [
+        (None, ''),
+        (123, ''),
+        ({'a': 1}, ''),
+        (['ABCD-1234'], ''),
+        (MISSING, ''),
+        ('ABCD-1234', 'ABCD-1234'),
+    ])
+    def test_non_string_user_code_becomes_empty(self, provider, monkeypatch, raw, expected):
+        payload = {
+            'device_code': 'devcode-1',
+            'verification_url': 'https://trakt.tv/activate',
+            'expires_in': 600,
+            'interval': 5,
+        }
+        if raw is not MISSING:
+            payload['user_code'] = raw
+        _mock_post(monkeypatch, _FakeResponse(200, payload))
+
+        result = provider.startDeviceAuth()
+
+        assert result['user_code'] == expected
+        assert isinstance(result['user_code'], str)
+
+
+class TestGenuineTraktSubdomainsStillWork:
+    """The pin must not become a wall. Trakt owns its subdomains and could
+    legitimately serve the activation page from one."""
+
+    @pytest.mark.parametrize('url', [
+        'https://trakt.tv/activate',
+        'https://trakt.tv/activate?user_code=ABCD-1234',
+        'https://www.trakt.tv/activate',
+        'https://api.trakt.tv/activate',
+        'https://TRAKT.TV/activate',
+    ])
+    def test_trakt_hosts_pass_through_unchanged(self, provider, monkeypatch, url):
+        _mock_post(monkeypatch, _FakeResponse(200, {
+            'device_code': 'devcode-1',
+            'user_code': 'ABCD-1234',
+            'verification_url': url,
+            'expires_in': 600,
+            'interval': 5,
+        }))
+
+        result = provider.startDeviceAuth()
+
+        assert result['verification_url'] == url
