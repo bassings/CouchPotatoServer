@@ -46,6 +46,108 @@ OPTIONAL_EVENTS = frozenset({
     #   here; recorded in docs/technical-debt.md.
 })
 
+#: Names that ARE registered and that nothing dispatches. Empty until each
+#: one has been adjudicated, because a list that starts populated is a list
+#: nobody reads.
+#:
+#: Every entry carries why it is unreachable and what would make the decision
+#: expire. `test_unfired_allowlist_has_no_stale_entries` fails in BOTH
+#: directions: an entry that gains a dispatch, or that stops being registered,
+#: breaks the build rather than sitting here describing nothing.
+UNFIRED_EVENTS = frozenset({
+    # ---------------------------------------------------------------
+    # Reachable another way. The FEATURE works; only the addEvent() is
+    # unused, so deleting the registration is safe and deleting the
+    # handler is not. Expires if the other route goes away.
+    # ---------------------------------------------------------------
+    'media.mark_watched',
+    # ^ markWatched is served as the API view '<type>.watched', registered
+    #   per media type in addSingleWatchViews() (media/_base/media/main.py:786).
+    'media.mark_unwatched',
+    # ^ markUnwatched is served as 'media.unwatched' (main.py:95) and as
+    #   '<type>.unwatched' (main.py:787).
+    'media.watch_history',
+    # ^ watchHistory is served as 'media.watch_history' (main.py:101) and as
+    #   '<type>.watch_history' (main.py:788).
+    'movie.restore_to_wanted',
+    # ^ restoreToWantedView is an API view (movie/_base/main.py:126); the
+    #   event registration beside it is a second door nobody opens.
+    'category.all',
+    # ^ Category.all is served as the API view 'category.list'
+    #   (plugins/category/main.py:27), whose allView() calls self.all()
+    #   directly at :41. The settings UI fetches /category.list/ on every
+    #   load (partials/settings/scripts.html, three call sites). This entry
+    #   was in the unreachable bucket below, which was wrong in the dangerous
+    #   direction: that header reads as a licence to delete a function the
+    #   category editor depends on.
+    'renamer.check_snatched',
+    # ^ the scheduler is handed the CALLABLE, not the name:
+    #   fireEvent('schedule.interval', 'renamer.check_snatched',
+    #             self.checkSnatched, ...) at renamer/main.py:235. The string
+    #   is a schedule id, not a dispatch. checkSnatched does run.
+
+    # ---------------------------------------------------------------
+    # Genuinely unreachable: the handler cannot run at all. Listed so this
+    # audit stays green and the decisions stay visible, NOT because any of
+    # it is correct. Each expires the moment something fires it, and
+    # test_unfired_allowlist_has_no_stale_entries fails then.
+    # ---------------------------------------------------------------
+    'renamer.before',
+    # ^ ONE handler: subtitle search (plugins/subtitle.py:28). Subtitles are
+    #   the most user-visible casualty of the dead chain, and an earlier
+    #   version of this comment left them out entirely while attributing six
+    #   handlers here that all belong to renamer.after below.
+    'renamer.after',
+    # ^ SIX handlers: trailers (plugins/trailer.py:17), metadata
+    #   (movie/providers/metadata/base.py:22), Plex (notifications/plex/
+    #   main.py:24), Synology (synoindex.py:22), custom scripts (script.py:24)
+    #   and manage (manage.py:43).
+    #
+    #   THE reason this guard exists, for both. Nothing fires bare `renamer`,
+    #   so the dispatcher never derives either hook, and all seven handlers
+    #   have been silently dead since the FastAPI migration with correct
+    #   plugin code behind them. See specs/RENAMER-EVENT-CHAIN.md; expires
+    #   when the rename flow is ported.
+    'app.test',
+    # ^ Four handlers, and one is load-bearing: doSubfolderTest
+    #   (plugins/file.py:39) is a 12-case truth table for isSubFolder, the
+    #   function deciding whether one path sits inside another, which the
+    #   renamer depends on. It has not run since the FastAPI migration.
+    #   The other three are provider self-tests (quality/main.py:76,
+    #   userscript/main.py:23, thepiratebay.py:44).
+    'userscript.get_excludes',
+    'userscript.get_includes',
+    'userscript.get_version',
+    # ^ Dead by design, not by accident: the userscript embed was retired in
+    #   UI-CLEANUP-02 (specs/UI-CLEANUP-02-retire-userscript-embed.md), which
+    #   removed the only caller. These three are the residue. Safe to delete
+    #   with their handlers; kept for now because that is a separate change.
+    'library.root',
+    'library.title',
+    'library.types',
+    # ^ media/_base/library/main.py:13,17 and library/base.py:10. The library
+    #   layer these belong to was largely bypassed in the FastAPI migration.
+    'manage.diskspace',
+    # ^ plugins/manage.py:37. getDiskSpace has no other caller, so the free
+    #   space figure it computes reaches nobody.
+    'media.with_identifiers',
+    # ^ media/_base/media/main.py:116.
+    'quality.order',
+    # ^ plugins/quality/main.py:56. getOrder is unreachable; profile ordering
+    #   is read from the profile records directly.
+    'scanner.remove_cptag',
+    # ^ plugins/scanner/api.py:10. removeCPTag IS called internally, at
+    #   folder_scanner.py:723, so only the event door is unused.
+    'scanner.partnumber',
+    # ^ plugins/scanner/api.py:13, and NOT the same case. getPartNumber
+    #   (folder_scanner.py:754) has no production caller anywhere: not this
+    #   event, not a method call, only its own unit test. So multi-part
+    #   detection does not run during a real scan, and a library with
+    #   Movie.cd1.mkv / Movie.cd2.mkv gets no part numbering. An earlier
+    #   version of this comment lumped it in with remove_cptag and said the
+    #   behaviour was not missing. It is.
+})
+
 # Per-dispatch and per-setting hooks. These are opt-in by design and are
 # unhandled for nearly every name they are generated for, so warning about
 # them would drown the signal:
