@@ -61,8 +61,9 @@ UNFIRED_EVENTS = frozenset({
     # handler is not. Expires if the other route goes away.
     # ---------------------------------------------------------------
     'media.mark_watched',
-    # ^ markWatched is served as the API view '<type>.watched', registered
-    #   per media type in addSingleWatchViews() (media/_base/media/main.py:786).
+    # ^ markWatched is served as 'media.watched' (media/_base/media/main.py:87)
+    #   and as '<type>.watched', registered per media type in
+    #   addSingleWatchViews() (main.py:786).
     'media.mark_unwatched',
     # ^ markUnwatched is served as 'media.unwatched' (main.py:95) and as
     #   '<type>.unwatched' (main.py:787).
@@ -75,8 +76,10 @@ UNFIRED_EVENTS = frozenset({
     'category.all',
     # ^ Category.all is served as the API view 'category.list'
     #   (plugins/category/main.py:27), whose allView() calls self.all()
-    #   directly at :41. The settings UI fetches /category.list/ on every
-    #   load (partials/settings/scripts.html, three call sites). This entry
+    #   directly at :41. The settings UI fetches /category.list/ from two
+    #   call sites (partials/settings/scripts.html:1447 and :1665), lazily
+    #   when the Categories tab is first opened rather than on every page
+    #   load, per the comment at :1440. This entry
     #   was in the unreachable bucket below, which was wrong in the dangerous
     #   direction: that header reads as a licence to delete a function the
     #   category editor depends on.
@@ -104,10 +107,22 @@ UNFIRED_EVENTS = frozenset({
     #   and manage (manage.py:43).
     #
     #   THE reason this guard exists, for both. Nothing fires bare `renamer`,
-    #   so the dispatcher never derives either hook, and all seven handlers
-    #   have been silently dead since the FastAPI migration with correct
-    #   plugin code behind them. See specs/RENAMER-EVENT-CHAIN.md; expires
-    #   when the rename flow is ported.
+    #   so the dispatcher never derives either hook and the RENAME-TRIGGERED
+    #   behaviour is dead for all seven: no subtitles fetched, no trailer, no
+    #   metadata written, no library rescan, no script run after a rename.
+    #
+    #   Not the same as the methods being dead code, and an earlier version
+    #   of this comment conflated the two. Plex.addToLibrary is separately
+    #   reachable from the Plex Test button, so it runs, just never because a
+    #   rename finished. That distinction is now machine-checked in
+    #   HANDLERS_REACHABLE_ANOTHER_WAY rather than asserted here.
+    #
+    #   The seven explicit registrations understate the reach: Notification's
+    #   own `listen_to` (notifications/base.py:19) adds renamer.after for
+    #   every provider instance, so in practice every notification provider's
+    #   rename notification is dead, not only the three named below.
+    #   See specs/RENAMER-EVENT-CHAIN.md; expires when the rename flow is
+    #   ported.
     'app.test',
     # ^ Four handlers, and one is load-bearing: doSubfolderTest
     #   (plugins/file.py:39) is a 12-case truth table for isSubFolder, the
@@ -147,6 +162,34 @@ UNFIRED_EVENTS = frozenset({
     #   version of this comment lumped it in with remove_cptag and said the
     #   behaviour was not missing. It is.
 })
+
+#: For every allowlisted event, the handler methods that something ELSE can
+#: reach: an API view, or a direct call from the same module. Declared so the
+#: claim is machine-checked rather than asserted in a comment.
+#:
+#: This exists because the same mistake was made three times on one branch:
+#: a comment saying a handler is dead when it is not. `category.all` was
+#: filed as unreachable while the settings UI calls it through
+#: `category.list`; `renamer.after` was described as seven dead handlers when
+#: `Plex.addToLibrary` runs from the Plex Test button. Both were caught by a
+#: human reading plugin files, which does not scale and did not hold.
+#:
+#: `test_reachable_handlers_are_declared` fails in BOTH directions: a handler
+#: that gains another caller, and an entry here that loses one.
+HANDLERS_REACHABLE_ANOTHER_WAY = {
+    'category.all': {'all'},
+    'media.mark_watched': {'markWatched'},
+    'media.mark_unwatched': {'markUnwatched'},
+    'media.watch_history': {'watchHistory'},
+    'movie.restore_to_wanted': {'restoreToWanted'},
+    'renamer.check_snatched': {'checkSnatched'},
+    'renamer.after': {'addToLibrary'},
+    # ^ Plex.addToLibrary only. Plex.test() calls it (plex/main.py:76) and
+    #   test() is an API view (notifications/base.py:28), so pressing Test on
+    #   the Plex settings asks Plex to rescan. The other five renamer.after
+    #   handlers have no other caller: Synoindex.test and Script.test do NOT
+    #   call theirs (synoindex.py:40, script.py:43).
+}
 
 # Per-dispatch and per-setting hooks. These are opt-in by design and are
 # unhandled for nearly every name they are generated for, so warning about

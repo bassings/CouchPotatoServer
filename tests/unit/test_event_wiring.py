@@ -23,7 +23,11 @@ import re
 
 import pytest
 
-from couchpotato.core.event import OPTIONAL_EVENTS, UNFIRED_EVENTS
+from couchpotato.core.event import (
+    HANDLERS_REACHABLE_ANOTHER_WAY,
+    OPTIONAL_EVENTS,
+    UNFIRED_EVENTS,
+)
 
 # Anchored to this file, not the CWD. A relative path silently yields an empty
 # file list when pytest is invoked from anywhere but the repo root, and every
@@ -396,6 +400,76 @@ def _templated_registration_sites():
     return found
 
 
+def _allowlisted_handler_methods():
+    """Map each allowlisted event name to the handler methods registered for
+    it, as `(module path, method name)` pairs."""
+    methods = {}
+    for path in _python_files():
+        tree = ast.parse(path.read_text(errors='replace'))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or _call_name(node) != 'addEvent':
+                continue
+            if len(node.args) < 2 or not isinstance(node.args[0], ast.Constant):
+                continue
+            name = node.args[0].value
+            if name not in UNFIRED_EVENTS:
+                continue
+            handler = node.args[1]
+            attr = getattr(handler, 'attr', None) or getattr(handler, 'id', None)
+            if attr:
+                methods.setdefault(name, set()).add(
+                    (str(path.relative_to(REPO_ROOT)), attr))
+    return methods
+
+
+def _methods_with_another_caller(candidates):
+    """Of `(module, method)` pairs, those the code can reach some OTHER way:
+    registered as an API view, or called directly from anywhere.
+
+    Scoped to the module that registers the handler, because a method name
+    alone collides across the tree: an earlier version of this analysis
+    matched names globally and reported `renamer.after` as API-reachable
+    through an unrelated `create()`.
+    """
+    wanted = {}
+    for module, method in candidates:
+        wanted.setdefault(module, set()).add(method)
+
+    reachable = set()
+    for path in _python_files():
+        module = str(path.relative_to(REPO_ROOT))
+        names = wanted.get(module)
+        if not names:
+            continue
+        tree = ast.parse(path.read_text(errors='replace'))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            # Registered as an API view: reachable over HTTP.
+            if _call_name(node) == 'addApiView' and len(node.args) >= 2:
+                attr = getattr(node.args[1], 'attr', None)
+                if attr in names:
+                    reachable.add((module, attr))
+            # Called directly by something else in the same module, e.g.
+            # Plex.test() calling self.addToLibrary().
+            called = getattr(node.func, 'attr', None)
+            if called in names and _call_name(node) != 'addEvent':
+                reachable.add((module, called))
+
+            # Handed to something else as a CALLABLE rather than called, which
+            # is how the scheduler reaches checkSnatched:
+            #   fireEvent('schedule.interval', 'renamer.check_snatched',
+            #             self.checkSnatched, ...)
+            # The string there is a schedule id, not a dispatch, and the
+            # method runs. Reading only call sites misses this entirely.
+            if _call_name(node) != 'addEvent':
+                for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                    passed = getattr(arg, 'attr', None)
+                    if passed in names:
+                        reachable.add((module, passed))
+    return reachable
+
+
 def _unfired_handlers():
     """Registered names that nothing can dispatch. Returns a sorted list."""
     fired, handled = _collect()
@@ -582,6 +656,47 @@ class TestNoUnfiredHandlers:
             'entry describes nothing. Remove them, or correct the line '
             'number if the file merely moved:\n%s'
             % '\n'.join('  %s  %s' % (k, v) for k, v in sorted(gone.items()))
+        )
+
+    def test_reachable_handlers_are_declared(self):
+        """No allowlist comment may say a handler is dead when it is not.
+
+        Three rounds of review on this branch each found one: `category.all`
+        filed as unreachable while the settings UI calls it, and
+        `renamer.after` described as seven dead handlers when
+        `Plex.addToLibrary` runs from the Test button. Both were caught by a
+        human reading plugin files. This resolves each allowlisted name to
+        its handler methods and asks whether anything else reaches them, so
+        the claim is checked rather than believed.
+        """
+        registered = _allowlisted_handler_methods()
+        pairs = {p for methods in registered.values() for p in methods}
+        reachable = _methods_with_another_caller(pairs)
+
+        found = {}
+        for name, methods in registered.items():
+            hit = {m for module, m in methods if (module, m) in reachable}
+            if hit:
+                found[name] = hit
+
+        missing = {n: sorted(m) for n, m in found.items()
+                   if m != set(HANDLERS_REACHABLE_ANOTHER_WAY.get(n, ()))}
+        assert not missing, (
+            'These allowlisted events have handler methods something ELSE can '
+            'reach (an API view, a direct call, or handed over as a callable), '
+            'and HANDLERS_REACHABLE_ANOTHER_WAY does not say so. Saying a '
+            'handler is dead when it is not reads as a licence to delete live '
+            'code:\n%s'
+            % '\n'.join('  %s -> %s' % (n, m) for n, m in sorted(missing.items()))
+        )
+
+        stale = {n: sorted(m) for n, m in HANDLERS_REACHABLE_ANOTHER_WAY.items()
+                 if set(m) != found.get(n, set())}
+        assert not stale, (
+            'These are declared reachable another way, and nothing reaches '
+            'them any more. The other route was removed, so the handler may '
+            'now be genuinely dead:\n%s'
+            % '\n'.join('  %s -> %s' % (n, m) for n, m in sorted(stale.items()))
         )
 
     def test_unfired_allowlist_has_no_stale_entries(self):
