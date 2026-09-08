@@ -737,6 +737,7 @@ function traktDeviceAuth() {
     // torn-down component and schedules the next one, which restarts the
     // chain destroy() just stopped. Every await below re-checks this.
     destroyed: false,
+    reinitTimer: null,
 
     async start() {
       // Re-entry guard, since the button stays focusable/clickable
@@ -773,6 +774,13 @@ function traktDeviceAuth() {
           this.showError(data.error || 'Failed to start authorisation.');
         }
       } catch (e) {
+        // A rejected fetch resumes here from an await too, so this path
+        // needs the same check as the resolve paths. Harmless while
+        // showError only writes reactive state, but showSuccess already
+        // schedules a timer, and the comment on `destroyed` promises every
+        // await re-checks. Making that true is cheaper than a comment the
+        // next person has to disbelieve.
+        if (this.destroyed) return;
         this.showError('Request failed: ' + e.message);
       }
 
@@ -806,6 +814,13 @@ function traktDeviceAuth() {
         // invalid code, denied, unexpected status): stop and report it.
         this.showError(data.error || 'Authorisation failed.');
       } catch (e) {
+        // A rejected fetch resumes here from an await too, so this path
+        // needs the same check as the resolve paths. Harmless while
+        // showError only writes reactive state, but showSuccess already
+        // schedules a timer, and the comment on `destroyed` promises every
+        // await re-checks. Making that true is cheaper than a comment the
+        // next person has to disbelieve.
+        if (this.destroyed) return;
         this.showError('Request failed: ' + e.message);
       }
     },
@@ -822,7 +837,11 @@ function traktDeviceAuth() {
       // populated token fields (password inputs, rendered from `values`)
       // reflect what the server actually stored.
       const panel = this.getPanel();
-      if (panel) setTimeout(() => panel.init(), 500);
+      // Held so destroy() can cancel it. It is not this.pollTimer, so
+      // clearPoll() never saw it: authorise, switch settings tab inside
+      // 500ms, and a torn-down component still re-fetched settings and
+      // added a duplicate watcher.
+      if (panel) this.reinitTimer = setTimeout(() => panel.init(), 500);
     },
 
     showError(message) {
@@ -850,6 +869,10 @@ function traktDeviceAuth() {
     destroy() {
       this.destroyed = true;
       this.clearPoll();
+      if (this.reinitTimer) {
+        clearTimeout(this.reinitTimer);
+        this.reinitTimer = null;
+      }
       this.polling = false;
     },
 

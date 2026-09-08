@@ -92,6 +92,8 @@ async function expectThemeIsInEffect(page: Page, theme: 'light' | 'dark') {
  * wait for `expectedStatus` to appear in the live region -- so a scan can
  * target whichever state (pending/success/error) it was called for.
  */
+const CODE = 'ABCD-1234';
+
 async function openTraktGroupInState(
   page: Page,
   pollResponse: ReturnType<typeof pollPendingResponse>,
@@ -118,11 +120,25 @@ async function openTraktGroupInState(
   await expect(startButton).toBeVisible({ timeout: 10000 });
   await startButton.click();
 
-  await expect(page.locator('[data-testid="trakt-auth-status"]')).toContainText(expectedStatus, { timeout: 8000 });
+  // Visible, not merely present: textContent survives display:none, so a
+  // text-only wait would let every axe scan below run against a state the
+  // user cannot see, and axe skips hidden subtrees, which turns zero
+  // violations into nothing scanned.
+  //
+  // The device code and the status message are DIFFERENT elements, so the
+  // wait has to name the one that actually carries the text. Waiting for the
+  // code on the message paragraph is how this helper failed once already:
+  // the paragraph legitimately reads "Waiting for authorisation" at that
+  // moment, so the assertion was simply pointed at the wrong node.
+  const target = page.locator(
+    expectedStatus === CODE ? '[data-testid="trakt-user-code"]' : '[data-testid="trakt-auth-message"]',
+  );
+  await expect(target).toBeVisible({ timeout: 8000 });
+  await expect(target).toContainText(expectedStatus);
 }
 
 async function openTraktGroupWithCodeDisplayed(page: Page) {
-  await openTraktGroupInState(page, pollPendingResponse(), 'ABCD-1234');
+  await openTraktGroupInState(page, pollPendingResponse(), CODE);
 }
 
 async function openTraktGroupWithSuccess(page: Page) {

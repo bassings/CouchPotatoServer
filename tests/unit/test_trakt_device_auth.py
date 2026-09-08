@@ -263,3 +263,76 @@ class TestPollForTokenRequiresDeviceCode:
 
         assert result['success'] is False
         assert 'device code' in result['error'].lower()
+
+
+class TestStartDeviceAuthRequiresBothCredentials:
+    """H1: `startDeviceAuth` used to require only the Client ID, while
+    `pollForToken` requires the Client Secret as well, and the browser fires
+    its first poll the instant a code arrives.
+
+    So a user who had entered only a Client ID was shown a device code, told
+    to go and type it in at trakt.tv, and roughly a tenth of a second later
+    watched it be replaced by 'Client ID and Client Secret are required'. The
+    code they had been sent to transcribe was already discarded. Measured
+    against a live server during review: the code was never visible in a
+    single sample.
+
+    Neither E2E spec could see this, because both seed only the client id and
+    then MOCK `device_code`, so the real handler never runs. A fixture more
+    permissive than production is exactly how a defect this loud survives a
+    green suite, which is why this guard lives at the unit level, driving the
+    real method, rather than as another browser test.
+    """
+
+    @pytest.mark.parametrize('client_id, client_secret, named', [
+        ('', 'test-client-secret', 'Client ID'),
+        (None, 'test-client-secret', 'Client ID'),
+        ('test-client-id', '', 'Client Secret'),
+        ('test-client-id', None, 'Client Secret'),
+        ('', '', 'Client ID'),
+    ])
+    def test_refuses_before_asking_trakt_and_names_the_missing_field(
+        self, provider, monkeypatch, client_id, client_secret, named
+    ):
+        monkeypatch.setattr(provider, 'get_client_id', lambda: client_id)
+        monkeypatch.setattr(provider, 'get_client_secret', lambda: client_secret)
+
+        # No mock for requests.post. If the guard fails to stop the flow, the
+        # method reaches a real outbound call and this test fails loudly
+        # rather than passing on a stubbed happy path.
+        called = []
+
+        import requests
+
+        def _forbidden(*args, **kwargs):
+            called.append(args)
+            raise AssertionError('startDeviceAuth called Trakt without both credentials')
+
+        monkeypatch.setattr(requests, 'post', _forbidden)
+
+        result = provider.startDeviceAuth()
+
+        assert result['success'] is False
+        assert called == [], 'Trakt was contacted despite missing credentials'
+        assert named in result['error'], result['error']
+        # The message has to say what to do, not just what is wrong: the old
+        # one read 'Client ID and Client Secret are required' with no location
+        # and no way to get either.
+        assert 'https://trakt.tv/oauth/applications' in result['error']
+
+    def test_both_present_still_reaches_trakt(self, provider, monkeypatch):
+        """The guard must not become a wall: with both credentials set, the
+        flow proceeds. Without this, deleting the entire method body would
+        satisfy every case above."""
+        _mock_post(monkeypatch, _FakeResponse(200, {
+            'device_code': 'dev-code',
+            'user_code': 'ABCD-1234',
+            'verification_url': 'https://trakt.tv/activate',
+            'expires_in': 600,
+            'interval': 5,
+        }))
+
+        result = provider.startDeviceAuth()
+
+        assert result['success'] is True
+        assert result['user_code'] == 'ABCD-1234'

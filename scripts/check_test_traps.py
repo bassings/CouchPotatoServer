@@ -1344,6 +1344,91 @@ _CAPLOG_LEVEL_METHODS = {"at_level", "set_level"}
 _REMAPPED_LEVEL_NAMES = {"INFO"}
 
 
+#: Test ids whose element is a live region: something a screen reader
+#: announces, and which the page shows and hides. Asserting one of these by
+#: text alone cannot fail when the element is hidden, because `toContainText`
+#: and `toHaveText` read `textContent`, which `display:none` does not affect.
+#:
+#: Found twice on one branch in three rounds (#311). First the device code
+#: box: setting `x-show` to `false`, so no user could ever read the code they
+#: are told to type in, left every spec green including the one named
+#: "displays the code and URL". Then the status message, one element over,
+#: where the same mutation left all sixteen specs green across two files.
+#: The accessibility scans do not catch it either: axe skips hidden subtrees,
+#: so "zero violations" quietly becomes "nothing was scanned".
+#:
+#: Two instances of one class is a mechanism request rather than a third fix,
+#: per AGENTS.md. This is the mechanism.
+_LIVE_REGION_TESTIDS = (
+    "trakt-auth-status",
+    "trakt-auth-message",
+    "trakt-user-code",
+    "trakt-verification-url",
+)
+
+_TEXT_ONLY_MATCHERS = ("toContainText", "toHaveText")
+
+
+def check_live_region_visibility(path: Path, text: str):
+    """Flag a live region asserted by TEXT but never by VISIBILITY.
+
+    Scoped per ELEMENT, not per file. An earlier draft of this rule accepted
+    any `toBeVisible` anywhere in the file, which meant the device code box's
+    assertion covered the status message sitting right beside it, and the rule
+    could not fail on the very code that motivated it. That is the defect
+    class this file exists to catch, written into the checker for it.
+
+    Locators reach `expect()` through a variable
+    (`const status = page.locator('[data-testid="..."]')`), so the binding is
+    resolved first and assertions are then attributed to the element rather
+    than matched textually on the assertion line.
+
+    A negative assertion (`not.toContainText`) is not text usage: "the code is
+    gone" is satisfied identically by "the code never appeared", so it neither
+    needs nor supplies visibility cover.
+    """
+    lines = strip_js_comments(text)
+
+    # variable -> test id, from `const x = page.locator('[data-testid="y"]')`
+    binding = re.compile(
+        r"""(?:const|let|var)\s+(\w+)\s*=\s*[^;]*?data-testid=["']([\w-]+)["']"""
+    )
+    bound = {}
+    for line in lines:
+        m = binding.search(line)
+        if m and m.group(2) in _LIVE_REGION_TESTIDS:
+            bound[m.group(1)] = m.group(2)
+
+    if not bound:
+        return
+
+    text_line = {}
+    has_visibility = set()
+
+    for idx, line in enumerate(lines):
+        for var, testid in bound.items():
+            if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), line):
+                continue
+            if "toBeVisible" in line or "toBeHidden" in line:
+                has_visibility.add(testid)
+            elif any(m in line for m in _TEXT_ONLY_MATCHERS) and "not." not in line:
+                text_line.setdefault(testid, idx + 1)
+
+    for testid, line_no in sorted(text_line.items()):
+        if testid in has_visibility:
+            continue
+        yield (
+            line_no,
+            "`%s` is a live region, asserted by text but never by visibility "
+            "in this file. `toContainText` and `toHaveText` read textContent, "
+            "which `display:none` does not affect, so hiding this element "
+            "permanently leaves the spec green and the control unusable. The "
+            "axe scans do not cover the gap either: axe skips hidden "
+            "subtrees, so zero violations degrades to nothing scanned. Assert "
+            "`toBeVisible()` on this element." % testid,
+        )
+
+
 def check_python_test(path: Path, text: str):
     """Flag `caplog.at_level("INFO")`, which silently captures nothing.
 
@@ -1676,6 +1761,7 @@ def check_file(path: Path):
         yield from check_vitest_spec(path, text)
     elif _is_e2e_spec(path):
         yield from check_e2e_spec_guards(path, text)
+        yield from check_live_region_visibility(path, text)
     elif path.name == "Makefile" or path.name.endswith(".mk"):
         yield from check_makefile(path, text)
     elif path.name.endswith(WORKFLOW_SUFFIXES):

@@ -124,7 +124,7 @@ class Trakt(Automation, TraktBase):
     applications. Users authenticate by:
     1. Creating a Trakt app at https://trakt.tv/oauth/applications
     2. Entering client_id and client_secret in CouchPotato settings
-    3. Clicking "Authorize" to start device code flow
+    3. Clicking "Start Trakt Authorisation" to start the device code flow
     4. Visiting trakt.tv/activate and entering the code shown
     5. CouchPotato polls for authorisation completion
     """
@@ -195,7 +195,7 @@ class Trakt(Automation, TraktBase):
                     self.conf('automation_oauth_refresh', value=data.get('refresh_token'))
                     Env.prop(prop_name, value=int(time.time()))
                 else:
-                    log.error('Failed refreshing Trakt token (HTTP %s), please re-authorize in settings', response.status_code)
+                    log.error('Failed refreshing Trakt token (HTTP %s), please re-authorise in settings', response.status_code)
 
             except Exception:
                 log.error('Failed refreshing Trakt token: %s', traceback.format_exc())
@@ -209,7 +209,7 @@ class Trakt(Automation, TraktBase):
             return movies
 
         if not self.conf('automation_oauth_token'):
-            log.warning('Trakt not authorized, skipping watchlist sync')
+            log.warning('Trakt not authorised, skipping watchlist sync')
             return movies
 
         for movie in self.getWatchlist():
@@ -246,14 +246,26 @@ class Trakt(Automation, TraktBase):
         """Start the device code authorisation flow.
 
         Returns a user_code and verification_url. The user must visit the URL
-        and enter the code to authorize CouchPotato.
+        and enter the code to authorise CouchPotato.
         """
         client_id = self.get_client_id()
+        client_secret = self.get_client_secret()
 
-        if not client_id:
+        # Both, not just the id. pollForToken needs the secret too, and the
+        # browser fires its first poll the instant a code arrives, so
+        # checking only the id here handed the user a code and then wiped it
+        # off the screen about a tenth of a second later, replaced by
+        # 'Client ID and Client Secret are required'. They were told to go
+        # and type a code that had already been thrown away. Refuse up front
+        # instead, and name the field rather than the pair.
+        if not client_id or not client_secret:
+            missing = 'Client ID' if not client_id else 'Client Secret'
             return {
                 'success': False,
-                'error': 'Please enter your Trakt Client ID first. Create an app at https://trakt.tv/oauth/applications',
+                'error': (
+                    'Please enter your Trakt %s first, in the fields above. '
+                    'Create an app at https://trakt.tv/oauth/applications to get both.'
+                ) % missing,
             }
 
         try:
@@ -310,7 +322,7 @@ class Trakt(Automation, TraktBase):
             }
 
     def pollForToken(self, **kwargs):
-        """Poll Trakt to check if the user has authorized the device code.
+        """Poll Trakt to check if the user has authorised the device code.
 
         Returns success when the user completes authorisation, or pending/error status.
         """
@@ -351,7 +363,7 @@ class Trakt(Automation, TraktBase):
             )
 
             if response.status_code == 200:
-                # Success! User authorized
+                # Success! User authorised
                 data = response.json()
                 self.conf('automation_oauth_token', value=data.get('access_token'))
                 self.conf('automation_oauth_refresh', value=data.get('refresh_token'))
@@ -365,7 +377,7 @@ class Trakt(Automation, TraktBase):
                 }
 
             elif response.status_code == 400:
-                # Pending - user hasn't authorized yet
+                # Pending - user has not authorised yet
                 return {
                     'success': False,
                     'pending': True,

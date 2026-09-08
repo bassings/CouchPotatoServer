@@ -36,7 +36,7 @@ config = [{
                     'type': 'password',
                     'label': 'Auth Token',
                     'advanced': True,
-                    'description': 'OAuth access token (set automatically after authorization).',
+                    'description': 'OAuth access token (set automatically after authorisation).',
                 },
                 {
                     'name': 'automation_oauth_refresh',

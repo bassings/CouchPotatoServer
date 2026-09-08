@@ -98,6 +98,23 @@ async function openTraktGroup(page: Page) {
   return startButton;
 }
 
+/**
+ * The only sanctioned way to assert that the device code is on screen.
+ *
+ * `expect(status).toContainText('ABCD-1234')` reads textContent from the
+ * region wrapper, which is present whether or not the code box is displayed.
+ * Setting the box to never display, so nobody could read the code they are
+ * told to type in, left every spec in this file green, twice, in two
+ * different rounds. Visibility on the code element itself is the assertion
+ * that can actually fail, and `scripts/check_test_traps.py` now enforces
+ * that any text assertion on these ids is paired with one.
+ */
+async function expectCodeShown(page: Page) {
+  const code = page.locator('[data-testid="trakt-user-code"]');
+  await expect(code).toBeVisible({ timeout: 8000 });
+  await expect(code).toContainText('ABCD-1234');
+}
+
 test.describe('Trakt device authorisation (FEAT #311)', () => {
   // L2: both endpoints are mocked per test below, which is discipline, not a
   // guard -- a forgotten mock (or a future edit that calls Trakt directly
@@ -151,21 +168,43 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     // The point of the test: the region a screen reader is listening to says
     // something while we are waiting. The button's own label also changes,
     // but that is only read if focus happens to be on the button.
-    await expect(status).toContainText('Contacting Trakt', { timeout: 8000 });
+    // toBeVisible on the message element itself, not toContainText on the
+    // region: textContent is present while hidden, so text alone cannot
+    // tell a working announcement from one nobody can see.
+    const message = page.locator('[data-testid="trakt-auth-message"]');
+    await expect(message).toBeVisible({ timeout: 8000 });
+    await expect(message).toContainText('Contacting Trakt');
 
     release();
-    await expect(status).toContainText('ABCD-1234', { timeout: 8000 });
+    await expectCodeShown(page);
   });
 
-  test('the button points at the status region, so its unavailable state has a reason (WCAG 1.3.1)', async ({ page }) => {
+  test('the button says what it is doing while it waits, in its NAME (WCAG 4.1.2)', async ({ page }) => {
     const startButton = await openTraktGroup(page);
 
-    // aria-disabled without aria-describedby reads as "unavailable" with the
-    // reason sitting in an unassociated element, for up to the full ten
-    // minute poll window.
-    const describedBy = await startButton.getAttribute('aria-describedby');
-    expect(describedBy).toBe('trakt-auth-status');
-    await expect(page.locator(`#${describedBy}`)).toHaveAttribute('role', 'status');
+    // The state has to be in the accessible NAME, not only in a description.
+    // Pointing aria-describedby at the whole live region made every focus
+    // read the verification URL and the code aloud again for the rest of the
+    // session; and leaving the label as "Start Trakt Authorisation" for the
+    // entire ten minute wait meant a sighted user saw a greyed-out control
+    // labelled Start that would not start.
+    await expect(startButton).toHaveAccessibleName('Start Trakt Authorisation');
+    expect(await startButton.getAttribute('aria-describedby')).toBeNull();
+
+    await page.route(DEVICE_CODE_ROUTE, (route) =>
+      route.fulfill(deviceCodeResponse({ interval: 30 })));
+    await page.route(POLL_ROUTE, (route) => route.fulfill(pollPendingResponse(30)));
+
+    await startButton.click();
+    await expectCodeShown(page);
+
+    await expect(startButton).toHaveAccessibleName('Waiting for Trakt…');
+    await expect(startButton).toHaveAttribute('aria-disabled', 'true');
+    // Still reachable: aria-disabled, not disabled, so it keeps its place in
+    // the tab order. That is precisely why it must not be dimmed, and why
+    // this test exists next to the contrast expectations.
+    await startButton.focus();
+    await expect(startButton).toBeFocused();
   });
 
   test('starting authorisation displays the code and URL inside a persistent live region', async ({ page }) => {
@@ -193,7 +232,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     // The code and the verification link land INSIDE the live region, not
     // merely somewhere on the page -- so a mutation to this element is what
     // a screen reader is asked to announce.
-    await expect(status).toContainText('ABCD-1234');
+    await expectCodeShown(page);
     const codeEl = status.locator('[data-testid="trakt-user-code"]');
     await expect(codeEl).toHaveText('ABCD-1234');
     // VISIBLE, not merely present. toHaveText and toContainText read
@@ -237,7 +276,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     });
 
     await startButton.click();
-    await expect(status).toContainText('ABCD-1234');
+    await expectCodeShown(page);
 
     // At least three polls within a few seconds proves the loop keeps
     // going on `pending: true` rather than firing once and stopping.
@@ -245,7 +284,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
 
     // Still displaying the code and still marked busy -- pending is not a
     // terminal state.
-    await expect(status).toContainText('ABCD-1234');
+    await expectCodeShown(page);
     await expect(startButton).toHaveAttribute('aria-disabled', 'true');
   });
 
@@ -279,7 +318,9 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     // displays the code and URL...'), which mocks a PENDING poll on a 30s
     // interval so the code is genuinely stable while it is asserted. This test
     // is about the success path, so it asserts only that.
-    await expect(status).toContainText('Authorisation successful! Trakt is now connected.', { timeout: 8000 });
+    const message = page.locator('[data-testid="trakt-auth-message"]');
+    await expect(message).toBeVisible({ timeout: 8000 });
+    await expect(message).toContainText('Authorisation successful! Trakt is now connected.');
     // The device code is no longer relevant once authorisation succeeded.
     await expect(status).not.toContainText('ABCD-1234');
     expect(pollRequests).toBeGreaterThanOrEqual(1);
@@ -319,7 +360,9 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     // just under gate load. The code display has its own stable-window test
     // above, which mocks a PENDING poll on a 30s interval. This test is
     // about the error path, so it asserts only that.
-    await expect(status).toContainText('Device code expired. Please start authorisation again.', { timeout: 8000 });
+    const message = page.locator('[data-testid="trakt-auth-message"]');
+    await expect(message).toBeVisible({ timeout: 8000 });
+    await expect(message).toContainText('Device code expired. Please start authorisation again.');
     await expect(status).not.toContainText('ABCD-1234');
 
     const requestsAtError = pollRequests;
@@ -365,7 +408,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     });
 
     await startButton.click();
-    await expect(status).toContainText('ABCD-1234');
+    await expectCodeShown(page);
 
     // Arm the counter and let at least one real poll land before the trigger,
     // so the wait below is measuring the loop stopping, not merely a request
@@ -424,7 +467,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     });
 
     await startButton.click();
-    await expect(status).toContainText('ABCD-1234');
+    await expectCodeShown(page);
     await expect.poll(() => pollRequests, { timeout: 5000 }).toBe(2);
 
     // Tear the component down while poll #2 is still open.
