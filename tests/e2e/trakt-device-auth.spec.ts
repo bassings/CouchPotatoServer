@@ -293,6 +293,47 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     await expect.poll(() => pollRequests, { timeout: 8000 }).toBeGreaterThanOrEqual(1);
   });
 
+  test('a double click starts ONE authorisation, not two (the guard covers its own await)', async ({ page }) => {
+    const startButton = await openTraktGroup(page);
+
+    // The re-entry guard has to be claimed synchronously. If the flag is set
+    // after the credential flush, the guard is a no-op across a real network
+    // round trip, and a double click, which is an ordinary thing to do and
+    // exactly the case the flush exists for, puts two runs on the same
+    // component: each overwrites userCode and pollTimer, orphaning whichever
+    // poll loop loses. That is the concurrent-loop defect this control was
+    // fixed for, one step earlier in the same function.
+    let deviceCodeRequests = 0;
+    await page.route(DEVICE_CODE_ROUTE, async (route) => {
+      deviceCodeRequests++;
+      return route.fulfill(deviceCodeResponse({ interval: 30 }));
+    });
+    await page.route(POLL_ROUTE, (route) => route.fulfill(pollPendingResponse(30)));
+
+    // Type first, so a real flush (a fetch, not a microtask hop) sits inside
+    // start() and the window is genuinely open.
+    const secretField = page.getByLabel('Client Secret', { exact: true });
+    await expect(secretField).toBeVisible({ timeout: 10000 });
+    await secretField.fill('typed-just-now-secret');
+
+    // Both clicks dispatched in ONE synchronous block. Playwright's second
+    // .click() would wait for the element to be "stable", which the spinner
+    // animation prevents, so it cannot express a double click on this control
+    // at all: the test would time out on actionability rather than measure
+    // the race. Dispatching directly is what a real double click does anyway.
+    await page.evaluate(() => {
+      const b = document.querySelector('[data-testid="trakt-start-auth"]') as HTMLElement;
+      b.click();
+      b.click();
+    });
+
+    await expectCodeShown(page);
+    // Read after a bounded wait, not at the click: a second request that has
+    // not been issued yet is indistinguishable from one that never will be.
+    await page.waitForTimeout(1500);
+    expect(deviceCodeRequests).toBe(1);
+  });
+
   test('a credential typed a moment ago is saved before authorisation starts', async ({ page }) => {
     const startButton = await openTraktGroup(page);
 

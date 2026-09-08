@@ -772,6 +772,17 @@ function traktDeviceAuth() {
       // (aria-disabled, not disabled) while a request or a poll is live.
       if (this.authorising || this.polling) return;
 
+      // Claim the flag SYNCHRONOUSLY, before any await. Setting it after the
+      // flush below left a window where the guard above was a no-op across a
+      // real network round trip: a double click, which is an ordinary thing
+      // to do and exactly the case the flush exists for, put two runs on the
+      // same component instance, each overwriting userCode and pollTimer and
+      // orphaning whichever poll loop lost the race. That is the two
+      // concurrent loops this whole control was fixed for, reintroduced one
+      // step earlier in the same function. A guard that only takes effect
+      // after an await does not guard the await.
+      this.authorising = true;
+
       // Credentials are written through setVal(), which debounces the save by
       // 500ms. Clicking Start straight after typing a Client ID or Secret,
       // which is exactly what someone setting this up does, would otherwise
@@ -782,11 +793,13 @@ function traktDeviceAuth() {
       const panel = this.getPanel();
       if (panel && typeof panel.flushPendingSaves === 'function') {
         await panel.flushPendingSaves();
-        if (this.destroyed) return;
+        if (this.destroyed) {
+          this.authorising = false;
+          return;
+        }
       }
 
       this.clearPoll();
-      this.authorising = true;
       this.error = false;
       this.userCode = '';
       this.verificationUrl = '';

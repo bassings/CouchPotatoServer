@@ -446,6 +446,8 @@ only one of the two return paths. That guard is T1 below.
 - [ ] T8: five films identified earlier today that are still not added to the
       library. Data task, no PR, state: queued (needs: T7)
 
+status: blocked-on-human: T6 tripped the rework circuit breaker at round 8. A fix of mine introduced a defect (the re-entry flag was claimed after an await, so a double click ran two authorisation flows), which is the one self-inflicted regression the rule says to escalate on rather than spend another round. Fixed and guarded, Expected 1 Received 2 against the regression. The decision is whether to land T6 now with each known variant guarded, or spend one deliberate pass restructuring start() and poll() so the class of defect becomes impossible rather than individually guarded. Every round has found another variant of the same shared-state-across-await problem, which reads as a design smell rather than bad luck.
+
 ## Conductor log
 
 - 2026-09-08 T2/T4/T7 closeout merged as #331. Five review findings, all mine,
