@@ -1,6 +1,8 @@
 import json
+import math
 import traceback
 import time
+from urllib.parse import urlsplit
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
@@ -12,6 +14,107 @@ from couchpotato.environment import Env
 
 
 log = CPLog(__name__)
+
+
+# M1: bounds for the device-auth poll interval and code expiry Trakt hands
+# back. Both are relayed to the browser's poll loop and stored for the next
+# poll, and both were previously trusted unchecked -- an interval of -1 or
+# 1e9 (which overflows setTimeout's 32-bit millisecond limit and so fires
+# immediately) drove hundreds of poll requests in a few seconds, each one
+# taking a per-route lock and a blocking 30s outbound call from the server's
+# thread pool. Interval bounds mirror Trakt's own documented range; expiry
+# bounds keep a legitimate-looking but absurd value from either expiring the
+# flow instantly or leaving stale device-code state around for a day.
+MIN_POLL_INTERVAL_SECONDS = 5
+MAX_POLL_INTERVAL_SECONDS = 60
+DEFAULT_POLL_INTERVAL_SECONDS = 5
+
+MIN_DEVICE_EXPIRY_SECONDS = 60
+MAX_DEVICE_EXPIRY_SECONDS = 1800
+DEFAULT_DEVICE_EXPIRY_SECONDS = 600
+
+# H2: verification_url is bound as an href in trakt_auth.html (`:href`). The
+# vendored Alpine does no scheme filtering on x-bind and there is no CSP, so
+# anything other than a genuine https:// URL is clickable script or local
+# file access if a response is ever forged or intercepted.
+DEFAULT_VERIFICATION_URL = 'https://trakt.tv/activate'
+
+
+def _clamp_seconds(value, low, high, default):
+    """Coerce an untrusted numeric field into `[low, high]`, falling back to
+    `default` for anything that is not a genuine, finite number: missing,
+    non-numeric, boolean (a Python bool is an int subclass, so `True` would
+    otherwise sail through as 1), NaN or infinite.
+
+    A value inside the bound the wire actually offered is clamped to the
+    nearer edge rather than forced to `default`, since that is still a
+    number Trakt asked for -- only the shape of the value, not its size,
+    decides whether it gets a default instead of a clamp.
+    """
+    if isinstance(value, bool):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is reachable from the wire, not theoretical: json.loads
+        # builds an arbitrary-precision int for a long integer literal, and
+        # float() raises on one too large to convert. Without it here the
+        # method's outer `except Exception` caught it instead, which failed
+        # closed but contradicted this function's promise to return `default`
+        # for anything that is not a finite number.
+        return default
+    if not math.isfinite(number):
+        return default
+    return int(min(max(number, low), high))
+
+
+def _safe_verification_url(url):
+    """Refuse anything that is not an https:// URL on Trakt's own host,
+    falling back to the documented device-auth activation page.
+
+    The scheme check alone stops a forged response becoming clickable script.
+    It does not stop it becoming a phishing page: an attacker who can forge
+    this field could point it at their own https:// site dressed as
+    trakt.tv/activate, and the user would type a real device code into it.
+    The host is knowable and fixed, so pin it. This is the page we send people
+    to; there is no legitimate reason for it to live anywhere else.
+
+    Parsed with `urlsplit`, not by hand. The hand-rolled version split on '/'
+    to drop the path, which does nothing when there is no '/' before a query
+    or fragment, so `https://evil.example?x=fake.trakt.tv` computed a "host"
+    of `evil.example?x=fake.trakt.tv`, which genuinely ends in `.trakt.tv`,
+    and was returned unchanged. The browser would have navigated to
+    evil.example. Reproduced before fixing. A real parser also handles
+    userinfo, port, fragment and case correctly, none of which is worth
+    re-deriving here, and getting one of them wrong is what happened.
+    """
+    if not isinstance(url, str):
+        return DEFAULT_VERIFICATION_URL
+
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or '').lower()
+        # Bound, not merely touched: `.port` is the accessor that validates
+        # the port, and it raises here rather than returning. A bare
+        # `parts.port` statement reads as dead code and gets tidied away,
+        # which would silently remove this check. An out-of-range port makes
+        # a link the browser cannot follow; the host may be genuinely
+        # Trakt's, so this is not about phishing, it is that sending someone
+        # to a URL that cannot resolve is worse than the documented page.
+        validated_port = parts.port
+    except ValueError:
+        return DEFAULT_VERIFICATION_URL
+
+    if parts.scheme != 'https':
+        return DEFAULT_VERIFICATION_URL
+
+    if validated_port is not None and validated_port not in (443, 80):
+        # A Trakt link on an unexpected port is not a link we published.
+        return DEFAULT_VERIFICATION_URL
+
+    if host == 'trakt.tv' or host.endswith('.trakt.tv'):
+        return url
+    return DEFAULT_VERIFICATION_URL
 
 
 class TraktBase(Provider):
@@ -63,9 +166,9 @@ class Trakt(Automation, TraktBase):
     applications. Users authenticate by:
     1. Creating a Trakt app at https://trakt.tv/oauth/applications
     2. Entering client_id and client_secret in CouchPotato settings
-    3. Clicking "Authorize" to start device code flow
+    3. Clicking "Start Trakt Authorisation" to start the device code flow
     4. Visiting trakt.tv/activate and entering the code shown
-    5. CouchPotato polls for authorization completion
+    5. CouchPotato polls for authorisation completion
     """
 
     urls = {
@@ -134,7 +237,7 @@ class Trakt(Automation, TraktBase):
                     self.conf('automation_oauth_refresh', value=data.get('refresh_token'))
                     Env.prop(prop_name, value=int(time.time()))
                 else:
-                    log.error('Failed refreshing Trakt token (HTTP %s), please re-authorize in settings', response.status_code)
+                    log.error('Failed refreshing Trakt token (HTTP %s), please re-authorise in settings', response.status_code)
 
             except Exception:
                 log.error('Failed refreshing Trakt token: %s', traceback.format_exc())
@@ -148,7 +251,7 @@ class Trakt(Automation, TraktBase):
             return movies
 
         if not self.conf('automation_oauth_token'):
-            log.warning('Trakt not authorized, skipping watchlist sync')
+            log.warning('Trakt not authorised, skipping watchlist sync')
             return movies
 
         for movie in self.getWatchlist():
@@ -178,21 +281,33 @@ class Trakt(Automation, TraktBase):
         return {
             'success': False,
             'error': 'OAuth proxy is no longer available. Use the device code flow instead.',
-            'message': 'Click "Start Authorization" to begin the device code authentication flow.',
+            'message': 'Click "Start Authorisation" to begin the device code authentication flow.',
         }
 
     def startDeviceAuth(self, **kwargs):
-        """Start the device code authorization flow.
+        """Start the device code authorisation flow.
 
         Returns a user_code and verification_url. The user must visit the URL
-        and enter the code to authorize CouchPotato.
+        and enter the code to authorise CouchPotato.
         """
         client_id = self.get_client_id()
+        client_secret = self.get_client_secret()
 
-        if not client_id:
+        # Both, not just the id. pollForToken needs the secret too, and the
+        # browser fires its first poll the instant a code arrives, so
+        # checking only the id here handed the user a code and then wiped it
+        # off the screen about a tenth of a second later, replaced by
+        # 'Client ID and Client Secret are required'. They were told to go
+        # and type a code that had already been thrown away. Refuse up front
+        # instead, and name the field rather than the pair.
+        if not client_id or not client_secret:
+            missing = 'Client ID' if not client_id else 'Client Secret'
             return {
                 'success': False,
-                'error': 'Please enter your Trakt Client ID first. Create an app at https://trakt.tv/oauth/applications',
+                'error': (
+                    'Please enter your Trakt %s first, in the fields above. '
+                    'Create an app at https://trakt.tv/oauth/applications to get both.'
+                ) % missing,
             }
 
         try:
@@ -206,17 +321,42 @@ class Trakt(Automation, TraktBase):
 
             if response.status_code == 200:
                 data = response.json()
+                # H2/M1: none of these are trustworthy as-is -- clamp the
+                # numeric fields and validate the URL scheme before either
+                # storing them for the next poll or handing them to the
+                # browser.
+                interval = _clamp_seconds(
+                    data.get('interval'),
+                    MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS,
+                    DEFAULT_POLL_INTERVAL_SECONDS,
+                )
+                expires_in = _clamp_seconds(
+                    data.get('expires_in'),
+                    MIN_DEVICE_EXPIRY_SECONDS, MAX_DEVICE_EXPIRY_SECONDS,
+                    DEFAULT_DEVICE_EXPIRY_SECONDS,
+                )
+                verification_url = _safe_verification_url(data.get('verification_url'))
+
+                # user_code goes to the DOM through x-text, which sets
+                # textContent, so there is no injection path. It is coerced
+                # anyway: every other field off this response is validated,
+                # and a non-string here would reach the template as whatever
+                # json gave us. Cheaper to be uniform than to leave one field
+                # explained only by a comment nobody reads.
+                user_code = data.get('user_code')
+                user_code = user_code if isinstance(user_code, str) else ''
+
                 # Store device code for polling
                 self._device_code = data.get('device_code')
-                self._device_expires = time.time() + data.get('expires_in', 600)
-                self._poll_interval = data.get('interval', 5)
+                self._device_expires = time.time() + expires_in
+                self._poll_interval = interval
 
                 return {
                     'success': True,
-                    'user_code': data.get('user_code'),
-                    'verification_url': data.get('verification_url'),
-                    'expires_in': data.get('expires_in'),
-                    'interval': data.get('interval'),
+                    'user_code': user_code,
+                    'verification_url': verification_url,
+                    'expires_in': expires_in,
+                    'interval': interval,
                 }
             else:
                 log.error('Failed to get device code: HTTP %s - %s', response.status_code, response.text)
@@ -233,9 +373,9 @@ class Trakt(Automation, TraktBase):
             }
 
     def pollForToken(self, **kwargs):
-        """Poll Trakt to check if the user has authorized the device code.
+        """Poll Trakt to check if the user has authorised the device code.
 
-        Returns success when the user completes authorization, or pending/error status.
+        Returns success when the user completes authorisation, or pending/error status.
         """
         client_id = self.get_client_id()
         client_secret = self.get_client_secret()
@@ -249,14 +389,14 @@ class Trakt(Automation, TraktBase):
         if not self._device_code:
             return {
                 'success': False,
-                'error': 'No device code. Start authorization first.',
+                'error': 'No device code. Start authorisation first.',
             }
 
         if time.time() > self._device_expires:
             self._device_code = None
             return {
                 'success': False,
-                'error': 'Device code expired. Please start authorization again.',
+                'error': 'Device code expired. Please start authorisation again.',
                 'expired': True,
             }
 
@@ -274,21 +414,21 @@ class Trakt(Automation, TraktBase):
             )
 
             if response.status_code == 200:
-                # Success! User authorized
+                # Success! User authorised
                 data = response.json()
                 self.conf('automation_oauth_token', value=data.get('access_token'))
                 self.conf('automation_oauth_refresh', value=data.get('refresh_token'))
                 Env.prop('last_trakt_refresh', value=int(time.time()))
                 self._device_code = None
 
-                log.info('Trakt authorization successful')
+                log.info('Trakt authorisation successful')
                 return {
                     'success': True,
-                    'message': 'Authorization successful! Trakt is now connected.',
+                    'message': 'Authorisation successful! Trakt is now connected.',
                 }
 
             elif response.status_code == 400:
-                # Pending - user hasn't authorized yet
+                # Pending - user has not authorised yet
                 return {
                     'success': False,
                     'pending': True,
@@ -297,22 +437,28 @@ class Trakt(Automation, TraktBase):
 
             elif response.status_code == 404:
                 self._device_code = None
-                return {'success': False, 'error': 'Invalid device code. Please restart authorization.'}
+                return {'success': False, 'error': 'Invalid device code. Please restart authorisation.'}
 
             elif response.status_code == 409:
                 return {'success': False, 'error': 'Code already approved. Refresh the page.'}
 
             elif response.status_code == 410:
                 self._device_code = None
-                return {'success': False, 'error': 'Code expired. Please restart authorization.', 'expired': True}
+                return {'success': False, 'error': 'Code expired. Please restart authorisation.', 'expired': True}
 
             elif response.status_code == 418:
                 self._device_code = None
-                return {'success': False, 'error': 'Authorization denied by user.'}
+                return {'success': False, 'error': 'Authorisation denied by user.'}
 
             elif response.status_code == 429:
-                # Slow down
-                self._poll_interval = min(self._poll_interval * 2, 30)
+                # Slow down. Same clamp as startDeviceAuth: doubling an
+                # already-stored interval must not walk it past the same
+                # ceiling a hostile initial value was bounded to.
+                self._poll_interval = _clamp_seconds(
+                    self._poll_interval * 2,
+                    MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS,
+                    DEFAULT_POLL_INTERVAL_SECONDS,
+                )
                 return {
                     'success': False,
                     'pending': True,

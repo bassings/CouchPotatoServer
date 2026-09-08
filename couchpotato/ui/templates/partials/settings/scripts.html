@@ -110,6 +110,7 @@ function settingsPanel() {
     currentGroups: [],
     lastSaved: false,
     saveTimers: {},
+    pendingSaves: {},
     version: '',
     updateAvailable: null,
 
@@ -417,10 +418,37 @@ function settingsPanel() {
     debounceSave(section, name, value) {
       const key = section + '.' + name;
       if (this.saveTimers[key]) clearTimeout(this.saveTimers[key]);
+      this.pendingSaves[key] = { section, name, value };
       this.saveTimers[key] = setTimeout(() => this.saveSingle(section, name, value), 500);
     },
 
+    /**
+     * Run every debounced save NOW and wait for all of them.
+     *
+     * For a control that acts on a setting the user has only just typed. The
+     * 500ms debounce is right for keystrokes and wrong the moment something
+     * READS the saved value: Trakt authorisation asked the server for a
+     * device code using whichever credentials the server had before the edit
+     * had landed, which on first setup is none of them.
+     *
+     * Safe to call when nothing is pending: it resolves immediately.
+     */
+    async flushPendingSaves() {
+      const pending = Object.entries(this.pendingSaves);
+      if (!pending.length) return;
+
+      this.pendingSaves = {};
+      await Promise.all(pending.map(([key, s]) => {
+        if (this.saveTimers[key]) {
+          clearTimeout(this.saveTimers[key]);
+          delete this.saveTimers[key];
+        }
+        return this.saveSingle(s.section, s.name, s.value);
+      }));
+    },
+
     async saveSingle(section, name, value) {
+      delete this.pendingSaves[section + '.' + name];
       this.saving = true;
       this.lastSaved = false;
       try {
@@ -711,6 +739,237 @@ function buttonField(section, opt) {
     buildDescription() {
       const panel = this.getPanel();
       return panel ? panel.buildDescription(this.section, this.opt) : (this.opt.description || '');
+    },
+  };
+}
+
+/* ── Trakt device authorisation (issue #311) ──
+   Bespoke, not a generalisation of buttonField above: that helper is
+   single-shot (fetch once, show a message, refresh the panel), and this
+   flow needs a start call followed by a bounded poll loop with its own
+   expiry and a "still waiting" state in between, which buttonField cannot
+   express without turning it into something else entirely.
+
+   STRUCTURE, and why it is worth reading before editing this.
+
+   Everything that went wrong with this control was one problem wearing
+   different clothes: work continuing across an `await` or a `setTimeout`
+   after the thing that started it was gone or superseded. It arrived four
+   times, found by four different reviewers, and the fourth was introduced
+   while fixing the third:
+
+     - a poll loop outliving the settings tab that started it, so the user
+       was told authorisation failed at the moment it succeeded;
+     - a request already in flight resuming after teardown and restarting
+       the chain teardown had just stopped;
+     - a panel refresh timer nothing could cancel;
+     - a re-entry flag claimed after an await, so a double click ran two
+       flows at once.
+
+   Guarding each one separately meant five pieces of state (`authorising`,
+   `polling`, `destroyed`, and two timer handles) each having to be correct
+   at six different suspension points. That is about thirty places to get
+   right, and a review found a new wrong one every round.
+
+   So there is now ONE invariant instead of five. A "run" is the unit of
+   work from a Start click to its terminal state, and exactly one can be
+   live. Every continuation asks the same single question -- am I still the
+   live run? -- through `isCurrent(run)`, and every timer is created through
+   `later(run, ...)`, which will not fire for a run that is over. Cancelling
+   a run invalidates its token and drops its timers in one place.
+
+   The practical rule for anyone editing this: after any `await`, the first
+   statement must be the `isCurrent(run)` check, and no `setTimeout` should
+   appear in this component except through `later()`. Both are mechanical
+   and both are visible in review, which the old arrangement was not.
+
+   `authorising` and `polling` survive, but ONLY as display state for the
+   button's label and its aria-disabled. They are no longer load-bearing for
+   correctness, which is why nothing branches on them after an await. */
+function traktDeviceAuth() {
+  return {
+    // Display state. Read by the template, never trusted for correctness.
+    authorising: false,
+    polling: false,
+    userCode: '',
+    verificationUrl: '',
+    statusText: '',
+    statusClass: 'text-cp-muted',
+
+    // The single correctness invariant. Bumped when a run starts and when
+    // one is cancelled, so any continuation holding an older token is, by
+    // definition, no longer the live run.
+    runId: 0,
+    expiresAt: 0,
+
+    /** True while `run` is still the live run. The only question any
+     *  continuation in this component needs to ask. */
+    isCurrent(run) {
+      return run === this.runId;
+    },
+
+    /** setTimeout owned by a run: fires only while that run is still live.
+     *
+     *  Deliberately NOT paired with a timer registry and clearTimeout. An
+     *  earlier draft had both, and a mutation showed the second one was
+     *  unreachable: cancelling a run cleared its timers, so the check here
+     *  could never be the thing that saved you, and no test could tell
+     *  whether it worked. Two mechanisms where one is unprovable is the
+     *  problem this restructure exists to remove, so there is one.
+     *
+     *  The cost is a single pending no-op timer per cancelled run, which
+     *  fires once, finds its run superseded and does nothing. It does not
+     *  reschedule, because the callback it would have called is what
+     *  reschedules. */
+    later(run, fn, ms) {
+      setTimeout(() => {
+        if (this.isCurrent(run)) fn();
+      }, ms);
+    },
+
+    /** End whatever run is live by invalidating its token, so every
+     *  continuation and every pending timer belonging to it becomes a no-op
+     *  the moment it resumes or fires. */
+    cancelRun() {
+      this.runId++;
+      this.authorising = false;
+      this.polling = false;
+    },
+
+    async start() {
+      // Re-entry guard. The button stays focusable and clickable
+      // (aria-disabled, not disabled), so a second click is an ordinary
+      // thing for a user to do and must not start a second run.
+      if (this.authorising || this.polling) return;
+
+      // Claim the run SYNCHRONOUSLY, before any await, or the guard above is
+      // a no-op for the duration of the first suspension.
+      this.cancelRun();
+      const run = this.runId;
+      this.authorising = true;
+      this.userCode = '';
+      this.verificationUrl = '';
+      // Announce the busy state rather than clearing the region. The button's
+      // label also changes, but that is only read if focus happens to be on
+      // it. The window is not trivial: the server allows a 30s timeout
+      // against Trakt, so this can be seconds. (WCAG 4.1.3)
+      this.statusText = 'Contacting Trakt…';
+      this.statusClass = 'text-cp-muted';
+
+      // Credentials are written through setVal(), which debounces the save by
+      // 500ms. Clicking Start straight after typing a Client ID or Secret,
+      // which is what someone setting this up does, would otherwise ask Trakt
+      // for a code using whatever the server held BEFORE the edit: reported
+      // as missing while visibly on screen, or worse, a code issued for the
+      // old client and polled for with the new one.
+      const panel = this.getPanel();
+      if (panel && typeof panel.flushPendingSaves === 'function') {
+        await panel.flushPendingSaves();
+        if (!this.isCurrent(run)) return;
+      }
+
+      try {
+        const resp = await fetch(CP.apiBase + '/automation.trakt.device_code/');
+        const data = await resp.json();
+        if (!this.isCurrent(run)) return;
+
+        if (data.success) {
+          this.userCode = data.user_code || '';
+          this.verificationUrl = data.verification_url || '';
+          this.expiresAt = Date.now() + (Number(data.expires_in) || 600) * 1000;
+          this.statusText = 'Waiting for authorisation…';
+          this.statusClass = 'text-cp-muted';
+          this.authorising = false;
+          this.polling = true;
+          // Wait the interval before the FIRST poll too. Trakt's interval is
+          // the minimum gap between token requests, and the user cannot have
+          // typed a code that appeared a moment ago, so an immediate poll is
+          // guaranteed to be wasted. Worse than wasted: it can draw the 429
+          // slow-down, which doubles the interval for every later poll.
+          const first = Number(data.interval) || 5;
+          this.later(run, () => this.poll(run, first), first * 1000);
+          return;
+        }
+
+        this.finish(run, data.error || 'Failed to start authorisation.', false);
+      } catch (e) {
+        if (!this.isCurrent(run)) return;
+        this.finish(run, 'Request failed: ' + e.message, false);
+      }
+    },
+
+    async poll(run, intervalSeconds) {
+      if (!this.isCurrent(run)) return;
+
+      if (Date.now() > this.expiresAt) {
+        this.finish(run, 'Authorisation code expired. Please start again.', false);
+        return;
+      }
+
+      try {
+        const resp = await fetch(CP.apiBase + '/automation.trakt.poll_token/');
+        const data = await resp.json();
+        if (!this.isCurrent(run)) return;
+
+        if (data.success) {
+          this.finish(run, data.message || 'Authorisation successful.', true);
+          return;
+        }
+
+        if (data.pending) {
+          const next = Number(data.interval) || intervalSeconds;
+          this.later(run, () => this.poll(run, next), next * 1000);
+          return;
+        }
+
+        // Any non-pending, non-success response is terminal (expired,
+        // invalid code, denied, unexpected status): stop and report it.
+        this.finish(run, data.error || 'Authorisation failed.', false);
+      } catch (e) {
+        if (!this.isCurrent(run)) return;
+        this.finish(run, 'Request failed: ' + e.message, false);
+      }
+    },
+
+    /** The one terminal path, success or failure. Ends the run first, so no
+     *  timer or in-flight request from it can act afterwards, then paints
+     *  the outcome. */
+    finish(run, message, ok) {
+      if (!this.isCurrent(run)) return;
+
+      this.cancelRun();
+      const ended = this.runId;
+
+      this.userCode = '';
+      this.verificationUrl = '';
+      this.statusText = message;
+      this.statusClass = ok ? 'text-cp-success' : 'text-cp-danger';
+
+      if (!ok) return;
+
+      // Same re-init as buttonField.execute(), so the now populated token
+      // fields (password inputs rendered from `values`) reflect what the
+      // server actually stored. Scheduled through later() like everything
+      // else, so teardown cancels it: this timer used to be invisible to
+      // cancellation and fired on a torn-down component.
+      const panel = this.getPanel();
+      if (panel) this.later(ended, () => panel.init(), 500);
+    },
+
+    // Alpine 3 calls destroy() when the element is removed, e.g. switching
+    // settings tabs, which re-keys currentGroups' x-for and drops this group
+    // out of it. Cancelling the run is the whole teardown: it invalidates
+    // the token every continuation checks and drops every timer the run
+    // owns, so there is nothing left to enumerate and nothing to forget.
+    destroy() {
+      this.cancelRun();
+    },
+
+    getPanel() {
+      let el = this.$el;
+      while (el && !el.__x_panel) el = el.parentElement;
+      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
+      return el ? Alpine.$data(el) : null;
     },
   };
 }

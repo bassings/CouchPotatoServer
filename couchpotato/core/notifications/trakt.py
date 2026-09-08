@@ -63,7 +63,7 @@ class Trakt(Notification, TraktBase):
                 log.warning('Trakt Client ID not configured in automation settings')
                 return False
             if not self.conf('automation_oauth_token'):
-                log.warning('Trakt not authorized. Authorize in the Automation tab first.')
+                log.warning('Trakt not authorised. Authorise it under Settings, Suggestions tab, Trakt.')
                 return False
 
             result = self.call(self.urls['test'])
