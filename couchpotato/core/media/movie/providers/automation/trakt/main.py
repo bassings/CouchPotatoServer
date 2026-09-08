@@ -54,7 +54,13 @@ def _clamp_seconds(value, low, high, default):
         return default
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError is reachable from the wire, not theoretical: json.loads
+        # builds an arbitrary-precision int for a long integer literal, and
+        # float() raises on one too large to convert. Without it here the
+        # method's outer `except Exception` caught it instead, which failed
+        # closed but contradicted this function's promise to return `default`
+        # for anything that is not a finite number.
         return default
     if not math.isfinite(number):
         return default
@@ -120,7 +126,7 @@ class Trakt(Automation, TraktBase):
     2. Entering client_id and client_secret in CouchPotato settings
     3. Clicking "Authorize" to start device code flow
     4. Visiting trakt.tv/activate and entering the code shown
-    5. CouchPotato polls for authorization completion
+    5. CouchPotato polls for authorisation completion
     """
 
     urls = {
@@ -233,11 +239,11 @@ class Trakt(Automation, TraktBase):
         return {
             'success': False,
             'error': 'OAuth proxy is no longer available. Use the device code flow instead.',
-            'message': 'Click "Start Authorization" to begin the device code authentication flow.',
+            'message': 'Click "Start Authorisation" to begin the device code authentication flow.',
         }
 
     def startDeviceAuth(self, **kwargs):
-        """Start the device code authorization flow.
+        """Start the device code authorisation flow.
 
         Returns a user_code and verification_url. The user must visit the URL
         and enter the code to authorize CouchPotato.
@@ -306,7 +312,7 @@ class Trakt(Automation, TraktBase):
     def pollForToken(self, **kwargs):
         """Poll Trakt to check if the user has authorized the device code.
 
-        Returns success when the user completes authorization, or pending/error status.
+        Returns success when the user completes authorisation, or pending/error status.
         """
         client_id = self.get_client_id()
         client_secret = self.get_client_secret()
@@ -320,14 +326,14 @@ class Trakt(Automation, TraktBase):
         if not self._device_code:
             return {
                 'success': False,
-                'error': 'No device code. Start authorization first.',
+                'error': 'No device code. Start authorisation first.',
             }
 
         if time.time() > self._device_expires:
             self._device_code = None
             return {
                 'success': False,
-                'error': 'Device code expired. Please start authorization again.',
+                'error': 'Device code expired. Please start authorisation again.',
                 'expired': True,
             }
 
@@ -352,10 +358,10 @@ class Trakt(Automation, TraktBase):
                 Env.prop('last_trakt_refresh', value=int(time.time()))
                 self._device_code = None
 
-                log.info('Trakt authorization successful')
+                log.info('Trakt authorisation successful')
                 return {
                     'success': True,
-                    'message': 'Authorization successful! Trakt is now connected.',
+                    'message': 'Authorisation successful! Trakt is now connected.',
                 }
 
             elif response.status_code == 400:
@@ -368,18 +374,18 @@ class Trakt(Automation, TraktBase):
 
             elif response.status_code == 404:
                 self._device_code = None
-                return {'success': False, 'error': 'Invalid device code. Please restart authorization.'}
+                return {'success': False, 'error': 'Invalid device code. Please restart authorisation.'}
 
             elif response.status_code == 409:
                 return {'success': False, 'error': 'Code already approved. Refresh the page.'}
 
             elif response.status_code == 410:
                 self._device_code = None
-                return {'success': False, 'error': 'Code expired. Please restart authorization.', 'expired': True}
+                return {'success': False, 'error': 'Code expired. Please restart authorisation.', 'expired': True}
 
             elif response.status_code == 418:
                 self._device_code = None
-                return {'success': False, 'error': 'Authorization denied by user.'}
+                return {'success': False, 'error': 'Authorisation denied by user.'}
 
             elif response.status_code == 429:
                 # Slow down. Same clamp as startDeviceAuth: doubling an

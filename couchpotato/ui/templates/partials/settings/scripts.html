@@ -732,6 +732,11 @@ function traktDeviceAuth() {
     error: false,
     expiresAt: 0,
     pollTimer: null,
+    // Set once by destroy(). Clearing pollTimer only cancels a poll that
+    // has not started yet; a fetch already in flight still resolves on a
+    // torn-down component and schedules the next one, which restarts the
+    // chain destroy() just stopped. Every await below re-checks this.
+    destroyed: false,
 
     async start() {
       // Re-entry guard, since the button stays focusable/clickable
@@ -743,11 +748,18 @@ function traktDeviceAuth() {
       this.error = false;
       this.userCode = '';
       this.verificationUrl = '';
-      this.statusText = '';
+      // Announce the busy state rather than clearing the region. The button's
+      // own label changes to "Starting", but that is only read if focus
+      // happens to be on the button; the live region is the programmatic
+      // equivalent WCAG 4.1.3 asks for. The window is not trivial: the server
+      // handler allows a 30s timeout against Trakt, so this can be seconds.
+      this.statusText = 'Contacting Trakt…';
+      this.statusClass = 'text-cp-muted';
 
       try {
         const resp = await fetch(CP.apiBase + '/automation.trakt.device_code/');
         const data = await resp.json();
+        if (this.destroyed) return;
 
         if (data.success) {
           this.userCode = data.user_code || '';
@@ -768,6 +780,7 @@ function traktDeviceAuth() {
     },
 
     async poll(intervalSeconds) {
+      if (this.destroyed) return;
       if (Date.now() > this.expiresAt) {
         this.showError('Authorisation code expired. Please start again.');
         return;
@@ -776,6 +789,7 @@ function traktDeviceAuth() {
       try {
         const resp = await fetch(CP.apiBase + '/automation.trakt.poll_token/');
         const data = await resp.json();
+        if (this.destroyed) return;
 
         if (data.success) {
           this.showSuccess(data.message || 'Authorisation successful.');
@@ -834,6 +848,7 @@ function traktDeviceAuth() {
     // firing on a detached scope, so a second "Start Authorisation" click
     // after returning races the orphaned chain instead of finding it gone.
     destroy() {
+      this.destroyed = true;
       this.clearPoll();
       this.polling = false;
     },

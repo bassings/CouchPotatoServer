@@ -57,7 +57,7 @@ function pollSuccessResponse() {
     contentType: 'application/json',
     body: JSON.stringify({
       success: true,
-      message: 'Authorization successful! Trakt is now connected.',
+      message: 'Authorisation successful! Trakt is now connected.',
     }),
   };
 }
@@ -128,6 +128,46 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     expect(outcome).not.toBe('reached-the-network');
   });
 
+  test('the busy state is announced in the live region, not only on the button label (WCAG 4.1.3)', async ({ page }) => {
+    const startButton = await openTraktGroup(page);
+    const status = page.locator('[data-testid="trakt-auth-status"]');
+
+    // Hold the device_code response open so the busy window is observable.
+    // Against real Trakt this window is genuinely seconds, not milliseconds:
+    // the server handler allows a 30s timeout on its outbound call.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(DEVICE_CODE_ROUTE, async (route) => {
+      await held;
+      return route.fulfill(deviceCodeResponse({ interval: 30 }));
+    });
+    await page.route(POLL_ROUTE, (route) => route.fulfill(pollPendingResponse(30)));
+
+    // Not toHaveText(''): the code box's own template text is in textContent
+    // even while hidden, which is exactly the blindness these specs had.
+    await expect(status).not.toContainText('Contacting Trakt');
+    await startButton.click();
+
+    // The point of the test: the region a screen reader is listening to says
+    // something while we are waiting. The button's own label also changes,
+    // but that is only read if focus happens to be on the button.
+    await expect(status).toContainText('Contacting Trakt', { timeout: 8000 });
+
+    release();
+    await expect(status).toContainText('ABCD-1234', { timeout: 8000 });
+  });
+
+  test('the button points at the status region, so its unavailable state has a reason (WCAG 1.3.1)', async ({ page }) => {
+    const startButton = await openTraktGroup(page);
+
+    // aria-disabled without aria-describedby reads as "unavailable" with the
+    // reason sitting in an unassociated element, for up to the full ten
+    // minute poll window.
+    const describedBy = await startButton.getAttribute('aria-describedby');
+    expect(describedBy).toBe('trakt-auth-status');
+    await expect(page.locator(`#${describedBy}`)).toHaveAttribute('role', 'status');
+  });
+
   test('starting authorisation displays the code and URL inside a persistent live region', async ({ page }) => {
     const startButton = await openTraktGroup(page);
 
@@ -156,8 +196,20 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     await expect(status).toContainText('ABCD-1234');
     const codeEl = status.locator('[data-testid="trakt-user-code"]');
     await expect(codeEl).toHaveText('ABCD-1234');
+    // VISIBLE, not merely present. toHaveText and toContainText read
+    // textContent, which display:none does not affect, so every assertion
+    // above this line passes on a control the user cannot see. Proven: with
+    // `x-show="userCode"` mutated to `x-show="false"`, so the code a user
+    // must type into trakt.tv can never appear and the feature is unusable,
+    // all 13 tests across both spec files stayed green. The axe scans miss
+    // it too, because axe skips hidden subtrees, so "zero violations"
+    // quietly degrades from "this control is clean" to "nothing was
+    // scanned". This assertion and its siblings below are the only things
+    // in either file that can fail on that mutation.
+    await expect(codeEl).toBeVisible();
 
     const link = status.locator('[data-testid="trakt-verification-url"]');
+    await expect(link).toBeVisible();
     await expect(link).toHaveAttribute('href', 'https://trakt.tv/activate');
     await expect(link).toHaveAttribute('target', '_blank');
     await expect(link).toHaveAttribute('rel', /noopener/);
@@ -227,7 +279,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     // displays the code and URL...'), which mocks a PENDING poll on a 30s
     // interval so the code is genuinely stable while it is asserted. This test
     // is about the success path, so it asserts only that.
-    await expect(status).toContainText('Authorization successful! Trakt is now connected.', { timeout: 8000 });
+    await expect(status).toContainText('Authorisation successful! Trakt is now connected.', { timeout: 8000 });
     // The device code is no longer relevant once authorisation succeeded.
     await expect(status).not.toContainText('ABCD-1234');
     expect(pollRequests).toBeGreaterThanOrEqual(1);
@@ -254,7 +306,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     let pollRequests = 0;
     await page.route(POLL_ROUTE, (route) => {
       pollRequests++;
-      return route.fulfill(pollErrorResponse('Device code expired. Please start authorization again.'));
+      return route.fulfill(pollErrorResponse('Device code expired. Please start authorisation again.'));
     });
 
     await startButton.click();
@@ -267,7 +319,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     // just under gate load. The code display has its own stable-window test
     // above, which mocks a PENDING poll on a 30s interval. This test is
     // about the error path, so it asserts only that.
-    await expect(status).toContainText('Device code expired. Please start authorization again.', { timeout: 8000 });
+    await expect(status).toContainText('Device code expired. Please start authorisation again.', { timeout: 8000 });
     await expect(status).not.toContainText('ABCD-1234');
 
     const requestsAtError = pollRequests;
@@ -299,7 +351,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     // from start()/showSuccess()/showError(). A second "Start Authorisation"
     // click back on this tab then raced the orphaned chain: whichever one
     // consumed the device code on trakt.tv's side succeeded, and the other
-    // read back "No device code. Start authorization first." -- reporting
+    // read back "No device code. Start authorisation first." -- reporting
     // failure to a user whose authorisation had actually succeeded.
     const startButton = await openTraktGroup(page);
     const status = page.locator('[data-testid="trakt-auth-status"]');
@@ -332,6 +384,61 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     // elapsed. Read only after the bounded wait, not at the same instant as
     // the navigation -- a request already in flight at navigation time would
     // otherwise be misread as the loop continuing.
+    await page.waitForTimeout(3000);
+
+    expect(pollRequests).toBe(countAtNavigation);
+  });
+
+  test('H1: a poll still IN FLIGHT at teardown does not resurrect the loop', async ({ page }) => {
+    // The sibling test above cannot see this. Its mock answers instantly, so
+    // at navigation the component is always in the timer-pending state, and
+    // its own comment says an in-flight request "would otherwise be misread
+    // as the loop continuing" -- it was written to tolerate the exact case
+    // that was broken. destroy() clears pollTimer, which cancels a poll that
+    // has not started; it does nothing about a fetch already open. poll()
+    // then resumed after its await on a torn-down component and scheduled
+    // the next one, restarting the chain. Measured before the fix: three
+    // further polls after teardown.
+    //
+    // In production the in-flight window is most of every cycle, not a
+    // sliver: pollForToken makes a blocking outbound call to Trakt with a
+    // 30 second timeout against a 5 second poll interval.
+    const startButton = await openTraktGroup(page);
+    const status = page.locator('[data-testid="trakt-auth-status"]');
+
+    await page.route(DEVICE_CODE_ROUTE, (route) => route.fulfill(deviceCodeResponse({ interval: 1 })));
+
+    let pollRequests = 0;
+    let releaseHeldPoll: (() => void) | null = null;
+    await page.route(POLL_ROUTE, async (route) => {
+      pollRequests++;
+      // Hold the SECOND poll open across the navigation, so teardown happens
+      // while a request is genuinely in flight. The first is answered
+      // normally so the loop is demonstrably running before the trigger.
+      if (pollRequests === 2) {
+        await new Promise<void>((resolve) => {
+          releaseHeldPoll = resolve;
+        });
+      }
+      return route.fulfill(pollPendingResponse(1));
+    });
+
+    await startButton.click();
+    await expect(status).toContainText('ABCD-1234');
+    await expect.poll(() => pollRequests, { timeout: 5000 }).toBe(2);
+
+    // Tear the component down while poll #2 is still open.
+    await page.getByRole('tab', { name: /^general$/i }).click();
+    await expect(page.locator('[data-testid="trakt-start-auth"]')).not.toBeAttached();
+
+    // Now let the held response land on the destroyed component.
+    expect(releaseHeldPoll).not.toBeNull();
+    (releaseHeldPoll as unknown as () => void)();
+
+    const countAtNavigation = pollRequests;
+
+    // Three seconds is at least two more 1s intervals. If the resumed poll
+    // schedules another, this goes above countAtNavigation.
     await page.waitForTimeout(3000);
 
     expect(pollRequests).toBe(countAtNavigation);

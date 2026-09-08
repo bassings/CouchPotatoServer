@@ -50,7 +50,7 @@ function pollSuccessResponse() {
     contentType: 'application/json',
     body: JSON.stringify({
       success: true,
-      message: 'Authorization successful! Trakt is now connected.',
+      message: 'Authorisation successful! Trakt is now connected.',
     }),
   };
 }
@@ -61,7 +61,7 @@ function pollErrorResponse() {
     contentType: 'application/json',
     body: JSON.stringify({
       success: false,
-      error: 'Device code expired. Please start authorization again.',
+      error: 'Device code expired. Please start authorisation again.',
     }),
   };
 }
@@ -126,11 +126,11 @@ async function openTraktGroupWithCodeDisplayed(page: Page) {
 }
 
 async function openTraktGroupWithSuccess(page: Page) {
-  await openTraktGroupInState(page, pollSuccessResponse(), 'Authorization successful! Trakt is now connected.');
+  await openTraktGroupInState(page, pollSuccessResponse(), 'Authorisation successful! Trakt is now connected.');
 }
 
 async function openTraktGroupWithError(page: Page) {
-  await openTraktGroupInState(page, pollErrorResponse(), 'Device code expired. Please start authorization again.');
+  await openTraktGroupInState(page, pollErrorResponse(), 'Device code expired. Please start authorisation again.');
 }
 
 /**
@@ -250,7 +250,12 @@ test.describe('Trakt device authorisation accessibility (FEAT #311)', () => {
     await expect(startButton).not.toHaveAttribute('disabled', '');
 
     await startButton.click();
-    await expect(page.locator('[data-testid="trakt-user-code"]')).toHaveText('ABCD-1234');
+    const codeEl = page.locator('[data-testid="trakt-user-code"]');
+    await expect(codeEl).toHaveText('ABCD-1234');
+    // See the note in trakt-device-auth.spec.ts: toHaveText alone passes on
+    // a code the user cannot see, and the axe scans in this very file skip
+    // hidden subtrees, so they cannot catch it either.
+    await expect(codeEl).toBeVisible();
 
     // Busy: aria-disabled (not the disabled attribute), so it stays in the
     // tab order and a keyboard/AT user can still discover and read it.
