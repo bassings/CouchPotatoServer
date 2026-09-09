@@ -2994,3 +2994,111 @@ class TestLiveRegionVisibilityRule:
               await expect(status).not.toContainText('x');
             }});
         """)
+
+
+class TestGitEnvIsScrubbedInTheScriptPath:
+    """`cwd=` does not win over `GIT_DIR`, and this script shells out to git.
+
+    Measured on this repo before the fix: `_tracked_test_files` returns 212
+    files normally and 0 with a foreign `GIT_DIR` set, and the orphaned-test
+    rule then reports clean having examined nothing. Not a crash and not a
+    skip, either of which would be visible.
+
+    Live rather than theoretical: `make check-traps` runs in the pre-push
+    gate, git exports `GIT_DIR` into hook subprocesses launched from a linked
+    worktree, and the same leak corrupted this repository twice on
+    2026-08-18. `tests/conftest.py` pops the namespace process-wide before
+    collection, which protects this code under pytest and NOT when the
+    script runs standalone.
+    """
+
+    def test_a_foreign_git_dir_does_not_empty_the_file_list(self, tmp_path, monkeypatch):
+        elsewhere = tmp_path / 'elsewhere'
+        elsewhere.mkdir()
+        env = sanitized_git_env()
+        subprocess.run(['git', 'init', '-q', str(elsewhere)], check=True, env=env)
+        (elsewhere / 'only-file.txt').write_text('x')
+        subprocess.run(['git', 'add', '-A'], cwd=elsewhere, check=True, env=env)
+        subprocess.run(
+            ['git', '-c', 'user.email=a@b', '-c', 'user.name=t',
+             'commit', '-qm', 'x'],
+            cwd=elsewhere, check=True, env=env)
+
+        repo_root = Path(check_test_traps.__file__).resolve().parents[1]
+        baseline = check_test_traps._tracked_test_files(repo_root)
+        assert baseline, 'baseline is empty, so this test would prove nothing'
+
+        monkeypatch.setenv('GIT_DIR', str(elsewhere / '.git'))
+        leaked = check_test_traps._tracked_test_files(repo_root)
+
+        assert leaked == baseline, (
+            'a leaked GIT_DIR changed which files this script sees: %d without '
+            'it, %d with it. The rules built on this list then report clean '
+            'having scanned a different repository.'
+            % (len(baseline), len(leaked))
+        )
+
+    def test_the_scripts_scrub_matches_the_suites_rule(self):
+        """The rule is stated in two places, so pin them together.
+
+        `tests/conftest.py` owns it for the suite and this script owns it for
+        the standalone path, because a script cannot import the suite's
+        conftest. Duplication that cannot drift is the compromise; silent
+        drift is the thing to prevent.
+        """
+        from tests.conftest import GIT_IDENTITY_ENV_PREFIXES
+
+        assert check_test_traps._GIT_IDENTITY_PREFIXES == GIT_IDENTITY_ENV_PREFIXES
+
+
+class TestUnknownMatchersNagRatherThanBeingAbsorbed:
+    """The rule decided "is this reading the element" from an allow-list of
+    two matchers, so anything else was silently absorbed.
+
+    Measured on the shipped version: `toHaveAccessibleName`,
+    `toHaveAccessibleDescription` and `toHaveValue` all went silent. A spec
+    asserting what a live region announces, without asserting anyone can see
+    it, was unflagged. That is the case this rule exists for, and
+    `toHaveAccessibleName` is the matcher this project's accessibility work
+    uses most.
+
+    Same defect and same side as the harness's own status allow-list, found
+    the same week: an unrecognised value absorbed instead of nagging.
+    """
+
+    STATUS = '[data-testid="trakt-auth-status"]'
+
+    def _findings(self, assertion):
+        source = (
+            "test('t', async ({ page }) => {\n"
+            f"  const status = page.locator('{self.STATUS}');\n"
+            f"  {assertion}\n"
+            "});\n"
+        )
+        return list(check_test_traps.check_live_region_visibility(
+            Path('tests/e2e/probe.spec.ts'), source))
+
+    @pytest.mark.parametrize('assertion', [
+        "await expect(status).toContainText('x');",
+        "await expect(status).toHaveText('x');",
+        "await expect(status).toHaveAccessibleName('x');",
+        "await expect(status).toHaveAccessibleDescription('x');",
+        "await expect(status).toHaveValue('x');",
+        # A matcher nobody has thought of yet. It MUST nag: absorbing it is
+        # indistinguishable from there being nothing to say.
+        "await expect(status).toHaveSomethingNobodyHasWrittenYet('x');",
+    ])
+    def test_reading_the_element_without_visibility_is_flagged(self, assertion):
+        assert self._findings(assertion), assertion
+
+    @pytest.mark.parametrize('assertion', [
+        "await expect(status).toBeVisible();",
+        "await expect(status).toBeHidden();",
+        "await expect(status).toHaveAttribute('role', 'status');",
+        "await expect(status).toHaveCount(1);",
+        # "the code is gone" is satisfied identically by "it never appeared",
+        # so a negative assertion neither needs nor supplies cover.
+        "await expect(status).not.toContainText('x');",
+    ])
+    def test_matchers_that_do_not_read_content_are_not_flagged(self, assertion):
+        assert not self._findings(assertion), assertion
