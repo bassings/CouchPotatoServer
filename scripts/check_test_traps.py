@@ -1369,111 +1369,136 @@ _LIVE_REGION_TESTIDS = (
 _TEXT_ONLY_MATCHERS = ("toContainText", "toHaveText")
 
 
-def check_live_region_visibility(path: Path, text: str):
-    """Flag a live region asserted by TEXT but never by VISIBILITY.
+#: A declaration that binds a locator to a live-region test id.
+#:
+#: This is master's regex, restored verbatim after a rewrite that tried to
+#: satisfy python:S8786 by matching the declaration and the test id in two
+#: steps. Review found FOUR shapes that rewrite silently stopped catching,
+#: each one narrower than this pattern: a declaration carrying an assertion,
+#: a declaration behind control flow on the same line (`if (ready) { const
+#: status = ...`), a second declaration on one line, and a name shadowed in
+#: a nested scope. Every one of them is a spec that hides a live region with
+#: the suite green, which is the defect this rule exists to catch.
+#:
+#: A possessive `[^;]*+` was tried too and is worse: it consumes to the `;`
+#: and can never backtrack to `data-testid=`, so it matches nothing at all.
+#: Measured, not assumed.
+#:
+#: So S8786 stays open, deliberately. The backtracking is real, and in this
+#: context it is not a risk worth contorting correct matching for: this is a
+#: build-time script over our own source, not untrusted input, and the
+#: measured worst case on a 60,000 character line with no match is 0.574ms.
+#: Revisit if this ever reads input it does not control.
+_LOCATOR_BINDING = re.compile(
+    r"""(?:const|let|var)\s+(\w+)\s*=\s*[^;]*?data-testid=["']([\w-]+)["']"""
+)
+_TESTID = re.compile(r"""data-testid=["']([\w-]+)["']""")
 
-    Scoped per ELEMENT, not per file. An earlier draft of this rule accepted
-    any `toBeVisible` anywhere in the file, which meant the device code box's
-    assertion covered the status message sitting right beside it, and the rule
-    could not fail on the very code that motivated it. That is the defect
-    class this file exists to catch, written into the checker for it.
+#: Only for deciding whether a line STARTS an unfinished declaration, which
+#: is a different question from what that declaration binds.
+_DECLARATION_START = re.compile(r"(?:const|let|var)\s+\w+\s*=")
 
-    Locators reach `expect()` through a variable
-    (`const status = page.locator('[data-testid="..."]')`), so the binding is
-    resolved first and assertions are then attributed to the element rather
-    than matched textually on the assertion line.
 
-    Bindings are resolved LEXICALLY, in file order, so a variable rebound to a
-    different element later in the file does not carry the earlier element's
-    assertions with it. A file-wide `name -> testid` map was the first
-    spelling and it was wrong in the direction that matters: two tests each
-    using `status` for a different live region would let one element's
-    `toBeVisible()` satisfy the other.
+def _joined_declarations(lines):
+    """Yield `(line index, source)` with an unfinished DECLARATION joined onto
+    the line it starts on, so a locator split across lines is matched whole.
 
-    Statements are joined before matching, not read line by line. That was the
-    second hole, and it was demonstrated on this rule's own first customer: a
-    locator written across three lines
-
-        const target = page.locator(
-          cond ? '[data-testid="a"]' : '[data-testid="b"]',
-        );
-
-    produced NO binding at all, so deleting its `toBeVisible()` left the
-    checker green. A guard against guards that cannot fail must not be one,
-    and it had that defect twice, in the two spellings a real spec actually
-    uses.
-
-    A negative assertion (`not.toContainText`) is not text usage: "the code is
-    gone" is satisfied identically by "the code never appeared", so it neither
-    needs nor supplies visibility cover.
+    Deliberately not a general statement joiner: an arrow-function test block
+    never balances its parentheses on one line, so a general one swallowed the
+    whole test into a single unit and the caller then skipped that unit's own
+    assertions. Measured: it silenced two evasion shapes this rule had
+    previously caught, which is the wrong direction for a false-green gate.
     """
-    lines = strip_js_comments(text)
-
-    # Join only an UNFINISHED DECLARATION onto the line it starts on, so a
-    # locator split across lines is matched whole. Deliberately not a general
-    # statement joiner: an arrow-function test block never balances its
-    # parentheses on one line, so a general joiner swallowed the whole test
-    # into one unit and the binding branch then skipped that unit's own
-    # assertions. Measured: it silenced two evasion shapes this rule had
-    # previously caught, which is the wrong direction for a false-green gate.
-    decl = re.compile(r"^\s*(?:const|let|var)\s+\w+\s*=")
-    joined = []
     buffer = ''
     start_at = 0
     for idx, line in enumerate(lines):
         if buffer:
             buffer = buffer + ' ' + line.strip()
-        elif decl.match(line) and (line.count('(') > line.count(')')
-                                   or line.count('[') > line.count(']')):
-            buffer = line.strip()
-            start_at = idx
+        elif _DECLARATION_START.match(line.strip()) and (
+                line.count('(') > line.count(')') or line.count('[') > line.count(']')):
+            buffer, start_at = line.strip(), idx
             continue
         else:
-            joined.append((idx, line))
+            yield idx, line
             continue
 
         if buffer.count('(') <= buffer.count(')') and buffer.count('[') <= buffer.count(']'):
-            joined.append((start_at, buffer))
+            yield start_at, buffer
             buffer = ''
     if buffer:
-        joined.append((start_at, buffer))
+        yield start_at, buffer
 
-    binding = re.compile(
-        r"""(?:const|let|var)\s+(\w+)\s*=\s*[^;]*?data-testid=["']([\w-]+)["']"""
-    )
 
+def _live_region_bindings(source):
+    """The variable and live-region test ids a statement binds, or None.
+
+    `search`, not `match`, and the test id must appear in the SAME statement.
+    Anchoring it lost `if (ready) { const status = ...`; dropping the test-id
+    requirement made every declaration look like a binding, so a declaration
+    carrying an assertion stopped being scanned. Both were found by review.
+
+    A statement can name more than one element (a ternary picking between
+    two), so all of them are returned.
+    """
+    m = _LOCATOR_BINDING.search(source)
+    if not m:
+        return None
+    found = tuple(t for t in _TESTID.findall(source) if t in _LIVE_REGION_TESTIDS)
+    if not found:
+        return None
+    return m.group(1), found
+
+
+def check_live_region_visibility(_path: Path, text: str):
+    """Flag a live region asserted by TEXT but never by VISIBILITY.
+
+    `toContainText` and `toHaveText` read textContent, which `display:none`
+    does not affect, so a spec that only ever reads text cannot tell a working
+    announcement from one nobody can see. Found twice on one branch (#311):
+    hiding the device code box, and then the status message beside it, each
+    left every spec green. The axe scans do not cover the gap either, because
+    axe skips hidden subtrees.
+
+    Scoped per ELEMENT and resolved LEXICALLY. Accepting any `toBeVisible`
+    anywhere in the file let one element's assertion cover its neighbour, and
+    a file-wide name map let a rebound variable carry the old element's
+    assertions with it. Both made this rule unable to fail on the code that
+    motivated it.
+    """
+    lines = strip_js_comments(text)
     if not any(t in "\n".join(lines) for t in _LIVE_REGION_TESTIDS):
         return
 
-    in_scope = {}          # variable -> the test id it currently refers to
-    text_line = {}         # test id -> first line asserting its text
-    has_visibility = set()  # test ids asserted visible
+    in_scope = {}
+    text_line = {}
+    has_visibility = set()
 
-    for idx, line in joined:
-        bind = binding.search(line)
-        if bind:
-            var = bind.group(1)
-            # A single statement can name more than one element (a ternary
-            # picking between two test ids). Bind the variable to ALL of them,
-            # so a text assertion through it needs visibility cover for each.
-            found = [t for t in re.findall(r'''data-testid=["']([\w-]+)["']''', line)
-                     if t in _LIVE_REGION_TESTIDS]
-            if found:
-                in_scope[var] = tuple(found)
-            else:
-                # Rebound to something that is not a live region: the name no
-                # longer stands for the element, so drop it rather than let a
-                # later assertion be credited to the old one.
-                in_scope.pop(var, None)
+    for idx, source in _joined_declarations(lines):
+        binding = _live_region_bindings(source)
+        if binding is not None:
+            # Only a statement that actually binds a live region is treated
+            # as a binding. Anything else falls through to the assertion
+            # scan below, because a declaration can carry an assertion:
+            #     const results = await Promise.all([
+            #       expect(status).toContainText('Connected'),
+            #     ]);
+            # and a nested scope can shadow the name without the outer
+            # binding being wrong afterwards. Skipping declarations outright,
+            # or popping on every non-matching one, lost both.
+            var, found = binding
+            in_scope[var] = found
             continue
 
         for var, testids in in_scope.items():
-            if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), line):
+            if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):
                 continue
+            visible = 'toBeVisible' in source or 'toBeHidden' in source
+            texty = (any(m in source for m in _TEXT_ONLY_MATCHERS)
+                     and 'not.' not in source)
             for testid in testids:
-                if "toBeVisible" in line or "toBeHidden" in line:
+                if visible:
                     has_visibility.add(testid)
-                elif any(m in line for m in _TEXT_ONLY_MATCHERS) and "not." not in line:
+                elif texty:
                     text_line.setdefault(testid, idx + 1)
 
     for testid, line_no in sorted(text_line.items()):
