@@ -30,7 +30,9 @@ bencodepy==0.9.5
 subliminal==2.7.1
 babelfish==0.6.1
 dogpile.cache==1.5.0
-stevedore==5.9.1  # 5.9.0 dropped Python 3.10 (CP supports 3.10+)
+stevedore==5.9.1  # was held at 5.8.0 because 5.9.0 requires >=3.11; that
+                  # hold expired when the 3.10-3.13 CI legs were dropped
+                  # on 2026-08-09 and prod moved to python:3.14-alpine
 pysubs2==1.9.0
 pymediainfo==7.0.1
 knowit==0.5.11
