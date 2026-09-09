@@ -3015,14 +3015,19 @@ class TestGitEnvIsScrubbedInTheScriptPath:
     def test_a_foreign_git_dir_does_not_empty_the_file_list(self, tmp_path, monkeypatch):
         elsewhere = tmp_path / 'elsewhere'
         elsewhere.mkdir()
-        env = sanitized_git_env()
-        subprocess.run(['git', 'init', '-q', str(elsewhere)], check=True, env=env)
+        # `env=sanitized_git_env()` written out at every call site, not bound
+        # to a local first: test_fixtures_do_not_leak_gitdir checks this
+        # statically and cannot follow a variable. It caught this test, which
+        # is the correct outcome for a test that shells out to git.
+        subprocess.run(['git', 'init', '-q', str(elsewhere)],
+                       check=True, env=sanitized_git_env())
         (elsewhere / 'only-file.txt').write_text('x')
-        subprocess.run(['git', 'add', '-A'], cwd=elsewhere, check=True, env=env)
+        subprocess.run(['git', 'add', '-A'], cwd=elsewhere,
+                       check=True, env=sanitized_git_env())
         subprocess.run(
             ['git', '-c', 'user.email=a@b', '-c', 'user.name=t',
              'commit', '-qm', 'x'],
-            cwd=elsewhere, check=True, env=env)
+            cwd=elsewhere, check=True, env=sanitized_git_env())
 
         repo_root = Path(check_test_traps.__file__).resolve().parents[1]
         baseline = check_test_traps._tracked_test_files(repo_root)
