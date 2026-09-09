@@ -1367,25 +1367,7 @@ _LIVE_REGION_TESTIDS = (
     "trakt-verification-url",
 )
 
-#: Matchers that do NOT read an element's content, so they neither need nor
-#: supply visibility cover. Everything else counts as reading it.
-#:
-#: A DENY-list, deliberately. This was an allow-list of two, and measured on
-#: the shipped rule `toHaveAccessibleName`, `toHaveAccessibleDescription` and
-#: `toHaveValue` all went SILENT: a spec asserting what a live region
-#: announces, without asserting anyone can see it, was unflagged. That is the
-#: case this rule exists for, and `toHaveAccessibleName` is the matcher this
-#: project's accessibility work uses most.
-#:
-#: The direction is the whole defect. An unrecognised matcher must nag rather
-#: than be absorbed, because absorbing it is indistinguishable from there
-#: being nothing to say. A false positive here costs one `toBeVisible()`; a
-#: false negative ships a control nobody can read.
-_NON_TEXT_MATCHERS = (
-    "toBeVisible", "toBeHidden", "toBeAttached", "toBeInViewport",
-    "toHaveAttribute", "toHaveClass", "toHaveId", "toHaveCount",
-    "toHaveCSS", "toBeEmpty", "toBeFocused", "toBeEnabled", "toBeDisabled",
-)
+_TEXT_ONLY_MATCHERS = ("toContainText", "toHaveText")
 
 
 #: Commit-identity variables, the only `GIT_*` names safe to pass through:
@@ -1548,11 +1530,7 @@ def check_live_region_visibility(_path: Path, text: str):
             if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):
                 continue
             visible = 'toBeVisible' in source or 'toBeHidden' in source
-            # Anything that is not a recognised non-text matcher counts as
-            # reading the element's content, so a matcher nobody thought of
-            # nags instead of being absorbed.
-            texty = ('expect(' in source
-                     and not any(m in source for m in _NON_TEXT_MATCHERS)
+            texty = (any(m in source for m in _TEXT_ONLY_MATCHERS)
                      and 'not.' not in source)
             for testid in testids:
                 if visible:

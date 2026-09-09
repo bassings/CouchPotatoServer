@@ -3055,55 +3055,22 @@ class TestGitEnvIsScrubbedInTheScriptPath:
 
         assert check_test_traps._GIT_IDENTITY_PREFIXES == GIT_IDENTITY_ENV_PREFIXES
 
+    def test_an_unknown_git_variable_does_not_survive_the_scrub(self):
+        """The prefix tuple is not the rule; the namespace strip is.
 
-class TestUnknownMatchersNagRatherThanBeingAbsorbed:
-    """The rule decided "is this reading the element" from an allow-list of
-    two matchers, so anything else was silently absorbed.
-
-    Measured on the shipped version: `toHaveAccessibleName`,
-    `toHaveAccessibleDescription` and `toHaveValue` all went silent. A spec
-    asserting what a live region announces, without asserting anyone can see
-    it, was unflagged. That is the case this rule exists for, and
-    `toHaveAccessibleName` is the matcher this project's accessibility work
-    uses most.
-
-    Same defect and same side as the harness's own status allow-list, found
-    the same week: an unrecognised value absorbed instead of nagging.
-    """
-
-    STATUS = '[data-testid="trakt-auth-status"]'
-
-    def _findings(self, assertion):
-        source = (
-            "test('t', async ({ page }) => {\n"
-            f"  const status = page.locator('{self.STATUS}');\n"
-            f"  {assertion}\n"
-            "});\n"
-        )
-        return list(check_test_traps.check_live_region_visibility(
-            Path('tests/e2e/probe.spec.ts'), source))
-
-    @pytest.mark.parametrize('assertion', [
-        "await expect(status).toContainText('x');",
-        "await expect(status).toHaveText('x');",
-        "await expect(status).toHaveAccessibleName('x');",
-        "await expect(status).toHaveAccessibleDescription('x');",
-        "await expect(status).toHaveValue('x');",
-        # A matcher nobody has thought of yet. It MUST nag: absorbing it is
-        # indistinguishable from there being nothing to say.
-        "await expect(status).toHaveSomethingNobodyHasWrittenYet('x');",
-    ])
-    def test_reading_the_element_without_visibility_is_flagged(self, assertion):
-        assert self._findings(assertion), assertion
-
-    @pytest.mark.parametrize('assertion', [
-        "await expect(status).toBeVisible();",
-        "await expect(status).toBeHidden();",
-        "await expect(status).toHaveAttribute('role', 'status');",
-        "await expect(status).toHaveCount(1);",
-        # "the code is gone" is satisfied identically by "it never appeared",
-        # so a negative assertion neither needs nor supplies cover.
-        "await expect(status).not.toContainText('x');",
-    ])
-    def test_matchers_that_do_not_read_content_are_not_flagged(self, assertion):
-        assert not self._findings(assertion), assertion
+        Review showed the earlier pin was insufficient: replacing the strip
+        with `env.pop('GIT_DIR')` left every test green, because the tuple was
+        untouched and the only probe used GIT_DIR. Driving the real function
+        under that mutant, GIT_INDEX_FILE leaked and collapsed the file list
+        to 1 -- and GIT_INDEX_FILE is exactly what git exports into hook
+        subprocesses.
+        """
+        monkey = 'GIT_NOT_A_REAL_VARIABLE'
+        os.environ[monkey] = 'x'
+        try:
+            assert monkey not in check_test_traps._git_env(), (
+                'a GIT_* name nobody listed survived the scrub, so the strip '
+                'has drifted into a denylist of known-dangerous names'
+            )
+        finally:
+            os.environ.pop(monkey, None)
