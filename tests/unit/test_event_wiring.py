@@ -312,16 +312,57 @@ def _templated_fire_formats():
     return formats
 
 
-def _template_matcher(template):
+def _media_types():
+    """Every media type declared in the tree, from `_type = '...'` on a
+    MediaBase subclass. Today that is `movie` alone.
+
+    Derived rather than hardcoded, so adding a media type does not silently
+    narrow this guard, and read from the same attribute
+    `fireEvent('%s.snatched' % media_type)` ultimately gets its value from.
+    """
+    types = set()
+    for path in _python_files():
+        tree = ast.parse(path.read_text(errors='replace'))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not (isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == '_type':
+                    types.add(node.value.value)
+    return types
+
+
+def _template_matcher(template, media_types=None):
     """A template to a regex where each `%s`/`%d` is exactly one name segment.
 
     One segment, not `.*`: `setting.save.%s.%s` must not swallow a name with
     four segments after the prefix, or the guard silently widens every time
     someone adds a deeper name.
     """
+    # A media-type template can only ever produce a type that exists. `[^.]+`
+    # accepted anything, so a MISTYPED registration (`moive.snatched`) read as
+    # reachable and the reverse guard stayed green on it, which is the exact
+    # handler-without-sender case this file is for.
+    #
+    # Only the leading `%s` of a media-type template is narrowed. The settings
+    # templates stay `[^.]+`, because a section and option name genuinely are
+    # caller-controlled and enumerating them would be a guess.
+    slot = r'[^.]+'
+    if media_types and template.startswith('%s.'):
+        slot = '(?:%s)' % '|'.join(re.escape(t) for t in sorted(media_types))
+
     parts = re.split(r'(%[sd]|\*)', template)
-    body = ''.join(r'[^.]+' if p in ('%s', '%d', '*') else re.escape(p)
-                   for p in parts)
+    body = ''
+    first = True
+    for part in parts:
+        if part in ('%s', '%d', '*'):
+            body += slot if first else r'[^.]+'
+            first = False
+        else:
+            body += re.escape(part)
     return re.compile('^' + body + '$')
 
 
@@ -424,56 +465,84 @@ def _allowlisted_handler_methods():
 
 def _methods_with_another_caller(candidates):
     """Of `(module, method)` pairs, those the code can reach some OTHER way:
-    registered as an API view, or called directly from anywhere.
+    registered as an API view, called directly, or handed over as a callable.
 
-    Scoped to the module that registers the handler, because a method name
-    alone collides across the tree: an earlier version of this analysis
-    matched names globally and reported `renamer.after` as API-reachable
-    through an unrelated `create()`.
+    Searched across the WHOLE tree, not just the module that registers the
+    handler. Scoping it to the registration site was the obvious thing and it
+    was wrong: `scanner.remove_cptag` is registered in `scanner/api.py` while
+    `removeCPTag` is called in `folder_scanner.py:723`, so the check reported
+    a handler as having no other caller while the comment beside it said the
+    opposite. A mechanism built to stop that exact contradiction could not see
+    its fourth instance.
+
+    Tree-wide search over-reports when two classes share a method name. That
+    is the safe direction here and is deliberate: a false "reachable" verdict
+    means an entry gets declared and a handler does not get deleted, while a
+    false "dead" verdict is what deletes live code. The event itself is still
+    reported as never fired by `_unfired_handlers`, so nothing is hidden,
+    only attributed more cautiously.
     """
-    wanted = {}
+    # Scoped to the PACKAGE the registration lives in, not the single file and
+    # not the whole tree. Both extremes were wrong, in opposite directions.
+    #
+    # One file missed `removeCPTag`, registered in `scanner/api.py` and called
+    # in `scanner/folder_scanner.py`, so the check reported no other caller
+    # while the comment beside it said there was one.
+    #
+    # The whole tree then produced three false "reachable" verdicts from bare
+    # method-name collisions: `getType` resolved to `Settings.getType`,
+    # `getVersion` to `Updater.getVersion`, `create` to `db.create`. That is
+    # the DANGEROUS direction, not the safe one: it would have moved three
+    # genuinely dead handlers into the bucket that says the feature works, and
+    # hidden them.
+    #
+    # A handler and its real callers live together. Anything further away is a
+    # different class that happens to share a method name.
+    by_package = {}
     for module, method in candidates:
-        wanted.setdefault(module, set()).add(method)
+        by_package.setdefault(str(pathlib.PurePosixPath(module).parent), set()).add(method)
 
     reachable = set()
+
     for path in _python_files():
         module = str(path.relative_to(REPO_ROOT))
-        names = wanted.get(module)
+        names = by_package.get(str(pathlib.PurePosixPath(module).parent))
         if not names:
             continue
         tree = ast.parse(path.read_text(errors='replace'))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            # Registered as an API view: reachable over HTTP.
-            if _call_name(node) == 'addApiView' and len(node.args) >= 2:
+            call = _call_name(node)
+
+            if call == 'addApiView' and len(node.args) >= 2:
                 attr = getattr(node.args[1], 'attr', None)
                 if attr in names:
-                    reachable.add((module, attr))
-            # Called directly by something else in the same module, e.g.
-            # Plex.test() calling self.addToLibrary().
-            called = getattr(node.func, 'attr', None)
-            if called in names and _call_name(node) != 'addEvent':
-                reachable.add((module, called))
+                    reachable.add((attr, module))
 
-            # Handed to something else as a CALLABLE rather than called, which
-            # is how the scheduler reaches checkSnatched:
+            if call == 'addEvent':
+                continue
+
+            called = getattr(node.func, 'attr', None)
+            if called in names:
+                reachable.add((called, module))
+
+            # Handed over as a callable rather than called, which is how the
+            # scheduler reaches checkSnatched:
             #   fireEvent('schedule.interval', 'renamer.check_snatched',
             #             self.checkSnatched, ...)
-            # The string there is a schedule id, not a dispatch, and the
-            # method runs. Reading only call sites misses this entirely.
-            if _call_name(node) != 'addEvent':
-                for arg in list(node.args) + [kw.value for kw in node.keywords]:
-                    passed = getattr(arg, 'attr', None)
-                    if passed in names:
-                        reachable.add((module, passed))
-    return reachable
+            for arg in list(node.args) + [kw.value for kw in node.keywords]:
+                passed = getattr(arg, 'attr', None)
+                if passed in names:
+                    reachable.add((passed, module))
+
+    return {method for method, _where in reachable}
 
 
 def _unfired_handlers():
     """Registered names that nothing can dispatch. Returns a sorted list."""
     fired, handled = _collect()
-    matchers = [_template_matcher(t) for t in VALUE_FIRE_TEMPLATES]
+    matchers = [_template_matcher(t, _media_types()) for t in VALUE_FIRE_TEMPLATES]
     return sorted(n for n in handled if not _is_reachable(n, fired, matchers))
 
 
@@ -586,7 +655,7 @@ class TestNoUnfiredHandlers:
         matters: as a wildcard, every `*.after` name reads as alive.
         """
         fired, _ = _collect()
-        matchers = [_template_matcher(t) for t in VALUE_FIRE_TEMPLATES]
+        matchers = [_template_matcher(t, _media_types()) for t in VALUE_FIRE_TEMPLATES]
 
         assert _is_reachable('app.load.after', fired, matchers), (
             'app.load is fired, so app.load.after is derived from it'
@@ -598,7 +667,7 @@ class TestNoUnfiredHandlers:
     def test_value_templates_match_the_tree(self):
         """Fail when the tree grows a templated dispatch this file does not
         know about, rather than silently reporting its handlers as dead."""
-        matchers = [_template_matcher(t) for t in VALUE_FIRE_TEMPLATES]
+        matchers = [_template_matcher(t, _media_types()) for t in VALUE_FIRE_TEMPLATES]
         unexplained = {}
 
         for fmt, sites in _templated_fire_formats().items():
@@ -629,6 +698,21 @@ class TestNoUnfiredHandlers:
             % '\n'.join('  %s  <- %s' % (f, s[0]) for f, s in sorted(unexplained.items()))
         )
 
+        # And the reverse, which is the dangerous half. A template whose only
+        # dispatch is deleted or renamed keeps sitting in the list, and
+        # `_is_reachable` keeps treating everything matching it as live. That
+        # hides exactly the handler-without-sender regression this file
+        # exists to catch, and nothing else would notice.
+        live = set(_templated_fire_formats())
+        stale = [t for t in VALUE_FIRE_TEMPLATES if t not in live]
+        assert not stale, (
+            'These templates are declared in VALUE_FIRE_TEMPLATES and nothing '
+            'in the tree fires them any more, so every handler they cover is '
+            'still being reported as reachable on the strength of a dispatch '
+            'that no longer exists:\n%s'
+            % '\n'.join('  %s' % t for t in stale)
+        )
+
     def test_templated_registrations_stay_disclosed(self):
         """The reverse audit's OTHER blind spot, held visible.
 
@@ -640,6 +724,18 @@ class TestNoUnfiredHandlers:
         the set of handlers nobody is auditing.
         """
         found = _templated_registration_sites()
+
+        changed = {k: '%s -> %s' % (TEMPLATED_REGISTRATION_SITES[k], v)
+                   for k, v in found.items()
+                   if k in TEMPLATED_REGISTRATION_SITES
+                   and TEMPLATED_REGISTRATION_SITES[k] != v}
+        assert not changed, (
+            'These recorded sites now register a DIFFERENT name. Comparing '
+            'locations alone missed this: editing a template in place, or '
+            'mistyping one, left the record describing something that is no '
+            'longer there:\n%s'
+            % '\n'.join('  %s  %s' % (k, v) for k, v in sorted(changed.items()))
+        )
 
         added = {k: v for k, v in found.items() if k not in TEMPLATED_REGISTRATION_SITES}
         assert not added, (
@@ -675,7 +771,7 @@ class TestNoUnfiredHandlers:
 
         found = {}
         for name, methods in registered.items():
-            hit = {m for module, m in methods if (module, m) in reachable}
+            hit = {m for _module, m in methods if m in reachable}
             if hit:
                 found[name] = hit
 

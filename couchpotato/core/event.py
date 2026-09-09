@@ -83,6 +83,13 @@ UNFIRED_EVENTS = frozenset({
     #   was in the unreachable bucket below, which was wrong in the dangerous
     #   direction: that header reads as a licence to delete a function the
     #   category editor depends on.
+    'scanner.remove_cptag',
+    # ^ registered in plugins/scanner/api.py:10, and removeCPTag is called at
+    #   folder_scanner.py:723, so only the event door is unused. This sat in
+    #   the unreachable bucket below with a comment saying the opposite, which
+    #   is the fourth instance of that contradiction on this branch and the
+    #   first one the machine check could not see: it searched only the module
+    #   that registers a handler, and this call is one file over.
     'renamer.check_snatched',
     # ^ the scheduler is handed the CALLABLE, not the name:
     #   fireEvent('schedule.interval', 'renamer.check_snatched',
@@ -150,9 +157,6 @@ UNFIRED_EVENTS = frozenset({
     'quality.order',
     # ^ plugins/quality/main.py:56. getOrder is unreachable; profile ordering
     #   is read from the profile records directly.
-    'scanner.remove_cptag',
-    # ^ plugins/scanner/api.py:10. removeCPTag IS called internally, at
-    #   folder_scanner.py:723, so only the event door is unused.
     'scanner.partnumber',
     # ^ plugins/scanner/api.py:13, and NOT the same case. getPartNumber
     #   (folder_scanner.py:754) has no production caller anywhere: not this
@@ -184,6 +188,7 @@ HANDLERS_REACHABLE_ANOTHER_WAY = {
     'movie.restore_to_wanted': {'restoreToWanted'},
     'renamer.check_snatched': {'checkSnatched'},
     'renamer.after': {'addToLibrary'},
+    'scanner.remove_cptag': {'removeCPTag'},
     # ^ Plex.addToLibrary only. Plex.test() calls it (plex/main.py:76) and
     #   test() is an API view (notifications/base.py:28), so pressing Test on
     #   the Plex settings asks Plex to rescan. The other five renamer.after
