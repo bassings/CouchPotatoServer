@@ -2917,6 +2917,39 @@ class TestLiveRegionVisibilityRule:
                 'a declaration carrying the assertion went unscanned:\n%s' % shape
             )
 
+    def test_a_declaration_behind_control_flow_is_still_a_binding(self):
+        """`if (ready) { const status = ...` on one line.
+
+        Anchoring the pattern to the start of the statement lost this. Real
+        specs put a locator behind a conditional, and the element is then
+        free to be hidden with the suite green.
+        """
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              if (ready) {{ const status = page.locator('{self.STATUS}'); }}
+              await expect(status).toContainText('x');
+            }});
+        """)
+
+    def test_a_second_declaration_on_one_line_binds_the_right_variable(self):
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const other = page.locator('.x'); const status = page.locator('{self.STATUS}');
+              await expect(status).toContainText('x');
+            }});
+        """)
+
+    def test_a_name_shadowed_in_a_nested_scope_does_not_lose_the_outer_binding(self):
+        """An inner declaration of the same name used to evict the outer one
+        permanently, so every later assertion through that name was ignored."""
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect.poll(async () => {{ const status = 1; return status; }});
+              await expect(status).toContainText('x');
+            }});
+        """)
+
     def test_a_visibility_assertion_clears_it(self):
         assert not self._findings(f"""
             test('t', async ({{ page }}) => {{

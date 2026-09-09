@@ -1369,12 +1369,34 @@ _LIVE_REGION_TESTIDS = (
 _TEXT_ONLY_MATCHERS = ("toContainText", "toHaveText")
 
 
-#: A declaration that binds a locator, e.g. `const status = page.locator(`.
-#: Deliberately NOT one regex reaching across to the test id: `[^;]*?` before
-#: a literal backtracks super-linearly on a long line (python:S8786), and the
-#: two-step below is both linear and easier to read.
-_LOCATOR_BINDING = re.compile(r"(?:const|let|var)\s+(\w+)\s*=")
+#: A declaration that binds a locator to a live-region test id.
+#:
+#: This is master's regex, restored verbatim after a rewrite that tried to
+#: satisfy python:S8786 by matching the declaration and the test id in two
+#: steps. Review found FOUR shapes that rewrite silently stopped catching,
+#: each one narrower than this pattern: a declaration carrying an assertion,
+#: a declaration behind control flow on the same line (`if (ready) { const
+#: status = ...`), a second declaration on one line, and a name shadowed in
+#: a nested scope. Every one of them is a spec that hides a live region with
+#: the suite green, which is the defect this rule exists to catch.
+#:
+#: A possessive `[^;]*+` was tried too and is worse: it consumes to the `;`
+#: and can never backtrack to `data-testid=`, so it matches nothing at all.
+#: Measured, not assumed.
+#:
+#: So S8786 stays open, deliberately. The backtracking is real, and in this
+#: context it is not a risk worth contorting correct matching for: this is a
+#: build-time script over our own source, not untrusted input, and the
+#: measured worst case on a 60,000 character line with no match is 0.574ms.
+#: Revisit if this ever reads input it does not control.
+_LOCATOR_BINDING = re.compile(
+    r"""(?:const|let|var)\s+(\w+)\s*=\s*[^;]*?data-testid=["']([\w-]+)["']"""
+)
 _TESTID = re.compile(r"""data-testid=["']([\w-]+)["']""")
+
+#: Only for deciding whether a line STARTS an unfinished declaration, which
+#: is a different question from what that declaration binds.
+_DECLARATION_START = re.compile(r"(?:const|let|var)\s+\w+\s*=")
 
 
 def _joined_declarations(lines):
@@ -1392,7 +1414,7 @@ def _joined_declarations(lines):
     for idx, line in enumerate(lines):
         if buffer:
             buffer = buffer + ' ' + line.strip()
-        elif _LOCATOR_BINDING.match(line.strip()) and (
+        elif _DECLARATION_START.match(line.strip()) and (
                 line.count('(') > line.count(')') or line.count('[') > line.count(']')):
             buffer, start_at = line.strip(), idx
             continue
@@ -1408,17 +1430,23 @@ def _joined_declarations(lines):
 
 
 def _live_region_bindings(source):
-    """The live-region test ids a declaration binds, or None if it is not one.
+    """The variable and live-region test ids a statement binds, or None.
 
-    A single statement can name more than one (a ternary picking between two),
-    and a variable rebound to something that is not a live region drops out,
-    so a later assertion is not credited to the element it used to mean.
+    `search`, not `match`, and the test id must appear in the SAME statement.
+    Anchoring it lost `if (ready) { const status = ...`; dropping the test-id
+    requirement made every declaration look like a binding, so a declaration
+    carrying an assertion stopped being scanned. Both were found by review.
+
+    A statement can name more than one element (a ternary picking between
+    two), so all of them are returned.
     """
-    if not _LOCATOR_BINDING.match(source.strip()):
+    m = _LOCATOR_BINDING.search(source)
+    if not m:
         return None
-    var = _LOCATOR_BINDING.match(source.strip()).group(1)
     found = tuple(t for t in _TESTID.findall(source) if t in _LIVE_REGION_TESTIDS)
-    return var, found
+    if not found:
+        return None
+    return m.group(1), found
 
 
 def check_live_region_visibility(_path: Path, text: str):
@@ -1448,21 +1476,18 @@ def check_live_region_visibility(_path: Path, text: str):
     for idx, source in _joined_declarations(lines):
         binding = _live_region_bindings(source)
         if binding is not None:
-            var, found = binding
-            if found:
-                # A statement that binds a live region is a binding and
-                # nothing else; fall through only when it does not.
-                in_scope[var] = found
-                continue
-            # A declaration that binds something ELSE can still carry an
-            # assertion, and often does:
+            # Only a statement that actually binds a live region is treated
+            # as a binding. Anything else falls through to the assertion
+            # scan below, because a declaration can carry an assertion:
             #     const results = await Promise.all([
             #       expect(status).toContainText('Connected'),
             #     ]);
-            # Skipping every declaration outright silently stopped catching
-            # four ordinary Playwright shapes that the previous version
-            # caught. Drop the stale binding, then keep scanning.
-            in_scope.pop(var, None)
+            # and a nested scope can shadow the name without the outer
+            # binding being wrong afterwards. Skipping declarations outright,
+            # or popping on every non-matching one, lost both.
+            var, found = binding
+            in_scope[var] = found
+            continue
 
         for var, testids in in_scope.items():
             if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):
