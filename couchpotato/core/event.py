@@ -46,6 +46,156 @@ OPTIONAL_EVENTS = frozenset({
     #   here; recorded in docs/technical-debt.md.
 })
 
+#: Names that ARE registered and that nothing dispatches. Empty until each
+#: one has been adjudicated, because a list that starts populated is a list
+#: nobody reads.
+#:
+#: Every entry carries why it is unreachable and what would make the decision
+#: expire. `test_unfired_allowlist_has_no_stale_entries` fails in BOTH
+#: directions: an entry that gains a dispatch, or that stops being registered,
+#: breaks the build rather than sitting here describing nothing.
+UNFIRED_EVENTS = frozenset({
+    # ---------------------------------------------------------------
+    # Reachable another way. The FEATURE works; only the addEvent() is
+    # unused, so deleting the registration is safe and deleting the
+    # handler is not. Expires if the other route goes away.
+    # ---------------------------------------------------------------
+    'media.mark_watched',
+    # ^ markWatched is served as 'media.watched' (media/_base/media/main.py:87)
+    #   and as '<type>.watched', registered per media type in
+    #   addSingleWatchViews() (main.py:786).
+    'media.mark_unwatched',
+    # ^ markUnwatched is served as 'media.unwatched' (main.py:95) and as
+    #   '<type>.unwatched' (main.py:787).
+    'media.watch_history',
+    # ^ watchHistory is served as 'media.watch_history' (main.py:101) and as
+    #   '<type>.watch_history' (main.py:788).
+    'movie.restore_to_wanted',
+    # ^ restoreToWantedView is an API view (movie/_base/main.py:126); the
+    #   event registration beside it is a second door nobody opens.
+    'category.all',
+    # ^ Category.all is served as the API view 'category.list'
+    #   (plugins/category/main.py:27), whose allView() calls self.all()
+    #   directly at :41. The settings UI fetches /category.list/ from two
+    #   call sites (partials/settings/scripts.html:1447 and :1665), lazily
+    #   when the Categories tab is first opened rather than on every page
+    #   load, per the comment at :1440. This entry
+    #   was in the unreachable bucket below, which was wrong in the dangerous
+    #   direction: that header reads as a licence to delete a function the
+    #   category editor depends on.
+    'scanner.remove_cptag',
+    # ^ registered in plugins/scanner/api.py:10, and removeCPTag is called at
+    #   folder_scanner.py:723, so only the event door is unused. This sat in
+    #   the unreachable bucket below with a comment saying the opposite, which
+    #   is the fourth instance of that contradiction on this branch and the
+    #   first one the machine check could not see: it searched only the module
+    #   that registers a handler, and this call is one file over.
+    'renamer.check_snatched',
+    # ^ the scheduler is handed the CALLABLE, not the name:
+    #   fireEvent('schedule.interval', 'renamer.check_snatched',
+    #             self.checkSnatched, ...) at renamer/main.py:235. The string
+    #   is a schedule id, not a dispatch. checkSnatched does run.
+
+    # ---------------------------------------------------------------
+    # Genuinely unreachable: the handler cannot run at all. Listed so this
+    # audit stays green and the decisions stay visible, NOT because any of
+    # it is correct. Each expires the moment something fires it, and
+    # test_unfired_allowlist_has_no_stale_entries fails then.
+    # ---------------------------------------------------------------
+    'renamer.before',
+    # ^ ONE handler: subtitle search (plugins/subtitle.py:28). Subtitles are
+    #   the most user-visible casualty of the dead chain, and an earlier
+    #   version of this comment left them out entirely while attributing six
+    #   handlers here that all belong to renamer.after below.
+    'renamer.after',
+    # ^ SIX handlers: trailers (plugins/trailer.py:17), metadata
+    #   (movie/providers/metadata/base.py:22), Plex (notifications/plex/
+    #   main.py:24), Synology (synoindex.py:22), custom scripts (script.py:24)
+    #   and manage (manage.py:43).
+    #
+    #   THE reason this guard exists, for both. Nothing fires bare `renamer`,
+    #   so the dispatcher never derives either hook and the RENAME-TRIGGERED
+    #   behaviour is dead for all seven: no subtitles fetched, no trailer, no
+    #   metadata written, no library rescan, no script run after a rename.
+    #
+    #   Not the same as the methods being dead code, and an earlier version
+    #   of this comment conflated the two. Plex.addToLibrary is separately
+    #   reachable from the Plex Test button, so it runs, just never because a
+    #   rename finished. That distinction is now machine-checked in
+    #   HANDLERS_REACHABLE_ANOTHER_WAY rather than asserted here.
+    #
+    #   The seven explicit registrations understate the reach: Notification's
+    #   own `listen_to` (notifications/base.py:19) adds renamer.after for
+    #   every provider instance, so in practice every notification provider's
+    #   rename notification is dead, not only the three named below.
+    #   See specs/RENAMER-EVENT-CHAIN.md; expires when the rename flow is
+    #   ported.
+    'app.test',
+    # ^ Four handlers, and one is load-bearing: doSubfolderTest
+    #   (plugins/file.py:39) is a 12-case truth table for isSubFolder, the
+    #   function deciding whether one path sits inside another, which the
+    #   renamer depends on. It has not run since the FastAPI migration.
+    #   The other three are provider self-tests (quality/main.py:76,
+    #   userscript/main.py:23, thepiratebay.py:44).
+    'userscript.get_excludes',
+    'userscript.get_includes',
+    'userscript.get_version',
+    # ^ Dead by design, not by accident: the userscript embed was retired in
+    #   UI-CLEANUP-02 (specs/UI-CLEANUP-02-retire-userscript-embed.md), which
+    #   removed the only caller. These three are the residue. Safe to delete
+    #   with their handlers; kept for now because that is a separate change.
+    'library.root',
+    'library.title',
+    'library.types',
+    # ^ media/_base/library/main.py:13,17 and library/base.py:10. The library
+    #   layer these belong to was largely bypassed in the FastAPI migration.
+    'manage.diskspace',
+    # ^ plugins/manage.py:37. getDiskSpace has no other caller, so the free
+    #   space figure it computes reaches nobody.
+    'media.with_identifiers',
+    # ^ media/_base/media/main.py:116.
+    'quality.order',
+    # ^ plugins/quality/main.py:56. getOrder is unreachable; profile ordering
+    #   is read from the profile records directly.
+    'scanner.partnumber',
+    # ^ plugins/scanner/api.py:13, and NOT the same case. getPartNumber
+    #   (folder_scanner.py:754) has no production caller anywhere: not this
+    #   event, not a method call, only its own unit test. So multi-part
+    #   detection does not run during a real scan, and a library with
+    #   Movie.cd1.mkv / Movie.cd2.mkv gets no part numbering. An earlier
+    #   version of this comment lumped it in with remove_cptag and said the
+    #   behaviour was not missing. It is.
+})
+
+#: For every allowlisted event, the handler methods that something ELSE can
+#: reach: an API view, or a direct call from the same module. Declared so the
+#: claim is machine-checked rather than asserted in a comment.
+#:
+#: This exists because the same mistake was made three times on one branch:
+#: a comment saying a handler is dead when it is not. `category.all` was
+#: filed as unreachable while the settings UI calls it through
+#: `category.list`; `renamer.after` was described as seven dead handlers when
+#: `Plex.addToLibrary` runs from the Plex Test button. Both were caught by a
+#: human reading plugin files, which does not scale and did not hold.
+#:
+#: `test_reachable_handlers_are_declared` fails in BOTH directions: a handler
+#: that gains another caller, and an entry here that loses one.
+HANDLERS_REACHABLE_ANOTHER_WAY = {
+    'category.all': {'all'},
+    'media.mark_watched': {'markWatched'},
+    'media.mark_unwatched': {'markUnwatched'},
+    'media.watch_history': {'watchHistory'},
+    'movie.restore_to_wanted': {'restoreToWanted'},
+    'renamer.check_snatched': {'checkSnatched'},
+    'renamer.after': {'addToLibrary'},
+    'scanner.remove_cptag': {'removeCPTag'},
+    # ^ Plex.addToLibrary only. Plex.test() calls it (plex/main.py:76) and
+    #   test() is an API view (notifications/base.py:28), so pressing Test on
+    #   the Plex settings asks Plex to rescan. The other five renamer.after
+    #   handlers have no other caller: Synoindex.test and Script.test do NOT
+    #   call theirs (synoindex.py:40, script.py:43).
+}
+
 # Per-dispatch and per-setting hooks. These are opt-in by design and are
 # unhandled for nearly every name they are generated for, so warning about
 # them would drown the signal:
