@@ -1450,10 +1450,19 @@ def check_live_region_visibility(_path: Path, text: str):
         if binding is not None:
             var, found = binding
             if found:
+                # A statement that binds a live region is a binding and
+                # nothing else; fall through only when it does not.
                 in_scope[var] = found
-            else:
-                in_scope.pop(var, None)
-            continue
+                continue
+            # A declaration that binds something ELSE can still carry an
+            # assertion, and often does:
+            #     const results = await Promise.all([
+            #       expect(status).toContainText('Connected'),
+            #     ]);
+            # Skipping every declaration outright silently stopped catching
+            # four ordinary Playwright shapes that the previous version
+            # caught. Drop the stale binding, then keep scanning.
+            in_scope.pop(var, None)
 
         for var, testids in in_scope.items():
             if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):

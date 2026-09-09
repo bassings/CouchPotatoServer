@@ -2863,3 +2863,101 @@ def test_a_new_template_in_either_render_root_is_covered_by_the_walk(tmp_path):
             "%s is a live Jinja render root but is not in DEFAULT_ROOTS" % root
         )
         assert root.is_dir(), "%s must be entered as a DIRECTORY, not a file" % root
+
+
+class TestLiveRegionVisibilityRule:
+    """`check_live_region_visibility` had no tests at all, on either side of a
+    refactor that changed its behaviour.
+
+    That is why a refactor driven by three SonarQube findings could silently
+    stop catching four ordinary Playwright shapes while all 218 trap tests
+    stayed green: none of them exercised the function. A rule written to stop
+    a green suite hiding a broken guard was itself guarded by nothing.
+
+    These pin the shapes that must fail, and the ones that must not.
+    """
+
+    STATUS = '[data-testid="trakt-auth-status"]'
+    CODE = '[data-testid="trakt-user-code"]'
+
+    def _findings(self, source):
+        return list(check_test_traps.check_live_region_visibility(
+            Path('tests/e2e/probe.spec.ts'), textwrap.dedent(source)))
+
+    def test_text_only_assertion_is_flagged(self):
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status).toContainText('x');
+            }});
+        """)
+
+    def test_a_declaration_that_carries_the_assertion_is_still_scanned(self):
+        """The regression this class was written for.
+
+        Batching assertions into a declaration is ordinary Playwright, and
+        skipping every declaration outright made the rule silent on it. The
+        element is then free to be hidden with the suite green, which is the
+        exact defect the rule exists to catch.
+        """
+        for shape in (
+            "const results = await Promise.all([\n"
+            "  expect(status).toContainText('x'),\n"
+            "]);",
+            "const checks = [\n  expect(status).toContainText('x'),\n];",
+            "const done = await expect(status).toContainText('x');",
+        ):
+            source = (
+                "test('t', async ({ page }) => {\n"
+                f"  const status = page.locator('{self.STATUS}');\n"
+                f"  {shape}\n"
+                "});\n"
+            )
+            assert self._findings(source), (
+                'a declaration carrying the assertion went unscanned:\n%s' % shape
+            )
+
+    def test_a_visibility_assertion_clears_it(self):
+        assert not self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status).toBeVisible();
+              await expect(status).toContainText('x');
+            }});
+        """)
+
+    def test_a_multiline_locator_is_still_resolved(self):
+        """Reading one line at a time produced no binding at all here, so
+        deleting the visibility assertion left the checker green."""
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const target = page.locator(
+                true ? '{self.CODE}' : '{self.STATUS}',
+              );
+              await expect(target).toContainText('x');
+            }});
+        """)
+
+    def test_one_elements_visibility_does_not_cover_another(self):
+        """A file-wide name map let the code box's assertion satisfy the
+        status message sitting beside it."""
+        assert self._findings(f"""
+            test('a', async ({{ page }}) => {{
+              const s = page.locator('{self.CODE}');
+              await expect(s).toBeVisible();
+            }});
+            test('b', async ({{ page }}) => {{
+              const s = page.locator('{self.STATUS}');
+              await expect(s).toContainText('x');
+            }});
+        """)
+
+    def test_a_negative_assertion_neither_needs_nor_gives_cover(self):
+        """`not.toContainText` is satisfied identically by "never appeared",
+        so it is not text usage and must not trigger the rule on its own."""
+        assert not self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status).not.toContainText('x');
+            }});
+        """)
