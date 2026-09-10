@@ -2,7 +2,7 @@
 """The one place a standalone script scrubs `GIT_*` before shelling out to git.
 
 `cwd=` does NOT win over `GIT_DIR`. Measured on this repo: `git ls-files`
-lists 795 files normally and 1 with a foreign `GIT_DIR` set, and a caller
+lists 796 files normally and 1 with a foreign `GIT_DIR` set, and a caller
 that trusts that list then reports "passed" having examined a different
 repository. Not a crash and not a skip, either of which would be visible.
 
@@ -37,19 +37,28 @@ def git_env():
     """The environment with git's whole `GIT_*` namespace stripped.
 
     `cwd=` does NOT win over `GIT_DIR`. Measured on this repo: `git ls-files`
-    lists 795 files normally and 1 with a foreign `GIT_DIR` set, and a caller
+    lists 796 files normally and 1 with a foreign `GIT_DIR` set, and a caller
     that trusts that list then reports "passed". Not a crash and not a skip,
     either of which would be visible: a confident green about a different
     repository, from a script whose whole job is stopping false greens.
 
-    Live rather than theoretical. `make check-traps` and `make
-    mutation-changed` both run in the pre-push gate, git exports `GIT_DIR`
-    into hook subprocesses launched from a linked worktree, and a lot of
-    work here happens in worktrees. The same leak corrupted this repository
-    twice on 2026-08-18, which is why `tests/conftest.py` pops the namespace
-    process-wide before collection. That protects this code when pytest
-    imports it and NOT when a script runs standalone, which is the gap this
-    module closes.
+    Live rather than theoretical for `make check-traps`, and the two callers
+    of this module differ here -- say so plainly rather than overstating the
+    second. `check-traps` runs INSIDE the pre-push hook's own process tree,
+    so every `git push` from a linked worktree hands it a `GIT_DIR` naming
+    that worktree's real `.git` directly (measured: `git ls-files` above).
+    `make mutation-changed` is NOT invoked by the hook -- confirmed by
+    grepping `.githooks/pre-push` and `scripts/verify.sh` for "mutation",
+    which finds nothing -- so it is run by hand, in an ordinary shell, and
+    is not exposed by that specific mechanism. It still shells out to git
+    the same way, though, and `subprocess.run(cwd=...)` gives it no
+    protection from an ambient `GIT_DIR` however that got set: a shell left
+    over from debugging a hook, another tool that exports it, or a later
+    change that wires this script into the gate itself. The same leak
+    corrupted this repository twice on 2026-08-18 via the check-traps path,
+    which is why `tests/conftest.py` pops the namespace process-wide before
+    collection. That protects this code when pytest imports it and NOT when
+    a script runs standalone, which is the gap this module closes for both.
 
     A namespace strip rather than a denylist of known-dangerous names,
     because a list of what redirects the repository would never have named

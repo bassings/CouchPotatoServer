@@ -311,8 +311,19 @@ def runner_env() -> dict[str, str]:
     `test_add_via_url.py` failing to import `couchpotato.api`). `make
     mutation-py` sets this, so a bare `python scripts/mutation_changed.py` must
     not silently lack it.
+
+    Starts from `git_env()`, not a raw `os.environ` copy. Measured: without
+    this, `runner_env()` carries `GIT_DIR`, `GIT_EDITOR` and
+    `GIT_CONFIG_PARAMETERS` through to the runner untouched. That matters
+    because mutmut 3.7.0 shells out to git itself with no `env=` and no
+    `cwd=` (`_run_git` in `mutmut/__main__.py`, `git rev-parse HEAD` / `git
+    diff --name-only` / `git ls-files`, used to decide whether its result
+    cache is stale) and inherits whatever environment THIS process was
+    launched with. Not measured, only read from mutmut's source: the actual
+    consequence is a wrong cache decision, not data loss, because a stale
+    or foreign answer there only changes which mutants get re-run.
     """
-    env = dict(os.environ)
+    env = git_env()
     libs = str(REPO_ROOT / "libs")
     existing = env.get("PYTHONPATH", "")
     if libs not in existing.split(os.pathsep):

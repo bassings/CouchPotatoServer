@@ -1376,7 +1376,7 @@ _TEXT_ONLY_MATCHERS = ("toContainText", "toHaveText")
 # shared with `scripts/mutation_changed.py` (#348), and are re-exported here
 # under their old names so nothing that already calls
 # `check_test_traps._git_env()` needs to change. See that module's docstring
-# for the measured evidence (`git ls-files`: 795 files normally, 1 with a
+# for the measured evidence (`git ls-files`: 796 files normally, 1 with a
 # foreign `GIT_DIR` set) and for why this is one definition, not two.
 _git_env = git_env
 _GIT_IDENTITY_PREFIXES = GIT_IDENTITY_PREFIXES
