@@ -542,6 +542,111 @@ def test_deleted_files_are_not_offered_as_mutation_targets(temp_repo):
     )
 
 
+# ── GIT_DIR leak (#348) ──────────────────────────────────────────────────
+
+
+def test_git_env_is_the_one_shared_helper_not_a_local_copy():
+    """One definition of the scrub, not two.
+
+    `check_test_traps.py` fixed its own `git ls-files` call in #347; #348 is
+    that `mutation_changed.py`'s four call sites stayed unscrubbed because
+    the fix lived only in the first file. Pinning identity, not merely equal
+    behaviour, closes the gap a future edit could reopen: two independently
+    written functions that both strip `GIT_*` would satisfy every other test
+    in this file while drifting the moment one of them changes and the other
+    does not.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    import check_test_traps
+    import git_env as git_env_module
+
+    assert mutation_changed.git_env is git_env_module.git_env, (
+        "mutation_changed.py is not using scripts/git_env.py's git_env() -- "
+        "it has its own copy again"
+    )
+    assert check_test_traps._git_env is git_env_module.git_env, (
+        "check_test_traps.py is not using scripts/git_env.py's git_env() -- "
+        "it has its own copy again"
+    )
+
+
+def _build_throwaway_repo(root):
+    """A second, unrelated git repo with one committed file -- the shape of
+    the foreign repository a leaked GIT_DIR points a subprocess at."""
+    _git(root, "init", "-q", "-b", "master")
+    _git(root, "config", "user.email", "throwaway@example.com")
+    _git(root, "config", "user.name", "Throwaway")
+    (root / "only-file.txt").write_text("x\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "x")
+    return root
+
+
+def test_git_toplevel_ignores_a_leaked_git_dir(temp_repo, tmp_path_factory, monkeypatch):
+    """`cwd=` does not win over `GIT_DIR`. With `GIT_WORK_TREE` unset, git
+    treats an explicit `GIT_DIR` as meaning "the current directory IS the
+    work tree", so `git rev-parse --show-toplevel` stops walking up to find
+    the real repo root and returns the caller's `cwd` unchanged instead.
+    Called from a subdirectory that is exactly the failure: the "root"
+    silently becomes the subdirectory rather than the repository's actual
+    top level, and everything `changed_files()` does afterwards is scoped
+    from the wrong place.
+
+    Measured directly: from `couchpotato/core/db/` inside this repo, a
+    foreign `GIT_DIR` makes `git rev-parse --show-toplevel` answer with that
+    same subdirectory rather than the repo root.
+
+    Exactly the leak `gitdir-leak-from-worktree-push` records: a worktree
+    push exports `GIT_DIR` into a pre-push hook subprocess, and a lot of
+    this project's work happens in worktrees.
+    """
+    throwaway = _build_throwaway_repo(tmp_path_factory.mktemp("throwaway"))
+    subdir = temp_repo / "couchpotato" / "core" / "db"
+    assert subdir.is_dir(), "fixture assumption is wrong -- no such subdirectory"
+
+    monkeypatch.setenv("GIT_DIR", str(throwaway / ".git"))
+
+    root = mutation_changed.git_toplevel(subdir)
+
+    assert root == temp_repo, (
+        f"git_toplevel() returned {root} under a leaked GIT_DIR pointing at "
+        f"{throwaway} -- expected the real repo root {temp_repo}"
+    )
+
+
+def test_changed_files_ignores_a_leaked_git_dir(temp_repo, tmp_path_factory, monkeypatch):
+    """The same leak reaching `changed_files()`'s three git calls
+    (merge-base, diff, ls-files). With a foreign `GIT_DIR` set, HEAD and the
+    base ref resolve inside the THROWAWAY repository's object database, so
+    the diff compares a stranger's one-file tree against this repo's real
+    working directory -- every file this repo has that the throwaway does
+    not know about then looks "changed".
+
+    Asserted against the real diff result, not a count: a count assertion
+    would pass by coincidence if the throwaway happened to hold a similar
+    number of files.
+    """
+    adapter = temp_repo / "couchpotato" / "core" / "db" / "sqlite_adapter.py"
+    adapter.write_text("def get(key):\n    return key.strip()\n")
+    _git(temp_repo, "commit", "-am", "tweak adapter")
+
+    expected = mutation_changed.changed_files("master", temp_repo)
+    assert expected == ["couchpotato/core/db/sqlite_adapter.py"], (
+        "fixture assumption is wrong -- the baseline diff itself changed"
+    )
+
+    throwaway = _build_throwaway_repo(tmp_path_factory.mktemp("throwaway"))
+    monkeypatch.setenv("GIT_DIR", str(throwaway / ".git"))
+
+    leaked = mutation_changed.changed_files("master", temp_repo)
+
+    assert leaked == expected, (
+        f"a leaked GIT_DIR changed changed_files()'s answer: {leaked!r} vs "
+        f"the real result {expected!r} -- scope collapsed to a different "
+        f"repository ({throwaway})"
+    )
+
+
 # ── The execution path (previously untested end to end) ─────────────────────
 
 

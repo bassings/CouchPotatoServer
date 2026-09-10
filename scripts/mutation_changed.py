@@ -34,6 +34,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from git_env import git_env
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -146,10 +148,17 @@ def git_toplevel(cwd: Path) -> Path:
     paths relative to the CWD. Run from a subdirectory, the two disagree and
     untracked files get mis-scoped (`new.py` instead of `sub/new.py`), so they
     silently fall outside the mutation scope.
+
+    ``env=git_env()`` matters here specifically: with ``GIT_WORK_TREE`` unset,
+    an ambient ``GIT_DIR`` makes git treat ``cwd`` itself as the work tree
+    instead of walking up to find the real root, so ``--show-toplevel`` quietly
+    returns ``cwd`` unchanged when called from a subdirectory. Measured: from
+    a subdirectory of this repo, a foreign ``GIT_DIR`` makes this answer with
+    that subdirectory instead of the repo root.
     """
     result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        cwd=cwd, capture_output=True, text=True,
+        cwd=cwd, capture_output=True, text=True, env=git_env(),
     )
     if result.returncode != 0:
         raise SystemExit(
@@ -163,12 +172,18 @@ def changed_files(base: str, cwd: Path) -> list[str]:
 
     Deletions are excluded (``--diff-filter=d``): a deleted file is not a
     mutation target, and pointing stryker at a nonexistent path is an error.
+
+    ``env=git_env()`` at every call site here too: an ambient ``GIT_DIR``
+    (what a worktree push exports into a pre-push hook) resolves HEAD and
+    ``base`` inside a foreign repository's object database, so the diff below
+    compares a stranger's tree against this repo's real working directory --
+    every file this repo has that the foreign tree lacks then looks "changed".
     """
     root = git_toplevel(cwd)
 
     merge_base = subprocess.run(
         ["git", "merge-base", "HEAD", base],
-        cwd=root, capture_output=True, text=True,
+        cwd=root, capture_output=True, text=True, env=git_env(),
     )
     if merge_base.returncode != 0:
         raise SystemExit(
@@ -178,11 +193,11 @@ def changed_files(base: str, cwd: Path) -> list[str]:
 
     diff = subprocess.run(
         ["git", "diff", "--name-only", "--diff-filter=d", merge_base.stdout.strip()],
-        cwd=root, capture_output=True, text=True, check=True,
+        cwd=root, capture_output=True, text=True, check=True, env=git_env(),
     )
     untracked = subprocess.run(
         ["git", "ls-files", "--others", "--exclude-standard"],
-        cwd=root, capture_output=True, text=True, check=True,
+        cwd=root, capture_output=True, text=True, check=True, env=git_env(),
     )
 
     files = {ln.strip() for ln in diff.stdout.splitlines() if ln.strip()}
