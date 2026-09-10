@@ -294,6 +294,40 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
   // themes. A closed-modal scan (already run elsewhere in this suite)
   // proves nothing about this dialog's content.
   // -------------------------------------------------------------------
+  // AC-A11Y-10, HOVER. `QA/branch-review-2026-08-31-review-queue.md` (M1)
+  // recorded this control at 4.21:1 on hover in the dark theme and
+  // prescribed measuring after `.hover()` here. That was never done, so the
+  // number went unmeasured while the resting state was checked every run.
+  //
+  // hover:bg-cp-danger/15 darkens the composited background, and the earlier
+  // fix set a `background-color` that lost a specificity tie to that utility
+  // (the vendored Tailwind CDN appends after the inline <style>), so what it
+  // corrected at rest was undone on hover. The current fix moves the
+  // FOREGROUND, which no `hover:bg-*` utility can reach.
+  //
+  // Measured: 5.12:1 hovered, against 4.08:1 with the previous colour.
+  test('the confirm control clears the contrast floor ON HOVER, not just at rest (dark theme, AC-A11Y-10)', async ({ page }) => {
+    await setDarkTheme(page);
+    const modal = await openReplaceModal(page, REVIEW_MOVIE_ID);
+    await expect(modal).toBeVisible();
+
+    const confirmBtn = modal.locator('[data-testid="operator-replace-confirm"]');
+    await expect(confirmBtn).toBeVisible();
+    await confirmBtn.hover();
+    // Settle the transition first: reading at the instant of the hover
+    // samples the resting colours and proves nothing.
+    await page.waitForTimeout(400);
+
+    const results = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
+    const detail = results.violations
+      .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html} -- ${n.failureSummary}`))
+      .join('\n');
+    expect(
+      results.violations.length,
+      `WCAG contrast violations while the confirm control is HOVERED (dark theme):\n${detail}`,
+    ).toBe(0);
+  });
+
   for (const theme of ['light', 'dark'] as const) {
     test(`modal has zero WCAG 2.2 AA violations while open (${theme} theme, point 1 / AC-A11Y-10)`, async ({ page }) => {
       if (theme === 'dark') await setDarkTheme(page);

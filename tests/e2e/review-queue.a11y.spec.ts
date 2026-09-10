@@ -539,6 +539,43 @@ test.describe('FEAT-010 Review queue accessibility', () => {
   // AC-A11Y-13: full axe scan, both themes, must FAIL (not skip) if no
   // review card is present.
   // ---------------------------------------------------------------------
+  // AC-A11Y-13, HOVER. `QA/branch-review-2026-08-31-review-queue.md` (M1)
+  // recorded these controls dropping to 4.21:1 on hover in the dark theme,
+  // and prescribed extending this file to measure after `.hover()`. That was
+  // never done, so the number went unmeasured for three weeks while the
+  // resting state was checked on every run.
+  //
+  // It matters because hover changes the composited background:
+  // `hover:bg-cp-danger/15` over `hover:bg-cp-danger/10`. The earlier fix set
+  // a `background-color` and lost a specificity tie to that utility (the
+  // vendored Tailwind CDN appends after the inline <style>), so the thing it
+  // corrected at rest was undone on hover. The current fix moves the
+  // FOREGROUND instead, which no `hover:bg-*` utility can touch.
+  //
+  // Measured on the fix: rest 5.46, hover 5.12.
+  test('Mark Failed clears the contrast floor ON HOVER, not just at rest (dark theme, AC-A11Y-13)', async ({ page }) => {
+    await setDarkTheme(page);
+    await gotoWantedWithReviewCards(page);
+    await assertThemeIs(page, false);
+
+    const markFailed = page.locator('[data-testid="review-mark-failed"]').first();
+    await expect(markFailed).toBeVisible({ timeout: 10000 });
+
+    await markFailed.hover();
+    // Let the transition settle, then measure: reading at the instant of the
+    // hover would sample the resting colours and prove nothing.
+    await page.waitForTimeout(400);
+
+    const results = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
+    const detail = results.violations
+      .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html} -- ${n.failureSummary}`))
+      .join('\n');
+    expect(
+      results.violations.length,
+      `WCAG contrast violations while Mark Failed is HOVERED (dark theme):\n${detail}`,
+    ).toBe(0);
+  });
+
   for (const theme of ['light', 'dark'] as const) {
     test(`Wanted page with a review card has zero WCAG 2.2 AA violations (${theme} theme, AC-A11Y-13)`, async ({ page }) => {
       if (theme === 'dark') await setDarkTheme(page);
