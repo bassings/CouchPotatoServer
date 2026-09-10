@@ -820,6 +820,7 @@ def _tracked_test_files(repo_root: Path, require_git: bool = False) -> list[str]
         result = subprocess.run(
             ["git", "ls-files"],
             cwd=repo_root, capture_output=True, text=True, check=True,
+            env=_git_env(),
         )
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         # No git, or not a work tree. `scripts/test-local.sh` runs this suite
@@ -1367,6 +1368,42 @@ _LIVE_REGION_TESTIDS = (
 )
 
 _TEXT_ONLY_MATCHERS = ("toContainText", "toHaveText")
+
+
+#: Commit-identity variables, the only `GIT_*` names safe to pass through:
+#: they change what a commit RECORDS, never where an operation LANDS or what
+#: git EXECUTES. Same rule and same reasoning as `tests/conftest.py`, and
+#: `test_script_git_env_matches_the_suite_rule` fails if the two drift.
+_GIT_IDENTITY_PREFIXES = ('GIT_AUTHOR_', 'GIT_COMMITTER_')
+
+
+def _git_env():
+    """The environment with git's whole `GIT_*` namespace stripped.
+
+    `cwd=` does NOT win over `GIT_DIR`. Measured on this repo: `git ls-files`
+    lists 795 files normally and 1 with a foreign `GIT_DIR` set, and this
+    script then scans that list and reports "passed". Not a crash and not a
+    skip, either of which would be visible: a confident green about a
+    different repository, from the script whose whole job is stopping false
+    greens.
+
+    Live rather than theoretical. `make check-traps` runs in the pre-push
+    gate, git exports `GIT_DIR` into hook subprocesses launched from a linked
+    worktree, and a lot of work here happens in worktrees. The same leak
+    corrupted this repository twice on 2026-08-18, which is why
+    `tests/conftest.py` pops the namespace process-wide before collection.
+    That protects this code when pytest imports it and NOT when `make
+    check-traps` runs it as a script, which is the gap this closes.
+
+    A namespace strip rather than a denylist of known-dangerous names,
+    because a list of what redirects the repository would never have named
+    GIT_CONFIG_PARAMETERS or GIT_TEMPLATE_DIR.
+    """
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith('GIT_') and not key.startswith(_GIT_IDENTITY_PREFIXES):
+            env.pop(key, None)
+    return env
 
 
 #: A declaration that binds a locator to a live-region test id.

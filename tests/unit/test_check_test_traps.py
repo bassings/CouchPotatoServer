@@ -2994,3 +2994,83 @@ class TestLiveRegionVisibilityRule:
               await expect(status).not.toContainText('x');
             }});
         """)
+
+
+class TestGitEnvIsScrubbedInTheScriptPath:
+    """`cwd=` does not win over `GIT_DIR`, and this script shells out to git.
+
+    Measured on this repo before the fix: `_tracked_test_files` returns 212
+    files normally and 0 with a foreign `GIT_DIR` set, and the orphaned-test
+    rule then reports clean having examined nothing. Not a crash and not a
+    skip, either of which would be visible.
+
+    Live rather than theoretical: `make check-traps` runs in the pre-push
+    gate, git exports `GIT_DIR` into hook subprocesses launched from a linked
+    worktree, and the same leak corrupted this repository twice on
+    2026-08-18. `tests/conftest.py` pops the namespace process-wide before
+    collection, which protects this code under pytest and NOT when the
+    script runs standalone.
+    """
+
+    def test_a_foreign_git_dir_does_not_empty_the_file_list(self, tmp_path, monkeypatch):
+        elsewhere = tmp_path / 'elsewhere'
+        elsewhere.mkdir()
+        # `env=sanitized_git_env()` written out at every call site, not bound
+        # to a local first: test_fixtures_do_not_leak_gitdir checks this
+        # statically and cannot follow a variable. It caught this test, which
+        # is the correct outcome for a test that shells out to git.
+        subprocess.run(['git', 'init', '-q', str(elsewhere)],
+                       check=True, env=sanitized_git_env())
+        (elsewhere / 'only-file.txt').write_text('x')
+        subprocess.run(['git', 'add', '-A'], cwd=elsewhere,
+                       check=True, env=sanitized_git_env())
+        subprocess.run(
+            ['git', '-c', 'user.email=a@b', '-c', 'user.name=t',
+             'commit', '-qm', 'x'],
+            cwd=elsewhere, check=True, env=sanitized_git_env())
+
+        repo_root = Path(check_test_traps.__file__).resolve().parents[1]
+        baseline = check_test_traps._tracked_test_files(repo_root)
+        assert baseline, 'baseline is empty, so this test would prove nothing'
+
+        monkeypatch.setenv('GIT_DIR', str(elsewhere / '.git'))
+        leaked = check_test_traps._tracked_test_files(repo_root)
+
+        assert leaked == baseline, (
+            'a leaked GIT_DIR changed which files this script sees: %d without '
+            'it, %d with it. The rules built on this list then report clean '
+            'having scanned a different repository.'
+            % (len(baseline), len(leaked))
+        )
+
+    def test_the_scripts_scrub_matches_the_suites_rule(self):
+        """The rule is stated in two places, so pin them together.
+
+        `tests/conftest.py` owns it for the suite and this script owns it for
+        the standalone path, because a script cannot import the suite's
+        conftest. Duplication that cannot drift is the compromise; silent
+        drift is the thing to prevent.
+        """
+        from tests.conftest import GIT_IDENTITY_ENV_PREFIXES
+
+        assert check_test_traps._GIT_IDENTITY_PREFIXES == GIT_IDENTITY_ENV_PREFIXES
+
+    def test_an_unknown_git_variable_does_not_survive_the_scrub(self):
+        """The prefix tuple is not the rule; the namespace strip is.
+
+        Review showed the earlier pin was insufficient: replacing the strip
+        with `env.pop('GIT_DIR')` left every test green, because the tuple was
+        untouched and the only probe used GIT_DIR. Driving the real function
+        under that mutant, GIT_INDEX_FILE leaked and collapsed the file list
+        to 1 -- and GIT_INDEX_FILE is exactly what git exports into hook
+        subprocesses.
+        """
+        monkey = 'GIT_NOT_A_REAL_VARIABLE'
+        os.environ[monkey] = 'x'
+        try:
+            assert monkey not in check_test_traps._git_env(), (
+                'a GIT_* name nobody listed survived the scrub, so the strip '
+                'has drifted into a denylist of known-dangerous names'
+            )
+        finally:
+            os.environ.pop(monkey, None)
