@@ -388,6 +388,23 @@ def test_runner_env_does_not_duplicate_libs(monkeypatch):
     assert env["PYTHONPATH"].split(os.pathsep).count(libs) == 1
 
 
+def test_runner_env_strips_git_star(monkeypatch):
+    """mutmut shells out to git itself with no `env=` and no `cwd=` to decide
+    whether its result cache is stale (`_run_git` in mutmut's own
+    `__main__.py`: `git rev-parse HEAD` / `git diff --name-only` / `git
+    ls-files`), inheriting whatever environment the mutation runner process
+    was launched with. If a leaked `GIT_DIR` reached `runner_env()`, mutmut
+    would answer those about a foreign repository too -- this is the last
+    environment `mutation_changed.py` builds that still needs the same
+    scrub as `git_toplevel()` and `changed_files()`.
+    """
+    monkeypatch.setenv("GIT_DIR", "/somewhere/foreign/.git")
+    env = mutation_changed.runner_env()
+    assert "GIT_DIR" not in env, (
+        "runner_env() carried GIT_DIR through to the mutation runners"
+    )
+
+
 # ── End-to-end against a real git repo ──────────────────────────────────────
 
 
@@ -413,15 +430,18 @@ def temp_repo(tmp_path):
     return tmp_path
 
 
-def run_script(cwd, *args):
+def run_script(cwd, *args, env=None):
     # sanitized_git_env() even though this spawns python, not git: the script
     # itself shells out to `git rev-parse --show-toplevel`, so an ambient
     # GIT_DIR reaches git one hop away. The process-level scrub in
     # tests/conftest.py already covers this; passing it explicitly keeps the
-    # call honest about what it depends on.
+    # call honest about what it depends on. `env=` lets a caller override
+    # that default deliberately, to prove the script's own entry point --
+    # not just the imported functions -- handles a leaked GIT_DIR correctly
+    # (see test_script_ignores_a_leaked_git_dir_end_to_end).
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args], cwd=cwd, capture_output=True,
-        text=True, env=sanitized_git_env(),
+        text=True, env=sanitized_git_env() if env is None else env,
     )
 
 
@@ -539,6 +559,269 @@ def test_deleted_files_are_not_offered_as_mutation_targets(temp_repo):
     assert result.returncode == 0, result.stderr
     assert "nothing" in result.stdout.lower(), (
         f"a deleted file was offered as a mutation target:\n{result.stdout}"
+    )
+
+
+# ── GIT_DIR leak (#348) ──────────────────────────────────────────────────
+
+
+def test_git_env_is_the_one_shared_helper_not_a_local_copy():
+    """One definition of the scrub, not two.
+
+    `check_test_traps.py` fixed its own `git ls-files` call in #347; #348 is
+    that `mutation_changed.py`'s four call sites stayed unscrubbed because
+    the fix lived only in the first file. Pinning identity, not merely equal
+    behaviour, closes the gap a future edit could reopen: two independently
+    written functions that both strip `GIT_*` would satisfy every other test
+    in this file while drifting the moment one of them changes and the other
+    does not.
+
+    No `sys.path.insert` here: the module does it once at import time
+    (above), and inserting again on every call would grow `sys.path` by one
+    duplicate entry per test run for no benefit.
+    """
+    import check_test_traps
+    import git_env as git_env_module
+
+    assert mutation_changed.git_env is git_env_module.git_env, (
+        "mutation_changed.py is not using scripts/git_env.py's git_env() -- "
+        "it has its own copy again"
+    )
+    assert check_test_traps._git_env is git_env_module.git_env, (
+        "check_test_traps.py is not using scripts/git_env.py's git_env() -- "
+        "it has its own copy again"
+    )
+
+
+def _build_throwaway_repo(root):
+    """A second, unrelated git repo with one committed file -- the shape of
+    the foreign repository a leaked GIT_DIR points a subprocess at."""
+    _git(root, "init", "-q", "-b", "master")
+    _git(root, "config", "user.email", "throwaway@example.com")
+    _git(root, "config", "user.name", "Throwaway")
+    (root / "only-file.txt").write_text("x\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "x")
+    return root
+
+
+def _assert_git_dir_injection_took_effect(cwd, throwaway, env=None):
+    """A git call from `cwd`, run with `env`, must resolve its git dir
+    INSIDE `throwaway` -- proof the hostile environment a test builds
+    actually reaches git, not just that the test called `setenv`/built a
+    dict.
+
+    Without this, a future change that moves the injection into a fixture,
+    or has it overwritten before the call under test runs, leaves a
+    leak-test passing while measuring nothing -- silently, because the
+    function under test always scrubs `GIT_*` on its own path regardless of
+    whether the leak this test means to simulate is actually present.
+    `tests/unit/conftest.py`'s `assert_git_dir_is()` documents exactly this
+    failure mode for the opposite polarity (proving sanitisation keeps an
+    operation IN a directory); this proves the opposite -- that an
+    unsanitised environment redirects one OUT.
+
+    `env` is REQUIRED in practice, asserted below rather than merely
+    documented: every caller in this file passes a hostile environment
+    explicitly, and a caller that forgot would otherwise fall through to
+    the `sanitized_git_env()` default below, which strips the very GIT_DIR
+    this helper exists to confirm is present and turns the proof into a
+    silent no-op. `env=sanitized_git_env() if env is None else env` is the
+    default's shape anyway (not a bare `env=env`) because
+    `test_fixtures_do_not_leak_gitdir.py`'s static audit requires every
+    literal `git` subprocess call in tests/ to be recognisably sanitised at
+    the call site -- the same escape hatch `_seed_commit` in
+    `test_git_env_namespace_scrub.py` uses, on purpose, so a helper can
+    still receive a deliberately hostile environment from its caller.
+    """
+    assert env is not None, (
+        "_assert_git_dir_injection_took_effect() was called with no env -- "
+        "pass the same hostile environment the test built, or this check "
+        "would silently verify the sanitised default instead"
+    )
+    result = subprocess.run(
+        ["git", "rev-parse", "--absolute-git-dir"], cwd=str(cwd),
+        capture_output=True, text=True,
+        env=sanitized_git_env() if env is None else env,
+    )
+    assert result.returncode == 0, (
+        f"the git call used to prove the injected GIT_DIR took effect "
+        f"failed outright: {result.stderr}"
+    )
+    resolved = os.path.realpath(result.stdout.strip())
+    expected = os.path.realpath(str(throwaway / ".git"))
+    assert resolved == expected, (
+        f"a git call from {cwd} resolved its git dir to {resolved}, not "
+        f"the throwaway's {expected} -- the GIT_DIR injection this test "
+        f"built did not actually take effect, so it would prove nothing "
+        f"about the leak"
+    )
+
+
+def test_git_toplevel_ignores_a_leaked_git_dir(temp_repo, tmp_path_factory, monkeypatch):
+    """`cwd=` does not win over `GIT_DIR`. With `GIT_WORK_TREE` unset, git
+    treats an explicit `GIT_DIR` as meaning "the current directory IS the
+    work tree", so `git rev-parse --show-toplevel` stops walking up to find
+    the real repo root and returns the caller's `cwd` unchanged instead.
+    Called from a subdirectory that is exactly the failure: the "root"
+    silently becomes the subdirectory rather than the repository's actual
+    top level, and everything `changed_files()` does afterwards is scoped
+    from the wrong place.
+
+    Measured directly: from `couchpotato/core/db/` inside this repo, a
+    foreign `GIT_DIR` makes `git rev-parse --show-toplevel` answer with that
+    same subdirectory rather than the repo root.
+
+    Exactly the leak `gitdir-leak-from-worktree-push` records: a worktree
+    push exports `GIT_DIR` into a pre-push hook subprocess, and a lot of
+    this project's work happens in worktrees.
+    """
+    throwaway = _build_throwaway_repo(tmp_path_factory.mktemp("throwaway"))
+    subdir = temp_repo / "couchpotato" / "core" / "db"
+    assert subdir.is_dir(), "fixture assumption is wrong -- no such subdirectory"
+
+    monkeypatch.setenv("GIT_DIR", str(throwaway / ".git"))
+    _assert_git_dir_injection_took_effect(subdir, throwaway, env=dict(os.environ))
+
+    root = mutation_changed.git_toplevel(subdir)
+
+    assert root == temp_repo, (
+        f"git_toplevel() returned {root} under a leaked GIT_DIR pointing at "
+        f"{throwaway} -- expected the real repo root {temp_repo}"
+    )
+
+
+def test_changed_files_ignores_a_leaked_git_dir(tmp_path, tmp_path_factory, monkeypatch):
+    """The same leak reaching `changed_files()`'s three git calls
+    (merge-base, diff, ls-files). With a foreign `GIT_DIR` set, HEAD and the
+    base ref resolve inside the THROWAWAY repository's object database, so
+    the diff compares a stranger's one-file tree against this repo's real
+    working directory -- every file this repo has that the throwaway does
+    not know about then looks "changed".
+
+    Asserted against the real diff result, not a count: a count assertion
+    would pass by coincidence if the throwaway happened to hold a similar
+    number of files.
+
+    Deliberately does NOT use the shared `temp_repo` fixture. An earlier
+    version of this test did, and relied entirely on `temp_repo`'s
+    README.md to tell a correct answer from a leaked one: the throwaway
+    repo's one file (`only-file.txt`) diffs as a DELETION against the real
+    working tree and `changed_files()` filters deletions out
+    (`--diff-filter=d`), so it contributes nothing either way, and the
+    tweaked adapter file is correctly present in both the leaked and the
+    real answer regardless of the leak. README.md was the only thing that
+    ever differed between them -- a reviewer proved it by deleting README.md
+    from the fixture and removing all four scrubs from production code, and
+    the test stayed green against completely unfixed code. This version
+    builds its own untouched marker file so the discriminating evidence
+    belongs to the test that depends on it, not to an unrelated fixture that
+    does not know it is load-bearing.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+
+    adapter = repo / "couchpotato" / "core" / "db" / "sqlite_adapter.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text("def get(key):\n    return key\n")
+    # Committed on master AND left untouched on feature, so it must be
+    # ABSENT from the correct diff -- its presence in the leaked one is
+    # this test's own evidence, not a borrowed coincidence.
+    marker = repo / "leak_discriminator.txt"
+    marker.write_text("untouched by the real diff\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "baseline")
+    _git(repo, "checkout", "-q", "-b", "feature")
+
+    adapter.write_text("def get(key):\n    return key.strip()\n")
+    _git(repo, "commit", "-qam", "tweak adapter")
+
+    expected = mutation_changed.changed_files("master", repo)
+    assert expected == ["couchpotato/core/db/sqlite_adapter.py"], (
+        "fixture assumption is wrong -- the baseline diff itself changed"
+    )
+    assert "leak_discriminator.txt" not in expected, (
+        "fixture assumption is wrong -- the marker must be untouched by "
+        "the correct diff, or its presence under the leak proves nothing"
+    )
+
+    throwaway = _build_throwaway_repo(tmp_path_factory.mktemp("throwaway"))
+    monkeypatch.setenv("GIT_DIR", str(throwaway / ".git"))
+    _assert_git_dir_injection_took_effect(repo, throwaway, env=dict(os.environ))
+
+    leaked = mutation_changed.changed_files("master", repo)
+
+    assert leaked == expected, (
+        f"a leaked GIT_DIR changed changed_files()'s answer: {leaked!r} vs "
+        f"the real result {expected!r} -- scope collapsed to a different "
+        f"repository ({throwaway})"
+    )
+
+
+def test_script_ignores_a_leaked_git_dir_end_to_end(tmp_path, tmp_path_factory):
+    """The tests above drive `git_toplevel()` and `changed_files()` as
+    imported functions. What `make mutation-changed` actually runs is
+    `scripts/mutation_changed.py` as a SUBPROCESS, with whatever `GIT_DIR`
+    is already in its environment -- and `run_script()` elsewhere in this
+    file always passes `sanitized_git_env()`, so no other test in this
+    suite ever starts the script itself under a leak. This is the one that
+    does: it also covers `runner_env()`, since the script is invoked the
+    same way regardless of which environment it goes on to build.
+
+    Deliberately does not use the shared `temp_repo` fixture, for the same
+    reason `test_changed_files_ignores_a_leaked_git_dir` does not. An
+    earlier version of this test did, and its marker was `temp_repo`'s
+    README.md -- which is not source-scoped, so `python_targets()`/
+    `js_targets()` silently drop it before it ever reaches the printed
+    command line. Confirmed by mutation: with all four `env=git_env()`
+    call sites removed, that version still passed. This one's marker is a
+    `.js` file under the stryker-scoped directory, matching the real
+    symptom this issue measured: "the script invented seven JavaScript
+    mutation targets the branch never touched."
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+
+    adapter = repo / "couchpotato" / "core" / "db" / "sqlite_adapter.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text("def get(key):\n    return key\n")
+    # Committed on master AND left untouched on feature, JS/TS-scoped
+    # (stryker.conf.json's `mutate`), so a leak that makes it look "added"
+    # invents a real mutation target instead of being silently dropped by
+    # scope filtering the way a non-scoped file (README.md) would be.
+    marker = repo / "couchpotato" / "static" / "scripts" / "ui" / "marker.js"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("// untouched by the real diff\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "baseline")
+    _git(repo, "checkout", "-q", "-b", "feature")
+
+    adapter.write_text("def get(key):\n    return key.strip()\n")
+    _git(repo, "commit", "-qam", "tweak adapter")
+
+    correct = run_script(repo, "--base", "master", "--dry-run")
+    assert correct.returncode == 0, correct.stderr
+    assert "1 python target(s), 0 js target(s)" in correct.stdout, (
+        f"fixture assumption is wrong -- the correct run does not show the "
+        f"expected target counts:\n{correct.stdout}"
+    )
+
+    throwaway = _build_throwaway_repo(tmp_path_factory.mktemp("throwaway"))
+    hostile_env = {**sanitized_git_env(), "GIT_DIR": str(throwaway / ".git")}
+    _assert_git_dir_injection_took_effect(repo, throwaway, env=hostile_env)
+
+    leaked = run_script(repo, "--base", "master", "--dry-run", env=hostile_env)
+
+    assert leaked.returncode == 0, leaked.stderr
+    assert leaked.stdout == correct.stdout, (
+        f"a leaked GIT_DIR changed the script's dry-run output:\n"
+        f"correct: {correct.stdout!r}\nleaked:  {leaked.stdout!r}"
     )
 
 
