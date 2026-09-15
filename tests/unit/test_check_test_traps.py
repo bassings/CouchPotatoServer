@@ -1085,6 +1085,12 @@ def test_typescript_ast_dependency_is_installed_before_the_trap_gate():
         '"$PYTHON" scripts/check_test_traps.py --require-git'
     )
 
+    test_job = ci[ci.index("  test:\n"):ci.index("  ui-unit-tests:\n")]
+    assert "actions/setup-node@" in test_job
+    assert test_job.index("npm ci") < test_job.index(
+        "python -m pytest tests/unit/"
+    )
+
 
 def test_flags_a_new_unexplained_wait_for_timeout(tmp_path):
     spec = _e2e_spec(tmp_path)

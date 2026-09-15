@@ -301,3 +301,9 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   Python unit, 42 integration, 214 UI unit, 176 Chromium, 2 isolation, 10
   mobile, and 96 accessibility tests. T1 through T5 are awaiting CI. T1's live
   clean-`master` proof and dependent T6 remain post-merge work.
+- 2026-09-16: PR #354's first Python CI run exposed a clean-runner dependency
+  gap: 73 TypeScript-backed trap-checker tests failed because that job had not
+  installed the pinned TypeScript package. Added a load-bearing workflow-order
+  assertion first, observed it fail, then made the Python job set up Node and
+  run the script-disabled npm install before pytest. The complete 284-test trap
+  checker suite is green locally; CI re-verification is pending.

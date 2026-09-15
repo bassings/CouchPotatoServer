@@ -270,6 +270,16 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    # Python unit tests exercise the TypeScript-backed E2E trap checker. Keep
+    # this job hermetic instead of relying on node_modules from another job.
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+
+    - name: Install TypeScript AST guard dependency
+      run: npm ci --ignore-scripts
+
     # The base branch, for the folder_scanner data-loss guard in
     # tests/unit/test_renamer_decision_memory.py. That guard asserts the
     # scanner shared with manage.updateLibrary is byte-identical to the
