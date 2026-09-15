@@ -68,7 +68,7 @@ class HDTrailers(TrailerProvider):
             return results
 
         try:
-            html = BeautifulSoup(data, parse_only = self.only_tables_tags)
+            html = BeautifulSoup(data, 'lxml', parse_only = self.only_tables_tags)
             result_table = html.find_all('h2', text = re.compile(movie_name))
 
             for h2 in result_table:
@@ -90,7 +90,7 @@ class HDTrailers(TrailerProvider):
 
         results = {'480p':[], '720p':[], '1080p':[]}
         try:
-            html = BeautifulSoup(data, parse_only = self.only_tables_tags)
+            html = BeautifulSoup(data, 'lxml', parse_only = self.only_tables_tags)
             result_table = html.find('table', attrs = {'class':'bottomTable'})
 
             for tr in result_table.find_all('tr'):

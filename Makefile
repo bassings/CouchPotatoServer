@@ -117,39 +117,16 @@ sonar-token-check: ## Fail fast if the analysis token is missing or empty
 	@# Runs before `coverage`, deliberately: that takes minutes, and
 	@# discovering a bad token after it has run is the sort of thing that gets
 	@# a target abandoned rather than fixed.
-	@test -r "$(SONAR_TOKEN_FILE)" || { \
-		echo "No token at $(SONAR_TOKEN_FILE). Use the ANALYSIS token (sqa_/sqp_),"; \
-		echo "never the admin token -- that one can rewrite issue history."; exit 1; }
-	@# Readability is not enough: an empty, truncated or wrongly-named file
-	@# passes `test -r` and then fails inside the scanner AFTER coverage has
-	@# run, which is precisely the waste this check exists to prevent. Assert
-	@# the assignment exists AND has a value.
-	@# `[^[:space:]]`, not `.+`: `.+` matches a value of pure whitespace, which
-	@# sources cleanly and then fails deep inside the scanner AFTER coverage --
-	@# the same late failure this check exists to prevent. POSIX class rather
-	@# than `\S`, which is a GNU extension BSD grep does not honour.
-	@grep -qE '^SONAR_TOKEN=[^[:space:]]' "$(SONAR_TOKEN_FILE)" || { \
-		echo "$(SONAR_TOKEN_FILE) does not define a non-empty SONAR_TOKEN=..."; \
-		exit 1; }
+	@$(PYTHON) scripts/sonar_scan.py --token-file "$(SONAR_TOKEN_FILE)" --check-token
 
 sonar: sonar-token-check ## Scan into self-hosted SonarQube (reporting only, never a gate)
-	@# `coverage` is invoked HERE rather than declared as a prerequisite.
-	@# Under `make -j` (or a global parallel MAKEFLAGS) independent
-	@# prerequisites run concurrently, so `sonar-token-check coverage` would
-	@# start the multi-minute coverage run alongside the check instead of
-	@# after it -- silently voiding the fail-fast guarantee above. A recipe
-	@# line is ordered under every mode.
-	$(MAKE) coverage
-	@# Token via the environment only, so it stays out of the process list and
-	@# shell history. Never pass -Dsonar.token= on the command line.
-	@set -a; . "$(SONAR_TOKEN_FILE)"; set +a; \
-		npx --yes sonarqube-scanner@$(SONAR_SCANNER_VERSION) -Dsonar.host.url=$(SONAR_HOST_URL)
-	@# Record WHICH commit was analysed. A finding's line number describes the
-	@# commit the server last saw, and SonarQube never reports which one that
-	@# was, so without this the dashboard can silently describe a tree weeks
-	@# old. Written only after the scanner succeeds, so a failed upload cannot
-	@# leave a stamp claiming freshness it does not have.
-	@{ git rev-parse HEAD; date -u '+%Y-%m-%dT%H:%M:%SZ'; } > .sonar-last-analysis
+	@# The orchestrator validates a clean master before coverage, before upload,
+	@# and after the scanner returns; it keeps the token out of argv and stamps
+	@# only after the submitted Compute Engine task reports SUCCESS. A red
+	@# quality gate remains a report.
+	$(PYTHON) scripts/sonar_scan.py --repo "$(CURDIR)" \
+		--host-url "$(SONAR_HOST_URL)" --token-file "$(SONAR_TOKEN_FILE)" \
+		--scanner-version "$(SONAR_SCANNER_VERSION)"
 	@echo ""
 	@echo "Scan uploaded. It is a MEASUREMENT, not a verdict:"
 	@echo "  * read findings at the call site before believing them;"

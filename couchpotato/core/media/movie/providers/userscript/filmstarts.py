@@ -15,7 +15,7 @@ class Filmstarts(UserscriptBase):
 		except Exception:
 			return
 
-		html = BeautifulSoup(data)
+		html = BeautifulSoup(data, 'lxml')
 		table = html.find("section", attrs={"class": "section ovw ovw-synopsis", "id": "synopsis-details"})
 
 		if table.find(text=re.compile('Originaltitel')): #some trailing whitespaces on some pages

@@ -45,8 +45,10 @@ persona from memory; `AGENTS.md` is the review rubric they apply.
 - **Repo:** https://github.com/bassings/CouchPotatoServer — default branch `master`
 - **Stack:** Python 3.14 (the version production ships and the only one CI tests), FastAPI/Uvicorn, htmx + Tailwind + Alpine.js UI, SQLite, Docker
 - **Entry point:** `CouchPotato.py`
-- **Production:** http://homemedia.maeewing.com:5050 · image `ghcr.io/bassings/couchpotatoserver:latest` (Alpine, `python:3.14-alpine`)
-- **Dev container port:** 5051 (`docker-compose.dev.yml`)
+- **Local environment:** operational hosts, ports, credential locations and
+  server paths are private machine-local context in
+  `~/.codex/environments/CouchPotatoServer.md`. Never copy that file's contents
+  into Git.
 
 ## Commands
 
@@ -152,12 +154,3 @@ db.get('release_identifier', '{imdb}.{audio}.{quality}', with_doc=True)  # relea
 | Feature specs | `specs/` |
 | QA test plan / findings / session logs | `QA/` |
 | Design system | `docs/design-system/` |
-
-## Production infrastructure
-
-- **Server:** homemedia.maeewing.com (SSH credentials in Openclaw memory:
-  `~/.openclaw/workspace/memory/topics/couchpotato.md`)
-- **Compose + config:** `/var/lib/plexmediaserver/CouchPotato/` — the
-  `config.bak/` directory there must **NEVER be deleted**
-- **SQLite DB:** `.../config/data/database_v2/couchpotato.db`
-- **Jackett:** http://homemedia:9117

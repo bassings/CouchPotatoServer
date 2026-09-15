@@ -34,7 +34,7 @@ class Bluray(Automation, RSS):
 
                 url = self.backlog_url % page
                 data = self.getHTMLData(url, headers = cookie)
-                soup = BeautifulSoup(data)
+                soup = BeautifulSoup(data, 'lxml')
 
                 try:
                     # Stop if the release year is before the minimal year

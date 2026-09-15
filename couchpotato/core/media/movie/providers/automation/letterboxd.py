@@ -46,14 +46,14 @@ class Letterboxd(Automation):
             if not enablers[index]:
                 continue
 
-            soup = BeautifulSoup(self.getHTMLData(self.url % (username, 1)))
+            soup = BeautifulSoup(self.getHTMLData(self.url % (username, 1)), 'lxml')
 
             pagination = soup.find_all('li', attrs={'class': 'paginate-page'})
             number_of_pages = tryInt(pagination[-1].find('a').get_text()) if pagination else 1
             pages = range(1, number_of_pages)
 
             for page in pages:
-                soup = BeautifulSoup(self.getHTMLData(self.url % (username, page)))
+                soup = BeautifulSoup(self.getHTMLData(self.url % (username, page)), 'lxml')
                 movies += self.getMoviesFromHTML(soup)
 
         return movies

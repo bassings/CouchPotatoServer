@@ -61,7 +61,7 @@ class Base(TorrentMagnetProvider):
 
             if data:
                 try:
-                    soup = BeautifulSoup(data)
+                    soup = BeautifulSoup(data, 'lxml')
                     results_table = soup.find('table', attrs = {'id': 'searchResult'})
 
                     if not results_table:
@@ -124,7 +124,7 @@ class Base(TorrentMagnetProvider):
 
     def getMoreInfo(self, item):
         full_description = self.getCache('tpb.%s' % item['id'], item['detail_url'], cache_timeout = 25920000)
-        html = BeautifulSoup(full_description)
+        html = BeautifulSoup(full_description, 'lxml')
         nfo_pre = html.find('div', attrs = {'class': 'nfo'})
         description = ''
         try:

@@ -31,7 +31,7 @@ class Base(TorrentProvider):
                 return
 
             try:
-                soup = BeautifulSoup(data)
+                soup = BeautifulSoup(data, 'lxml')
 
                 if soup.find('error'):
                     log.info(soup.find('error').get_text())

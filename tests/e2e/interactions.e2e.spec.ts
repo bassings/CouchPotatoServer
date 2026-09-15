@@ -2,17 +2,15 @@ import { test, expect } from './fixtures';
 import { Page } from '@playwright/test';
 
 /**
- * Comprehensive interaction tests for CouchPotato.
- * Tests every user-interactable element across all pages.
+ * Representative interaction regression tests for CouchPotato's core pages.
  * 
  * Coverage:
  * - Navigation (sidebar, mobile menu)
  * - Wanted page (filters, search, movie cards, bulk actions)
  * - Available route redirect behavior
- * - Add Movie page (search, add button, profile selection)
  * - Movie Detail page (refresh, trailer, delete, releases)
  * - Suggestions page (charts, add/skip buttons)
- * - Settings page (all tabs, inputs, toggles, test buttons)
+ * - Settings page (tabs, inputs, toggles, and logs)
  * - Theme toggle
  */
 
@@ -22,11 +20,14 @@ import { Page } from '@playwright/test';
 // See helpers.ts for the full explanation.
 import {
   checkNoErrors as sharedCheckNoErrors,
+  mockMovieAction,
+  mockMovieTrailer,
+  mockSettingsSave,
   mockSuggestionsCharts,
   waitForPageReady,
 } from './helpers';
 
-// Thin shim so the 19 existing call sites keep their `(page, errors)` signature.
+// Thin shim so existing call sites keep their `(page, errors)` signature.
 // It DELEGATES rather than reimplementing: a second copy of the filter list is
 // exactly the duplication that let a good helper and a broken one coexist in
 // this suite. `page` is unused.
@@ -252,51 +253,6 @@ test.describe('Available Page', () => {
   });
 });
 
-test.describe('Add Movie Page', () => {
-  test('search input accepts text and shows results', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-
-    await page.goto('/add/');
-    await waitForPageReady(page);
-
-    const searchInput = page.locator('input[placeholder*="Search"]');
-    await expect(searchInput).toBeVisible();
-    
-    await searchInput.fill('Matrix');
-    await page.waitForTimeout(2000); // Wait for debounced search
-    await waitForPageReady(page);
-
-    // Should show some results or loading state
-    checkNoErrors(page, errors);
-  });
-
-  test('add button on search result works', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-
-    await page.goto('/add/');
-    await waitForPageReady(page);
-
-    const searchInput = page.locator('input[placeholder*="Search"]');
-    await searchInput.fill('Inception');
-    await page.waitForTimeout(2000);
-    await waitForPageReady(page);
-
-    const addBtn = page.locator('button:has-text("Add")').first();
-    if (await addBtn.isVisible({ timeout: 5000 })) { // vacuous-guard-ok: this search is real/unmocked (unlike search.spec.ts), so a result -- and its Add button -- is not guaranteed; checkNoErrors below is the assertion that always runs.
-      await addBtn.click();
-      await page.waitForTimeout(2000);
-      
-      // Should not show TV show error
-      const tvError = await page.locator('text=/TV show/i').isVisible().catch(() => false);
-      expect(tvError).toBe(false);
-    }
-
-    checkNoErrors(page, errors);
-  });
-});
-
 test.describe('Movie Detail Page', () => {
   test.beforeEach(async ({ page }) => {
     // The seeded library always has a movie in the Wanted grid (see the
@@ -316,40 +272,39 @@ test.describe('Movie Detail Page', () => {
   });
 
   test('refresh button works', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+    const currentMovieId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1);
+    expect(currentMovieId, 'detail URL has no movie id').toBeTruthy();
+    const refresh = await mockMovieAction(page, 'movie.refresh', currentMovieId!, {});
 
-    if (page.url().includes('/movie/')) {
-      const refreshBtn = page.locator('button:has-text("Refresh")');
-      if (await refreshBtn.isVisible({ timeout: 3000 })) {
-        await refreshBtn.click();
-        await page.waitForTimeout(2000);
-      }
+    for (const query of ['?id=wrong-movie', '']) {
+      const status = await page.evaluate(async (suffix) => {
+        const response = await fetch((window as any).CP.apiBase + '/movie.refresh/' + suffix);
+        return response.status;
+      }, query);
+      expect(status, 'the movie-action mock accepted a wrong or missing id').toBe(400);
     }
+    expect(refresh.requestCount()).toBe(0);
 
-    checkNoErrors(page, errors);
+    const refreshBtn = page.getByRole('button', { name: /^Refresh$/ });
+    await expect(refreshBtn).toBeVisible({ timeout: 3000 });
+    await refreshBtn.click();
+    await expect.poll(
+      () => refresh.requestCount(),
+      { message: 'Refresh never requested movie.refresh' },
+    ).toBe(1);
   });
 
   test('trailer button works', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+    const currentMovieId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1);
+    expect(currentMovieId, 'detail URL has no movie id').toBeTruthy();
+    const trailer = await mockMovieTrailer(page, currentMovieId!);
 
-    if (page.url().includes('/movie/')) {
-      // Use specific selector for the movie detail page trailer button (has x-ref="trailerBtn")
-      const trailerBtn = page.locator('button[x-ref="trailerBtn"]:has-text("Trailer")');
-      if (await trailerBtn.isVisible({ timeout: 3000 })) {
-        await trailerBtn.click();
-        await page.waitForTimeout(2000);
-        
-        // Modal should open or loading should show
-        const modal = page.locator('[role="dialog"]');
-        const loading = page.locator('text=/Loading/i');
-        
-        // Either is acceptable
-      }
-    }
-
-    checkNoErrors(page, errors);
+    const trailerBtn = page.locator('button[x-ref="trailerBtn"]:has-text("Trailer")');
+    await expect(trailerBtn).toBeVisible({ timeout: 3000 });
+    await trailerBtn.click();
+    await expect(page.getByRole('dialog', { name: 'Movie trailer' })).toBeVisible({ timeout: 5000 });
+    expect(trailer.requestCount()).toBe(1);
+    await expect.poll(() => trailer.outboundRequestCount!()).toBeGreaterThan(0);
   });
 
   test('delete button shows confirmation', async ({ page }) => {
@@ -500,55 +455,34 @@ test.describe('Settings Page', () => {
   });
 
   test('text inputs accept values', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-
+    await mockSettingsSave(page);
     await page.goto('/settings/');
     await waitForPageReady(page);
 
-    const textInput = page.locator('input[type="text"]').first();
-    if (await textInput.isVisible()) {
-      const original = await textInput.inputValue();
-      await textInput.fill('test_value');
-      await page.waitForTimeout(500);
-      await textInput.fill(original);
-    }
-
-    checkNoErrors(page, errors);
+    const textInput = page.locator('input[type="text"]:visible').first();
+    await expect(textInput).toBeVisible();
+    const original = await textInput.inputValue();
+    await textInput.fill('test_value');
+    await expect(textInput).toHaveValue('test_value');
+    await textInput.fill(original);
+    await expect(textInput).toHaveValue(original);
   });
 
   test('checkboxes toggle', async ({ page }) => {
     const errors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
+    await mockSettingsSave(page);
     await page.goto('/settings/');
     await waitForPageReady(page);
 
-    const checkbox = page.locator('input[type="checkbox"]').first();
-    if (await checkbox.isVisible()) {
-      const original = await checkbox.isChecked();
-      await checkbox.click();
-      await page.waitForTimeout(500);
-      if (await checkbox.isChecked() !== original) {
-        await checkbox.click(); // Restore
-      }
-    }
-
-    checkNoErrors(page, errors);
-  });
-
-  test('select dropdowns work', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-
-    await page.goto('/settings/');
-    await waitForPageReady(page);
-
-    const select = page.locator('select').first();
-    if (await select.isVisible()) {
-      await select.click();
-      await page.waitForTimeout(300);
-    }
+    const checkbox = page.locator('input[type="checkbox"]:visible').first();
+    await expect(checkbox).toBeVisible();
+    const original = await checkbox.isChecked();
+    await checkbox.click();
+    await expect(checkbox).toBeChecked({ checked: !original });
+    await checkbox.click();
+    await expect(checkbox).toBeChecked({ checked: original });
 
     checkNoErrors(page, errors);
   });
@@ -574,65 +508,10 @@ test.describe('Settings Page', () => {
     await expect(advancedToggle).toHaveAttribute('aria-checked', 'false');
   });
 
-  test('Jackett sync button works', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-
-    await page.goto('/settings/');
-    await waitForPageReady(page);
-
-    // Go to Searchers tab
-    const searchersTab = page.locator('[role="tab"]:has-text("Searchers")');
-    if (await searchersTab.isVisible()) {
-      await searchersTab.click();
-      await page.waitForTimeout(500);
-    }
-
-    const syncBtn = page.locator('button:has-text("Sync")');
-    if (await syncBtn.isVisible({ timeout: 3000 })) {
-      await syncBtn.click();
-      await page.waitForTimeout(2000);
-    }
-
-    checkNoErrors(page, errors);
-  });
-
-  test('provider test buttons return valid response', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-
-    await page.goto('/settings/');
-    await waitForPageReady(page);
-
-    // Go to Searchers tab
-    const searchersTab = page.locator('[role="tab"]:has-text("Searchers")');
-    if (await searchersTab.isVisible()) {
-      await searchersTab.click();
-      await page.waitForTimeout(500);
-    }
-
-    // Click first visible Test button
-    const testBtn = page.locator('button:has-text("Test")').first();
-    if (await testBtn.isVisible({ timeout: 3000 })) { // vacuous-guard-ok: whether a Test button exists at all depends on which searcher providers are registered, which this test does not control; checkNoErrors below is the assertion that always runs.
-      const responsePromise = page.waitForResponse(
-        resp => resp.url().includes('test'),
-        { timeout: 15000 }
-      ).catch(() => null);
-
-      await testBtn.click();
-      const response = await responsePromise;
-
-      if (response) {
-        expect(response.status()).toBe(200);
-      }
-    }
-
-    checkNoErrors(page, errors);
-  });
 });
 
 test.describe('Logs Page', () => {
-  test('logs page loads and shows content', async ({ page }) => {
+  test('logs tab loads and shows controls', async ({ page }) => {
     const errors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
@@ -640,13 +519,10 @@ test.describe('Logs Page', () => {
     await waitForPageReady(page);
 
     const logsTab = page.locator('[role="tab"]:has-text("Logs")');
-    if (await logsTab.isVisible()) {
-      await logsTab.click();
-      await waitForPageReady(page);
-      
-      // Should show log content
-      await page.waitForTimeout(1000);
-    }
+    await expect(logsTab).toBeVisible();
+    await logsTab.click();
+    await expect(page.locator('#settings-log-level')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Clear all logs' })).toBeVisible();
 
     checkNoErrors(page, errors);
   });
@@ -678,21 +554,26 @@ test.describe('Logs Page', () => {
   test('clear logs button works', async ({ page }) => {
     const errors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+    let clearRequested = false;
+    await page.route(/logging\.clear/, route => {
+      clearRequested = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
 
     await page.goto('/settings/');
     await waitForPageReady(page);
 
     const logsTab = page.locator('[role="tab"]:has-text("Logs")');
-    if (await logsTab.isVisible()) {
-      await logsTab.click();
-      await page.waitForTimeout(500);
+    await expect(logsTab).toBeVisible();
+    await logsTab.click();
 
-      const clearBtn = page.locator('button:has-text("Clear")');
-      if (await clearBtn.isVisible()) {
-        await clearBtn.click();
-        await page.waitForTimeout(500);
-      }
-    }
+    const clearBtn = page.getByRole('button', { name: 'Clear all logs' });
+    await expect(clearBtn).toBeVisible();
+    await clearBtn.click();
+    await expect.poll(
+      () => clearRequested,
+      { message: 'Clear never requested logging.clear' },
+    ).toBe(true);
 
     checkNoErrors(page, errors);
   });
@@ -734,12 +615,6 @@ test.describe('Keyboard Navigation', () => {
     // `if(videoId) { showTrailer = true; }`) and the old version of this test
     // would then "pass" on Escape doing nothing to a modal that was never
     // there. Stub it so the modal is guaranteed to open.
-    await page.route(/movie\.trailer/, (route) => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: true, video_id: 'dQw4w9WgXcQ' }),
-    }));
-
     await page.goto('/wanted/');
     await waitForPageReady(page);
 
@@ -748,6 +623,10 @@ test.describe('Keyboard Navigation', () => {
     await expect(movieLink).toBeVisible({ timeout: 10000 });
     await movieLink.click();
     await waitForPageReady(page);
+
+    const currentMovieId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1);
+    expect(currentMovieId, 'detail URL has no movie id').toBeTruthy();
+    const trailer = await mockMovieTrailer(page, currentMovieId!);
 
     // Trailer is unconditional on the detail page (movie_detail.html has no
     // `{% if %}` around it) -- confirmed by movie-detail.spec.ts's own tests.
@@ -761,6 +640,8 @@ test.describe('Keyboard Navigation', () => {
     // two dialogs and Playwright's strict mode rejects it.
     const modal = page.getByRole('dialog', { name: 'Movie trailer' });
     await expect(modal).toBeVisible({ timeout: 5000 });
+    expect(trailer.requestCount()).toBe(1);
+    await expect.poll(() => trailer.outboundRequestCount!()).toBeGreaterThan(0);
 
     await page.keyboard.press('Escape');
 

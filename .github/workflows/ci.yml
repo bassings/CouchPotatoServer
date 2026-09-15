@@ -117,10 +117,9 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
-    # node: check_test_traps.py rule 8 parses each template's inline <script>
-    # with `node --check` on stdin -- runtime only, no npm install. The rule
-    # fails HARD without it (AC-QA-74: skipping silently is worse than no
-    # gate), so this step and that rule land together.
+    # Node runs both the inline-script syntax check and the TypeScript AST
+    # false-green guard. The latter imports the exact-pinned dev dependency,
+    # so a clean lint runner must install it before invoking check_test_traps.
     - name: Set up Node.js
       uses: actions/setup-node@v7
       with:
@@ -133,6 +132,9 @@ jobs:
 
     - name: Install ruff
       run: pip install 'ruff==0.16.5'
+
+    - name: Install TypeScript AST guard dependency
+      run: npm ci --ignore-scripts
 
     - name: Run ruff
       run: ruff check .
@@ -267,6 +269,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+
+    # Python unit tests exercise the TypeScript-backed E2E trap checker. Keep
+    # this job hermetic instead of relying on node_modules from another job.
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+
+    - name: Install TypeScript AST guard dependency
+      run: npm ci --ignore-scripts
 
     # The base branch, for the folder_scanner data-loss guard in
     # tests/unit/test_renamer_decision_memory.py. That guard asserts the

@@ -38,7 +38,7 @@ class Base(TorrentProvider):
         data = self.getHTMLData(url)
 
         if data:
-            html = BeautifulSoup(data)
+            html = BeautifulSoup(data, 'lxml')
 
             try:
                 result_table = html.find(attrs = {'id': 'torrenttable'})

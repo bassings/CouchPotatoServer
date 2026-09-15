@@ -78,7 +78,7 @@ class Base(TorrentProvider):
 
     def getMoreInfo(self, item):
         full_description = self.getCache('bithdtv.%s' % item['id'], item['detail_url'], cache_timeout = 25920000)
-        html = BeautifulSoup(full_description)
+        html = BeautifulSoup(full_description, 'lxml')
         nfo_pre = html.find('table', attrs = {'class': 'detail'})
         description = toUnicode(nfo_pre.text) if nfo_pre else ''
 

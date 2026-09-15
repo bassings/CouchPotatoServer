@@ -100,6 +100,10 @@ step "1/7 ruff lint"
 
 # ── 2. False-green guard ────────────────────────────────────────────────────
 step "2/7 test-trap check"
+if [[ ! -d node_modules/typescript ]]; then
+  echo "TypeScript AST guard dependency missing — running npm ci..."
+  npm ci
+fi
 "$PYTHON" scripts/check_test_traps.py --require-git || fail "test-trap check found issues"
 
 # ── 3. UI conformance ───────────────────────────────────────────────────────
