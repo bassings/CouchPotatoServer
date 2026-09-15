@@ -21,6 +21,13 @@ from .index import MediaIndex, MediaStatusIndex, MediaWatchedIndex, MediaTypeInd
 log = CPLog(__name__)
 
 
+def _bind_media_type(callback, media_type):
+    def route_callback(*args, **kwargs):
+        return callback(**dict(kwargs, type = media_type))
+
+    return route_callback
+
+
 class MediaPlugin(MediaBase):
 
     _database = {
@@ -451,7 +458,7 @@ class MediaPlugin(MediaBase):
     def addSingleListView(self):
 
         for media_type in fireEvent(MEDIA_TYPES, merge = True):
-            tempList = lambda *args, **kwargs : self.listView(type = media_type, **kwargs)
+            tempList = _bind_media_type(self.listView, media_type)
             addApiView('%s.list' % media_type, tempList, docs = {
                 'desc': 'List media',
                 'params': {
@@ -541,7 +548,7 @@ class MediaPlugin(MediaBase):
     def addSingleCharView(self):
 
         for media_type in fireEvent(MEDIA_TYPES, merge = True):
-            tempChar = lambda *args, **kwargs : self.charView(type = media_type, **kwargs)
+            tempChar = _bind_media_type(self.charView, media_type)
             addApiView('%s.available_chars' % media_type, tempChar)
 
     def delete(self, media_id, delete_from = None):
@@ -780,9 +787,9 @@ class MediaPlugin(MediaBase):
     def addSingleWatchViews(self):
 
         for media_type in fireEvent(MEDIA_TYPES, merge = True):
-            tempWatched = lambda *args, **kwargs : self.markWatched(type = media_type, **kwargs)
-            tempUnwatched = lambda *args, **kwargs : self.markUnwatched(type = media_type, **kwargs)
-            tempWatchHistory = lambda *args, **kwargs : self.watchHistory(type = media_type, **kwargs)
+            tempWatched = _bind_media_type(self.markWatched, media_type)
+            tempUnwatched = _bind_media_type(self.markUnwatched, media_type)
+            tempWatchHistory = _bind_media_type(self.watchHistory, media_type)
             addApiView('%s.watched' % media_type, tempWatched)
             addApiView('%s.unwatched' % media_type, tempUnwatched)
             addApiView('%s.watch_history' % media_type, tempWatchHistory)
@@ -790,7 +797,7 @@ class MediaPlugin(MediaBase):
     def addSingleDeleteView(self):
 
         for media_type in fireEvent(MEDIA_TYPES, merge = True):
-            tempDelete = lambda *args, **kwargs : self.deleteView(type = media_type, **kwargs)
+            tempDelete = _bind_media_type(self.deleteView, media_type)
             addApiView('%s.delete' % media_type, tempDelete, docs = {
             'desc': 'Delete a ' + media_type + ' from the wanted list',
             'params': {

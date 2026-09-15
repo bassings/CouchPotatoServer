@@ -27,7 +27,7 @@ class Base(NZBProvider):
         if data:
             try:
 
-                html = BeautifulSoup(data)
+                html = BeautifulSoup(data, 'lxml')
                 main_table = html.find('table', attrs = {'id': 'r2'})
 
                 if not main_table:

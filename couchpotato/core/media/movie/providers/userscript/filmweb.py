@@ -22,7 +22,7 @@ class Filmweb(UserscriptBase):
         except Exception:
             return
 
-        html = BeautifulSoup(data)
+        html = BeautifulSoup(data, 'lxml')
         name = html.find('meta', {'name': 'title'})['content'][:-9].strip()
         name_year = fireEvent(SCANNER_NAME_YEAR, name, single = True)
         name = name_year.get('name')

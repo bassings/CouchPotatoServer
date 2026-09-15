@@ -54,7 +54,7 @@ class Base(TorrentProvider):
                 data = data.decode('utf-8', errors='replace')
 
             if data:
-                html = BeautifulSoup(data)
+                html = BeautifulSoup(data, 'lxml')
 
                 try:
                     page_nav = html.find('span', attrs = {'class': 'page_nav'})
