@@ -211,23 +211,23 @@ Each item is an independent review unit. External delivery is not implied by
 this checklist; commits, pushes, PRs, and SonarQube state changes occur only
 within the authority explicitly granted by the owner.
 
-- [ ] **T1 — truthful scan completion and versioning** — state: building
+- [ ] **T1 — truthful scan completion and versioning** — state: awaiting-ci #354
   (implementation and local review clean; AC-PROD-1 awaits a post-commit clean
   master scan). Add
   clean-master/stable-HEAD preflight, full-SHA project versioning, CE completion
   polling, atomic freshness stamping, dirty-tree staleness reporting, and
   credential-boundary regression tests. Covers AC-OPS-1..4, AC-SEC-1..3,
   AC-QA-1, AC-PROD-1.
-- [x] **T2 — narrow synchronization repair** — state: complete. Replaced the one
+- [ ] **T2 — narrow synchronization repair** — state: awaiting-ci #354. Replaced the one
   unexplained reflow wait and two redundant `networkidle` waits with observable
   conditions. Covers AC-DESIGN-1..2, AC-A11Y-1..3.
-- [x] **T3 — recurring E2E false-green mechanisms** — state: complete. Enforced
+- [ ] **T3 — recurring E2E false-green mechanisms** — state: awaiting-ci #354. Enforced
   syntax-aware fixed-wait exemptions and conditional-body detection, then
   repaired or removed the exposed vacuous tests.
   Covers AC-QA-2..3 and AC-A11Y-2..3.
-- [x] **T4 — bind media callback types** — state: complete. Added the two-type
+- [ ] **T4 — bind media callback types** — state: awaiting-ci #354. Added the two-type
   regression test and a small shared route binder. Covers AC-QA-4, AC-SIMP-1.
-- [x] **T5 — deterministic provider parsing** — state: complete. Added the AST
+- [ ] **T5 — deterministic provider parsing** — state: awaiting-ci #354. Added the AST
   recurrence guard, characterize provider parsing, and explicitly select the
   pinned parser in provider-sized groups. Covers AC-QA-5, AC-PROD-2,
   AC-SEC-4, AC-SIMP-2.
@@ -297,3 +297,7 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   Chromium, accessibility, and mobile, with Ruff, the 317-file trap gate, UI
   conformance, and diff hygiene clean. T1's post-commit live validation and T6
   remain deliberately pending until the work is committed on clean `master`.
+- 2026-09-16: Opened PR #354 after the mandatory pre-push gate passed 4,184
+  Python unit, 42 integration, 214 UI unit, 176 Chromium, 2 isolation, 10
+  mobile, and 96 accessibility tests. T1 through T5 are awaiting CI. T1's live
+  clean-`master` proof and dependent T6 remain post-merge work.
