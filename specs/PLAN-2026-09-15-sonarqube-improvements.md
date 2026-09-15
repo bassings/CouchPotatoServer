@@ -307,3 +307,8 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   assertion first, observed it fail, then made the Python job set up Node and
   run the script-disabled npm install before pytest. The complete 284-test trap
   checker suite is green locally; CI re-verification is pending.
+- 2026-09-16: The second Python CI run loaded TypeScript and reduced the failure
+  to one host-dependent fixture. Its missing-Node test removed only the first
+  matching `PATH` entry, while the GitHub runner exposes a fallback Node
+  installation. Replaced that subtraction with a constructed empty executable
+  directory; the focused test and complete 284-test checker suite are green.

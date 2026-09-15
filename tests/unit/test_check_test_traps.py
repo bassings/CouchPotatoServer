@@ -3258,17 +3258,14 @@ def test_missing_node_fails_the_cli_and_never_prints_passed(tmp_path):
     """The CLI-level half of AC-QA-74, with `node` actually removed from
     PATH — the same shape `make check-traps`/CI would hit."""
     (tmp_path / "t.html").write_text("<script>\nconst x = 1;\n</script>\n")
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
     env = dict(os.environ)
-    node_path = shutil.which("node")
-    if node_path:
-        # shutil.which returns a PATH entry joined with the name, unresolved —
-        # so the matching directory to drop is the plain parent, NOT the
-        # symlink-resolved one (node is a symlink into ../Cellar/... on
-        # Homebrew, which is never itself a PATH entry).
-        node_dir = str(Path(node_path).parent)
-        env["PATH"] = os.pathsep.join(
-            p for p in env.get("PATH", "").split(os.pathsep) if p and p != node_dir
-        )
+    # Construct the missing-tool world rather than removing only the first
+    # `node` directory. GitHub runners expose multiple Node installations, so
+    # filtering one PATH entry left a fallback executable and made this test
+    # depend on the host's layout.
+    env["PATH"] = str(empty_bin)
     result = subprocess.run(
         [sys.executable, str(CHECKER), str(tmp_path)],
         capture_output=True, text=True, cwd=REPO_ROOT, env=env,
