@@ -21,8 +21,8 @@ FROM python:${PYTHON_VERSION}-alpine
 
 WORKDIR /app
 
-# Build deps for any dependency lacking a prebuilt musllinux wheel
-RUN apk add --no-cache build-base libffi-dev openssl-dev libxml2-dev libxslt-dev
+# Build deps plus the Bash/Git/Node tooling exercised by the unit-test suite.
+RUN apk add --no-cache build-base libffi-dev openssl-dev libxml2-dev libxslt-dev bash git nodejs npm
 
 # Install test dependencies
 COPY requirements.txt requirements-dev.txt ./
@@ -35,8 +35,9 @@ EOF
 echo "🔬 Running tests (mount source for live files including tests/)..."
 docker run --rm \
     -v "$PROJECT_DIR:/app:ro" \
+    -v /app/node_modules \
     -w /app \
     "$IMAGE_NAME" \
-    pytest -v --tb=short tests/unit/
+    sh -c 'git config --global --add safe.directory /app && npm ci --ignore-scripts && pytest -v --tb=short tests/unit/'
 
 echo "✅ Tests passed!"

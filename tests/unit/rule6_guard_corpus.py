@@ -9,18 +9,18 @@ A table is the fix. Any change to the routing or the body slice is now scored
 against all of these at once, which is what surfaced shape 23 -- a false
 positive no individual test could see.
 
-Wrong-answer counts, RE-DERIVED at round 11 against all 33 shapes by scoring
+Wrong-answer counts, RE-DERIVED at round 11 against all 34 shapes by scoring
 this table against the actual historical files from git
 (`git show <sha>:scripts/check_test_traps.py`). Reproduce, do not trust:
 
-    shipped                                    0 / 33
-    4a8e9d00  round 6, first `){`              9 / 33
-    d9c70c83  round 7, last `){`              13 / 33
-    dc4fdab5  round 4                          8 / 33
-    65ca81f7  round 5                         15 / 33
-    eada3f1b  round 3                         23 / 33
-    cd180e05  round 2                         24 / 33
-    9c11c598  original                        26 / 33
+    shipped                                    0 / 34
+    4a8e9d00  round 6, first `){`             10 / 34
+    d9c70c83  round 7, last `){`              14 / 34
+    dc4fdab5  round 4                          9 / 34
+    65ca81f7  round 5                         16 / 34
+    eada3f1b  round 3                         24 / 34
+    cd180e05  round 2                         25 / 34
+    9c11c598  original                        27 / 34
 
 THE DENOMINATOR IS PART OF THE MEASUREMENT. The previous table read `/ 30`,
 because it was scored when the corpus held 30 shapes and shapes 31-32 were
@@ -246,4 +246,11 @@ SHAPES = [
  ("33 non-braced click-only guard", T +
   "  const c = page.locator('.card');\n"
   "  if (await c.count() > 0) await c.click();\n" + E, 1),
+
+ # Cloud review 2026-09-16: the AST implementation recognized the equivalent
+ # non-braced early return (shape 05), but not a one-statement braced block.
+ ("34 braced early return, expect after", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() === 0) { return; }\n"
+  "  await expect(c).toBeVisible();\n" + E, 1),
 ]

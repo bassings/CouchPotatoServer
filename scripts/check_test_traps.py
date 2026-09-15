@@ -831,10 +831,9 @@ def _tracked_test_files(repo_root: Path, require_git: bool = False) -> list[str]
             env=_git_env(),
         )
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-        # No git, or not a work tree. `scripts/test-local.sh` runs this suite
-        # inside python:3.14-alpine, which has no git, and an unhandled
-        # traceback there turned `make check-traps` into a crash and added
-        # seven red tests to the optional container run.
+        # No git, or not a work tree. Supplementary Python-only environments
+        # may not install git, and an unhandled traceback there turns every
+        # direct caller of this helper red without producing a rule finding.
         #
         # This IS the silent-skip that the PyYAML branch 500 lines up refuses
         # to do ("a check that quietly does nothing is the exact failure this

@@ -161,6 +161,54 @@ def test_all_child_environments_scrub_ambient_admin_token(tmp_path, monkeypatch)
     assert all("SONAR_ADMIN_TOKEN" not in kwargs["env"] for _argv, kwargs in commands.calls)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "SONARQUBE_SCANNER_PARAMS",
+        "SONARQUBE_FUTURE_CONFIG",
+        "SONAR_SCANNER_JSON_PARAMS",
+        "SONAR_SCANNER_SOURCES",
+        "SONAR_HOST_URL",
+        "SONAR_USER_HOME",
+        "SONAR_ORGANIZATION",
+        "SONAR_BINARY_CACHE",
+        "SONAR_FUTURE_CONFIG",
+    ],
+)
+def test_all_child_environments_scrub_ambient_scanner_configuration(
+    tmp_path, monkeypatch, name
+):
+    monkeypatch.setenv(name, '{"sonar.projectBaseDir":"/private/sentinel"}')
+    cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
+
+    sonar_scan.run_scan(cfg, run=commands, open_url=success_opener)
+
+    assert all(
+        name not in kwargs["env"]
+        for _argv, kwargs in commands.calls
+    )
+
+
+def test_only_explicit_analysis_token_can_reenter_the_sonar_namespace(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SONAR_HOST_URL", "http://ambient.invalid")
+    monkeypatch.setenv("SONARQUBE_FUTURE_CONFIG", "must-not-survive")
+    commands = FakeCommands(tmp_path)
+
+    sonar_scan.run_scan(config(tmp_path), run=commands, open_url=success_opener)
+
+    for argv, kwargs in commands.calls:
+        sonar_names = {
+            name
+            for name in kwargs["env"]
+            if name.startswith(("SONAR_", "SONARQUBE_"))
+        }
+        expected = {"SONAR_TOKEN"} if argv[0] == "node" else set()
+        assert sonar_names == expected
+
+
 def test_token_bearing_scanner_scrubs_node_preloads(tmp_path, monkeypatch):
     monkeypatch.setenv("NODE_OPTIONS", "--require=/tmp/must-not-run-before-scanner.js")
     commands = FakeCommands(tmp_path)

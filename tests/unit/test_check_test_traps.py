@@ -39,8 +39,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKER = REPO_ROOT / "scripts" / "check_test_traps.py"
 
-# AC-QA-74: pytest cases needing `node` skip visibly rather than going red,
-# so scripts/test-local.sh's node-less Alpine container stays clean.
+# AC-QA-74: pytest cases needing `node` skip visibly rather than going red on
+# developer machines that do not have it. The documented Alpine runner now
+# installs Node and the locked TypeScript dependency, so it exercises the rule.
 # Resolved ONCE at import. A live `shutil.which` call is unsafe here: the
 # missing-node tests monkeypatch the shared `shutil` module object, so a
 # later call would see their patch and skip the very test doing the patching.
@@ -78,7 +79,8 @@ def findings_for(path: Path):
     was the obvious fix and the wrong one: the next html test added without the
     decorator silently reintroduces the problem, and this file grows. Verified
     by removing node from PATH — 12 tests failed before this guard, 0 after,
-    which is what `scripts/test-local.sh` (Alpine, no node) would have hit.
+    which is what a Python-only environment would otherwise hit. The documented
+    Alpine runner provisions Node so its full run does not take this skip.
 
     Keyed on `_NODE_ON_THIS_MACHINE`, resolved ONCE at import, not on a live
     `shutil.which` call. `monkeypatch.setattr(check_test_traps.shutil, "which",
@@ -1089,6 +1091,16 @@ def test_typescript_ast_dependency_is_installed_before_the_trap_gate():
     assert "actions/setup-node@" in test_job
     assert test_job.index("npm ci") < test_job.index(
         "python -m pytest tests/unit/"
+    )
+
+    local = (REPO_ROOT / "scripts/test-local.sh").read_text(encoding="utf-8")
+    assert "bash git nodejs npm" in local
+    assert "-v /app/node_modules" in local
+    assert local.index("git config --global --add safe.directory /app") < local.index(
+        "npm ci --ignore-scripts"
+    )
+    assert local.index("npm ci --ignore-scripts") < local.index(
+        "pytest -v --tb=short tests/unit/"
     )
 
 
@@ -2284,11 +2296,9 @@ def test_reports_a_summary_when_clean(tmp_path):
 class TestRule5WithoutGit:
     """Rule 5's input is `git ls-files`. What happens when git is not there.
 
-    `./scripts/test-local.sh` runs this suite inside `python:3.14-alpine`,
-    which ships no git. An unhandled `FileNotFoundError` there turned
-    `make check-traps` into a crash and took the container run from 34 red
-    to 40 red, all of them `FileNotFoundError: 'git'` and none of them a real
-    finding.
+    Supplementary Python-only environments may ship without git. An unhandled
+    `FileNotFoundError` there turns direct helper calls into unrelated failures
+    rather than a useful rule finding.
 
     Catching it creates the opposite hazard, and it is the one this whole
     script exists to prevent: a rule that silently does nothing while the
@@ -2301,15 +2311,18 @@ class TestRule5WithoutGit:
     def _path_without_git(tmp_path):
         """A PATH with no `git` on it, so the lookup raises FileNotFoundError.
 
-        Keeps `node` reachable: this class is isolating rule 5's git-missing
-        behaviour, and losing node too would fail these tests via rule 8
-        (CI-003 Part B) for an unrelated reason.
+        Keeps only `node` reachable: this class is isolating rule 5's
+        git-missing behaviour, and losing node too would fail these tests via
+        rule 8 (CI-003 Part B) for an unrelated reason. Do not retain Node by
+        adding its original directory: Alpine installs both node and git in
+        /usr/bin, which makes that supposed missing-git world contain git.
         """
         empty_bin = tmp_path / 'empty-bin'
         empty_bin.mkdir()
         node_path = shutil.which("node")
-        node_dir = str(Path(node_path).parent) if node_path else ""
-        return os.pathsep.join(p for p in (str(empty_bin), node_dir) if p)
+        if node_path:
+            (empty_bin / 'node').symlink_to(node_path)
+        return str(empty_bin)
 
     @requires_node
     def test_a_missing_git_skips_the_rule_rather_than_crashing(self, tmp_path):

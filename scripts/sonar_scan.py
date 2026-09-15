@@ -84,12 +84,11 @@ def load_analysis_token(path: Path) -> str:
 
 def _safe_env() -> dict[str, str]:
     env = os.environ.copy()
-    env.pop("SONAR_TOKEN", None)
-    env.pop("SONAR_ADMIN_TOKEN", None)
     env.pop("NODE_OPTIONS", None)
     for name in list(env):
         if (
             name.startswith("GIT_")
+            or name.startswith(("SONAR_", "SONARQUBE_"))
             or name.lower().endswith("_proxy")
             or name.lower().startswith("npm_config_")
         ):

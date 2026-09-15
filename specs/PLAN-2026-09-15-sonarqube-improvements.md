@@ -312,3 +312,34 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   matching `PATH` entry, while the GitHub runner exposes a fallback Node
   installation. Replaced that subtraction with a constructed empty executable
   directory; the focused test and complete 284-test checker suite are green.
+- 2026-09-16: Cloud review of PR #354 found three boundary gaps and each was
+  driven red before implementation: a one-statement braced early return now
+  joins the 34-shape AST corpus; every scanner child environment now removes
+  `SONARQUBE_SCANNER_PARAMS`; and the documented Alpine unit-test runner now
+  installs the locked TypeScript dependency into a writable isolated volume.
+  Exercising that runner rather than trusting its static test also exposed its
+  missing Git/Bash mechanisms and a fixture that accidentally retained Git
+  whenever Node shared `/usr/bin`; the runner now provisions both tools and
+  the fixture exposes only a temporary Node link. Final focused evidence is
+  346 scanner/guard tests plus the 317-file gate, and the real Alpine run is
+  green with 4,171 passed, 29 skipped, and 5 expected failures. CI and fresh
+  review are pending for this repair commit.
+- 2026-09-16: The mandatory two-agent repair review found two remaining
+  mechanism gaps. The Sonar boundary removed only the deprecated JSON variable,
+  so the preferred `SONAR_SCANNER_JSON_PARAMS` and generic
+  `SONAR_SCANNER_*` property namespace could still override analysis scope;
+  parameterized red tests now pin all three forms and `_safe_env` removes the
+  namespace before every child. The Alpine runner also now marks only `/app`
+  as a Git safe directory before testing, so a root container accepts a
+  non-root-owned bind mount. Focused red evidence failed three cases; final
+  evidence is 348 scanner/guard tests, the 317-file gate, Ruff, shell syntax,
+  and diff hygiene. A fresh independent review is pending.
+- 2026-09-16: Security re-review found the same scanner-environment class in
+  non-`SONAR_SCANNER_*` variables. Per the recurrence rule, the boundary is
+  now namespace-based rather than an expanding denylist: every ambient
+  `SONAR_*` and `SONARQUBE_*` variable is removed from all child processes,
+  and only the token read from the analysis-token file is added back for the
+  direct scanner launch. A future-name assertion makes the mechanism
+  load-bearing. Seven red cases preceded the implementation; the final
+  scanner/guard suite now passes 355 tests with Ruff and the 317-file gate.
+  Security re-review is pending.

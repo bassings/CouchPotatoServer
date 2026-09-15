@@ -274,7 +274,7 @@ function isOnlyReturn(node) {
 }
 
 function earlyReturnSkipsAssertion(node) {
-  if (!ts.isReturnStatement(node.thenStatement) || !ts.isBlock(node.parent)) return false;
+  if (!isOnlyReturn(node.thenStatement) || !ts.isBlock(node.parent)) return false;
   const index = node.parent.statements.indexOf(node);
   return index >= 0 &&
     node.parent.statements.slice(index + 1).some(statement => containsAssertion(statement));
