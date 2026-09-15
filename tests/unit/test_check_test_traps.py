@@ -1330,6 +1330,23 @@ def test_flags_expect_inside_an_isvisible_guard(tmp_path):
     assert "isVisible" in message or "count" in message
 
 
+@pytest.mark.parametrize("probe", ["await button.isVisible()", "await button.count() > 0"])
+def test_allows_visibility_guard_when_both_branches_assert(tmp_path, probe):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('proves both outcomes', async ({ page }) => {\n"
+        "  const button = page.locator('button');\n"
+        f"  if ({probe}) {{\n"
+        "    await expect(button).toBeVisible();\n"
+        "  } else {\n"
+        "    await expect(button).toHaveCount(0);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
 def test_flags_a_guard_whose_await_was_hoisted_to_a_previous_line(tmp_path):
     """Moving one expression up a line must not defeat the rule.
 

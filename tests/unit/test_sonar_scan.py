@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import shlex
 import shutil
 import subprocess
+import sys
+import time
 from email.message import Message
 from io import BytesIO
 from pathlib import Path
@@ -73,10 +76,17 @@ class FakeCommands:
         self.drift_after_npm = None
         self.drift_after_scanner = None
         self.write_scanner_report = True
+        self.fail_command = None
+        self.timeout_command = None
         self.calls = []
 
     def __call__(self, argv, **kwargs):
         self.calls.append((list(argv), kwargs))
+        command = "coverage" if argv[-1:] == ["coverage"] else argv[0]
+        if command == self.fail_command:
+            raise subprocess.CalledProcessError(1, argv)
+        if command == self.timeout_command:
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
         if argv[:3] == ["git", "symbolic-ref", "--short"]:
             stdout = self.branch + "\n"
         elif argv[:3] == ["git", "status", "--porcelain"]:
@@ -560,6 +570,144 @@ def test_ce_timeout_is_bounded_and_preserves_previous_stamp(tmp_path):
     assert stamp.read_text() == "previous\n"
 
 
+@pytest.mark.parametrize("command", ["coverage", "npm", "node"])
+def test_subprocess_failure_skips_ce_and_preserves_previous_stamp(tmp_path, command):
+    commands = FakeCommands(tmp_path)
+    commands.fail_command = command
+    stamp = tmp_path / ".sonar-last-analysis"
+    stamp.write_bytes(b"previous\nold-time\n")
+    ce_requested = False
+
+    def unexpected_ce(*_args, **_kwargs):
+        nonlocal ce_requested
+        ce_requested = True
+        raise AssertionError("CE must not be polled after a failed command")
+
+    with pytest.raises(sonar_scan.ScanError, match=f"Command failed: {command}"):
+        sonar_scan.run_scan(config(tmp_path), run=commands, open_url=unexpected_ce)
+
+    assert ce_requested is False
+    assert stamp.read_bytes() == b"previous\nold-time\n"
+
+
+@pytest.mark.parametrize("command", ["coverage", "npm", "node"])
+def test_external_work_has_a_bounded_timeout_and_preserves_stamp(tmp_path, command):
+    commands = FakeCommands(tmp_path)
+    commands.timeout_command = command
+    stamp = tmp_path / ".sonar-last-analysis"
+    stamp.write_bytes(b"previous\n")
+
+    with pytest.raises(sonar_scan.ScanError, match=f"Command timed out: {command}"):
+        sonar_scan.run_scan(config(tmp_path), run=commands, open_url=success_opener)
+
+    timed_out_call = next(kwargs for argv, kwargs in commands.calls if (
+        "coverage" if argv[-1:] == ["coverage"] else argv[0]
+    ) == command)
+    assert 0 < timed_out_call["timeout"] <= 15 * 60
+    assert stamp.read_bytes() == b"previous\n"
+
+
+def test_real_timeout_terminates_the_entire_subprocess_group(tmp_path):
+    child_pid_file = tmp_path / "child.pid"
+    child_marker = tmp_path / "child-finished"
+    child_code = (
+        "import pathlib,time; time.sleep(0.6); "
+        f"pathlib.Path({str(child_marker)!r}).write_text('survived')"
+    )
+    parent_code = (
+        "import pathlib,subprocess,sys,time; "
+        f"child=subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+        f"pathlib.Path({str(child_pid_file)!r}).write_text(str(child.pid)); "
+        "time.sleep(30)"
+    )
+
+    with pytest.raises(sonar_scan.ScanError, match="Command timed out: process tree"):
+        sonar_scan._command(
+            subprocess.run,
+            [sys.executable, "-c", parent_code],
+            tmp_path,
+            env=sonar_scan._safe_env(),
+            timeout=0.2,
+            description="process tree",
+        )
+
+    child_pid = int(child_pid_file.read_text())
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.02)
+    else:
+        os.kill(child_pid, signal.SIGKILL)
+        pytest.fail("timed-out descendant process was left running")
+    time.sleep(0.7)
+    assert not child_marker.exists(), "timed-out descendant continued doing work"
+
+
+def test_keyboard_interrupt_terminates_the_entire_subprocess_group(tmp_path):
+    process_ids_file = tmp_path / "process-ids"
+    child_marker = tmp_path / "cancelled-child-finished"
+    child_code = (
+        "import pathlib,time; time.sleep(0.6); "
+        f"pathlib.Path({str(child_marker)!r}).write_text('survived')"
+    )
+    command_code = (
+        "import os,pathlib,subprocess,sys,time; "
+        f"child=subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+        f"pathlib.Path({str(process_ids_file)!r}).write_text(f'{{os.getpid()}} {{child.pid}}'); "
+        "time.sleep(30)"
+    )
+    controller_code = (
+        "import pathlib,subprocess,sys; from scripts import sonar_scan; "
+        "sonar_scan._command(subprocess.run, "
+        f"[sys.executable, '-c', {command_code!r}], "
+        f"pathlib.Path({str(tmp_path)!r}), env=sonar_scan._safe_env(), "
+        "timeout=30, description='cancelled process tree')"
+    )
+    controller = subprocess.Popen(
+        [sys.executable, "-c", controller_code],
+        cwd=Path.cwd(),
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    process_ids = []
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not process_ids_file.exists():
+            time.sleep(0.02)
+        assert process_ids_file.exists(), "controller did not start its process tree"
+        process_ids = [int(value) for value in process_ids_file.read_text().split()]
+
+        controller.send_signal(signal.SIGINT)
+        controller.wait(timeout=5)
+
+        for process_id in process_ids:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(process_id, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.02)
+            else:
+                pytest.fail(f"cancelled process {process_id} was left running")
+        time.sleep(0.7)
+        assert not child_marker.exists(), "cancelled descendant continued doing work"
+    finally:
+        if controller.poll() is None:
+            controller.kill()
+            controller.wait()
+        for process_id in process_ids:
+            try:
+                os.kill(process_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def test_report_task_requires_task_id_and_ignores_report_server_url(tmp_path):
     report = tmp_path / "report-task.txt"
     report.write_text("serverUrl=http://evil.invalid\n")
@@ -911,6 +1059,28 @@ def test_staleness_warns_when_analysed_root_file_is_dirty(tmp_path, relative_pat
         ["bash", str(repo / "scripts" / "sonar_staleness.sh")],
         cwd=repo,
         env={**os.environ, "SONAR_TOKEN": "must-not-be-needed"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "DIRTY" in result.stdout
+    assert "line numbers describe this tree" not in result.stdout.lower()
+
+
+@pytest.mark.parametrize("stamp_state", ["missing", "unknown-commit"])
+def test_staleness_early_recovery_paths_still_report_dirty_tree(tmp_path, stamp_state):
+    repo, tracked = make_staleness_repo(tmp_path, "couchpotato/module.py")
+    tracked.write_text("second\n")
+    stamp = repo / ".sonar-last-analysis"
+    if stamp_state == "missing":
+        stamp.unlink()
+    else:
+        stamp.write_text(f"{'f' * 40}\n2026-09-15T00:00:00Z\n")
+
+    result = subprocess.run(
+        ["bash", str(repo / "scripts" / "sonar_staleness.sh")],
+        cwd=repo,
         check=True,
         capture_output=True,
         text=True,

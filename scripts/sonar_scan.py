@@ -13,6 +13,7 @@ import base64
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,10 @@ FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 ANALYSIS_TOKEN = re.compile(r"^sq[ap]_\S+$")
 ACTIVE_CE_STATES = {"PENDING", "IN_PROGRESS"}
 FAILED_CE_STATES = {"FAILED", "CANCELED"}
+GIT_COMMAND_TIMEOUT = 30.0
+COVERAGE_COMMAND_TIMEOUT = 15 * 60.0
+NPM_COMMAND_TIMEOUT = 5 * 60.0
+SCANNER_COMMAND_TIMEOUT = 10 * 60.0
 
 
 class ScanError(RuntimeError):
@@ -103,19 +108,107 @@ def _command(
     *,
     env: dict[str, str],
     capture_output: bool = True,
+    timeout: float = GIT_COMMAND_TIMEOUT,
+    description: str | None = None,
 ) -> str:
+    command_name = description or argv[0]
     try:
-        result = run(
-            argv,
-            cwd=repo,
-            env=env,
-            check=True,
-            capture_output=capture_output,
-            text=True,
-        )
+        if run is subprocess.run:
+            result = _run_isolated_process(
+                argv,
+                cwd=repo,
+                env=env,
+                capture_output=capture_output,
+                timeout=timeout,
+            )
+        else:
+            result = run(
+                argv,
+                cwd=repo,
+                env=env,
+                check=True,
+                capture_output=capture_output,
+                text=True,
+                timeout=timeout,
+            )
+    except subprocess.TimeoutExpired as exc:
+        raise ScanError(
+            f"Command timed out: {command_name}; its process group was stopped, inspect local state and retry"
+        ) from exc
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise ScanError(f"Command failed: {argv[0]}; fix the reported local error and retry") from exc
+        raise ScanError(
+            f"Command failed: {command_name}; fix the reported local error and retry"
+        ) from exc
     return result.stdout or ""
+
+
+def _run_isolated_process(
+    argv: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    capture_output: bool,
+    timeout: float,
+) -> subprocess.CompletedProcess:
+    """Run one command in a process group that can be stopped as a unit."""
+
+    pipe = subprocess.PIPE if capture_output else None
+    process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdout=pipe,
+        stderr=pipe,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        stdout, stderr = _stop_process_group(process)
+        raise subprocess.TimeoutExpired(
+            argv,
+            timeout,
+            output=stdout if stdout is not None else exc.output,
+            stderr=stderr if stderr is not None else exc.stderr,
+        ) from exc
+    except BaseException:
+        _stop_process_group(process)
+        raise
+    result = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+    if process.returncode:
+        raise subprocess.CalledProcessError(
+            process.returncode,
+            argv,
+            output=stdout,
+            stderr=stderr,
+        )
+    return result
+
+
+def _stop_process_group(process: subprocess.Popen) -> tuple[str | None, str | None]:
+    """Stop and reap a command group without leaving detached child work."""
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        stdout, stderr = process.communicate(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return process.communicate()
+
+    # The group leader may have exited while a descendant that closed its
+    # inherited pipes kept running. Ensure no such work survives.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    return stdout, stderr
 
 
 def checkout_sha(
@@ -215,9 +308,10 @@ def poll_ce_task(
             raise ScanError(f"SonarQube CE task ended {status}; inspect server logs and retry the scan")
         if status not in ACTIVE_CE_STATES:
             raise ScanError(f"SonarQube CE returned unknown status {status!r}; no freshness stamp written")
-        if monotonic() - started >= config.poll_timeout:
+        remaining = config.poll_timeout - (monotonic() - started)
+        if remaining <= 0:
             raise ScanError("SonarQube CE task timed out; check the task on the server and retry the scan")
-        sleep(config.poll_interval)
+        sleep(min(config.poll_interval, remaining))
 
 
 def write_stamp_atomically(path: Path, sha: str) -> None:
@@ -254,6 +348,8 @@ def run_scan(
         config.repo,
         env=_safe_env(),
         capture_output=False,
+        timeout=COVERAGE_COMMAND_TIMEOUT,
+        description="coverage",
     )
     checkout_sha(config, run, expected_sha=sha)
 
@@ -290,6 +386,7 @@ def run_scan(
             scanner_root_path,
             env=_safe_env(),
             capture_output=False,
+            timeout=NPM_COMMAND_TIMEOUT,
         )
         checkout_sha(config, run, expected_sha=sha)
         scanner_entry = (
@@ -313,6 +410,7 @@ def run_scan(
             config.repo,
             env=scanner_env,
             capture_output=False,
+            timeout=SCANNER_COMMAND_TIMEOUT,
         )
     checkout_sha(config, run, expected_sha=sha, after_upload=True)
     task_id = read_task_id(report_path)
