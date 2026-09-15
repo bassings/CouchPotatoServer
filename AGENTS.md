@@ -6,6 +6,27 @@ CouchPotatoServer is a media-management web application with a Python backend, a
 
 Treat this as a home-server application that may run on private networks and manage personal media libraries, automation credentials, user settings, and downloaded metadata. Changes should preserve reliability, privacy, and production deployability.
 
+The default branch is `master`. Production ships Python 3.14 with
+FastAPI/Uvicorn, an htmx, Tailwind and Alpine.js interface, SQLite-backed
+state, and an Alpine-based Docker image. The application entry point is
+`CouchPotato.py`.
+
+## Project Commands
+
+| Command | Purpose |
+|---|---|
+| `make setup` | Install dependencies and the repository pre-push hook once per clone. |
+| `make verify` | Run the full local gate that mirrors CI. |
+| `make verify-fast` | Run the fast lint and unit-test gate. |
+| `make check-traps` | Detect known false-green test and shell-gate patterns. |
+| `make check-secrets` | Run the working-tree secret scan used by CI. |
+| `make mutation-changed` | Mutation-test changed files that are in configured scope. |
+| `make mutation-py` / `make mutation-js` | Run the complete configured mutation suites. |
+| `make coverage` | Generate Python and JavaScript coverage consumed by SonarQube. |
+| `make sonar` | Upload a post-merge clean-`master` analysis to the internal SonarQube instance. Reporting only, never a CI or merge gate. |
+| `./scripts/test-local.sh` | Run Python unit tests in a clean Alpine container. |
+| `./scripts/backup.sh` | Snapshot production SQLite state and settings before a promotion when the documented policy requires it. |
+
 ## Review Guidelines
 
 When reviewing pull requests, prioritise issues that can cause real defects, security exposure, accessibility regressions, privacy leaks, data loss, broken mobile workflows, or operational failures. Keep minor style preferences out of review comments unless they contribute to one of those risks.
@@ -43,6 +64,13 @@ Treat these as high-priority review findings:
 
 ## Development Expectations
 
+- Use red, green, refactor for behavioural changes. Run the new test in its
+  failing state, confirm it fails for the intended reason, then implement the
+  minimum change and refactor with the suite green.
+- Prove new tests and guards are load-bearing. Deliberately create the protected
+  failure, confirm the mutation really applied, observe the expected failure,
+  restore the source and confirm the restoration. Use the configured mutation
+  runner where the changed file is in scope and review every survivor.
 - Preserve existing app patterns unless there is a clear reason to change them.
 - Prefer simple, typed validation and explicit parsing for untrusted input.
 - Keep sensitive operations server-side and avoid logging secrets or private paths.
@@ -50,6 +78,28 @@ Treat these as high-priority review findings:
 - Do not add broad new dependencies without a clear benefit.
 - Add or update tests when changing user-facing flows, access control, persistence, migrations, deployment, or release automation.
 - Do not weaken linting, type checking, tests, security checks, dependency checks, or accessibility checks to make a change pass.
+- UI changes require relevant Playwright coverage, including phone-width
+  verification where they affect a core workflow.
+- The Dockerfile is Alpine-based. Use Alpine-compatible tools such as `apk`,
+  `su-exec`, `adduser` and POSIX `sh`; do not introduce Debian-only commands or
+  assume Bash exists in the production image.
+- Use conventional commits. Development releases use beta tags; production is
+  a separately authorised promotion of a tested artefact. Never deploy merely
+  because implementation or verification is complete.
+
+## Key Technical Decisions and Locations
+
+- `couchpotato/core/db/sqlite_adapter.py` is the active database adapter.
+  Vendored `libs/CodernityDB/` remains solely for supported migration and must
+  not be removed as routine cleanup.
+- The current UI is served at `/`; the legacy `/old/` interface is being
+  retired under `specs/UI-MIGRATION.md`.
+- `docs/design-system/README.md` and
+  `docs/design-system/CONFORMANCE.md` define the UI design system and its
+  enforced conformance rules.
+- `docs/development-process.md` contains the full delivery, review and release
+  process. `docs/technical-debt.md` records deliberate exceptions and known
+  debt. Feature contracts live under `specs/`.
 
 ## Local Verification
 
