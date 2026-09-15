@@ -257,9 +257,9 @@ def read_task_id(report_path: Path) -> str:
         )
     except OSError as exc:
         raise ScanError("Scanner did not produce .scannerwork/report-task.txt; no freshness stamp written") from exc
-    task_id = fields.get("taskId", "").strip()
+    task_id = fields.get("ceTaskId", "").strip()
     if not task_id:
-        raise ScanError("Scanner report is missing taskId; no freshness stamp written")
+        raise ScanError("Scanner report is missing ceTaskId; no freshness stamp written")
     return task_id
 
 

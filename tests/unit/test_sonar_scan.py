@@ -110,7 +110,7 @@ class FakeCommands:
             if self.write_scanner_report:
                 report = self.repo / ".scannerwork" / "report-task.txt"
                 report.parent.mkdir(exist_ok=True)
-                report.write_text("taskId=ce-task-123\nserverUrl=http://evil.invalid\n")
+                report.write_text("ceTaskId=ce-task-123\nserverUrl=http://evil.invalid\n")
             if self.drift_after_scanner == "branch":
                 self.branch = "feature"
             elif self.drift_after_scanner == "dirty":
@@ -711,8 +711,18 @@ def test_keyboard_interrupt_terminates_the_entire_subprocess_group(tmp_path):
 def test_report_task_requires_task_id_and_ignores_report_server_url(tmp_path):
     report = tmp_path / "report-task.txt"
     report.write_text("serverUrl=http://evil.invalid\n")
-    with pytest.raises(sonar_scan.ScanError, match="taskId"):
+    with pytest.raises(sonar_scan.ScanError, match="ceTaskId"):
         sonar_scan.read_task_id(report)
+
+
+def test_report_task_reads_scanner_ce_task_id_and_ignores_task_url(tmp_path):
+    report = tmp_path / "report-task.txt"
+    report.write_text(
+        "ceTaskId=ce-task-123\n"
+        "ceTaskUrl=http://evil.invalid/api/ce/task?id=wrong-task\n"
+    )
+
+    assert sonar_scan.read_task_id(report) == "ce-task-123"
 
 
 def test_missing_ce_task_id_after_upload_preserves_previous_stamp(tmp_path):
@@ -729,7 +739,7 @@ def test_missing_ce_task_id_after_upload_preserves_previous_stamp(tmp_path):
             )
         return result
 
-    with pytest.raises(sonar_scan.ScanError, match="taskId"):
+    with pytest.raises(sonar_scan.ScanError, match="ceTaskId"):
         sonar_scan.run_scan(cfg, run=scanner_without_task, open_url=success_opener)
 
     assert stamp.read_text() == "previous\n"
@@ -739,7 +749,7 @@ def test_stale_report_is_removed_and_cannot_be_reused(tmp_path):
     cfg = config(tmp_path)
     report = tmp_path / ".scannerwork" / "report-task.txt"
     report.parent.mkdir()
-    report.write_text("taskId=stale-task\n")
+    report.write_text("ceTaskId=stale-task\n")
     stamp = tmp_path / ".sonar-last-analysis"
     stamp.write_text("previous\n")
     commands = FakeCommands(tmp_path)
@@ -983,7 +993,7 @@ def test_real_scanner_git_validation_stays_bound_to_configured_repo(tmp_path, mo
         scanner_argv.extend(argv)
         report = repo_a / ".scannerwork" / "report-task.txt"
         report.parent.mkdir()
-        report.write_text("taskId=ce-task-123\n")
+        report.write_text("ceTaskId=ce-task-123\n")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     cfg = sonar_scan.Config(
