@@ -9,25 +9,18 @@ A table is the fix. Any change to the routing or the body slice is now scored
 against all of these at once, which is what surfaced shape 23 -- a false
 positive no individual test could see.
 
-Wrong-answer counts, RE-DERIVED at round 10 against all 32 shapes by scoring
+Wrong-answer counts, RE-DERIVED at round 11 against all 33 shapes by scoring
 this table against the actual historical files from git
-(`git show <sha>:scripts/check_test_traps.py`) and against one-line variants
-of the shipped file. Reproduce, do not trust:
+(`git show <sha>:scripts/check_test_traps.py`). Reproduce, do not trust:
 
-    shipped                                    0 / 32
-    4a8e9d00  round 6, first `){`              3 / 32   shapes 23, 31, 32
-    d9c70c83  round 7, last `){`               5 / 32   shapes 26-28, 31, 32
-    dc4fdab5  round 4                          4 / 32   shapes 07, 23, 31, 32
-    65ca81f7  round 5                          7 / 32   shapes 03, 19, 24, 25, 27, 31, 32
-    eada3f1b  round 3                         17 / 32
-    cd180e05  round 2                         17 / 32
-    9c11c598  original                        18 / 32
-
-    one-line variants of the shipped file:
-      take the LAST `){` instead of the first   3 / 32   shapes 26-28
-      skip the string blanking                  1 / 32   shape 23
-      drop the `opens_block or inline_block`
-        routing gate (`if True:`)               1 / 32   shape 16
+    shipped                                    0 / 33
+    4a8e9d00  round 6, first `){`              9 / 33
+    d9c70c83  round 7, last `){`              13 / 33
+    dc4fdab5  round 4                          8 / 33
+    65ca81f7  round 5                         15 / 33
+    eada3f1b  round 3                         23 / 33
+    cd180e05  round 2                         24 / 33
+    9c11c598  original                        26 / 33
 
 THE DENOMINATOR IS PART OF THE MEASUREMENT. The previous table read `/ 30`,
 because it was scored when the corpus held 30 shapes and shapes 31-32 were
@@ -37,16 +30,10 @@ text asserted "no version this rule ever shipped scores worse than 17", while
 the original scores 18. Re-score the whole table when you add a shape; do not
 append a row.
 
-The round-8 table this replaces was itself a correction of a round-7 one that
-recorded 3/3/5/16. Those came from applying reconstructed slice spellings to
-the CURRENT file, producing hybrids that never shipped. Two corrections in
-three rounds, on a table whose entire purpose is to be trustworthy, is the
-argument for scoring it mechanically: the numbers above were produced by a
-script that loads each `git show` output as a module and asserts
-`hasattr(m, "check_file")` first -- because a zsh history-expansion bug once
-turned `git show "$c:scripts/..."` into an empty file, and an empty module
-scores every shape wrong, which looks exactly like a catastrophically bad
-historical version.
+The scores were re-derived for T3 because click-only guards changed from an
+accepted blind spot to a finding. They were produced by loading each exact
+``git show <sha>:scripts/check_test_traps.py`` output as a module and scoring
+all 33 current shapes; reconstructed hybrids are not evidence.
 
 If you change this table, score against `git show`, not against a
 reconstruction.
@@ -55,11 +42,10 @@ Shapes with an expected count of 0 are as important as the 1s: a rule whose
 documented remedy for a false positive is an opt-out comment teaches people to
 silence it, which is worse than the vacuity it was written to catch.
 
-Two kinds of expected-0 live here and they are NOT the same. Most are correct
-silence. Shape 20 is a known BLIND SPOT, named as such: it is a genuinely
-vacuous guard the rule cannot see. If a future change makes shape 20 report 1,
-that is GOOD NEWS and the table should be updated -- not a regression to
-revert. Any shape whose name says BLIND SPOT carries that contract.
+Expected-0 shapes are as important as the findings: they stop a blocking rule
+from teaching authors to add exemptions to correct tests. Shape 20's former
+multiline-condition blind spot is now an expected finding through the
+TypeScript AST mechanism.
 """
 
 # Every shape is a whole spec file, so the checker sees what it sees in the
@@ -100,11 +86,11 @@ SHAPES = [
   "  if (await page.locator(`#movie-${id}`).count() > 0) {\n"
   "    await page.click('.go');\n"
   "  }\n"
-  "  await page.waitForTimeout(1);\n" + E, 0),
+  "  await page.waitForTimeout(1); // wait-for-timeout-ok: forbidden-transition=fixture-settle\n" + E, 1),
 
  ("07 condition string mentions expect(, body asserts nothing", T +
   "  if (await page.getByText('{0} expect(x)').count() > 0) { await page.click('.go'); }\n"
-  "  await page.waitForTimeout(1);\n" + E, 0),
+  "  await page.waitForTimeout(1); // wait-for-timeout-ok: forbidden-transition=fixture-settle\n" + E, 1),
 
  ("08 one-liner: expect BEFORE a nested object literal", T +
   "  const c = page.locator('.card');\n"
@@ -128,11 +114,11 @@ SHAPES = [
   "  const c = page.locator('.card');\n"
   "  if (await c.count() > 0) { await expect(c).toBeVisible(); } // vacuous-guard-ok:\n" + E, 1),
 
- ("13 click-only guard, no expect anywhere (out of scope by design)", T +
+ ("13 click-only guard, no expect anywhere", T +
   "  const c = page.locator('.card');\n"
   "  if (await c.count() > 0) {\n"
   "    await c.click();\n"
-  "  }\n" + E, 0),
+  "  }\n" + E, 1),
 
  ("14 one-liner whose condition carries filter({...}), expect on the line", T +
   "  const rows = page.locator('tr');\n"
@@ -147,7 +133,7 @@ SHAPES = [
  ("16 non-braced teardown guard; expect only in a LATER test", 
   "test('teardown', async ({ page }) => {\n"
   "  const del = page.locator('.del');\n"
-  "  if (await del.count() === 0) return;\n"
+  "  if (await del.count() === 0) return; // vacuous-guard-ok: idempotent teardown\n"
   "  await del.click();\n"
   "});\n"
   "test('other', async ({ page }) => {\n"
@@ -169,13 +155,13 @@ SHAPES = [
   "    await c.click();\n"
   "  }\n" + E, 1),
 
- ("20 multi-line condition (BLIND SPOT: expected 0 until fixed)", T +
+ ("20 multi-line condition", T +
   "  const c = page.locator('.card');\n"
   "  if (\n"
   "    await c.count() > 0\n"
   "  ) {\n"
   "    await expect(c).toBeVisible();\n"
-  "  }\n" + E, 0),
+  "  }\n" + E, 1),
 
  ("21 template literal mentioning expect( in condition, real expect in body", T +
   "  if (await page.getByText(`{x} expect(y)`).count() > 0) {\n"
@@ -189,7 +175,7 @@ SHAPES = [
 
  ("23 condition string literally containing `){`, body asserts nothing", T +
   "  if (await page.getByText('a ){ b expect(q)').count() > 0) { await page.click('.go'); }\n"
-  "  await page.waitForTimeout(1);\n" + E, 0),
+  "  await page.waitForTimeout(1); // wait-for-timeout-ok: forbidden-transition=fixture-settle\n" + E, 1),
 
  ("24 guard line ending in `{` with expect on the SAME line after a nested obj", T +
   "  const c = page.locator('.card');\n"
@@ -230,14 +216,14 @@ SHAPES = [
  ("29 one-line click-only guard, unconditional expect on the NEXT line", T +
   "  const c = page.locator('.card');\n"
   "  if (await c.count() > 0) { await c.click(); }\n"
-  "  await expect(page.locator('h1')).toBeVisible();\n" + E, 0),
+  "  await expect(page.locator('h1')).toBeVisible();\n" + E, 1),
 
  ("30 braced click-only guard, expect after the closing brace", T +
   "  const c = page.locator('.card');\n"
   "  if (await c.count() > 0) {\n"
   "    await c.click();\n"
   "  }\n"
-  "  await expect(page.locator('h1')).toBeVisible();\n" + E, 0),
+  "  await expect(page.locator('h1')).toBeVisible();\n" + E, 1),
 
  # 31-32: the rule's OWN recommended remedy. Its message says "assert both
  # branches if it is not", and it used to flag exactly that, so two live
@@ -253,4 +239,11 @@ SHAPES = [
   "  } else {\n"
   "    await expect(c).toHaveCount(0);\n"
   "  }\n" + E, 0),
+
+ # Round 11: click-only detection must inspect any thenStatement, not only a
+ # braced block. This is ordinary valid syntax and was invisible to every
+ # lexical implementation above.
+ ("33 non-braced click-only guard", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() > 0) await c.click();\n" + E, 1),
 ]

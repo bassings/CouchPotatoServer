@@ -69,7 +69,13 @@ Checks performed:
      local-only by design (``tests/local/test_real_database.py``, gated on a
      39 MB machine-local backup that will never exist in CI).
 
-  6. **Vacuous E2E guards.** ``expect(`` inside an
+  6. **Vacuous E2E synchronization and guards.** New executable
+     ``waitForTimeout`` calls require a structured, non-empty exemption naming
+     the forbidden event or transition being observed; a file/test/argument
+     identity inventory keeps existing waits stable without creating
+     duration-only spare bypasses. A TypeScript compiler AST finds direct,
+     computed, aliased, template-expression, and non-awaited calls.
+     ``expect(`` or a click inside an
      ``if (await x.isVisible()/count()) { ... }`` block under ``tests/e2e/**``
      — that shape lets a Playwright test pass while asserting nothing, because
      the guard can be false with nothing outside it to catch the gap (T1.4,
@@ -137,11 +143,13 @@ finding.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 from git_env import GIT_IDENTITY_PREFIXES, git_env
@@ -354,9 +362,7 @@ def strip_js_comments(text: str) -> list[str]:
                 col += 1
             continue
 
-        # Inside a string. Keep the characters (a geometry read cannot live in a
-        # string literal, and keeping them preserves column meaning), but track
-        # the terminator, honouring backslash escapes.
+        # Inside a string. Keep characters while tracking the terminator.
         out[row] += ch
         if ch == "\\":
             if col + 1 < len(line):
@@ -972,70 +978,74 @@ def check_orphaned_test_files(
 # looked at spec files would miss it.
 E2E_FILE_SUFFIXES = (".ts", ".js")
 
-# A guard line: `if (`, an `await`, a call to `.isVisible(` or `.count(`
-# somewhere in the condition, and the block opens on the SAME physical line
-# (the codebase's own uniform style — every real instance found while writing
-# this rule looked like `if (await x.isVisible()) {`). A condition split
-# across lines is a false negative, same trade-off Rule 1 makes for
-# same-file/same-property: catching the real, common shape beats chasing every
-# way JS could theoretically be formatted.
-GUARD_CONDITION_RE = re.compile(r"\bif\s*\(.*\bawait\b.*\.(?:isVisible|count)\s*\(")
-
-# The same guard, written with the await hoisted to a previous line:
-#
-#     const count = await cardLinks.count();
-#     ...
-#     if (count > 1) {            <- GUARD_CONDITION_RE cannot see this
-#
-# Moving one expression up a line defeated the rule entirely, and the first
-# new code written after the rule landed did exactly that
-# (interactions.e2e.spec.ts). A rule introduced to retire a human review step
-# has to survive the most obvious reformatting of the thing it looks for.
-#
-# Deliberately file-scoped rather than scope-aware: this is a regex-based
-# guard, not a JS parser, and a name bound to an awaited count anywhere in a
-# spec file is a name whose `if` is worth a written justification. The opt-out
-# below is the pressure valve.
-HOISTED_ASSIGNMENT_RE = re.compile(
-    r"\b(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*\(?\s*await\b[^;]*?\.(?:isVisible|count)\s*\(",
-    re.DOTALL,
+WAIT_EXEMPTION_RE = re.compile(
+    r"//\s*wait-for-timeout-ok:\s*"
+    r"(?:forbidden-event|forbidden-transition)=([a-z][a-z0-9-]*)\s*$"
 )
 
-# WHAT THIS RULE STILL DOES NOT SEE, stated rather than left to silence.
-# AGENTS.md retired a human review step in favour of this rule, so the next
-# reviewer needs to know where the rule is a partial substitute. Measured by
-# review 2026-08-06 against 12 hand-built specs; the first four below were
-# closed in response, these remain open:
-#
-#   * a single-statement `if` with no braces and no `return`
-#         if (shown)
-#           await expect(...);
-#   * a ternary                      shown ? await expect(...) : null;
-#   * a logical-and short circuit    shown && await expect(...);
-#   * a destructured binding         const { count } = await probe();
-#   * `test.skip(total === 0, '...')` -- a skip, not an if
-#
-# None of THOSE is currently used in tests/e2e/**. But the list above is
-# `if`-shaped only, and that is not the whole class. Review found the rule
-# silent on ITERATION-COUNT guards, and one was live in the tree at the time:
-#
-#       for (let i = 0; i < Math.min(count, 5); i++) { ... expect(...) }
-#
-# runs zero times when `count` is 0, so every assertion inside it is skipped
-# on exactly the input the test exists to catch. `while`, `switch` and a
-# multi-line `if (` condition are silent for the same reason. Those instances
-# were fixed by hand; the rule still cannot see the shape.
-#
-# And for a guard with NO braces at all, the region is approximated by
-# indentation (see `_end_of_enclosing_block`), which is narrower than what
-# `return` really does. Measured as silent: a non-braced guard nested one
-# block deeper than the assertions it skips, and one whose body contains a
-# line at column 0 (a template literal handed to `page.setContent` or
-# `addInitScript`). Neither is live in tests/e2e/** today.
-#
-# Closing any of this properly needs a JS parser rather than more regexes,
-# which is the point at which this rule should become an ESLint plugin rather
-# than be extended again.
+# Existing waits were reviewed before this rule existed. Identity includes the
+# file, enclosing test title, exact argument, and a normalized AST context
+# fingerprint. Removing or relocating one therefore cannot free a slot for a
+# different timing guess, even within the same test.
+LEGACY_WAIT_IDENTITIES = {
+    "tests/e2e/filters.spec.ts": {
+        ("clicking Wanted filter should filter movies", "300", "42bb5bcce6a85db7"): 1,
+        ("clicking Available filter should filter movies", "300", "b1eb4d6065727fa3"): 1,
+        ("clicking All should show all movies", "300", "a0f390fa596e3032"): 1,
+        ("clicking All should show all movies", "300", "b1400d759beddf8e"): 1,
+        ("dismissing the card Mark Failed confirmation issues zero requests (AC-QA-12)", "500", "f9c493fe85b317b8"): 1,
+        ("two rapid clicks on Mark Done produce exactly one media.done request (AC-QA-16, pointer)", "700", "ae34b3f2eed922a9"): 1,
+        ("two rapid Enter presses on a focused Mark Done produce exactly one media.done request (AC-QA-16, keyboard)", "700", "afd6900e55262500"): 1,
+        ("Select All on a grid containing review-gated films states the skip count before acting, never requests their deletion, and they survive end-to-end (AC-QA-20, AC-SEC-2)", "800", "31f3893ae895c5ac"): 1,
+    },
+    "tests/e2e/interactions.e2e.spec.ts": {
+        ("theme toggle switches modes", "300", "9ed7004d6543b085"): 1,
+        ("mobile menu works on small viewport", "300", "1dcd635fd1ad7640"): 1,
+        ("filter buttons work", "300", "1814811e929ba34b"): 1,
+        ("text filter input works", "500", "71d5f5a72570ae5a"): 1,
+        ("text filter input works", "500", "2d27ad0678435195"): 1,
+        ("tabs switch content", "500", "bbfd78e136d338df"): 1,
+        ("all tabs are clickable", "500", "bbfd78e136d338df"): 1,
+        ("log filter dropdown works", "500", "dfbea4ff84ce3a66"): 1,
+        ("can tab through interactive elements", "100", "b1d4372dca85329d"): 1,
+    },
+    "tests/e2e/operator-replace-modal.a11y.spec.ts": {
+        ("the confirm control clears the contrast floor ON HOVER, not just at rest (dark theme, AC-A11Y-10)", "400", "4ada735ad20ca0e9"): 1,
+    },
+    "tests/e2e/operator-replace-modal.spec.ts": {
+        ("the confirm control cannot fire a replacement until a candidate is chosen (point 3)", "500", "732dc74305a4d9ab"): 1,
+        ("two rapid activations of confirm produce exactly one request to renamer.operator_replace (point 6)", "700", "9214d7d6f4d517e5"): 1,
+    },
+    "tests/e2e/review-queue.a11y.spec.ts": {
+        ("activating the Review chip mutates nothing when films awaiting review are present (AC-A11Y-4)", "500", "8ef5b9180dbeb8ef"): 1,
+        ("Mark Failed clears the contrast floor ON HOVER, not just at rest (dark theme, AC-A11Y-13)", "400", "0209586c0113bf5c"): 1,
+        ("Mark Done on a card with others remaining: defined focus, a real Library-naming announcement, and a confined grid update (AC-A11Y-9/10/11, others-remain case, REAL backend)", "1000", "e50c7f5123a38f65"): 1,
+    },
+    "tests/e2e/search.spec.ts": {
+        ("should show search results when typing", "500", "0bb9b9a7a4ebd0c1"): 1,
+        ("should show year and identifying info for search results (DEF-007)", "500", "0bb9b9a7a4ebd0c1"): 1,
+        ("should have Add button on search results", "500", "8c09f9de9642b2c0"): 1,
+        ("should show profile selector in search results", "500", "8c09f9de9642b2c0"): 1,
+    },
+    "tests/e2e/settings.spec.ts": {
+        ("should be able to switch tabs", "1000", "5ae224a2452b3030"): 1,
+        ("should show Advanced toggle", "1000", "d109bd3a375919ad"): 1,
+        ("Jackett sync button should have description (DEF-003)", "1000", "5ae224a2452b3030"): 1,
+        ("Jackett sync button should have description (DEF-003)", "500", "11e2f5d2ef0b67ff"): 1,
+        ('the "Require login" toggle renders and reflects the stored value', "1000", "2c91b0ed9608d2e5"): 1,
+        ("should auto-save settings", "1000", "d9e7ace3ed3bdf51"): 1,
+        ("should auto-save settings", "1000", "d64bd64f320e499c"): 1,
+        ("focus then blur WITHOUT typing saves nothing", "1500", "fc7de2fd80a333f8"): 1,
+    },
+    "tests/e2e/trakt-device-auth.spec.ts": {
+        ("the first poll waits for the interval instead of firing immediately", "1200", "341aa072224e383f"): 1,
+        ("a double click starts ONE authorisation, not two (the guard covers its own await)", "1500", "0df9d21a2dc93caa"): 1,
+        ("an error poll response reports the error and stops polling", "2500", "dc4fa4fd75aa68f9"): 1,
+        ("leaving within the refresh delay after success does not refetch settings on a dead component", "1500", "47011bdc7e1695d6"): 1,
+        ("H1: navigating away mid-poll stops the poll loop instead of orphaning it", "3000", "7fb093f991bfd721"): 1,
+        ("H1: a poll still IN FLIGHT at teardown does not resurrect the loop", "3000", "fa3e477ecc3e20fd"): 1,
+    },
+}
 
 # A trailing comment naming why this specific guard cannot be made
 # unconditional. Must be on the SAME line as the `if` (where every opt-out
@@ -1043,296 +1053,122 @@ HOISTED_ASSIGNMENT_RE = re.compile(
 # anything, and "near the guard" is not a check the next edit can rely on.
 OPT_OUT_RE = re.compile(r"//\s*vacuous-guard-ok:\s*(.*)$")
 
-EXPECT_CALL_RE = re.compile(r"\bexpect\s*\(")
+E2E_AST_HELPER = REPO_ROOT / "scripts" / "check_e2e_test_traps.mjs"
+
+
+def check_e2e_ast_traps(path: Path, text: str):
+    """Run the TypeScript AST guard and enforce stable legacy wait identities."""
+    node = shutil.which("node")
+    if node is None:
+        yield (
+            1,
+            "cannot check Playwright false-green traps: node is not installed, "
+            "so the TypeScript AST guard cannot run.",
+        )
+        return
+    try:
+        # NODE_OPTIONS can execute an arbitrary --require payload before this
+        # parse-only helper starts. Match _node_check's environment boundary:
+        # ambient Node configuration must not turn a repository scan into code
+        # execution.
+        env = {key: value for key, value in os.environ.items()
+               if key != "NODE_OPTIONS"}
+        result = subprocess.run(
+            [node, str(E2E_AST_HELPER), str(path)],
+            input=text,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            timeout=10,
+            check=False,
+            env=env,
+        )
+        payload = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+        yield (1, "TypeScript AST guard failed to run: %s" % exc)
+        return
+    if not isinstance(payload, dict):
+        detail = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "no JSON output"
+        yield (1, "TypeScript AST guard failed to run: %s" % detail)
+        return
+    if payload.get("parseErrors"):
+        yield (1, "TypeScript AST guard found %d parse error(s); refusing to scan a partial tree."
+               % payload["parseErrors"])
+        return
+
+    try:
+        relative = path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        relative = ""
+    allowed = Counter(LEGACY_WAIT_IDENTITIES.get(relative, {}))
+    seen = Counter()
+
+    for wait in payload.get("waits", []):
+        line_no = int(wait["line"])
+        argument = str(wait["argument"])
+        identity = (str(wait["test"]), argument, str(wait["context"]))
+        source_line = str(wait["sourceLine"])
+        if WAIT_EXEMPTION_RE.search(source_line):
+            continue
+        seen[identity] += 1
+        if seen[identity] <= allowed[identity]:
+            continue
+        yield (
+            line_no,
+            "new executable waitForTimeout has no valid exemption. Replace the "
+            "timing guess with an observable condition, or add a same-line "
+            "`// wait-for-timeout-ok: forbidden-event=<name>` or "
+            "`forbidden-transition=<name>` exemption naming the absence being "
+            "measured; empty and free-form exemptions are rejected.",
+        )
+
+    for identity, expected in allowed.items():
+        actual = seen[identity]
+        if actual >= expected:
+            continue
+        yield (
+            1,
+            "legacy waitForTimeout inventory is stale for test %r, argument %s, context %s: "
+            "expected %d unexempted call(s), found %d. Remove the stable identity "
+            "so it cannot be reused by another test."
+            % (identity[0], identity[1], identity[2], expected, actual),
+        )
+
+    for finding in payload.get("findings", []):
+        line_no = int(finding["line"])
+        kind = finding["kind"]
+        source_line = str(finding["sourceLine"])
+        if kind in {"click-guard", "expect-guard"}:
+            opt_out = OPT_OUT_RE.search(source_line)
+            if opt_out and opt_out.group(1).strip():
+                continue
+            if opt_out:
+                yield (
+                    line_no,
+                    "`// vacuous-guard-ok:` opt-out has no reason after the colon.",
+                )
+                continue
+            action = "click" if kind == "click-guard" else "expect("
+            yield (
+                line_no,
+                "%s inside an `if (...isVisible()/count())` guard can pass while "
+                "the named behavior is absent. Make the precondition unconditional, "
+                "assert both branches, or document an idempotent/external condition "
+                "with `// vacuous-guard-ok: <reason>`." % action,
+            )
+        elif kind == "swallowed-response":
+            yield (
+                line_no,
+                "response assertion is conditional after waitForResponse rejection "
+                "was swallowed as null/undefined; let the wait fail or assert the "
+                "response unconditionally.",
+            )
 
 
 def _is_e2e_spec(path: Path) -> bool:
     if not path.name.endswith(E2E_FILE_SUFFIXES):
         return False
     return "e2e" in {part.lower() for part in path.parts}
-
-
-def _hoisted_guard_names(cleaned_lines: list[str]) -> set[str]:
-    """Names bound to an awaited `.isVisible()`/`.count()` anywhere in the file.
-
-    Scanned over the JOINED text, not line by line: Prettier wraps a long
-    assignment onto the next line (`const total =` / `  await x.count();`),
-    and a per-line scan missed that, so reformatting alone defeated the rule.
-    A bare reassignment (`total = await x.count();`) counts too.
-    """
-    return {
-        match.group(1)
-        for match in HOISTED_ASSIGNMENT_RE.finditer("\n".join(cleaned_lines))
-    }
-
-
-def _is_guard_if_line(line: str, hoisted_names: frozenset = frozenset()) -> bool:
-    """A comment-stripped line that opens an isVisible()/count() guard block.
-
-    Either written inline (`if (await x.count() > 1) {`) or with the await
-    hoisted to an earlier line and the resulting name used here.
-    """
-    stripped = line.rstrip()
-    if GUARD_CONDITION_RE.search(stripped) and stripped.endswith("{"):
-        return True
-    if not stripped.endswith("{"):
-        # A non-braced `if` and an early `return` are ordinary JS that
-        # Prettier will produce, and requiring a trailing `{` made both
-        # invisible. Two live examples already exist in this suite
-        # (`if (await delBtn.count() === 0) return;`), both in best-effort
-        # teardown helpers, so neither is vacuous today -- but the rule
-        # should see the shape.
-        if not re.match(r"^\}?\s*(?:else\s+)?if\s*\(", stripped.lstrip()):
-            return False
-        return _condition_uses_a_guard_name(stripped, hoisted_names) or bool(
-            GUARD_CONDITION_RE.search(stripped)
-        )
-    if not re.match(r"^\}?\s*(?:else\s+)?if\s*\(", stripped.lstrip()):
-        return False
-    return _condition_uses_a_guard_name(stripped, hoisted_names)
-
-
-def _condition_uses_a_guard_name(line: str, hoisted_names) -> bool:
-    condition = line[line.index("if"):] if "if" in line else ""
-    return any(
-        re.search(r"\b%s\b" % re.escape(name), condition) for name in hoisted_names
-    )
-
-
-def _else_branch_asserts(cleaned_lines: list[str], close_idx: int,
-                         search_from: int = 0) -> bool:
-    """Does the `else` attached to the guard closing at `close_idx` assert?
-
-    If it does, the test cannot pass while asserting nothing, which is the
-    whole property this rule protects -- and "assert both branches" is what
-    the rule's own message recommends. Flagging it anyway meant live opt-outs
-    existed purely to silence the rule for complying with its own advice.
-
-    Two constraints, both learned by getting them wrong:
-
-    - The `else` must follow the guard's CLOSING brace (`search_from` is the
-      offset just past the guard's opening brace on a one-liner). Searching
-      the whole line matched a guard's own `} else if (...)` prefix and read
-      the guard's assertion as the else branch's.
-    - The body is sliced from the ELSE's brace, not the line's first. On a
-      one-liner the guard's own `{` comes first.
-
-    Approximate, like the rest of this rule. A false negative only leaves the
-    guard flagged, which the written opt-out already handles.
-    """
-    if close_idx >= len(cleaned_lines):
-        return False
-
-    segment = cleaned_lines[close_idx][search_from:]
-    match = re.search(r"\}\s*else\b", segment)
-    if match:
-        rest, base_idx = segment[match.end():], close_idx
-    else:
-        # `}` and `else` on separate lines.
-        if close_idx + 1 >= len(cleaned_lines):
-            return False
-        nxt = cleaned_lines[close_idx + 1]
-        head = re.match(r"^\s*else\b", nxt)
-        if not head:
-            return False
-        rest, base_idx = nxt[head.end():], close_idx + 1
-
-    if "{" not in rest:
-        return bool(EXPECT_CALL_RE.search(rest))
-
-    else_close = _find_matching_brace(cleaned_lines, base_idx)
-    body = rest[rest.index("{") + 1:] + "\n" + "\n".join(
-        cleaned_lines[base_idx + 1:else_close]
-    )
-    return bool(EXPECT_CALL_RE.search(body))
-
-
-def _end_of_enclosing_block(cleaned_lines: list[str], start_idx: int) -> int:
-    """First line STRICTLY LESS indented than `start_idx`: where its block ends.
-
-    Used only for guards with no `{` at all. Approximate by design -- this is a
-    regex checker, not a parser -- and knowingly narrower than what `return`
-    actually does, which is exit the whole function. Two consequences, both
-    measured and both recorded in the module's WHAT THIS RULE STILL DOES NOT
-    SEE list rather than left as silence:
-
-    - a guard nested one block deeper than the assertions it skips is missed,
-      because the region stops at the dedent;
-    - a body containing a line at column 0 (a template literal passed to
-      `page.setContent` or `addInitScript`) ends the region early.
-
-    The alternative, which this replaced, was the brace matcher scanning to end
-    of file: that flagged a teardown helper because an unrelated test lower in
-    the file happened to contain `expect(`, and the documented remedy for a
-    false positive is an opt-out comment, which is how a rule that replaced a
-    human review step trains people to silence it.
-    """
-    indent = len(cleaned_lines[start_idx]) - len(cleaned_lines[start_idx].lstrip())
-    for idx in range(start_idx + 1, len(cleaned_lines)):
-        line = cleaned_lines[idx]
-        if not line.strip():
-            continue
-        # STRICTLY less, not <=. An early return affects every statement that
-        # follows it at the SAME level, which is the whole point of the shape;
-        # stopping at the first sibling would find an empty body and flag
-        # nothing. Dedenting past the guard is where the enclosing block ends,
-        # and that is what keeps a sibling `test(...)` out of the body.
-        if len(line) - len(line.lstrip()) < indent:
-            return idx
-    return len(cleaned_lines)
-
-
-def _find_matching_brace(cleaned_lines: list[str], start_idx: int) -> int:
-    """Index of the line whose `}` closes the `{` ending ``cleaned_lines[start_idx]``.
-
-    Heuristic brace counting over comment-stripped source, same trade-off as
-    the rest of this file: it does not additionally blank out string-literal
-    contents, so a `{`/`}` character inside a JS string could in principle
-    miscount. Every real guard body in this suite is plain Playwright
-    calls and `expect(...)` assertions with no such string, so this is
-    accepted rather than building a full parser for it.
-    """
-    depth = 0
-    for idx in range(start_idx, len(cleaned_lines)):
-        line = cleaned_lines[idx]
-        segment = line if idx != start_idx else line[line.rfind("{"):]
-        for ch in segment:
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return idx
-    return len(cleaned_lines) - 1
-
-
-def check_e2e_spec_guards(path: Path, text: str):
-    """Rule 6: ``expect(`` inside an ``if (await x.isVisible()/count())`` guard.
-
-    That shape lets a Playwright test pass while asserting nothing: the guard
-    can resolve false with no assertion outside it to catch the gap. Scans
-    comment-stripped lines (``strip_js_comments``, shared with Rule 1) for a
-    guard line, finds its matching closing brace, and flags any ``expect(``
-    strictly between them — UNLESS the guard's own line carries a same-line
-    ``// vacuous-guard-ok: <reason>`` comment, checked against the RAW (not
-    comment-stripped) line, with a non-empty reason after the colon.
-
-    Deliberately does not flag a guard with NO ``expect(`` inside it at all
-    (a click-only conditional): that is a different, harder-to-detect shape
-    (it requires knowing whether the enclosing `test(...)` asserts anything
-    ANYWHERE, not just within this block) and is out of this rule's scope —
-    T1.4 fixed those by hand; this rule guards against the shape regressing,
-    which is the ``expect(`` case.
-    """
-    raw_lines = text.split("\n")
-    cleaned_lines = strip_js_comments(text)
-    hoisted_names = frozenset(_hoisted_guard_names(cleaned_lines))
-
-    for idx, line in enumerate(cleaned_lines):
-        if not _is_guard_if_line(line, hoisted_names):
-            continue
-
-        # Route on whether the line actually opens or contains a BLOCK, not on
-        # whether it contains any brace. `"{" in line` was too coarse: a
-        # non-braced guard whose CONDITION carries a balanced brace pair --
-        # `if (await page.locator(`#movie-${id}`).count() === 0) return;`, or a
-        # selector string containing `{}` -- went to the brace matcher, which
-        # balanced on the guard line itself, collapsed the region to nothing
-        # and reported clean. Measured across sixteen formatting shapes: that
-        # spelling was caught before the previous round and silent after it,
-        # while template literals already appear in two locator calls in this
-        # suite.
-        opens_block = line.count("{") > line.count("}")
-        # Blank STRING CONTENTS first, then take the FIRST `){`.
-        #
-        # Taking the last match was the previous attempt, and it traded a
-        # false positive for a false-negative class: a nested block opener
-        # after the assertion on the guard line (`if (...) { await expect(x);
-        # if (n > 1) { ... } }`) made the slice start past the `expect(`, so
-        # the rule went silent on a genuinely vacuous guard. Wrong direction
-        # for a false-green gate.
-        #
-        # The root cause of both is that `strip_js_comments` does not blank
-        # string contents -- its own docstring says so -- so a literal `){`
-        # inside a selector looked like a block opener. Blanking the contents
-        # removes that without inventing a new heuristic, and the first match
-        # is then genuinely the block opener. Length is preserved so the
-        # offsets still index the real line.
-        _blanked = re.sub(
-            r"'[^']*'|\"[^\"]*\"|`[^`]*`",
-            lambda m: m.group(0)[0] + "-" * (len(m.group(0)) - 2) + m.group(0)[-1],
-            line,
-        )
-        inline_block = re.search(r"\)\s*\{", _blanked)
-        if opens_block or inline_block:
-            close_idx = _find_matching_brace(cleaned_lines, idx)
-        else:
-            # A non-braced guard (`if (cond) return;`) has no block, so the
-            # brace matcher would scan to end of file and pick up an unrelated
-            # test's `expect(` -- flagging a teardown helper that asserts
-            # nothing, and teaching people to silence the rule with an opt-out.
-            # The affected region is the rest of the ENCLOSING block, which
-            # indentation approximates cheaply and without a JS parser.
-            close_idx = _end_of_enclosing_block(cleaned_lines, idx)
-        # For a one-line guard (`if (cond) { await expect(x).toBeVisible(); }`)
-        # the braces balance on that line, so close_idx lands on it and the
-        # joined slice below is empty -- the rule saw nothing in the most
-        # compact spelling of the very shape it exists to catch.
-        #
-        # Sliced from the first `){` on the string-blanked line, which is the
-        # block opener. NOT `index("{")`,
-        # which picks up the condition's own brace (a template literal), and
-        # NOT `rfind("{")`, which misses an `expect(` preceding a nested
-        # object literal.
-        # Slice whenever the line contains a block opener, INCLUDING when the
-        # block also stays open. Gating this on `not opens_block` silenced a
-        # braced guard whose `expect(` sits on the guard line while the block
-        # closes later -- and arbitrarily so: the identical shape written
-        # `} else if (...) {` was still flagged, because the leading `}`
-        # balanced the count and sent it down the other path.
-        inline_body = line[inline_block.end():] if inline_block else ""
-        body = inline_body + "\n" + "\n".join(cleaned_lines[idx + 1:close_idx])
-        if not EXPECT_CALL_RE.search(body):
-            continue
-
-        # If the ELSE branch also asserts, the test cannot pass while
-        # asserting nothing, which is the whole property this rule protects.
-        # The rule used to flag it anyway -- while its own message recommended
-        # exactly that remedy ("assert both branches if it is not"), so two of
-        # the suite's live opt-outs existed purely to silence the rule for
-        # complying with its own advice. Every opt-out spent on a compliant
-        # pattern devalues the ones spent on genuine exceptions.
-        if _else_branch_asserts(
-                cleaned_lines, close_idx,
-                search_from=inline_block.end() if (inline_block and close_idx == idx) else 0):
-            continue
-
-        line_no = idx + 1
-        raw_line = raw_lines[idx] if idx < len(raw_lines) else ""
-        opt_out = OPT_OUT_RE.search(raw_line)
-
-        if opt_out is None:
-            yield (
-                line_no,
-                "expect( inside an `if (...isVisible()/count())` guard -- "
-                "this can pass while asserting nothing, if the guard is ever "
-                "false. Make the precondition unconditional if it is actually "
-                "guaranteed, assert both branches if it is not, or opt out with "
-                "a same-line `// vacuous-guard-ok: <reason>` comment if the "
-                "guard is genuinely outside this test's control.",
-            )
-            continue
-
-        reason = opt_out.group(1).strip()
-        if not reason:
-            yield (
-                line_no,
-                "`// vacuous-guard-ok:` opt-out has no reason after the colon -- "
-                "a bare opt-out is indistinguishable from silencing the check, "
-                "which is the exact false-green this rule exists to prevent. "
-                "Say why the guard cannot be made unconditional or assert both "
-                "branches instead.",
-            )
 
 
 #: pytest's caplog resolves a level given as a STRING through
@@ -1860,7 +1696,7 @@ def check_file(path: Path):
     elif _is_vitest_spec(path):
         yield from check_vitest_spec(path, text)
     elif _is_e2e_spec(path):
-        yield from check_e2e_spec_guards(path, text)
+        yield from check_e2e_ast_traps(path, text)
         yield from check_live_region_visibility(path, text)
     elif path.name == "Makefile" or path.name.endswith(".mk"):
         yield from check_makefile(path, text)

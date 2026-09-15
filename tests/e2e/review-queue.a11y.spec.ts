@@ -605,24 +605,50 @@ test.describe('FEAT-010 Review queue accessibility', () => {
   test('no horizontal reflow at 640px CSS width, and the review control stays reachable once focused (AC-A11Y-14, zoom-equivalent)', async ({ page }) => {
     const { readOnlyCard } = await gotoWantedWithReviewCards(page);
     await page.setViewportSize({ width: 640, height: 800 });
-    await page.waitForTimeout(200);
+    await expect(
+      readOnlyCard,
+      'the seeded review card must remain visible at 640px before measuring reflow',
+    ).toBeVisible();
 
-    const overflow = await page.evaluate(() => ({
-      scrollWidth: document.documentElement.scrollWidth,
-      clientWidth: document.documentElement.clientWidth,
-    }));
-    expect(
-      overflow.scrollWidth,
-      `document scrolls horizontally at 640px (${overflow.scrollWidth}px content in ${overflow.clientWidth}px) -- WCAG 1.4.10 reflow`,
-    ).toBeLessThanOrEqual(overflow.clientWidth);
+    await expect(async () => {
+      const overflow = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      expect(
+        overflow.scrollWidth,
+        `document scrolls horizontally at 640px (${overflow.scrollWidth}px content in ${overflow.clientWidth}px) -- WCAG 1.4.10 reflow`,
+      ).toBeLessThanOrEqual(overflow.clientWidth);
+    }).toPass({ timeout: 5000 });
 
     const markDone = readOnlyCard.locator('[data-testid="review-mark-done"]');
+    await expect(
+      markDone,
+      'the Mark Done control must be visible before its focused bounds are measured',
+    ).toBeVisible();
     await markDone.focus();
     await expect(markDone).toBeFocused();
-    const box = await markDone.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box!.x).toBeGreaterThanOrEqual(0);
-    expect(box!.x + box!.width).toBeLessThanOrEqual(640);
+    await expect(async () => {
+      const bounds = await markDone.evaluate((control) => {
+        const rect = control.getBoundingClientRect();
+        return {
+          focused: document.activeElement === control,
+          x: rect.x,
+          right: rect.right,
+          width: rect.width,
+          height: rect.height,
+          clientWidth: document.documentElement.clientWidth,
+        };
+      });
+      expect(bounds.focused, 'the Mark Done control lost focus while layout settled').toBe(true);
+      expect(bounds.width, 'the focused Mark Done control has no rendered width').toBeGreaterThan(0);
+      expect(bounds.height, 'the focused Mark Done control has no rendered height').toBeGreaterThan(0);
+      expect(bounds.x, 'the focused Mark Done control extends left of the viewport').toBeGreaterThanOrEqual(0);
+      expect(
+        bounds.right,
+        `the focused Mark Done control extends past the ${bounds.clientWidth}px viewport`,
+      ).toBeLessThanOrEqual(bounds.clientWidth);
+    }).toPass({ timeout: 5000 });
   });
 
   // =======================================================================

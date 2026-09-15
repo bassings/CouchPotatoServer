@@ -383,7 +383,9 @@ test.describe('Accessibility', () => {
 
   test('settings folder/row "Add" buttons and the folder browser "Up" button lead with their visible text (WCAG 2.5.3)', async ({ page }) => {
     await page.goto('/settings/');
-    await page.waitForLoadState('networkidle');
+    // The tablist is gated behind Alpine's settings-loading state, so its
+    // visibility is the route-specific readiness signal for every control
+    // this test opens below.
     await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
 
     // --- Control 1: "+ Add folder" in the Movie Library directory list.
@@ -910,7 +912,8 @@ test.describe('Accessibility', () => {
 
   test('Interactive elements should be keyboard accessible', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // #movie-count is populated only after the Wanted grid's htmx swap and
+    // filterMovies() pass, so this keeps the keyboard sweep non-vacuous.
     await expect(page.locator('#movie-count')).not.toBeEmpty();
 
     // Tab through the page

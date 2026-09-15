@@ -25,6 +25,7 @@ which is what makes it usable as a blocking gate.
 """
 
 import ast
+import json
 import os
 import re
 import shutil
@@ -89,6 +90,17 @@ def findings_for(path: Path):
     if path.suffix == ".html" and not _NODE_ON_THIS_MACHINE:
         pytest.skip("node is not installed; rule 8 cannot parse template scripts here")
     return list(check_test_traps.check_file(path))
+
+
+def e2e_ast_payload(path: Path):
+    result = subprocess.run(
+        ["node", str(REPO_ROOT / "scripts" / "check_e2e_test_traps.mjs"), str(path)],
+        input=path.read_text(),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(result.stdout)
 
 
 def messages_for(path: Path):
@@ -1061,6 +1073,226 @@ def _e2e_spec(tmp_path, name="feature.spec.ts"):
     return e2e_dir / name
 
 
+def test_typescript_ast_dependency_is_installed_before_the_trap_gate():
+    ci = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    lint_job = ci[ci.index("  lint:\n"):ci.index("  conformance:\n")]
+    assert lint_job.index("npm ci") < lint_job.index(
+        "python scripts/check_test_traps.py --require-git"
+    )
+
+    verify = (REPO_ROOT / "scripts/verify.sh").read_text(encoding="utf-8")
+    assert verify.index("npm ci") < verify.index(
+        '"$PYTHON" scripts/check_test_traps.py --require-git'
+    )
+
+
+def test_flags_a_new_unexplained_wait_for_timeout(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('waits', async ({ page }) => {\n"
+        "  await page.waitForTimeout(250);\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 2
+    assert "waitForTimeout" in findings[0][1]
+
+
+@pytest.mark.parametrize("kind", ["forbidden-event", "forbidden-transition"])
+def test_allows_a_structured_wait_exemption_that_names_what_is_observed(
+        tmp_path, kind):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('proves absence', async ({ page }) => {\n"
+        f"  await page.waitForTimeout(250); // wait-for-timeout-ok: {kind}=duplicate-request\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "",
+        "   ",
+        "because timing is hard",
+        "forbidden-event=",
+        "forbidden-transition=   ",
+    ],
+)
+def test_rejects_empty_or_malformed_wait_exemptions(tmp_path, suffix):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('waits', async ({ page }) => {\n"
+        f"  await page.waitForTimeout(250); // wait-for-timeout-ok: {suffix}\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "exemption" in findings[0][1]
+
+
+def test_a_wait_exemption_in_non_executable_text_is_not_accepted(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('waits', async ({ page }) => {\n"
+        "  // wait-for-timeout-ok: forbidden-event=duplicate-request\n"
+        "  const explanation = 'wait-for-timeout-ok: forbidden-event=duplicate-request';\n"
+        "  await page.waitForTimeout(250);\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_a_multiline_wait_is_still_rejected(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('waits', async ({ page }) => {\n"
+        "  await page.waitForTimeout(\n"
+        "    250,\n"
+        "  );\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 2
+
+
+def test_legacy_wait_allowance_cannot_be_reused_after_removal(tmp_path, monkeypatch):
+    spec = _e2e_spec(tmp_path)
+    relative = spec.relative_to(tmp_path).as_posix()
+    monkeypatch.setattr(check_test_traps, "REPO_ROOT", tmp_path)
+    spec.write_text(
+        "test('legacy', async ({ page }) => {\n"
+        "  await page.waitForTimeout(250);\n"
+        "});\n"
+    )
+    context = e2e_ast_payload(spec)["waits"][0]["context"]
+    monkeypatch.setattr(
+        check_test_traps,
+        "LEGACY_WAIT_IDENTITIES",
+        {relative: {("legacy", "250", context): 1}},
+    )
+    assert findings_for(spec) == []
+
+    spec.write_text("test('legacy removed', async () => {});\n")
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "cannot be reused" in findings[0][1]
+
+
+def test_legacy_wait_allowance_cannot_move_to_another_test_at_the_same_duration(
+        tmp_path, monkeypatch):
+    spec = _e2e_spec(tmp_path)
+    relative = spec.relative_to(tmp_path).as_posix()
+    monkeypatch.setattr(check_test_traps, "REPO_ROOT", tmp_path)
+    spec.write_text(
+        "test('old transition', async ({ page }) => {\n"
+        "  await page.waitForTimeout(250);\n"
+        "});\n"
+        "test('new transition', async ({ page }) => {});\n"
+    )
+    context = e2e_ast_payload(spec)["waits"][0]["context"]
+    monkeypatch.setattr(
+        check_test_traps,
+        "LEGACY_WAIT_IDENTITIES",
+        {relative: {("old transition", "250", context): 1}},
+    )
+    spec.write_text(
+        "test('old transition', async ({ page }) => {});\n"
+        "test('new transition', async ({ page }) => {\n"
+        "  await page.waitForTimeout(250);\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert findings, "a duration-only allowance was silently reusable"
+
+
+def test_legacy_wait_allowance_cannot_move_within_the_same_test(
+        tmp_path, monkeypatch):
+    spec = _e2e_spec(tmp_path)
+    relative = spec.relative_to(tmp_path).as_posix()
+    monkeypatch.setattr(check_test_traps, "REPO_ROOT", tmp_path)
+    spec.write_text(
+        "test('legacy', async ({ page }) => {\n"
+        "  await expect(page.locator('main')).toBeVisible();\n"
+        "  await page.waitForTimeout(250);\n"
+        "  await expect(page.locator('footer')).toBeVisible();\n"
+        "});\n"
+    )
+    payload = e2e_ast_payload(spec)
+    original = payload["waits"][0]
+    monkeypatch.setattr(
+        check_test_traps,
+        "LEGACY_WAIT_IDENTITIES",
+        {relative: {("legacy", "250", original["context"]): 1}},
+    )
+    assert findings_for(spec) == []
+
+    spec.write_text(
+        "test('legacy', async ({ page }) => {\n"
+        "  await expect(page.locator('main')).toBeVisible();\n"
+        "  await expect(page.locator('footer')).toBeVisible();\n"
+        "  await page.waitForTimeout(250);\n"
+        "});\n"
+    )
+    findings = findings_for(spec)
+    assert findings, "same-test relocation silently reused a legacy identity"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "const rendered = `${await page.waitForTimeout(250)}`;",
+        "await page['waitForTimeout'](250);",
+        "const delay = page.waitForTimeout.bind(page); await delay(250);",
+        "const delay = page.waitForTimeout; await delay(250);",
+        "const pending = page.waitForTimeout(250); await pending;",
+    ],
+)
+def test_flags_waits_hidden_by_javascript_expression_shapes(tmp_path, call):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('waits indirectly', async ({ page }) => {\n"
+        f"  {call}\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "waitForTimeout" in findings[0][1]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "let delay; delay = page.waitForTimeout;",
+        "const { waitForTimeout: delay } = page;",
+        "let delay; ({ waitForTimeout: delay } = page);",
+    ],
+)
+def test_flags_wait_aliases_created_by_assignment_or_destructuring(
+        tmp_path, binding):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('wait alias dataflow', async ({ page }) => {\n"
+        f"  {binding}\n"
+        "  await delay(250);\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "waitForTimeout" in findings[0][1]
+
+
 def test_flags_expect_inside_an_isvisible_guard(tmp_path):
     spec = _e2e_spec(tmp_path)
     spec.write_text(
@@ -1234,9 +1466,8 @@ def test_a_one_line_braced_guard_uses_the_brace_matcher(tmp_path):
         "});\n"
     )
 
-    # The guard's own block contains no expect(, and the assertion that
-    # follows it is unconditional, so there is nothing to flag.
-    assert findings_for(spec) == []
+    # The unconditional assertion does not prove the guarded click happened.
+    assert len(findings_for(spec)) == 1
 
 
 def test_a_one_line_braced_guard_with_its_own_expect_is_still_flagged(tmp_path):
@@ -1361,11 +1592,14 @@ def test_the_guard_lines_condition_is_not_treated_as_body(tmp_path):
         # from that brace never reaches it and the fixture proves nothing --
         # which is what the first draft of this test did.
         "  if (await page.getByText('{0} expect(x)').count() > 0) { await page.click('.go'); }\n"
-        "  await page.waitForTimeout(1);\n"
+        "  await page.waitForTimeout(1); // wait-for-timeout-ok: forbidden-transition=fixture-settle\n"
         "});\n"
     )
 
-    assert findings_for(spec) == []
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "click inside" in findings[0][1]
+    assert "expect( inside" not in findings[0][1]
 
 
 @pytest.mark.parametrize(
@@ -1454,11 +1688,8 @@ def test_flags_expect_inside_a_count_guard(tmp_path):
     assert findings[0][0] == 3
 
 
-def test_does_not_flag_an_assertion_outside_the_guard(tmp_path):
-    """The real defect this rule targets is the assertion living INSIDE the
-    guard with nothing outside it — checkNoErrors-style patterns (an
-    assertion that always runs, with an unrelated action inside the guard)
-    are exactly what T1.4 decided were NOT vacuous."""
+def test_flags_a_guarded_click_with_an_assertion_outside_the_guard(tmp_path):
+    """An unrelated assertion does not prove the named click happened."""
     spec = _e2e_spec(tmp_path)
     spec.write_text(
         "test('clicks if present', async ({ page }) => {\n"
@@ -1470,15 +1701,11 @@ def test_does_not_flag_an_assertion_outside_the_guard(tmp_path):
         "});\n"
     )
 
-    assert findings_for(spec) == []
+    assert len(findings_for(spec)) == 1
 
 
-def test_does_not_flag_a_guard_with_no_expect_at_all(tmp_path):
-    """A click-only guard with zero assertions anywhere is a real defect too
-    (T1.4 fixed several by hand), but it is a DIFFERENT shape than this rule
-    covers -- catching it needs knowing whether the whole enclosing test()
-    asserts anything anywhere, not just this block. Out of scope by design,
-    documented in check_e2e_spec_guards' own docstring."""
+def test_flags_a_click_only_guard_with_no_expect_at_all(tmp_path):
+    """A named interaction must not disappear behind a conditional."""
     spec = _e2e_spec(tmp_path)
     spec.write_text(
         "test('clicks if present', async ({ page }) => {\n"
@@ -1487,6 +1714,311 @@ def test_does_not_flag_a_guard_with_no_expect_at_all(tmp_path):
         "    await btn.click();\n"
         "  }\n"
         "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "click" in findings[0][1]
+
+
+def test_flags_a_click_only_guard_despite_an_unrelated_unconditional_assertion(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('button works', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await btn.click();\n"
+        "  }\n"
+        "  expect(errors).toHaveLength(0);\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_a_click_guard_with_a_multiline_condition(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('button works', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (\n"
+        "    await btn.isVisible()\n"
+        "  ) {\n"
+        "    await btn.click();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_braces_inside_strings_do_not_hide_a_click_guard(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('button works', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    const marker = '}';\n"
+        "    await btn.click();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_a_non_braced_click_only_guard(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('button works', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) await btn.click();\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "click" in findings[0][1]
+
+
+def test_flags_a_conditionally_swallowed_response_assertion(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('request succeeds', async ({ page }) => {\n"
+        "  const responsePromise = page.waitForResponse(r => r.url().includes('test'))\n"
+        "    .catch(() => null);\n"
+        "  await page.getByRole('button').click();\n"
+        "  const response = await responsePromise;\n"
+        "  if (response) {\n"
+        "    expect(response.status()).toBe(200);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "response" in findings[0][1]
+
+
+@pytest.mark.parametrize("empty", ["null", "undefined", "void 0", "{}"])
+def test_flags_a_directly_awaited_swallowed_response_assertion(tmp_path, empty):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('request succeeds', async ({ page }) => {\n"
+        "  const response = await page.waitForResponse(() => true)\n"
+        f"    .catch(() => {empty});\n"
+        "  if (response) { expect(response.status()).toBe(200); }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "response" in findings[0][1]
+
+
+@pytest.mark.parametrize(
+    "handler_body",
+    [
+        "console.warn('request missing'); return null;",
+        "console.warn('request missing');",
+        "return false;",
+        "return 0;",
+        "return '';",
+    ],
+)
+def test_flags_catch_blocks_that_resolve_to_a_falsy_sentinel(
+        tmp_path, handler_body):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('request succeeds', async ({ page }) => {\n"
+        "  const response = await page.waitForResponse(() => true).catch(() => {\n"
+        f"    {handler_body}\n"
+        "  });\n"
+        "  if (response) expect(response.status()).toBe(200);\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "response" in findings[0][1]
+
+
+@pytest.mark.parametrize("condition", ["response !== undefined", "response != null"])
+def test_flags_a_nullish_condition_around_a_swallowed_response(
+        tmp_path, condition):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('request succeeds', async ({ page }) => {\n"
+        "  const response = await page.waitForResponse(() => true)\n"
+        "    .catch(() => undefined);\n"
+        f"  if ({condition}) {{ expect(response.status()).toBe(200); }}\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "response" in findings[0][1]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "let response; response = await page.waitForResponse(() => true).catch(() => null);\n"
+        "  if (response) expect(response.status()).toBe(200);",
+        "const response = await page.waitForResponse(() => true).catch(() => null);\n"
+        "  if (response && response.ok()) expect(response.status()).toBe(200);",
+        "const response = await page.waitForResponse(() => true).catch(() => null);\n"
+        "  if (!response) return;\n"
+        "  expect(response.status()).toBe(200);",
+        "let pending; pending = page.waitForResponse(() => true).catch(() => null);\n"
+        "  let response; response = await pending;\n"
+        "  if (response) expect(response.status()).toBe(200);",
+    ],
+)
+def test_flags_swallowed_response_assignment_and_truthiness_dataflow(
+        tmp_path, body):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('request succeeds', async ({ page }) => {\n"
+        f"  {body}\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "response" in findings[0][1]
+
+
+@pytest.mark.parametrize(
+    "conditional_assertion",
+    [
+        "response && expect(response.status()).toBe(200);",
+        "!response || expect(response.status()).toBe(200);",
+        "response ? expect(response.status()).toBe(200) : undefined;",
+    ],
+)
+def test_flags_expression_conditioned_swallowed_response_assertions(
+        tmp_path, conditional_assertion):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('request succeeds', async ({ page }) => {\n"
+        "  const response = await page.waitForResponse(() => true).catch(() => null);\n"
+        f"  {conditional_assertion}\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "response" in findings[0][1]
+
+
+def test_allows_a_swallowed_response_ternary_when_both_branches_assert(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('request outcome is explicit', async ({ page }) => {\n"
+        "  const response = await page.waitForResponse(() => true).catch(() => null);\n"
+        "  response\n"
+        "    ? expect(response.status()).toBe(200)\n"
+        "    : expect(response).toBeNull();\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_expression_condition_does_not_join_an_unrelated_response(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('independent requests', async ({ page }) => {\n"
+        "  const ignored = page.waitForResponse(() => true).catch(() => null);\n"
+        "  const response = await page.request.get('/health');\n"
+        "  response && expect(response.ok()).toBe(true);\n"
+        "  await ignored;\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_e2e_ast_dataflow_is_isolated_by_typescript_symbol(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('tracked bindings', async ({ page }) => {\n"
+        "  const delay = page.waitForTimeout; await delay(25);\n"
+        "  const shown = await page.locator('button').isVisible();\n"
+        "  if (shown) expect(shown).toBe(true);\n"
+        "  const response = await page.waitForResponse(() => true).catch(() => null);\n"
+        "  response && expect(response.status()).toBe(200);\n"
+        "});\n"
+        "test('ordinary shadowing locals', async ({ page }) => {\n"
+        "  const delay = async () => 25; await delay();\n"
+        "  const shown = process.env.FEATURE_FLAG;\n"
+        "  if (shown) expect(shown).toBe('enabled');\n"
+        "  const response = await page.request.get('/health');\n"
+        "  response && expect(response.ok()).toBe(true);\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 3, findings
+    assert all(line < 8 for line, _message in findings), findings
+
+
+def test_flags_expect_poll_inside_a_visibility_guard(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('polls only when visible', async ({ page }) => {\n"
+        "  const button = page.locator('button');\n"
+        "  if (await button.isVisible()) {\n"
+        "    await expect.poll(() => button.getAttribute('aria-pressed')).toBe('true');\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "expect(" in findings[0][1]
+
+
+def test_flags_expect_poll_conditioned_on_a_swallowed_response(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('polls response only if received', async ({ page }) => {\n"
+        "  const response = await page.waitForResponse(() => true).catch(() => null);\n"
+        "  if (response) {\n"
+        "    await expect.poll(() => response.status()).toBe(200);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "response" in findings[0][1]
+
+
+def test_does_not_join_an_unrelated_swallowed_wait_to_a_conditional_assertion(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('two independent checks', async ({ page }) => {\n"
+        "  const ignored = page.waitForResponse(() => true).catch(() => null);\n"
+        "  const response = await page.request.get('/health');\n"
+        "  if (response) { expect(response.ok()).toBe(true); }\n"
+        "  await ignored;\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_allows_a_documented_idempotent_click_guard(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "async function teardown(page) {\n"
+        "  const deleteButton = page.getByRole('button', { name: 'Delete' });\n"
+        "  if (await deleteButton.isVisible()) { // vacuous-guard-ok: idempotent teardown may find the resource already absent\n"
+        "    await deleteButton.click();\n"
+        "  }\n"
+        "}\n"
     )
 
     assert findings_for(spec) == []
@@ -1600,8 +2132,8 @@ def test_expect_after_the_guard_closes_is_not_pulled_in(tmp_path):
     )
 
     findings = findings_for(spec)
-    assert len(findings) == 1, findings
-    assert findings[0][0] == 7, "should point at the second guard (b), not the first (a)"
+    assert len(findings) == 2, findings
+    assert [finding[0] for finding in findings] == [3, 7]
 
 
 def test_a_commented_out_guard_is_not_flagged(tmp_path):
@@ -2592,6 +3124,29 @@ def test_node_options_in_the_environment_cannot_make_the_checker_execute(tmp_pat
     monkeypatch.setenv("NODE_OPTIONS", node_options)
     assert findings_for(path) == []
     assert not marker.exists(), "NODE_OPTIONS executed code during a parse-only check"
+
+
+def test_node_options_cannot_execute_during_the_e2e_ast_check(tmp_path, monkeypatch):
+    if not _NODE_ON_THIS_MACHINE:
+        pytest.skip("node is not installed; the control below cannot run")
+    marker = tmp_path / "e2e-executed"
+    payload = tmp_path / "e2e-payload.js"
+    payload.write_text("require('fs').writeFileSync(%r, 'x');\n" % str(marker))
+    node_options = f"--require {payload}"
+
+    control = subprocess.run(
+        ["node", "--check", "-"], input="const a = 1;\n", text=True,
+        capture_output=True, env={**os.environ, "NODE_OPTIONS": node_options},
+    )
+    if control.returncode != 0 or not marker.exists():
+        pytest.skip("NODE_OPTIONS --require did not fire on this node; test would prove nothing")
+    marker.unlink()
+
+    spec = _e2e_spec(tmp_path)
+    spec.write_text("test('clean', () => { expect(true).toBe(true); });\n")
+    monkeypatch.setenv("NODE_OPTIONS", node_options)
+    assert findings_for(spec) == []
+    assert not marker.exists(), "NODE_OPTIONS executed code during the E2E AST check"
 
 
 def test_external_script_with_empty_body_is_not_flagged(tmp_path):

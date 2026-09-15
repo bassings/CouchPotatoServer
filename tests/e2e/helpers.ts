@@ -32,6 +32,83 @@ export async function waitForPageReady(page: Page): Promise<void> {
   await expect(page.locator('#main-content')).toBeVisible();
 }
 
+export type MovieActionMock = {
+  requestCount: () => number;
+  outboundRequestCount?: () => number;
+};
+
+/**
+ * Stub a movie action without accepting a request for the wrong media item.
+ *
+ * The expected id comes from the current detail URL. Returning an error for a
+ * wrong or absent id means the UI assertion cannot pass against an over-broad
+ * endpoint stub that would accept any movie.
+ */
+export async function mockMovieAction(
+  page: Page,
+  endpoint: 'movie.refresh' | 'movie.trailer',
+  expectedMovieId: string,
+  body: object,
+): Promise<MovieActionMock> {
+  let requests = 0;
+  await page.route(new RegExp(endpoint.replace('.', '\\.')), route => {
+    const actualMovieId = new URL(route.request().url()).searchParams.get('id');
+    if (actualMovieId !== expectedMovieId) {
+      return route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, error: 'unexpected movie id' }),
+      });
+    }
+    requests += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    });
+  });
+  return { requestCount: () => requests };
+}
+
+/** Stub both halves of trailer playback: the local lookup and YouTube iframe. */
+export async function mockMovieTrailer(
+  page: Page,
+  expectedMovieId: string,
+): Promise<MovieActionMock> {
+  const action = await mockMovieAction(
+    page,
+    'movie.trailer',
+    expectedMovieId,
+    { success: true, video_id: 'e2e-video-id' },
+  );
+  let outboundRequests = 0;
+  await page.route('https://www.youtube.com/**', route => {
+    outboundRequests += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<!doctype html><title>Stub trailer</title>',
+    });
+  });
+  return { ...action, outboundRequestCount: () => outboundRequests };
+}
+
+/**
+ * Keep interaction-only settings tests from mutating the shared E2E server.
+ *
+ * Settings controls autosave after a debounce. Restoring the DOM value is not
+ * a persistence boundary: a slow assertion or command gap can let the first
+ * value reach the real backend before the restore runs. Tests that only verify
+ * browser interaction install this route before loading `/settings/`.
+ */
+export async function mockSettingsSave(page: Page): Promise<void> {
+  await page.route('**/settings.save/**', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true }),
+  }));
+}
+
 /**
  * Stub `/partial/charts` with a representative poster card.
  *
