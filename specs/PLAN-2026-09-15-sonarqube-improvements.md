@@ -251,6 +251,13 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-8:** Replace only the nested conditional reported as
   `python:S3358` with explicit branches; do not change errno fallback,
   logging, exit, or path-redaction behavior.
+- **AC-QA-11:** An iTunes automation regression with more configured URLs than
+  enable flags proves a missing flag disables that URL instead of raising
+  outside the provider's error boundary. Reversing the corrected bounds
+  predicate must fail the test.
+- **AC-OPS-7:** Keep processing enabled iTunes feeds while safely skipping
+  URLs whose enable flag is missing, and remove the redundant always-true XML
+  root check reported as `python:S5727` without changing feed parsing.
 
 ## Implementation sequence
 
@@ -296,6 +303,9 @@ within the authority explicitly granted by the owner.
 - [x] **T10 — make errno fallback explicit** — state: completed.
   Replace the T9-introduced nested conditional without widening the startup
   refactor. Covers AC-QA-10, AC-SEC-7, AC-SIMP-8.
+- [x] **T11 — bound iTunes automation configuration** — state: completed.
+  Treat a missing per-URL enable flag as disabled, retain enabled-feed parsing,
+  and remove the redundant parsed-root condition. Covers AC-QA-11, AC-OPS-7.
 
 All tasks also cover AC-SIMP-3..4 and AC-QA-6.
 
@@ -471,5 +481,25 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   descendant, and an independently applied wrapped mutation fails it.
   Security, QA, and operability re-reviews are clean. The full release gate
   passed 4,264 Python unit tests, 42 integration tests, 214 UI unit tests, 176
+  Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
+  checks.
+- 2026-09-17: PR #369 merged as `53d52ef646c2f84c30cdf29010507f93d2aa4e9b`.
+  The exact-version and exact-revision Sonar analysis closed T10's `S3358`
+  issue with no replacement finding: code smells fell from 1,082 to 1,081,
+  open issues from 1,097 to 1,096, and the informational gate returned to OK.
+  Coverage remains 56.8%, bugs 15, duplication 1.8%, and vulnerabilities and
+  hotspots zero. The remaining `S5863` bcrypt test finding is adjudicated as a
+  real salted-hash assertion, not a tautology. T11 starts from the genuine
+  off-by-one configuration failure found while reviewing the critical
+  `S5727` iTunes automation finding.
+- 2026-09-17: T11 completed locally. A red regression reproduced the
+  out-of-range enable-flag access before the provider's exception boundary;
+  the corrected inclusive bound now treats missing flags as disabled while a
+  real enabled XML feed still reaches search and returns its IMDb id. Reversing
+  `>=` to `>` failed at the original access, killing the targeted mutation.
+  The redundant parsed-root condition is removed because `fromstring` returns
+  a root or raises into the existing per-feed handler. Security/privacy, QA,
+  and product/operability reviews are clean. The full release gate passed
+  4,265 Python unit tests, 42 integration tests, 214 UI unit tests, 176
   Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
   checks.

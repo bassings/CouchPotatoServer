@@ -28,11 +28,8 @@ class ITunes(Automation, RSS):
         namespace = 'http://www.w3.org/2005/Atom'
         namespace_im = 'http://itunes.apple.com/rss'
 
-        index = -1
-        for url in urls:
-
-            index += 1
-            if len(enablers) == 0 or len(enablers) < index or not enablers[index]:
+        for index, url in enumerate(urls):
+            if index >= len(enablers) or not enablers[index]:
                 continue
 
             try:
@@ -41,22 +38,21 @@ class ITunes(Automation, RSS):
 
                 data = XMLTree.fromstring(rss_data)
 
-                if data is not None:
-                    entry_tag = str(QName(namespace, 'entry'))
-                    rss_movies = self.getElements(data, entry_tag)
+                entry_tag = str(QName(namespace, 'entry'))
+                rss_movies = self.getElements(data, entry_tag)
 
-                    for movie in rss_movies:
-                        name_tag = str(QName(namespace_im, 'name'))
-                        name = self.getTextElement(movie, name_tag)
+                for movie in rss_movies:
+                    name_tag = str(QName(namespace_im, 'name'))
+                    name = self.getTextElement(movie, name_tag)
 
-                        releaseDate_tag = str(QName(namespace_im, 'releaseDate'))
-                        releaseDateText = self.getTextElement(movie, releaseDate_tag)
-                        year = datetime.datetime.strptime(releaseDateText, '%Y-%m-%dT00:00:00-07:00').strftime("%Y")
+                    releaseDate_tag = str(QName(namespace_im, 'releaseDate'))
+                    releaseDateText = self.getTextElement(movie, releaseDate_tag)
+                    year = datetime.datetime.strptime(releaseDateText, '%Y-%m-%dT00:00:00-07:00').strftime("%Y")
 
-                        imdb = self.search(name, year)
+                    imdb = self.search(name, year)
 
-                        if imdb and self.isMinimalMovie(imdb):
-                            movies.append(imdb['imdb'])
+                    if imdb and self.isMinimalMovie(imdb):
+                        movies.append(imdb['imdb'])
 
             except Exception:
                 log.error('Failed loading iTunes rss feed: %s %s', url, traceback.format_exc())
