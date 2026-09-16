@@ -465,3 +465,65 @@ def test_userscript_real_parsers_keep_title_and_year(malformed):
         return_value={"name": "Film Name", "year": 2025},
     ):
         assert filmweb.getMovie("unused") == ("Film Name", 2025)
+
+
+def test_filmweb_missing_title_metadata_skips_search():
+    from couchpotato.core.media.movie.providers.userscript.filmweb import Filmweb
+
+    search = Mock()
+    provider = _bare_provider(
+        Filmweb,
+        urlopen="<html><head></head><body></body></html>",
+        search=search,
+    )
+
+    with patch(
+        "couchpotato.core.media.movie.providers.userscript.filmweb.fireEvent"
+    ) as parse_name_year:
+        assert provider.getMovie("unused") is None
+
+    parse_name_year.assert_not_called()
+    search.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "html",
+    [
+        "<html><body></body></html>",
+        """<html><head></head><body>
+        <section class="section ovw ovw-synopsis" id="synopsis-details">
+        <span>Produktionsjahr</span><span>2025</span></section></body></html>""",
+        """<html><head><meta property="og:title" content="Fallback"></head><body>
+        <section class="section ovw ovw-synopsis" id="synopsis-details">
+        </section></body></html>""",
+    ],
+    ids=["missing-synopsis", "missing-title", "missing-year"],
+)
+def test_filmstarts_missing_required_metadata_skips_search(html):
+    from couchpotato.core.media.movie.providers.userscript.filmstarts import Filmstarts
+
+    search = Mock()
+    provider = _bare_provider(Filmstarts, getUrl=html, search=search)
+
+    assert provider.getMovie("unused") is None
+    search.assert_not_called()
+
+
+def test_awesomehd_missing_authkey_skips_results_with_actionable_error():
+    from couchpotato.core.media._base.providers.torrent.awesomehd import Base as AwesomeHD
+
+    provider = _bare_provider(
+        AwesomeHD,
+        getHTMLData="<html><body><torrent><id>202</id></torrent></body></html>",
+        conf=lambda key: {"passkey": "pass", "only_internal": False}.get(key),
+        getName="Awesome-HD",
+    )
+    results = []
+
+    with patch("couchpotato.core.media._base.providers.torrent.awesomehd.log") as logger:
+        provider._search({"identifier": "tt1"}, {}, results)
+
+    assert results == []
+    logger.error.assert_called_once_with(
+        "Awesome-HD response did not include an auth key; skipping results."
+    )

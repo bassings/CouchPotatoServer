@@ -37,7 +37,12 @@ class Base(TorrentProvider):
                     log.info(soup.find('error').get_text())
                     return
 
-                authkey = soup.find('authkey').get_text()
+                authkey_element = soup.find('authkey')
+                if not authkey_element:
+                    log.error('Awesome-HD response did not include an auth key; skipping results.')
+                    return
+
+                authkey = authkey_element.get_text()
                 entries = soup.find_all('torrent')
 
                 for entry in entries:
@@ -152,4 +157,3 @@ config = [{
         },
     ],
 }]
-
