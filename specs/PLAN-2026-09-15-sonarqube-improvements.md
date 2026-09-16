@@ -245,6 +245,12 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-7:** Close the `python:S3776` issue introduced when T8 made the
   entry point testable, without moving excessive complexity into another
   helper or weakening the privacy-safe error boundary.
+- **AC-QA-10:** A focused AST regression rejects nested conditional
+  expressions in the path-safe startup-error helper and fails against the
+  exact compact expression reported by SonarQube.
+- **AC-SIMP-8:** Replace only the nested conditional reported as
+  `python:S3358` with explicit branches; do not change errno fallback,
+  logging, exit, or path-redaction behavior.
 
 ## Implementation sequence
 
@@ -287,6 +293,9 @@ within the authority explicitly granted by the owner.
   Extract the now-reachable `OSError` policy into small helpers, use the shared
   path-safe formatter, and replace the numeric EINTR sentinel.
   Covers AC-OPS-6, AC-QA-9, AC-SEC-7, AC-SIMP-7.
+- [x] **T10 — make errno fallback explicit** — state: completed.
+  Replace the T9-introduced nested conditional without widening the startup
+  refactor. Covers AC-QA-10, AC-SEC-7, AC-SIMP-8.
 
 All tasks also cover AC-SIMP-3..4 and AC-QA-6.
 
@@ -449,3 +458,18 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   and operability re-reviews are clean. The full release gate passed 4,263
   Python unit tests, 42 integration tests, 214 UI unit tests, 176 Chromium
   flows, 2 isolation checks, 10 mobile checks, and 96 accessibility checks.
+- 2026-09-17: PR #368 merged as `62cf23aab13ae16933f22be160eaf05ad0d4e11a`.
+  The exact-version and exact-revision Sonar analysis closed T9's `S3776`
+  issue, but reported the nested errno conditional as new `python:S3358`.
+  Code smells therefore remained 1,082 and the informational gate remained
+  red with one new issue. T10 starts from that exact replacement finding.
+- 2026-09-17: T10 completed locally. The AST regression was red against the
+  exact nested errno conditional reported by SonarQube, then explicit
+  `if`/`elif`/`else` branches restored green without changing the startup
+  policy. QA review found the first guard inspected only direct children and
+  could miss a wrapped nested conditional; the guard now walks every
+  descendant, and an independently applied wrapped mutation fails it.
+  Security, QA, and operability re-reviews are clean. The full release gate
+  passed 4,264 Python unit tests, 42 integration tests, 214 UI unit tests, 176
+  Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
+  checks.

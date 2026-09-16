@@ -141,7 +141,12 @@ class Loader:
 
 def _path_safe_oserror(error):
     try:
-        number = error.errno if hasattr(error, 'errno') else (error.args[0] if error.args else 0)
+        if hasattr(error, 'errno'):
+            number = error.errno
+        elif error.args:
+            number = error.args[0]
+        else:
+            number = 0
     except (AttributeError, IndexError):
         number = 0
 
