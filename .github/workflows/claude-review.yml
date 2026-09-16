@@ -71,7 +71,7 @@ jobs:
         # block every merge in the repository with no warning and no change
         # here. That is the real reason for the pin rather than this one
         # regression. Bump it deliberately, when someone can watch the run.
-        uses: anthropics/claude-code-action@v1.0.223
+        uses: anthropics/claude-code-action@v1.0.225
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Keep one updating summary comment per PR (visible verdict even when
