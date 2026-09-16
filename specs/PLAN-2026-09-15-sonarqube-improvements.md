@@ -223,9 +223,8 @@ Each item is an independent review unit. External delivery is not implied by
 this checklist; commits, pushes, PRs, and SonarQube state changes occur only
 within the authority explicitly granted by the owner.
 
-- [x] **T1 — truthful scan completion and versioning** — state: merged #354
-  (implementation and local review clean; AC-PROD-1 awaits a post-commit clean
-  master scan). Add
+- [x] **T1 — truthful scan completion and versioning** — state: merged #354.
+  Added
   clean-master/stable-HEAD preflight, full-SHA project versioning, CE completion
   polling, atomic freshness stamping, dirty-tree staleness reporting, and
   credential-boundary regression tests. Covers AC-OPS-1..4, AC-SEC-1..3,
@@ -247,8 +246,8 @@ within the authority explicitly granted by the owner.
   *(needs: T1)* — state: completed. After a fresh successful scan and rendered
   proof, change only the exact `Web:S5254` issue and verify the transition.
   Covers AC-A11Y-4..5, AC-SEC-5.
-- [ ] **T7 — explicit Windows hidden-attribute failure handling** — state:
-  building. Replace the assertion used as control flow in the file browser,
+- [x] **T7 — explicit Windows hidden-attribute failure handling** — state:
+  completed. Replaced the assertion used as control flow in the file browser,
   with a regression test that executes the real method under `python -O`.
   Covers AC-QA-7, AC-SEC-6, AC-SIMP-5.
 
@@ -376,3 +375,10 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   verification reviews are clean. The full gate passed 4,233 Python unit, 42
   integration, 214 UI unit, 176 Chromium, 2 isolation, 10 mobile, and 96
   accessibility tests. T7 is locally healthy for delivery.
+- 2026-09-16: PR review found two completed task blocks that still described
+  work as building or awaiting validation. The recurrence is now guarded by a
+  structural plan-status test: its red run identified the stale T1 block;
+  synthetic cases cover both checkbox/state mismatch directions, lifecycle
+  prose outside the state field, and malformed task lines hidden among valid
+  ones. The repaired plan plus T7 regression suite passes 32 tests with Ruff
+  and diff hygiene clean.
