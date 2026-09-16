@@ -217,6 +217,21 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-5:** Replace assertion-based control flow with one explicit
   sentinel check; do not refactor directory enumeration or Windows imports.
 
+### Startup OSError handling
+
+- **AC-OPS-5:** The process entry point treats `OSError(errno.EINTR, ...)` as
+  an interrupted shutdown, while any other `OSError` is logged when a loader
+  exists and re-raised so startup cannot fail silently.
+- **AC-QA-8:** Focused tests execute the entry-point control flow with a fake
+  loader and prove both the EINTR and non-EINTR branches. A mutation that
+  restores the broad early `except OSError: pass` must fail the non-EINTR test.
+- **AC-SEC-7:** A non-EINTR `OSError` is surfaced without copying its filename
+  or traceback into the unfiltered startup error handler or the final raised
+  exception. Tests use a private media-path sentinel and capture real logging.
+- **AC-SIMP-6:** Keep one `OSError` handler and preserve the existing
+  `KeyboardInterrupt`, `SystemExit`, and generic-exception behavior; do not
+  change loader initialization, daemonization, or restart behavior.
+
 ## Implementation sequence
 
 Each item is an independent review unit. External delivery is not implied by
@@ -250,6 +265,10 @@ within the authority explicitly granted by the owner.
   completed. Replaced the assertion used as control flow in the file browser,
   with a regression test that executes the real method under `python -O`.
   Covers AC-QA-7, AC-SEC-6, AC-SIMP-5.
+- [x] **T8 — make startup OSError handling reachable** — state: completed.
+  Remove the shadowing broad handler through a testable entry-point boundary,
+  retaining EINTR shutdown semantics and surfacing every other OS failure.
+  Covers AC-OPS-5, AC-QA-8, AC-SEC-7, AC-SIMP-6.
 
 All tasks also cover AC-SIMP-3..4 and AC-QA-6.
 
@@ -382,3 +401,17 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   prose outside the state field, and malformed task lines hidden among valid
   ones. The repaired plan plus T7 regression suite passes 32 tests with Ruff
   and diff hygiene clean.
+- 2026-09-16: PR #366 merged as `38a7236f99c339a8651f609f82a1cff6b71cbb2f`.
+  The exact-revision Sonar analysis closed the targeted browser `S5779` issue,
+  reducing bugs from 17 to 16 and open issues from 1,098 to 1,097; coverage
+  remains 56.8%, duplication 1.8%, and the gate is OK. T8 starts from the
+  reachable startup error-handling defect identified by `python:S1045`.
+- 2026-09-16: T8 completed locally. The red test first proved that the script
+  boundary was not callable; focused tests then cover EINTR, non-EINTR,
+  `KeyboardInterrupt`, `SystemExit`, and generic exceptions. Restoring the
+  shadowing broad `except OSError: pass` kills the non-EINTR regression test.
+  Security review found and drove removal of both the original filename and
+  the implicit `exc_info` traceback from the real logger path; security, QA,
+  and operability lenses are clean. The full release gate passed 4,261 Python
+  unit tests, 42 integration tests, 214 UI unit tests, 176 Chromium flows, 2
+  isolation checks, 10 mobile checks, and 96 accessibility checks.
