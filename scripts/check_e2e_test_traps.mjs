@@ -3,7 +3,7 @@
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import * as ts from 'typescript';
+import * as ts from '@typescript/typescript6';
 
 const filename = process.argv[2] || 'tests/e2e/input.spec.ts';
 const sourceText = fs.readFileSync(0, 'utf8');
@@ -15,14 +15,20 @@ const parsedSource = ts.createSourceFile(
   filename.endsWith('.js') ? ts.ScriptKind.JS : ts.ScriptKind.TS,
 );
 const compilerOptions = { noLib: true, noResolve: true, allowJs: true };
+let unexpectedHostReads = 0;
+function isInputFile(requested) {
+  if (requested === filename) return true;
+  unexpectedHostReads += 1;
+  return false;
+}
 const compilerHost = {
-  getSourceFile: requested => requested === filename ? parsedSource : undefined,
+  getSourceFile: requested => isInputFile(requested) ? parsedSource : undefined,
   getDefaultLibFileName: () => 'lib.d.ts',
   writeFile: () => {},
   getCurrentDirectory: () => '',
   getDirectories: () => [],
   fileExists: requested => requested === filename,
-  readFile: requested => requested === filename ? sourceText : undefined,
+  readFile: requested => isInputFile(requested) ? sourceText : undefined,
   getCanonicalFileName: name => name,
   useCaseSensitiveFileNames: () => true,
   getNewLine: () => '\n',
@@ -429,4 +435,10 @@ function visit(node) {
 }
 visit(source);
 
-process.stdout.write(JSON.stringify({ waits, findings, parseErrors: source.parseDiagnostics.length }));
+process.stdout.write(JSON.stringify({
+  waits,
+  findings,
+  parseErrors: source.parseDiagnostics.length,
+  sourceFileCount: program.getSourceFiles().length,
+  unexpectedHostReads,
+}));

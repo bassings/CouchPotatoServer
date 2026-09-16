@@ -100,8 +100,11 @@ step "1/7 ruff lint"
 
 # ── 2. False-green guard ────────────────────────────────────────────────────
 step "2/7 test-trap check"
-if [[ ! -d node_modules/typescript ]]; then
-  echo "TypeScript AST guard dependency missing — running npm ci..."
+if [[ ! -d node_modules/@typescript/native ||
+      ! -d node_modules/@typescript/typescript6 ||
+      ! -x node_modules/.bin/tsc ||
+      ! -x node_modules/.bin/tsc6 ]]; then
+  echo "TypeScript 7 compiler or TypeScript 6 AST compatibility API missing — running npm ci..."
   npm ci
 fi
 "$PYTHON" scripts/check_test_traps.py --require-git || fail "test-trap check found issues"

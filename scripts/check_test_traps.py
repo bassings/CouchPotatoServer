@@ -1087,12 +1087,28 @@ def check_e2e_ast_traps(path: Path, text: str):
         yield (1, "TypeScript AST guard failed to run: %s" % exc)
         return
     if not isinstance(payload, dict):
-        detail = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "no JSON output"
+        stderr_lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+        useful_lines = [
+            line for line in stderr_lines
+            if not line.startswith("Node.js v") and not line.startswith("at ")
+        ]
+        detail = next(
+            (line for line in useful_lines if "Error" in line),
+            useful_lines[0] if useful_lines else "no JSON output",
+        )
         yield (1, "TypeScript AST guard failed to run: %s" % detail)
         return
     if payload.get("parseErrors"):
         yield (1, "TypeScript AST guard found %d parse error(s); refusing to scan a partial tree."
                % payload["parseErrors"])
+        return
+    if payload.get("sourceFileCount") != 1 or payload.get("unexpectedHostReads") != 0:
+        yield (
+            1,
+            "TypeScript AST guard escaped its stdin-only boundary: loaded %s source files "
+            "and attempted %s unexpected host read(s)."
+            % (payload.get("sourceFileCount"), payload.get("unexpectedHostReads")),
+        )
         return
 
     try:

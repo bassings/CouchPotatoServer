@@ -1083,6 +1083,9 @@ def test_typescript_ast_dependency_is_installed_before_the_trap_gate():
     )
 
     verify = (REPO_ROOT / "scripts/verify.sh").read_text(encoding="utf-8")
+    assert "node_modules/@typescript/native" in verify
+    assert "node_modules/@typescript/typescript6" in verify
+    assert "node_modules/.bin/tsc6" in verify
     assert verify.index("npm ci") < verify.index(
         '"$PYTHON" scripts/check_test_traps.py --require-git'
     )
@@ -1102,6 +1105,124 @@ def test_typescript_ast_dependency_is_installed_before_the_trap_gate():
     assert local.index("npm ci --ignore-scripts") < local.index(
         "pytest -v --tb=short tests/unit/"
     )
+
+
+def test_typescript_7_and_compatibility_api_are_exact_explicit_dependencies():
+    package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
+    dependencies = package["devDependencies"]
+
+    assert dependencies.get("@typescript/native") == "npm:typescript@7.0.2"
+    assert dependencies.get("@typescript/typescript6") == "6.0.2"
+    assert "typescript" not in dependencies
+
+    lock = json.loads((REPO_ROOT / "package-lock.json").read_text(encoding="utf-8"))
+    root_dependencies = lock["packages"][""]["devDependencies"]
+    assert root_dependencies.get("@typescript/native") == "npm:typescript@7.0.2"
+    assert root_dependencies.get("@typescript/typescript6") == "6.0.2"
+    assert "typescript" not in root_dependencies
+
+    compat_api = lock["packages"]["node_modules/@typescript/old"]
+    assert compat_api["version"] == "6.0.3"
+    assert compat_api["resolved"].startswith("https://registry.npmjs.org/typescript/")
+    assert compat_api["integrity"].startswith("sha512-")
+
+    platform_packages = {
+        name: details
+        for name, details in lock["packages"].items()
+        if name.startswith("node_modules/@typescript/typescript-")
+    }
+    assert len(platform_packages) == 20
+    for name, details in platform_packages.items():
+        assert details["version"] == "7.0.2", name
+        assert details["resolved"].startswith("https://registry.npmjs.org/@typescript/"), name
+        assert details["integrity"].startswith("sha512-"), name
+
+
+@requires_node
+def test_typescript_packages_have_microsoft_provenance_and_no_lifecycle_scripts():
+    package_paths = [
+        REPO_ROOT / "node_modules" / "@typescript" / "native" / "package.json",
+        REPO_ROOT / "node_modules" / "@typescript" / "typescript6" / "package.json",
+        REPO_ROOT / "node_modules" / "@typescript" / "old" / "package.json",
+    ]
+    package_paths.extend(
+        path
+        for path in (REPO_ROOT / "node_modules" / "@typescript").glob(
+            "typescript-*/package.json"
+        )
+        if path.parent.name != "typescript6"
+    )
+    assert len(package_paths) >= 4, "the selected native platform package is absent"
+    lifecycle = {"preinstall", "install", "postinstall"}
+    for path in package_paths:
+        package = json.loads(path.read_text(encoding="utf-8"))
+        repository = package.get("repository") or {}
+        repository_url = repository.get("url", "") if isinstance(repository, dict) else repository
+        assert repository_url == "https://github.com/microsoft/TypeScript.git", path
+        assert lifecycle.isdisjoint((package.get("scripts") or {}).keys()), path
+
+
+@requires_node
+def test_typescript_native_compiler_and_compatibility_api_contract(tmp_path):
+    bin_dir = REPO_ROOT / "node_modules" / ".bin"
+    tsc = bin_dir / "tsc"
+    tsc6 = bin_dir / "tsc6"
+    assert tsc.exists(), "locked install did not provide the TypeScript 7 compiler"
+    assert tsc6.exists(), "locked install did not provide the TypeScript 6 compatibility compiler"
+
+    native_version = subprocess.run(
+        [str(tsc), "--version"], capture_output=True, text=True, cwd=REPO_ROOT, check=True
+    ).stdout.strip()
+    compat_version = subprocess.run(
+        [str(tsc6), "--version"], capture_output=True, text=True, cwd=REPO_ROOT, check=True
+    ).stdout.strip()
+    assert native_version == "Version 7.0.2"
+    assert compat_version == "Version 6.0.3"
+
+    api = subprocess.run(
+        ["node", "--input-type=module"],
+        input=(
+            "import * as ts from '@typescript/typescript6';\n"
+            "const source = ts.createSourceFile('fixture.ts', 'const n: number = 1', "
+            "ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);\n"
+            "const program = ts.createProgram([], {noLib: true, noResolve: true});\n"
+            "console.log(JSON.stringify({version: ts.version, source: !!source, "
+            "checker: typeof program.getTypeChecker, createProgram: typeof ts.createProgram, "
+            "isIdentifier: typeof ts.isIdentifier}));\n"
+        ),
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    contract = json.loads(api.stdout)
+    assert contract == {
+        "version": "6.0.3",
+        "source": True,
+        "checker": "function",
+        "createProgram": "function",
+        "isIdentifier": "function",
+    }
+
+    valid = tmp_path / "valid.ts"
+    invalid = tmp_path / "invalid.ts"
+    valid.write_text("const answer: number = 42;\n", encoding="utf-8")
+    invalid.write_text("const answer: number = 'wrong';\n", encoding="utf-8")
+    valid_result = subprocess.run(
+        [str(tsc), "--noEmit", "--strict", str(valid)],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+    )
+    invalid_result = subprocess.run(
+        [str(tsc), "--noEmit", "--strict", str(invalid)],
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+    )
+    assert valid_result.returncode == 0, valid_result.stdout + valid_result.stderr
+    assert invalid_result.returncode != 0
+    assert "not assignable to type" in invalid_result.stdout + invalid_result.stderr
 
 
 def test_flags_a_new_unexplained_wait_for_timeout(tmp_path):
@@ -1997,6 +2118,68 @@ def test_e2e_ast_dataflow_is_isolated_by_typescript_symbol(tmp_path):
     findings = findings_for(spec)
     assert len(findings) == 3, findings
     assert all(line < 8 for line, _message in findings), findings
+
+
+def test_e2e_ast_helper_does_not_resolve_or_parse_an_adjacent_import(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    sentinel = spec.parent / "must-not-be-read.ts"
+    sentinel.write_text("const = this is deliberately invalid TypeScript;\n")
+    spec.write_text(
+        "import './must-not-be-read';\n"
+        "test('ordinary assertion', async () => { expect(true).toBe(true); });\n"
+    )
+
+    payload = e2e_ast_payload(spec)
+    assert payload["sourceFileCount"] == 1
+    assert payload["unexpectedHostReads"] == 0
+    assert findings_for(spec) == []
+
+
+@pytest.mark.parametrize(
+    "boundary_fields",
+    [
+        {"sourceFileCount": 2, "unexpectedHostReads": 0},
+        {"sourceFileCount": 1, "unexpectedHostReads": 1},
+        {"unexpectedHostReads": 0},
+        {"sourceFileCount": 1},
+    ],
+)
+def test_e2e_ast_check_fails_closed_if_the_stdin_only_boundary_is_crossed(
+    tmp_path, monkeypatch, boundary_fields
+):
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(
+        check_test_traps.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            a,
+            0,
+            stdout=json.dumps(
+                {"waits": [], "findings": [], "parseErrors": 0, **boundary_fields}
+            ),
+            stderr="",
+        ),
+    )
+    spec = _e2e_spec(tmp_path)
+    spec.write_text("test('ordinary assertion', async () => { expect(true).toBe(true); });\n")
+
+    findings = findings_for(spec)
+
+    assert len(findings) == 1, findings
+    assert "stdin-only boundary" in findings[0][1]
+
+
+def test_e2e_ast_helper_parses_but_never_executes_the_inspected_source(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    marker = tmp_path / "executed-by-ast-helper"
+    spec.write_text(
+        "import { writeFileSync } from 'node:fs';\n"
+        f"writeFileSync({json.dumps(str(marker))}, 'unsafe');\n"
+        "test('ordinary assertion', async () => { expect(true).toBe(true); });\n"
+    )
+
+    assert findings_for(spec) == []
+    assert not marker.exists(), "the E2E AST helper executed inspected test code"
 
 
 def test_flags_expect_poll_inside_a_visibility_guard(tmp_path):
@@ -3320,6 +3503,34 @@ def test_unrelated_parser_failure_is_reported_as_could_not_run(tmp_path, monkeyp
     message = findings[0][1]
     assert "could not run" in message
     assert "SyntaxError" not in message
+
+
+def test_e2e_ast_failure_preserves_the_actionable_exception_not_node_version(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(
+        check_test_traps.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            a,
+            1,
+            stdout="",
+            stderr=(
+                "TypeError: Cannot read properties of undefined (reading 'Latest')\n"
+                "    at check_e2e_test_traps.mjs:10:19\n"
+                "Node.js v24.20.0\n"
+            ),
+        ),
+    )
+    spec = _e2e_spec(tmp_path)
+    spec.write_text("test('example', async () => { expect(true).toBe(true); });\n")
+
+    findings = findings_for(spec)
+
+    assert len(findings) == 1, findings
+    assert "Cannot read properties of undefined" in findings[0][1]
+    assert not findings[0][1].endswith("Node.js v24.20.0")
 
 
 def test_a_killed_parser_is_reported_as_could_not_run(tmp_path, monkeypatch):
