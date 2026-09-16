@@ -2132,6 +2132,19 @@ def test_e2e_ast_helper_does_not_resolve_or_parse_an_adjacent_import(tmp_path):
     assert findings_for(spec) == []
 
 
+def test_e2e_ast_helper_parses_but_never_executes_the_inspected_source(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    marker = tmp_path / "executed-by-ast-helper"
+    spec.write_text(
+        "import { writeFileSync } from 'node:fs';\n"
+        f"writeFileSync({json.dumps(str(marker))}, 'unsafe');\n"
+        "test('ordinary assertion', async () => { expect(true).toBe(true); });\n"
+    )
+
+    assert findings_for(spec) == []
+    assert not marker.exists(), "the E2E AST helper executed inspected test code"
+
+
 def test_flags_expect_poll_inside_a_visibility_guard(tmp_path):
     spec = _e2e_spec(tmp_path)
     spec.write_text(
