@@ -2129,7 +2129,41 @@ def test_e2e_ast_helper_does_not_resolve_or_parse_an_adjacent_import(tmp_path):
         "test('ordinary assertion', async () => { expect(true).toBe(true); });\n"
     )
 
+    payload = e2e_ast_payload(spec)
+    assert payload["sourceFileCount"] == 1
+    assert payload["unexpectedHostReads"] == 0
     assert findings_for(spec) == []
+
+
+def test_e2e_ast_check_fails_closed_if_more_than_the_stdin_source_is_loaded(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(
+        check_test_traps.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            a,
+            0,
+            stdout=json.dumps(
+                {
+                    "waits": [],
+                    "findings": [],
+                    "parseErrors": 0,
+                    "sourceFileCount": 2,
+                    "unexpectedHostReads": 1,
+                }
+            ),
+            stderr="",
+        ),
+    )
+    spec = _e2e_spec(tmp_path)
+    spec.write_text("test('ordinary assertion', async () => { expect(true).toBe(true); });\n")
+
+    findings = findings_for(spec)
+
+    assert len(findings) == 1, findings
+    assert "loaded 2 source files" in findings[0][1]
 
 
 def test_e2e_ast_helper_parses_but_never_executes_the_inspected_source(tmp_path):

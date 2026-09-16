@@ -1102,6 +1102,14 @@ def check_e2e_ast_traps(path: Path, text: str):
         yield (1, "TypeScript AST guard found %d parse error(s); refusing to scan a partial tree."
                % payload["parseErrors"])
         return
+    if payload.get("sourceFileCount") != 1 or payload.get("unexpectedHostReads") != 0:
+        yield (
+            1,
+            "TypeScript AST guard escaped its stdin-only boundary: loaded %s source files "
+            "and attempted %s unexpected host read(s)."
+            % (payload.get("sourceFileCount"), payload.get("unexpectedHostReads")),
+        )
+        return
 
     try:
         relative = path.resolve().relative_to(REPO_ROOT).as_posix()
