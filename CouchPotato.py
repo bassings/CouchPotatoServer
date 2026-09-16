@@ -138,15 +138,13 @@ class Loader:
         return self.options.daemon and self.options.pid_file
 
 
-if __name__ == '__main__':
+def main(loader_factory=Loader):
     l = None
     try:
-        l = Loader()
+        l = loader_factory()
         l.daemonize()
         l.run()
     except KeyboardInterrupt:
-        pass
-    except OSError:
         pass
     except SystemExit:
         raise
@@ -164,10 +162,14 @@ if __name__ == '__main__':
 
         if nr != 4:
             try:
-                l.log.critical(traceback.format_exc())
+                safe_error = OSError(nr, os.strerror(nr))
+            except (TypeError, ValueError):
+                safe_error = OSError(nr, 'Operating system error')
+            try:
+                l.log.critical('%s', safe_error, exc_info=False)
             except Exception:
-                print(traceback.format_exc())
-            raise
+                print(str(safe_error), file=sys.stderr)
+            raise safe_error from None
     except Exception:
         try:
             # if this fails we will have two tracebacks
@@ -179,3 +181,7 @@ if __name__ == '__main__':
         except Exception:
             print(traceback.format_exc())
         raise
+
+
+if __name__ == '__main__':
+    main()

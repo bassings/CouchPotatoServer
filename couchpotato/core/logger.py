@@ -401,7 +401,8 @@ class CPLog:
         self._log(logging.ERROR, msg, *args, **kwargs)
 
     def critical(self, msg, *args, **kwargs):
-        self._log(logging.CRITICAL, msg, *args, exc_info=True, **kwargs)
+        kwargs.setdefault('exc_info', True)
+        self._log(logging.CRITICAL, msg, *args, **kwargs)
 
 
 def setup_logging(log_path=None, debug=False, console=True, encoding='utf-8'):
