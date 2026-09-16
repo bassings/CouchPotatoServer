@@ -8,8 +8,13 @@ Python 3 port. It was sitting on a live defect the whole time: see
 """
 #import sys
 import os
+import pathlib
 import shutil
+import subprocess
+import sys
 import tempfile
+import textwrap
+from types import SimpleNamespace
 
 from unittest import mock
 import unittest
@@ -28,6 +33,53 @@ from couchpotato.core.softchroot import SoftChroot
 # os.listdir on it: a unit test whose duration and contents depend on whatever
 # the developer's machine has in /tmp. The assertions here are all about
 # chroot-relative paths, so nothing needs the real one.
+
+
+@pytest.mark.parametrize(('attributes', 'expected'), [
+    (-1, False),
+    (0, False),
+    (2, True),
+    (3, True),
+])
+def test_windows_hidden_attribute_bit_is_interpreted_explicitly(attributes, expected):
+    kernel32 = SimpleNamespace(GetFileAttributesW=mock.Mock(return_value=attributes))
+    windll = SimpleNamespace(kernel32=kernel32)
+
+    with mock.patch('couchpotato.core.plugins.browser.ctypes.windll', windll, create=True):
+        browser = FileBrowser.__new__(FileBrowser)
+        assert browser.has_hidden_attribute('C:\\Media\\movie.mkv') is expected
+
+
+def test_failed_windows_attribute_lookup_is_not_hidden_under_optimized_python():
+    """The Win32 failure sentinel must not depend on an enabled assertion."""
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env['PYTHONPATH'] = os.pathsep.join(
+        [str(repo_root), str(repo_root / 'libs'), env.get('PYTHONPATH', '')]
+    )
+    program = textwrap.dedent(
+        """
+        from types import SimpleNamespace
+        import couchpotato.core.plugins.browser as browser
+
+        browser.ctypes.windll = SimpleNamespace(
+            kernel32=SimpleNamespace(GetFileAttributesW=lambda _path: -1)
+        )
+        instance = browser.FileBrowser.__new__(browser.FileBrowser)
+        raise SystemExit(0 if instance.has_hidden_attribute(r'C:\\Missing') is False else 1)
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, '-O', '-c', program],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 def test_view_returns_chroot_relative_directories_as_a_list(tmp_path):

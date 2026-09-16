@@ -205,36 +205,52 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   prescribed Python, UI-unit, Chromium, and accessibility verification before
   it is eligible for delivery.
 
+### Windows hidden-attribute failure semantics
+
+- **AC-QA-7:** A Windows `GetFileAttributesW` failure sentinel (`-1`) is
+  treated as "not hidden" under both normal and optimized (`python -O`)
+  execution. Tests also retain the ordinary hidden-bit and non-hidden cases.
+- **AC-SEC-6:** The file-browser result must not depend on an `assert`, because
+  optimized Python removes assertions and would otherwise classify a failed
+  lookup as hidden. The repair remains local to attribute interpretation and
+  does not expose the requested path or change traversal handling.
+- **AC-SIMP-5:** Replace assertion-based control flow with one explicit
+  sentinel check; do not refactor directory enumeration or Windows imports.
+
 ## Implementation sequence
 
 Each item is an independent review unit. External delivery is not implied by
 this checklist; commits, pushes, PRs, and SonarQube state changes occur only
 within the authority explicitly granted by the owner.
 
-- [ ] **T1 — truthful scan completion and versioning** — state: awaiting-ci #354
+- [x] **T1 — truthful scan completion and versioning** — state: merged #354
   (implementation and local review clean; AC-PROD-1 awaits a post-commit clean
   master scan). Add
   clean-master/stable-HEAD preflight, full-SHA project versioning, CE completion
   polling, atomic freshness stamping, dirty-tree staleness reporting, and
   credential-boundary regression tests. Covers AC-OPS-1..4, AC-SEC-1..3,
   AC-QA-1, AC-PROD-1.
-- [ ] **T2 — narrow synchronization repair** — state: awaiting-ci #354. Replaced the one
+- [x] **T2 — narrow synchronization repair** — state: merged #354. Replaced the one
   unexplained reflow wait and two redundant `networkidle` waits with observable
   conditions. Covers AC-DESIGN-1..2, AC-A11Y-1..3.
-- [ ] **T3 — recurring E2E false-green mechanisms** — state: awaiting-ci #354. Enforced
+- [x] **T3 — recurring E2E false-green mechanisms** — state: merged #354. Enforced
   syntax-aware fixed-wait exemptions and conditional-body detection, then
   repaired or removed the exposed vacuous tests.
   Covers AC-QA-2..3 and AC-A11Y-2..3.
-- [ ] **T4 — bind media callback types** — state: awaiting-ci #354. Added the two-type
+- [x] **T4 — bind media callback types** — state: merged #354. Added the two-type
   regression test and a small shared route binder. Covers AC-QA-4, AC-SIMP-1.
-- [ ] **T5 — deterministic provider parsing** — state: awaiting-ci #354. Added the AST
+- [x] **T5 — deterministic provider parsing** — state: merged #354 and #364. Added the AST
   recurrence guard, characterize provider parsing, and explicitly select the
   pinned parser in provider-sized groups. Covers AC-QA-5, AC-PROD-2,
   AC-SEC-4, AC-SIMP-2.
-- [ ] **T6 — adjudicate the confirmed HTML-language false positive**
-  *(needs: T1)* — state: queued. After a fresh successful scan and rendered
+- [x] **T6 — adjudicate the confirmed HTML-language false positive**
+  *(needs: T1)* — state: completed. After a fresh successful scan and rendered
   proof, change only the exact `Web:S5254` issue and verify the transition.
   Covers AC-A11Y-4..5, AC-SEC-5.
+- [ ] **T7 — explicit Windows hidden-attribute failure handling** — state:
+  building. Replace the assertion used as control flow in the file browser,
+  with a regression test that executes the real method under `python -O`.
+  Covers AC-QA-7, AC-SEC-6, AC-SIMP-5.
 
 All tasks also cover AC-SIMP-3..4 and AC-QA-6.
 
@@ -343,3 +359,20 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   load-bearing. Seven red cases preceded the implementation; the final
   scanner/guard suite now passes 355 tests with Ruff and the 317-file gate.
   Security re-review is pending.
+- 2026-09-16: Reconciled the plan after the dependency queue: PR #365 adopted
+  the TypeScript 7 native compiler while retaining the TypeScript 6 compiler
+  API boundary, and merged with all hosted checks and both cloud reviews clean.
+  The post-merge Sonar analysis completed at exact project version and revision
+  `6095847d7676ac5eaabb755928f20cdf903a90bf`; the gate is OK with 56.8%
+  coverage, 17 bugs, 1,081 code smells, and zero vulnerabilities or hotspots.
+  T1 through T6 are complete. T7 starts from the remaining critical
+  assertion-control-flow bug in the Windows file browser.
+- 2026-09-16: T7 followed an explicit red-green-mutation loop. The optimized
+  interpreter regression failed against the assertion-based implementation,
+  then the explicit Win32 `-1` sentinel check made 39 focused file-browser and
+  Windows-import tests pass. Removing that check made the optimized regression
+  fail, so the test killed the relevant mutation. QA review added direct
+  normal-interpreter sentinel coverage; fresh security, QA, product, and
+  verification reviews are clean. The full gate passed 4,233 Python unit, 42
+  integration, 214 UI unit, 176 Chromium, 2 isolation, 10 mobile, and 96
+  accessibility tests. T7 is locally healthy for delivery.
