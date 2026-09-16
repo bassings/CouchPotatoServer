@@ -155,9 +155,9 @@ class FileBrowser(Plugin):
         result = False
         try:
             attrs = ctypes.windll.kernel32.GetFileAttributesW(sp(filepath)) #@UndefinedVariable
-            assert attrs != -1
-            result = bool(attrs & 2)
-        except (AttributeError, AssertionError):
+            if attrs != -1:
+                result = bool(attrs & 2)
+        except AttributeError:
             pass
         except Exception:
             log.error('Failed getting hidden attribute: %s', traceback.format_exc())
