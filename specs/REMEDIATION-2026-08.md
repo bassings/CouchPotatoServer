@@ -50,11 +50,11 @@ These change the work, so they are recorded here rather than left as assumptions
   must ship with an idempotent self-upgrade call in `open()`, or it reaches
   fresh installs only and does nothing on production. This is the single
   highest-value gotcha in this plan.
-- **`/getkey/` has no live consumer.** Only `couchpotato/simple_healthcheck.py:76`
-  and `couchpotato/integration_test.py:156` call it; `simple_healthcheck.py` is
-  referenced by nothing (the Docker HEALTHCHECK hits `/`, `Dockerfile:89`), and
-  the JS client described in `specs/SEC-003-password-hashing.md` went away with
-  the legacy UI. Gating it is safe; both files are dead code.
+- **`/getkey/` has no live consumer.** As of Sonar T15, only the dead
+  `couchpotato/integration_test.py` calls it; the repaired standalone health
+  probe requests `/` only. The probe is referenced by nothing (the Docker
+  HEALTHCHECK independently hits `/`), and the JS client described in
+  `specs/SEC-003-password-hashing.md` went away with the legacy UI.
 - **`db.opened` appears only at `database.py:402`** (the fossil migration): the broken compat surface is on a dead path, so deletion beats repair.
 - **No `download_info` index exists** in `schema.sql`: the `release_download`
   fix needs one added, subject to the `open()` gotcha above.
@@ -1604,7 +1604,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the inverse of the runtime default is how this survived review the first
       time.
 
-- [ ] T38: `simple_healthcheck.py` is dead AND its assertions cannot pass — state: queued (needs: AC-OPS-12 production grep, same blocker as `/getkey`'s deletion)
+- [ ] T38: delete the retired `simple_healthcheck.py` after production verification — state: queued (needs: AC-OPS-12 production grep)
 
       Surfaced by the 2026-08-18 SonarQube scan (3 x `python:S5779`) and driven
       before recording. Two defects, one file:
@@ -1634,12 +1634,11 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       mislabels its own failure differently, which is worse than one shared
       wrong message: it sends the reader somewhere specific and wrong.
 
-      **The fix is almost certainly deletion, not repair.** Its only consumer
-      relationship is the reverse one: `simple_healthcheck.py:76` is the sole
-      referrer of the `/getkey` endpoint, and that deletion is already recorded
-      as blocked on AC-OPS-12's production grep. Same blocker, same removal.
-      Repairing a dead file to keep a check nothing runs would be work spent
-      moving in the wrong direction.
+      **Deletion still requires AC-OPS-12's production grep.** Sonar T15 repairs
+      the retained executable in the meantime: it is Python 3, makes one
+      bounded request to `/`, does not touch `/getkey/`, and reports explicit
+      HTTP/content/latency failures. That repair does not claim the external
+      deletion evidence was obtained.
 
 - [ ] T39: three provider scrapers access a parsed element without checking it exists — state: queued (no deps)
 
@@ -4329,11 +4328,12 @@ to download, but none of the ... downloaders are enabled" and returns
   Of the 17 CRITICAL bugs, three families were verified and recorded as tasks
   rather than left in a dashboard nobody reads:
 
-  - **T38** `simple_healthcheck.py` — `assertIn(str, bytes)` raises TypeError,
-    driven, so the check can NEVER pass; and every assertion sits inside
-    `except Exception` so the failure is reported as "failed to load web page"
-    when the page loaded fine. Fix is deletion, blocked on the same AC-OPS-12
-    production grep as `/getkey`.
+  - **T38** `simple_healthcheck.py` — at this revision,
+    `assertIn(str, bytes)` raised TypeError, so the check could NEVER pass; and
+    every assertion sat inside `except Exception`, so the failure was reported
+    as "failed to load web page" when the page loaded fine. T15 subsequently
+    repaired the probe under Python 3. Deletion remains blocked on the same
+    AC-OPS-12 production grep as `/getkey`.
   - **T39** THREE provider scrapers access a parsed element without a None
     check. (This line said "six" until review caught it. Six S8904
     OCCURRENCES, but `awesomehd.py` supplies two, and three of the six are not
@@ -5175,12 +5175,14 @@ Delete: `couchpotato/simple_healthcheck.py`, `couchpotato/integration_test.py`,
   here, on a criterion protecting a production healthcheck, would be the same
   error with higher stakes.
 
-  For the record, and it is why this is a deferral rather than a blocker: the
-  file is a `unittest.TestCase` carrying `#!/usr/bin/env python2` while
-  importing `from urllib.request import ...` (Python 3 only). It cannot execute
-  under its own shebang, so a compose `healthcheck:` invoking it would already
-  be failing today. That makes the residual risk small -- but "small" is not
-  the bar the criterion set, and the grep costs one command.
+  For the record, and it was why this was a deferral rather than a blocker at
+  this revision: the file was a `unittest.TestCase` carrying
+  `#!/usr/bin/env python2` while importing `from urllib.request import ...`
+  (Python 3 only). It could not execute under its own shebang, so a compose
+  `healthcheck:` invoking it would already have been failing. T15 subsequently
+  replaced it with a functional Python 3 probe. The AC-OPS-12 production grep
+  still gates deletion because the check costs one command and remains the
+  required evidence that no external deployment invokes the file.
 - **AC-SEC-5** `/getkey/` is byte-identical after this PR, and
   `grep -rn getkey` returning only `couchpotato/__init__.py` and
   `tests/unit/test_fastapi_web.py` is captured in the PR body as the standing
