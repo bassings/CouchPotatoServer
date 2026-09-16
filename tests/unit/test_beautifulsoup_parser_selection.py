@@ -496,8 +496,23 @@ def test_filmweb_missing_title_metadata_skips_search():
         """<html><head><meta property="og:title" content="Fallback"></head><body>
         <section class="section ovw ovw-synopsis" id="synopsis-details">
         </section></body></html>""",
+        """<html><body>
+        <section class="section ovw ovw-synopsis" id="synopsis-details">
+        <span>Originaltitel</span>
+        <span>Produktionsjahr</span><span>2025</span></section>
+        <nav><h2>Navigation heading</h2></nav></body></html>""",
+        """<html><head><meta property="og:title" content="Fallback"></head><body>
+        <section class="section ovw ovw-synopsis" id="synopsis-details">
+        <span>Produktionsjahr</span></section>
+        <footer><span>Privacy</span></footer></body></html>""",
     ],
-    ids=["missing-synopsis", "missing-title", "missing-year"],
+    ids=[
+        "missing-synopsis",
+        "missing-title",
+        "missing-year",
+        "title-decoy-outside-synopsis",
+        "year-decoy-outside-synopsis",
+    ],
 )
 def test_filmstarts_missing_required_metadata_skips_search(html):
     from couchpotato.core.media.movie.providers.userscript.filmstarts import Filmstarts

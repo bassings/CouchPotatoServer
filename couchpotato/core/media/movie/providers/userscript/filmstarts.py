@@ -24,7 +24,7 @@ class Filmstarts(UserscriptBase):
 		if original_title: #some trailing whitespaces on some pages
 			# Get original film title from the table specified above
 			title = original_title.find_next('h2')
-			if not title:
+			if not title or table not in title.parents:
 				return
 			name = title.text
 		else:
@@ -37,7 +37,7 @@ class Filmstarts(UserscriptBase):
 		# Year of production is not available in the meta data, so get it from the table
 		year_label = table.find("span", string=re.compile("Produktionsjahr"))
 		year_value = year_label.find_next('span') if year_label else None
-		if not year_value:
+		if not year_value or table not in year_value.parents:
 			return
 		year = year_value.text
 
