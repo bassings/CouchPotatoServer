@@ -11,6 +11,11 @@ from couchpotato.core.helpers.variable import splitString
 log = CPLog(__name__)
 
 
+def isListItemEnabled(enablers, index):
+    """Treat a missing per-item enable flag as disabled."""
+    return 0 <= index < len(enablers) and bool(enablers[index])
+
+
 class Automation(AutomationBase):
 
     enabled_option = 'automation_enabled'
