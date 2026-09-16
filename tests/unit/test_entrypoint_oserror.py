@@ -1,8 +1,11 @@
 """Regression tests for process-level OSError handling in CouchPotato.py."""
 
+import ast
 import errno
+import inspect
 import io
 import logging
+import textwrap
 import traceback
 from unittest.mock import Mock
 
@@ -24,6 +27,17 @@ class RaisingLoader:
 
     def run(self):
         raise self.error
+
+
+def test_path_safe_oserror_has_no_nested_conditional_expression():
+    source = textwrap.dedent(inspect.getsource(entrypoint._path_safe_oserror))
+    tree = ast.parse(source)
+
+    for expression in (node for node in ast.walk(tree) if isinstance(node, ast.IfExp)):
+        assert not any(
+            child is not expression and isinstance(child, ast.IfExp)
+            for child in ast.walk(expression)
+        )
 
 
 def test_non_eintr_oserror_policy_is_testable_outside_main_control_flow():
