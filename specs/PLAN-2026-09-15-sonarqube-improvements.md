@@ -263,6 +263,9 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   earlier enabled entry. Reversing the shared bounds predicate must fail.
 - **AC-SIMP-9:** Replace the recurring direct enable-list indexing class with
   one shared bounds helper used by all three affected automation providers.
+- **AC-QA-13:** The shared enable-list helper follows the repository's Python
+  naming convention, all three providers import that exact symbol, and their
+  fail-closed behavior remains covered.
 
 ## Implementation sequence
 
@@ -314,6 +317,9 @@ within the authority explicitly granted by the owner.
 - [x] **T12 — enforce bounded automation enable flags** — state: completed.
   Replace sibling direct flag indexing in IMDb and Letterboxd, and T11's local
   guard, with one tested fail-closed mechanism. Covers AC-QA-12, AC-SIMP-9.
+- [x] **T13 — align the shared helper with Python naming** — state: completed.
+  Rename the T12 helper and every provider import to close its exact new-code
+  `python:S1542` regression without changing behavior. Covers AC-QA-13.
 
 All tasks also cover AC-SIMP-3..4 and AC-QA-6.
 
@@ -527,3 +533,16 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   4,267 Python unit tests, 42 integration tests, 214 UI unit tests, 176
   Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
   checks.
+- 2026-09-17: PR #371 merged as
+  `fdb86567f2adbeff55a9482a21db7f6c2a4303a2` with every hosted check and
+  cloud review clean. The exact-version and exact-revision Sonar analysis
+  retained 100% new-code coverage and 0.0% new duplication, but identified
+  the new shared helper's camelCase name as one `python:S1542` smell. Total
+  coverage rose from 56.9% to 57.0%; code smells rose from 1,079 to 1,080 and
+  open issues from 1,094 to 1,095, while bugs remained 15 and vulnerabilities
+  and hotspots remained zero. T13 starts from that exact replacement finding.
+- 2026-09-17: T13 completed locally. The naming regression first failed by
+  importing the required snake_case symbol; renaming the helper and all three
+  provider imports made the focused iTunes, IMDb, and Letterboxd tests green.
+  Ruff reports no finding and the former camelCase symbol is absent from the
+  source and tests.

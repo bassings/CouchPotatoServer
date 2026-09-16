@@ -6,7 +6,7 @@ import xml.etree.ElementTree as XMLTree
 from couchpotato.core.helpers.rss import RSS
 from couchpotato.core.helpers.variable import md5, splitString, tryInt
 from couchpotato.core.logger import CPLog
-from couchpotato.core.media.movie.providers.automation.base import Automation, isListItemEnabled
+from couchpotato.core.media.movie.providers.automation.base import Automation, is_list_item_enabled
 
 
 log = CPLog(__name__)
@@ -29,7 +29,7 @@ class ITunes(Automation, RSS):
         namespace_im = 'http://itunes.apple.com/rss'
 
         for index, url in enumerate(urls):
-            if not isListItemEnabled(enablers, index):
+            if not is_list_item_enabled(enablers, index):
                 continue
 
             try:

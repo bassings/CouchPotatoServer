@@ -7,7 +7,7 @@ from couchpotato.core.helpers.rss import RSS
 from couchpotato.core.helpers.variable import getImdb, splitString, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.base import MultiProvider
-from couchpotato.core.media.movie.providers.automation.base import Automation, isListItemEnabled
+from couchpotato.core.media.movie.providers.automation.base import Automation, is_list_item_enabled
 
 
 log = CPLog(__name__)
@@ -98,7 +98,7 @@ class IMDBWatchlist(IMDBBase):
                 log.error('Failed getting id from watchlist: %s', traceback.format_exc())
 
             index += 1
-            if not isListItemEnabled(watchlist_enablers, index):
+            if not is_list_item_enabled(watchlist_enablers, index):
                 continue
 
             start = 0
