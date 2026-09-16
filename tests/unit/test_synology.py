@@ -21,6 +21,8 @@ an outage.
 """
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from couchpotato.core.downloaders import synology as synology_module
 from couchpotato.core.downloaders.synology import Synology, SynologyRPC
 
@@ -142,6 +144,45 @@ class TestSynologyRPCTimeout:
         payload), so the shorter value risks breaking a slow-but-working
         setup."""
         assert synology_module._REQUEST_TIMEOUT == 60
+
+
+class TestSynologyInterruptPropagation:
+    """A return in ``finally`` must not turn process cancellation into a
+    routine Synology failure.  ``KeyboardInterrupt`` is intentionally outside
+    the downloader's ordinary ``Exception`` recovery boundary."""
+
+    def test_rpc_request_does_not_swallow_keyboard_interrupt(self):
+        rpc = SynologyRPC('mynas', 5000)
+
+        with patch.object(synology_module.requests, 'post', side_effect=KeyboardInterrupt), \
+             pytest.raises(KeyboardInterrupt):
+            rpc._req(rpc.download_url, {})
+
+    def test_download_does_not_swallow_keyboard_interrupt(self):
+        downloader = Synology.__new__(Synology)
+        data = {'name': 'Movie', 'protocol': 'torrent_magnet', 'url': 'magnet:?xt=urn:btih:ABC'}
+        config = {
+            'host': 'localhost:5000', 'username': 'op', 'password': 'hunter2',
+            'destination': '', 'ssl': False, 'ssl_verify': True, 'ssl_ca_bundle': '',
+        }
+        def conf(key, **kwargs):
+            return config.get(key, kwargs.get('default', ''))
+
+        with patch.object(downloader, 'conf', side_effect=conf), \
+             patch.object(synology_module.SynologyRPC, 'create_task', side_effect=KeyboardInterrupt), \
+             pytest.raises(KeyboardInterrupt):
+            downloader.download(data=data)
+
+    def test_create_task_logs_out_before_propagating_keyboard_interrupt(self):
+        rpc = SynologyRPC('mynas', 5000)
+
+        with patch.object(rpc, '_login', return_value=True), \
+             patch.object(rpc, '_req', side_effect=KeyboardInterrupt), \
+             patch.object(rpc, '_logout') as logout, \
+             pytest.raises(KeyboardInterrupt):
+            rpc.create_task(url='magnet:?xt=urn:btih:ABC')
+
+        logout.assert_called_once_with()
 
 
 # ===========================================================================

@@ -72,8 +72,7 @@ class Synology(DownloaderBase):
                     response = srpc.create_task(filename = filename, filedata = filedata)
         except Exception:
             log.error('Exception while adding torrent: %s', traceback.format_exc())
-        finally:
-            return self.downloadReturnId('') if response else False
+        return self.downloadReturnId('') if response else False
 
     def test(self):
         """ Check if connection works
@@ -207,8 +206,7 @@ class SynologyRPC:
             log.error('SynologyRPC HTTPError: %s', err)
         except Exception as err:
             log.error('Exception: %s', err)
-        finally:
-            return response
+        return response
 
     def create_task(self, url = None, filename = None, filedata = None):
         """ Creates new download task in Synology DownloadStation. Either specify
@@ -219,44 +217,46 @@ class SynologyRPC:
         result = False
         # login
         if self._login():
-            args = {'api': 'SYNO.DownloadStation.Task',
-                    'version': '1',
-                    'method': 'create',
-                    '_sid': self.sid}
+            try:
+                args = {'api': 'SYNO.DownloadStation.Task',
+                        'version': '1',
+                        'method': 'create',
+                        '_sid': self.sid}
 
-            if self.destination and len(self.destination) > 0:
-                args['destination'] = self.destination
+                if self.destination and len(self.destination) > 0:
+                    args['destination'] = self.destination
 
-            if url:
-                log.info('Login success, adding torrent URI')
-                args['uri'] = url
-                response = self._req(self.download_url, args = args)
-                if response['success']:
+                if url:
+                    log.info('Login success, adding torrent URI')
+                    args['uri'] = url
+                    response = self._req(self.download_url, args = args)
+                    if response['success']:
+                        log.info('Response: %s', response)
+                    else:
+                        log.error('Response: %s', response)
+                        synoerrortype = {
+                            400 : 'File upload failed',
+                            401 : 'Max number of tasks reached',
+                            402 : 'Destination denied',
+                            403 : 'Destination does not exist',
+                            404 : 'Invalid task id',
+                            405 : 'Invalid task action',
+                            406 : 'No default destination',
+                            407 : 'Set destination failed',
+                            408 : 'File does not exist'
+                        }
+                        log.error('DownloadStation returned the following error : %s', synoerrortype[response['error']['code']])
+                    result = response['success']
+                elif filename and filedata:
+                    log.info('Login success, adding torrent')
+                    files = {'file': (filename, filedata)}
+                    response = self._req(self.download_url, args = args, files = files)
                     log.info('Response: %s', response)
+                    result = response['success']
                 else:
-                    log.error('Response: %s', response)
-                    synoerrortype = {
-                        400 : 'File upload failed',
-                        401 : 'Max number of tasks reached',
-                        402 : 'Destination denied',
-                        403 : 'Destination does not exist',
-                        404 : 'Invalid task id',
-                        405 : 'Invalid task action',
-                        406 : 'No default destination',
-                        407 : 'Set destination failed',
-                        408 : 'File does not exist'
-                    }
-                    log.error('DownloadStation returned the following error : %s', synoerrortype[response['error']['code']])
-                result = response['success']
-            elif filename and filedata:
-                log.info('Login success, adding torrent')
-                files = {'file': (filename, filedata)}
-                response = self._req(self.download_url, args = args, files = files)
-                log.info('Response: %s', response)
-                result = response['success']
-            else:
-                log.error('Invalid use of SynologyRPC.create_task: either url or filename+filedata must be specified')
-            self._logout()
+                    log.error('Invalid use of SynologyRPC.create_task: either url or filename+filedata must be specified')
+            finally:
+                self._logout()
 
         return result
 
