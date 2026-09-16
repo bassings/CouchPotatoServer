@@ -3,6 +3,12 @@
 from unittest.mock import Mock
 
 
+def test_enable_flag_helper_uses_python_naming_convention():
+    from couchpotato.core.media.movie.providers.automation.base import is_list_item_enabled
+
+    assert is_list_item_enabled(['1'], 0) is True
+
+
 def test_imdb_missing_enable_flag_skips_extra_watchlist():
     from couchpotato.core.media.movie.providers.automation.imdb import IMDBWatchlist
 
