@@ -3,7 +3,7 @@
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import * as ts from 'typescript';
+import * as ts from '@typescript/typescript6';
 
 const filename = process.argv[2] || 'tests/e2e/input.spec.ts';
 const sourceText = fs.readFileSync(0, 'utf8');
