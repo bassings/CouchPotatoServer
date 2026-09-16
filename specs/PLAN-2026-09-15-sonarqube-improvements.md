@@ -272,6 +272,27 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   naming convention, all three providers import that exact symbol, and their
   fail-closed behavior remains covered.
 
+### Standalone health-probe reliability
+
+- **AC-QA-14:** The retained `simple_healthcheck.py` runs under Python 3,
+  compares the response body as bytes, requires HTTP 200 plus CouchPotato page
+  identity, bounds the response prefix to 64 KiB, caps each network operation
+  at the five-second latency threshold, and stops before the next body read
+  once that threshold is observed. Focused tests cover the current sign-in
+  page, 404/503 responses, wrong content, connection and mid-read protocol
+  failures, the 64 KiB cap, response closure, latency, and both process exit
+  codes. An already-blocking socket operation retains its own capped timeout;
+  this is a bounded health probe, not a hard real-time deadline.
+- **AC-SEC-8:** The probe requests only the root page. It no longer calls the
+  API-key endpoint and does not print exception details that can contain local
+  network or proxy information.
+- **AC-OPS-8:** The probe remains a standalone process with success/failure
+  exit semantics. Deletion remains separately gated on REMEDIATION AC-OPS-12's
+  production grep; repairing it does not claim that external check occurred.
+- **AC-SIMP-10:** Replace the five overlapping `unittest` methods with one
+  request and explicit failure collection; introduce no dependency or service
+  endpoint.
+
 ## Implementation sequence
 
 Each item is an independent review unit. External delivery is not implied by
@@ -325,7 +346,7 @@ within the authority explicitly granted by the owner.
 - [x] **T13 — align the shared helper with Python naming** — state: completed.
   Rename the T12 helper and every provider import to close its exact new-code
   `python:S1542` regression without changing behavior. Covers AC-QA-13.
-- [ ] **T14 — remove the unserved legacy core static tree** — state: in-progress.
+- [x] **T14 — remove the unserved legacy core static tree** — state: completed.
   Delete the complete 20-file `couchpotato/core/**/static` tree after
   proving it is outside the production mount, keep unfinished user behavior in
   the explicit UI parity backlog, and enforce both the filesystem boundary and
@@ -334,6 +355,11 @@ within the authority explicitly granted by the owner.
   `PLAN-2026-09-07-post-sonarqube-followups.md`; T14 must not rewrite or gate
   that file, and its lifecycle remains an explicit owner-reconciliation task.
   Covers AC-SIMP-4 and AC-QA-6.
+- [ ] **T15 — repair the retained standalone health probe** — state: in-progress.
+  Replace the Python-2-labelled, bytes-incompatible, assertion-wrapping probe
+  with one Python 3 root-page check while its deletion still requires the
+  production-only AC-OPS-12 grep. Covers AC-QA-14, AC-SEC-8, AC-OPS-8, and
+  AC-SIMP-10.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -580,3 +606,29 @@ T9 and T14 exceptions stated above.
   and add a structural guard that fails if any file is reintroduced beneath a
   core `static` directory. Acceptance also requires the existing current-UI
   and legacy-bundle-removal tests to remain green.
+- 2026-09-17: PR #373 merged as
+  `7a993cb396eb17a64e07a8aa4e59e17ebe2938e4` with every hosted check and
+  cloud review clean. Two complete local gates passed 4,283 Python unit tests,
+  42 integration tests, 214 UI unit tests, 176 Chromium flows, 2 isolation
+  checks, 10 mobile checks, and 96 accessibility checks. The exact-master
+  Sonar analysis closed the updater, Trakt, and PutIO bugs with no replacement
+  finding: bugs fell from 15 to 12, smells from 1,079 to 835, coverage rose
+  from 57.0% to 60.9%, and duplication fell from 1.8% to 1.6%. The gate is OK
+  with zero new issues, vulnerabilities, or hotspots.
+- 2026-09-17: T15 starts from the three remaining critical S5779 findings in
+  `simple_healthcheck.py`. The first focused run was red because no explicit
+  `check_health` boundary existed. The replacement is constrained to one root
+  request: deletion remains blocked on the production-only AC-OPS-12 grep, so
+  this slice repairs the retained executable without pretending that external
+  evidence was obtained.
+- 2026-09-17: T15 review rejected fixtures that passed through object
+  finalization rather than explicit `HTTPError` closure, raised a protocol
+  failure at the opener rather than the real body-read boundary, and did not
+  execute the process exit mapping. Mutation-resistant replacements retain the
+  error object, fail from `read1`, and execute `__main__` for success and
+  failure. A live slow-stream probe also showed urllib's per-operation timeout
+  did not bound the old unbounded `read()`; the probe now reads at most 64 KiB
+  in chunks, caps each socket operation at the latency threshold, and starts no
+  further read after that threshold is observed. A read already in progress
+  can consume its own capped timeout, so the plan does not claim a hard
+  five-second wall-clock deadline.

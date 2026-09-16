@@ -149,10 +149,11 @@ class TestGetKeyDoesNotLeakTheApiKey:
     and an unauthenticated caller received the key outright whenever no
     password was configured.
 
-    NOT deleted here, though the spec calls for that eventually: its only
-    referrer is `couchpotato/simple_healthcheck.py:76`, whose own removal is
-    blocked on AC-OPS-12's production grep. Closing the hole does not depend on
-    resolving that, so it is closed now and the deletion follows separately.
+    NOT deleted here, though the spec calls for that eventually. Sonar T15
+    removed the standalone health probe's call, leaving only the dead
+    `couchpotato/integration_test.py` referrer; endpoint deletion remains a
+    separately gated cleanup. Closing the hole does not depend on resolving
+    that, so it is closed now and the deletion follows separately.
     """
 
     def test_no_password_configured_does_not_hand_out_the_api_key(self, settings):
