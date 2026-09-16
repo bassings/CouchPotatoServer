@@ -170,7 +170,7 @@ def test_external_parser_choices_are_literal_and_pinned():
 
     assert parsers
     assert set(parsers) <= {"html.parser", "lxml"}
-    assert "lxml==6.1.2" in (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    assert "lxml==6.1.3" in (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
 
 
 def _unfinished(html, malformed):
