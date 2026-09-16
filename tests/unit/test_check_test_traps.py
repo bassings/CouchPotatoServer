@@ -2135,8 +2135,17 @@ def test_e2e_ast_helper_does_not_resolve_or_parse_an_adjacent_import(tmp_path):
     assert findings_for(spec) == []
 
 
-def test_e2e_ast_check_fails_closed_if_more_than_the_stdin_source_is_loaded(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    "boundary_fields",
+    [
+        {"sourceFileCount": 2, "unexpectedHostReads": 0},
+        {"sourceFileCount": 1, "unexpectedHostReads": 1},
+        {"unexpectedHostReads": 0},
+        {"sourceFileCount": 1},
+    ],
+)
+def test_e2e_ast_check_fails_closed_if_the_stdin_only_boundary_is_crossed(
+    tmp_path, monkeypatch, boundary_fields
 ):
     monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
     monkeypatch.setattr(
@@ -2146,13 +2155,7 @@ def test_e2e_ast_check_fails_closed_if_more_than_the_stdin_source_is_loaded(
             a,
             0,
             stdout=json.dumps(
-                {
-                    "waits": [],
-                    "findings": [],
-                    "parseErrors": 0,
-                    "sourceFileCount": 2,
-                    "unexpectedHostReads": 1,
-                }
+                {"waits": [], "findings": [], "parseErrors": 0, **boundary_fields}
             ),
             stderr="",
         ),
@@ -2163,7 +2166,7 @@ def test_e2e_ast_check_fails_closed_if_more_than_the_stdin_source_is_loaded(
     findings = findings_for(spec)
 
     assert len(findings) == 1, findings
-    assert "loaded 2 source files" in findings[0][1]
+    assert "stdin-only boundary" in findings[0][1]
 
 
 def test_e2e_ast_helper_parses_but_never_executes_the_inspected_source(tmp_path):
