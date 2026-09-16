@@ -12,6 +12,7 @@ builtins.long = int
 
 from logging import handlers
 from os.path import dirname
+import errno
 import logging
 import os
 import select
@@ -138,44 +139,53 @@ class Loader:
         return self.options.daemon and self.options.pid_file
 
 
-def main(loader_factory=Loader):
-    l = None
+def _path_safe_oserror(error):
     try:
-        l = loader_factory()
-        l.daemonize()
-        l.run()
+        number = error.errno if hasattr(error, 'errno') else (error.args[0] if error.args else 0)
+    except (AttributeError, IndexError):
+        number = 0
+
+    try:
+        return number, OSError(number, os.strerror(number))
+    except (TypeError, ValueError):
+        return number, OSError(number, 'Operating system error')
+
+
+def _handle_oserror(loader, error):
+    from couchpotato.core.logger import without_paths
+
+    number, safe_error = _path_safe_oserror(error)
+    if number == errno.EINTR:
+        return
+
+    message = without_paths(safe_error)
+    try:
+        loader.log.critical('%s', message, exc_info=False)
+    except Exception:
+        print(message, file=sys.stderr)
+    raise safe_error from None
+
+
+def main(loader_factory=Loader):
+    loader = None
+    try:
+        loader = loader_factory()
+        loader.daemonize()
+        loader.run()
     except KeyboardInterrupt:
         pass
     except SystemExit:
         raise
-    except OSError as e:
+    except OSError as error:
         # log when socket receives SIGINT, but continue.
         # previous code would have skipped over other types of IO errors too.
-        try:
-            # In Python 3, socket exceptions don't unpack the same way
-            if hasattr(e, 'errno'):
-                nr = e.errno
-            else:
-                nr = e.args[0] if e.args else 0
-        except (AttributeError, IndexError):
-            nr = 0
-
-        if nr != 4:
-            try:
-                safe_error = OSError(nr, os.strerror(nr))
-            except (TypeError, ValueError):
-                safe_error = OSError(nr, 'Operating system error')
-            try:
-                l.log.critical('%s', safe_error, exc_info=False)
-            except Exception:
-                print(str(safe_error), file=sys.stderr)
-            raise safe_error from None
+        _handle_oserror(loader, error)
     except Exception:
         try:
             # if this fails we will have two tracebacks
             # one for failing to log, and one for the exception that got us here.
-            if l:
-                l.log.critical(traceback.format_exc())
+            if loader:
+                loader.log.critical(traceback.format_exc())
             else:
                 print(traceback.format_exc())
         except Exception:
