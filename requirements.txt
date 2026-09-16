@@ -3,7 +3,7 @@
 # Web Framework
 fastapi==0.141.1
 starlette==1.6.0
-uvicorn==0.52.1
+uvicorn==0.52.4
 Jinja2==3.1.6
 python-multipart==0.0.32
 
