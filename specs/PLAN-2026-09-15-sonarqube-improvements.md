@@ -41,7 +41,9 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - Making SonarQube a CI, release, or merge gate.
 - Exposing the private SonarQube instance outside the internal network.
 - Lowering the count by disabling rules or bulk-dismissing findings.
-- Mechanical cognitive-complexity or naming refactors.
+- Mechanical cognitive-complexity or naming refactors, except the exact
+  `CouchPotato.py` regression introduced by T8 and bounded by T9's behavioral
+  tests; this does not reopen the existing complexity backlog.
 - Editing dead legacy JavaScript merely to clear findings; delete it only when
   the corresponding migrated UI proves it is unserved.
 - Raising aggregate coverage indiscriminately; tests should target risky or
@@ -199,7 +201,10 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   independently reviewable slices. No slice depends on a target Sonar score.
 - **AC-SIMP-4:** No slice changes cognitive-complexity findings, naming, dead
   legacy JavaScript, aggregate coverage targets, vendored CodernityDB, shipped
-  public app keys, or the documented accepted E2E coverage gap.
+  public app keys, or the documented accepted E2E coverage gap. The sole
+  exception is T9's bounded repair of the exact `CouchPotato.py` finding that
+  T8 introduced; it must preserve T8 behavior and may not expand into backlog
+  complexity cleanup.
 - **AC-QA-6:** Each slice passes focused tests, `make check-traps`, and relevant
   lint/browser checks. The final combined local state passes the repository's
   prescribed Python, UI-unit, Chromium, and accessibility verification before
@@ -231,6 +236,15 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-6:** Keep one `OSError` handler and preserve the existing
   `KeyboardInterrupt`, `SystemExit`, and generic-exception behavior; do not
   change loader initialization, daemonization, or restart behavior.
+- **AC-OPS-6:** Extract the startup `OSError` policy into bounded helpers while
+  preserving the exact exit, logging, and path-redaction behavior delivered by
+  T8, including quiet EINTR handling and the stderr fallback.
+- **AC-QA-9:** Exercise the extracted non-EINTR policy directly and retain the
+  entry-point integration coverage. Reversing its EINTR predicate must fail
+  both the direct non-EINTR test and the EINTR integration test.
+- **AC-SIMP-7:** Close the `python:S3776` issue introduced when T8 made the
+  entry point testable, without moving excessive complexity into another
+  helper or weakening the privacy-safe error boundary.
 
 ## Implementation sequence
 
@@ -269,6 +283,10 @@ within the authority explicitly granted by the owner.
   Remove the shadowing broad handler through a testable entry-point boundary,
   retaining EINTR shutdown semantics and surfacing every other OS failure.
   Covers AC-OPS-5, AC-QA-8, AC-SEC-7, AC-SIMP-6.
+- [x] **T9 — bound startup exception complexity** — state: completed.
+  Extract the now-reachable `OSError` policy into small helpers, use the shared
+  path-safe formatter, and replace the numeric EINTR sentinel.
+  Covers AC-OPS-6, AC-QA-9, AC-SEC-7, AC-SIMP-7.
 
 All tasks also cover AC-SIMP-3..4 and AC-QA-6.
 
@@ -415,3 +433,19 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   and operability lenses are clean. The full release gate passed 4,261 Python
   unit tests, 42 integration tests, 214 UI unit tests, 176 Chromium flows, 2
   isolation checks, 10 mobile checks, and 96 accessibility checks.
+- 2026-09-16: PR #367 merged as `848709951dcb98c05ffc2495226b8057291d5d35`.
+  The exact-version and exact-revision Sonar analysis closed the targeted
+  `python:S1045` issue and reduced bugs from 16 to 15. Coverage remains 56.8%,
+  duplication 1.8%, and vulnerabilities and hotspots remain zero. Extracting
+  the entry point exposed one new `python:S3776` smell, so code smells rose
+  from 1,081 to 1,082, open issues stayed at 1,097, and the informational gate
+  reports one new issue. T9 starts from that measured regression.
+- 2026-09-16: T9 completed locally. The red test established a directly
+  testable `OSError` policy boundary; the implementation split path-safe error
+  reconstruction and reporting out of `main`, reused the shared path-safe
+  formatter, and replaced the numeric EINTR sentinel. Reversing the EINTR
+  predicate made both required tests fail. QA found and drove a narrow policy
+  exception for only the T8-introduced complexity regression; security, QA,
+  and operability re-reviews are clean. The full release gate passed 4,263
+  Python unit tests, 42 integration tests, 214 UI unit tests, 176 Chromium
+  flows, 2 isolation checks, 10 mobile checks, and 96 accessibility checks.

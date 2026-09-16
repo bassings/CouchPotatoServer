@@ -26,6 +26,21 @@ class RaisingLoader:
         raise self.error
 
 
+def test_non_eintr_oserror_policy_is_testable_outside_main_control_flow():
+    private_path = '/media/private/Secret Movie (2026)/file.mkv'
+    error = PermissionError(errno.EACCES, 'permission denied', private_path)
+    loader = RaisingLoader(error)
+
+    with pytest.raises(OSError) as raised:
+        entrypoint._handle_oserror(loader, error)
+
+    assert raised.value.errno == errno.EACCES
+    assert private_path not in str(raised.value)
+    loader.log.critical.assert_called_once_with(
+        '%s', '[errno 13] Permission denied', exc_info=False,
+    )
+
+
 def test_non_eintr_oserror_is_logged_and_propagated_without_its_private_path():
     private_path = '/media/private/Secret Movie (2026)/file.mkv'
     error = PermissionError(errno.EACCES, 'permission denied', private_path)
@@ -47,6 +62,22 @@ def test_non_eintr_oserror_is_logged_and_propagated_without_its_private_path():
     assert private_path not in ''.join(traceback.format_exception(raised.value))
     assert raised.value.__suppress_context__ is True
     assert 'Permission denied' in log_output.getvalue()
+
+
+def test_oserror_before_loader_exists_uses_path_safe_stderr(capsys):
+    private_path = '/media/private/Secret Movie (2026)/file.mkv'
+
+    def failing_loader_factory():
+        raise PermissionError(errno.EACCES, 'permission denied', private_path)
+
+    with pytest.raises(OSError) as raised:
+        entrypoint.main(loader_factory=failing_loader_factory)
+
+    stderr = capsys.readouterr().err
+    assert raised.value.errno == errno.EACCES
+    assert 'Permission denied' in stderr
+    assert private_path not in stderr
+    assert private_path not in ''.join(traceback.format_exception(raised.value))
 
 
 def test_eintr_oserror_is_treated_as_interrupted_shutdown():
