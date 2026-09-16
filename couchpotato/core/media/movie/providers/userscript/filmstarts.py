@@ -17,15 +17,28 @@ class Filmstarts(UserscriptBase):
 
 		html = BeautifulSoup(data, 'lxml')
 		table = html.find("section", attrs={"class": "section ovw ovw-synopsis", "id": "synopsis-details"})
+		if not table:
+			return
 
-		if table.find(text=re.compile('Originaltitel')): #some trailing whitespaces on some pages
+		original_title = table.find("span", string=re.compile("Originaltitel"))
+		if original_title: #some trailing whitespaces on some pages
 			# Get original film title from the table specified above
-			name = name = table.find("span", text=re.compile("Originaltitel")).findNext('h2').text
+			title = original_title.find_next('h2')
+			if not title or table not in title.parents:
+				return
+			name = title.text
 		else:
 			# If none is available get the title from the meta data
-			name = html.find("meta", {"property":"og:title"})['content']
+			title = html.find("meta", {"property":"og:title"})
+			if not title or not title.get('content'):
+				return
+			name = title['content']
 
 		# Year of production is not available in the meta data, so get it from the table
-		year = table.find("span", text=re.compile("Produktionsjahr")).findNext('span').text
+		year_label = table.find("span", string=re.compile("Produktionsjahr"))
+		year_value = year_label.find_next('span') if year_label else None
+		if not year_value or table not in year_value.parents:
+			return
+		year = year_value.text
 
 		return self.search(name, year)

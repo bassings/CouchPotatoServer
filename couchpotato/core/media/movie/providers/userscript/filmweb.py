@@ -23,7 +23,11 @@ class Filmweb(UserscriptBase):
             return
 
         html = BeautifulSoup(data, 'lxml')
-        name = html.find('meta', {'name': 'title'})['content'][:-9].strip()
+        title = html.find('meta', {'name': 'title'})
+        if not title or not title.get('content'):
+            return
+
+        name = title['content'][:-9].strip()
         name_year = fireEvent(SCANNER_NAME_YEAR, name, single = True)
         name = name_year.get('name')
         year = name_year.get('year')
