@@ -1,5 +1,7 @@
 # FEAT-001: Mark as Done Button
 
+> **Lifecycle: completed**
+
 ## Problem
 Movies stay in the "Available" section after being downloaded. Users need a way to manually mark a movie as "done" to:
 1. Stop CouchPotato from continuing to search for it

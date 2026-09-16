@@ -1,5 +1,10 @@
 # SPEC: UI-PORT-01 — Quality Profile Management (modern UI)
 
+> **Lifecycle: completed**
+
+> **Status: completed.** The current UI and its browser coverage are live; the
+> legacy comparison below is historical context.
+
 ## Problem
 The modern htmx+Alpine+Tailwind UI (`/`) has no quality-profile management screen.
 The legacy UI (`/old/`) exposed this via `profile.js` and `quality.js` (MooTools classes).

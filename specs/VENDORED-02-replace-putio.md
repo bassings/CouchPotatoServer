@@ -1,5 +1,10 @@
 # VENDORED-02 — Replace vendored put.io client (`lib/pio` + `lib/tus`) with `putio.py`
 
+> **Lifecycle: completed**
+
+> **Status: completed.** This file is the historical dependency-migration
+> record; current UI and retired-layer status are stated explicitly below.
+
 ## Problem
 
 `couchpotato/lib/pio` is a vendored, Python-2-era fork of the official put.io
@@ -90,15 +95,12 @@ No call sites needed behavioral changes beyond the import line itself.
    this flow was already 100% non-functional before this change). The
    manual `oauth_token` settings field (the only way this downloader has
    actually been configurable) is untouched and still works exactly as
-   before. Note: the legacy MooTools settings-page JS
-   (`couchpotato/core/downloaders/putio/static/putio.js`) still calls the
-   now-removed `downloader.putio.auth_url` endpoint from a "Register your
-   put.io account" button; that JS belongs to the legacy asset layer being
-   retired separately (see `specs/UI-CLEANUP-02-retire-userscript-embed.md`)
-   and was out of scope here — the button already did nothing useful before
-   this change (dead redirect target) and will now just fail its API call
-   instead, no functional regression for the only supported flow (manual
-   `oauth_token` entry in Settings).
+   before. At the time of this change, the unserved legacy MooTools
+   settings-page script still called the removed endpoint from a "Register
+   your put.io account" button. T14 later deleted that complete
+   `couchpotato/core/**/static` tree after verifying it had no production
+   route or build consumer. The supported manual `oauth_token` entry remains
+   available in the current Settings and setup-wizard UIs.
 
 ## Files changed
 

@@ -1,5 +1,11 @@
 # UI-PORT-02 — Port the login page to the Tailwind design system
 
+> **Lifecycle: completed**
+
+> **Status: completed.** The login page uses the current design system, and the
+> ClientScript/static chain described below was later deleted. This is the
+> historical implementation record.
+
 ## Problem
 
 `couchpotato/templates/login.html` is the last page still rendered by the legacy

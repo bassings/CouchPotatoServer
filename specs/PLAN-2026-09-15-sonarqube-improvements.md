@@ -1,5 +1,8 @@
 # PLAN 2026-09-15: improve the value of SonarQube results
 
+> **Lifecycle: active**
+> **Legacy runtime: retired; `/old/*`: redirect-only.**
+
 ## Problem
 
 The self-hosted SonarQube analysis of `couchpotato` is current at
@@ -199,12 +202,14 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-3:** Scanner metadata, synchronization, false-green prevention,
   callback binding, parser selection, and issue adjudication remain separate,
   independently reviewable slices. No slice depends on a target Sonar score.
-- **AC-SIMP-4:** No slice changes cognitive-complexity findings, naming, dead
-  legacy JavaScript, aggregate coverage targets, vendored CodernityDB, shipped
+- **AC-SIMP-4:** No slice changes cognitive-complexity findings, naming,
+  aggregate coverage targets, vendored CodernityDB, shipped
   public app keys, or the documented accepted E2E coverage gap. The sole
   exception is T9's bounded repair of the exact `CouchPotato.py` finding that
   T8 introduced; it must preserve T8 behavior and may not expand into backlog
-  complexity cleanup.
+  complexity cleanup. T14 may delete the complete dead legacy JavaScript tree
+  only after proving the tree has no production route, template or build
+  consumer; it must not refactor or selectively preserve that unserved code.
 - **AC-QA-6:** Each slice passes focused tests, `make check-traps`, and relevant
   lint/browser checks. The final combined local state passes the repository's
   prescribed Python, UI-unit, Chromium, and accessibility verification before
@@ -320,8 +325,18 @@ within the authority explicitly granted by the owner.
 - [x] **T13 — align the shared helper with Python naming** — state: completed.
   Rename the T12 helper and every provider import to close its exact new-code
   `python:S1542` regression without changing behavior. Covers AC-QA-13.
+- [ ] **T14 — remove the unserved legacy core static tree** — state: in-progress.
+  Delete the complete 20-file `couchpotato/core/**/static` tree after
+  proving it is outside the production mount, keep unfinished user behavior in
+  the explicit UI parity backlog, and enforce both the filesystem boundary and
+  active-guidance lifecycle with regression tests. The sole lifecycle
+  deferment is the user-owned, concurrently edited
+  `PLAN-2026-09-07-post-sonarqube-followups.md`; T14 must not rewrite or gate
+  that file, and its lifecycle remains an explicit owner-reconciliation task.
+  Covers AC-SIMP-4 and AC-QA-6.
 
-All tasks also cover AC-SIMP-3..4 and AC-QA-6.
+All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
+T9 and T14 exceptions stated above.
 
 ## Conductor log
 
@@ -546,3 +561,22 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   provider imports made the focused iTunes, IMDb, and Letterboxd tests green.
   Ruff reports no finding and the former camelCase symbol is absent from the
   source and tests.
+- 2026-09-17: PR #372 merged as
+  `f25a90d85f0348ec684220beeb9c86d3045b161c` with every hosted check and
+  cloud review clean. The exact-version and exact-revision Sonar analysis
+  closed T13's `python:S1542` issue with no replacement finding: code smells
+  fell from 1,080 to 1,079 and open issues from 1,095 to 1,094. The gate is
+  OK, new-code coverage is 100%, total coverage is 57.0%, bugs remain 15,
+  duplication remains 1.8%, and vulnerabilities and hotspots remain zero.
+- 2026-09-17: T14 starts from the critical `typescript:S4275` updater finding.
+  Two independent clean-agent reviews rejected the first fix after proving its
+  runtime premise false: the app mounts only `couchpotato/static`, the current
+  templates reference only that tree, and the retired ClientScript/combined
+  bundle path no longer exposes any of the 20 files under
+  `couchpotato/core/**/static`. A synthetic MooTools test could kill the local
+  `self` mutation while preserving code no user can execute. T14 therefore
+  treats the recurring class as one mechanism: delete the complete orphaned
+  core static tree, including the S4275 updater and S1848 Trakt/PutIO findings,
+  and add a structural guard that fails if any file is reintroduced beneath a
+  core `static` directory. Acceptance also requires the existing current-UI
+  and legacy-bundle-removal tests to remain green.

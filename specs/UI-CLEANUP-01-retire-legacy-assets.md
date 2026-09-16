@@ -1,25 +1,24 @@
 # UI-CLEANUP-01 — Retire the legacy MooTools/SCSS asset layer
 
-> **Implementation note (deviation from this spec — read first).** As written,
-> the delete-list and acceptance grep below would remove `clientscript.py`, the
-> 4 compiled `combined.*` bundles, `static/fonts/**`, `index.html`, and
-> `index()`. During implementation a live consumer was found:
-> `couchpotato/core/plugins/userscript/main.py` (`Userscript.iFrame`, the
-> `userscript` API view) calls `index()`, which renders `index.html` via the
-> `clientscript.*` events. That whole chain was therefore **kept**, and only the
-> genuinely-orphaned assets were deleted. So the acceptance grep below does
-> **not** come back clean for `clientscript`/`combined.min`/`static/fonts` — that
-> is expected. Full retirement is deferred to follow-up **UI-CLEANUP-02**, gated
-> on porting/removing the userscript add-via-URL embed. See `specs/UI-MIGRATION.md`.
+> **Lifecycle: completed**
+
+> **Completion status — read first.** This is the original UI-CLEANUP-01 work
+> order, retained as implementation history. Its temporary exception was closed
+> by UI-CLEANUP-02, which removed the broken userscript embed, ClientScript,
+> compiled bundles, fonts and templates. Sonar T14 then deleted all 20 unserved
+> files under `couchpotato/core/**/static` and added a structural recurrence
+> guard. The legacy runtime is retired; `/old/*` is only a redirect. Outstanding
+> user behavior is tracked in `specs/UI-MIGRATION.md`, not kept as dead code.
 
 ## Problem
 
-The classic `/old` MooTools UI is dead: `/old/*` is a redirect-only shim
-(`couchpotato/__init__.py`), and the old `views`/`addView` machinery that rendered
-`index.html`/`api.html`/`database.html` is populated but never read. The legacy
-asset layer (SCSS sources + compiled `combined.min.css`, the icon font + Open Sans
-+ Lobster binaries, the MooTools/Uniform/classic JS, and `clientscript.py`) still
-ships but is now unreferenced by the modern UI (`couchpotato/ui/**`) — dead weight.
+At the start of UI-CLEANUP-01, the classic `/old` MooTools UI was dead:
+`/old/*` was a redirect-only shim (`couchpotato/__init__.py`), and the old
+`views`/`addView` machinery that rendered `index.html`/`api.html`/`database.html`
+was populated but never read. The legacy asset layer (SCSS sources + compiled
+`combined.min.css`, the icon font + Open Sans + Lobster binaries, the
+MooTools/Uniform/classic JS, and `clientscript.py`) still shipped but was
+unreferenced by the modern UI (`couchpotato/ui/**`) — dead weight.
 
 **Precondition (already done in UI-PORT-02):** `couchpotato/templates/login.html`
 has been ported to the Tailwind design system and no longer calls

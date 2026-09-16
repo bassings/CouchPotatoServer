@@ -1,5 +1,7 @@
 # PLAN 2026-09-07: work the SonarQube backlog in assessed slices
 
+> **Lifecycle: completed**
+
 **Owner instruction, 2026-09-07:** push to SonarQube and fix anything medium or
 higher, with the clarification that "fix" means ASSESS FIRST, and that things
 which should not be fixed can be accepted.

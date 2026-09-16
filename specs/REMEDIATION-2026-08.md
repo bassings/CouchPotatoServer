@@ -1,5 +1,8 @@
 # Remediation Plan: Audit 2026-08-02
 
+> **Lifecycle: active**
+> **Legacy runtime: retired; `/old/*`: redirect-only.**
+
 Resolves every finding in the 2026-08-02 repository audit, plus the outstanding
 half of FEAT-009. Sequenced into six milestone-sized PRs, each passing the full
 local review gate before push.
@@ -986,8 +989,8 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [ ] T25: 39 inputs in the new UI's wizard have no label — state: queued (no deps) · re-confirmed present by the 2026-08-18 scan (still 39 x `Web:InputWithoutLabelCheck`), i.e. NOT yet fixed. **Retracted 2026-08-18: an earlier version of this line called that "independent corroboration by a different tool with a different ruleset". It is not. T25 was CREATED from these same SonarQube findings — the body below says so — so a second scan reporting the same rule is the same tool agreeing with itself. A re-run is evidence the defect is still open, and nothing more.**
 
       `couchpotato/ui/templates/wizard.html`, all 39 instances of SonarQube's
-      `Web:InputWithoutLabelCheck`. This is the NEW UI, not the legacy tree
-      being retired, and this project states a WCAG 2.2 AA floor enforced as
+      `Web:InputWithoutLabelCheck`. This is the NEW UI, not the now-retired
+      legacy tree, and this project states a WCAG 2.2 AA floor enforced as
       automated tests in both themes and at phone width.
 
       **The interesting part is not the labels, it is that the a11y gate is
@@ -3627,7 +3630,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       | Candidate | Size | The question |
       |---|---|---|
-      | `couchpotato/core/**/static/*.js` | 4,487 lines | Legacy `/old/` UI. An earlier note said the userscript add-via-URL keeps part of it alive; that is obsolete — `add_via_url` is served by the NEW UI (`couchpotato/ui/__init__.py:384`) via `callApiHandler`. Re-establish what, if anything, still needs these |
+      | ~~`couchpotato/core/**/static/*.js`~~ | ~~4,487 lines~~ | **Resolved by Sonar T14.** The production boundary was re-established: FastAPI mounts only `couchpotato/static`, the loader skips `static`, and no template or build consumer referenced this tree. All 20 assets (19 JavaScript files plus one image) were deleted together, with `tests/unit/test_no_legacy_core_static_assets.py` preventing the retired class from returning. Outstanding UI behavior remains explicit in `specs/UI-MIGRATION.md`; git history, not unreachable runtime files, is the porting reference. |
       | `libs/CodernityDB/` | 7,147 lines | Kept for one-time migration per CLAUDE.md. Has every install migrated? If the answer is unknowable, it stays and the docs say why |
       | `Plugin.renderTemplate` | 1 method | Zero callers anywhere (`.py`, `.html`, `.js`). Also T17's third finding |
       | `remove_lower_quality_copies` | 1 setting | Deliberately inert, warns once. Delete once operators have had a release to notice |

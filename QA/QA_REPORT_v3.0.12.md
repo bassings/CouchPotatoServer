@@ -1,5 +1,10 @@
 # CouchPotato v3.0.12 QA Report
 
+> **Lifecycle: historical**
+>
+> This report predates retirement of the Classic UI; `/old/*` is now
+> redirect-only.
+
 **Test Date:** 2026-02-16
 **Version:** v3.0.12 (docker)
 **Previous Version Tested:** v3.0.11

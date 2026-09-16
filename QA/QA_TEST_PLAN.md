@@ -1,9 +1,15 @@
 # CouchPotato QA Test Plan
 
+> **Lifecycle: historical**
+> **Legacy runtime: retired; `/old/*`: redirect-only.**
+
+> Point-in-time v3.0.11 test inventory. It is retained as evidence, not as
+> current test guidance; the automated suites and current feature specs govern.
+
 **Application:** CouchPotato Movie Management System
 **Version:** v3.0.11 (docker)
 **Stack:** Python 3, FastAPI, htmx + Tailwind + Alpine.js
-**Last Updated:** 2026-02-16
+**Last Updated:** 2026-09-17
 
 ---
 
@@ -18,7 +24,7 @@
 | Add Movie | /add/ | ✓ | TMDB search to add movies |
 | Settings | /settings/ | ✓ | Configuration with tabbed interface |
 | Setup Wizard | /wizard/ | ✓ | 6-step setup wizard |
-| Classic UI | /old/ | ⚠ | Requires separate authentication |
+| Retired classic route | /old/ | ✓ | Redirect-only; contains no classic page |
 
 ### 1.2 Detail Pages
 | Page | URL Pattern | Status | Notes |
@@ -594,5 +600,4 @@ Document any issues that are known but not planned for immediate fix:
 
 | Issue | Reason | Workaround |
 |-------|--------|------------|
-| Classic UI requires separate auth | Architecture limitation | Use new UI |
 | | | |
