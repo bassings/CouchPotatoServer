@@ -1,5 +1,10 @@
 # QA Session Notes — 2026-02-16
 
+> **Lifecycle: historical**
+>
+> This session predates retirement of the Classic UI. Its questions and route
+> observations are historical, not current implementation guidance.
+
 **Start Time:** 06:43 AEST
 **Production URL:** http://homemedia.maeewing.com:5050
 **Version:** vdocker:(v3.0.11)

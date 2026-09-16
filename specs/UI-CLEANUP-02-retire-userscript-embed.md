@@ -1,5 +1,11 @@
 # UI-CLEANUP-02 — Retire the legacy userscript embed + delete the last legacy chain
 
+> **Lifecycle: completed**
+
+> **Status: completed.** The userscript embed, ClientScript chain, compiled
+> bundles, fonts and templates described below were deleted. Sonar T14 later
+> removed the remaining unserved `couchpotato/core/**/static` tree.
+
 ## Problem
 
 UI-CLEANUP-01 kept a chain alive because `Userscript.iFrame` called

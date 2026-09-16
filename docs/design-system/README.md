@@ -1,7 +1,9 @@
 # Handoff: CouchPotato Design System (v3 / htmx UI)
 
+> **Legacy runtime: retired; `/old/*`: redirect-only.**
+
 ## Overview
-This package documents the **canonical design system for the modern CouchPotato web UI** — the htmx + Alpine + Tailwind interface under `couchpotato/ui/`. It defines colour, typography, spacing, iconography, components, motion, and accessibility so the modern UI can be built/extended consistently and the legacy MooTools UI (`/old/`, `couchpotato/static/style/*.scss`) can be retired.
+This package documents the **canonical design system for the CouchPotato web UI** — the htmx + Alpine + Tailwind interface under `couchpotato/ui/`. It defines colour, typography, spacing, iconography, components, motion, and accessibility for the single shipped interface; the former MooTools `/old/` UI and its asset tree have been retired.
 
 The system was **extracted directly from the existing codebase** (`couchpotato/ui/templates/base.html` and the `partials/`), so most tokens below already exist in the app. Treat this README as the source of truth when adding new screens or refactoring old ones.
 
@@ -80,7 +82,7 @@ Depth = three near-black layers (`bg` → `surface` → `card`) + translucent bo
 ## Iconography
 The app uses **Heroicons (outline)** inline as SVG — 24×24, `stroke-width="1.5"`, `stroke="currentColor"`, `fill="none"`, decorative ones get `aria-hidden="true"`. No icon font.
 
-The legacy UI's 30-glyph icon font maps to these Heroicons. When porting old screens, swap each glyph for its equivalent:
+The retired UI's 30-glyph icon font maps to these Heroicons. When implementing a gap from the audited migration backlog, use the equivalent below:
 
 | Legacy glyph | Heroicon (outline) |
 |---|---|
@@ -187,7 +189,7 @@ Built-in, with a Playwright + axe suite. Rules every component follows:
 - `theme.css` — **ready-to-paste theme.** All `:root` / `:root.light` variables, the light-mode contrast + translucent overrides, scrollbars, `fade-in`, htmx indicator, and the full a11y/reduced-motion base. Values are verified against `base.html` (including the correct poster-card hover: dark `0.15`/`0.06`, light `0.3`/`0.1`). Load it after the Tailwind CDN + `tailwind.config`.
 - `screenshots/` — annotated PNGs of each section (dark), plus `13-colour-light.png` and `14-forms-light.png` for the light theme: `01-overview` · `02-colour` · `03-typography` · `04-icons` · `05-components` · `06-forms` · `07-modals` · `08-states` · `09-surfaces` · `10-motion` · `11-accessibility` · `12-migration`.
 - `couchpotato-design-system.dc.html` — static design-canvas export (tokens, components, and the **icon path data** in its `iconGroups` array). Reference/data only — not a browsable page (see "About the Design Files"); this README is authoritative.
-- `couchpotato-design-system-classic.dc.html` — the legacy red/Open Sans/Lobster system, for reference only (being retired).
+- `couchpotato-design-system-classic.dc.html` — the retired red/Open Sans/Lobster system, for historical reference only.
 
 ### Source files in the repo to align with
 - `couchpotato/ui/templates/base.html` — Tailwind config, CSS variables, sidebar/chrome, toasts, theme toggle, a11y scaffolding.

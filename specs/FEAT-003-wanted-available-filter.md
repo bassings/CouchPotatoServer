@@ -1,7 +1,10 @@
 # FEAT-003: Merge Available into Wanted — Filter Redesign
 
+> **Lifecycle: completed**
+
 ## Status
-Ready for implementation
+Completed; later extended by the Review filter in FEAT-010. This document is
+the implementation record, not a queued instruction.
 
 ## Problem
 
@@ -22,13 +25,14 @@ pointless here — done movies are in the Library, not the Wanted list.
 5. User clicks "Done" → movie moves to **Library**
 6. If not done yet: user can open the movie and hit Refresh to re-search
 
-## Proposed Changes
+## Implemented Design
 
 ### 1. Remove "Available" from sidebar navigation
 
 In `base.html`, remove `('available', 'Available', ...)` from `nav_items`.
 
-The sidebar becomes: **Wanted / Library / Classic UI**
+The Available link leaves the sidebar. The retired Classic UI is not a
+navigation destination; `/old/*` redirects to the current UI.
 
 ### 2. Replace "Done" filter with "Available" in Wanted filter bar
 
@@ -113,20 +117,20 @@ nav. Add a redirect from `/available` → `/wanted?filter=available` so any book
 
 ## Acceptance Criteria
 
-- [ ] "Available" is removed from the sidebar on desktop, mobile bottom nav, and mobile drawer
-- [ ] Wanted page filter bar shows: All / Wanted / Available (no Done)
-- [ ] "All" shows every active movie (same as current default load)
-- [ ] "Wanted" filter shows only movies with no releases found
-- [ ] "Available" filter shows movies that have releases OR are downloading/downloaded
-- [ ] Navigating to `/available` redirects to `/wanted?filter=available`
-- [ ] Filter state persists in URL (existing IMP-004 behaviour preserved)
-- [ ] Movie count updates correctly for each filter
-- [ ] No regressions on Library page (unaffected)
-- [ ] All existing unit tests pass (`pytest tests/unit/ -q`)
-- [ ] Lint passes (`ruff check .`)
+- [x] "Available" is removed from the sidebar on desktop, mobile bottom nav, and mobile drawer
+- [x] Wanted page filter bar shows All / Wanted / Available (and now Review)
+- [x] "All" shows every active movie (same as current default load)
+- [x] "Wanted" filter shows only movies with no releases found
+- [x] "Available" filter shows movies that have releases and are not awaiting review
+- [x] Navigating to `/available` redirects to `/wanted?filter=available`
+- [x] Filter state persists in URL (existing IMP-004 behaviour preserved)
+- [x] Movie count updates correctly for each filter
+- [x] No regressions on Library page (unaffected)
+- [x] All existing unit tests pass (`pytest tests/unit/ -q`)
+- [x] Lint passes (`ruff check .`)
 
 ## Out of Scope
 
 - Changes to the Library page
 - Changes to movie status values in the database
-- The classic UI (`/old/`)
+- The already-retired Classic UI (`/old/*` redirects to `/`)

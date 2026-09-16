@@ -1,5 +1,10 @@
 # VENDORED-06: Replace vendored `git` library with `dulwich`
 
+> **Lifecycle: completed**
+>
+> The `updater.js` mentioned below was an unserved legacy consumer and was
+> deleted with the complete `couchpotato/core/**/static` tree in Sonar T14.
+
 ## Problem
 
 `couchpotato/lib/git/` is a small vendored git wrapper (Python 2-era, MIT/BSD
@@ -93,8 +98,10 @@ no-op, not an error.
 
 `getVersion()` / `check()` / `doUpdate()` signatures and the version dict
 shape (`hash`, `date`, `type`, `branch`, `repr`) are unchanged — the rest of
-`updater/main.py` (`Updater.info()`, `.check()`, `.autoUpdate()`) and the
-settings UI (`updater.js`) consume these unmodified.
+`updater/main.py` (`Updater.info()`, `.check()`, `.autoUpdate()`) consumes
+these unmodified. The current UI reads `updater.info` from its base and
+settings templates. The former unserved `updater.js` consumer was deleted
+later with the complete retired `couchpotato/core/**/static` tree in T14.
 
 ## What did not change
 

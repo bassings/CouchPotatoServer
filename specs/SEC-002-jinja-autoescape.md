@@ -1,5 +1,11 @@
 # SEC-002: Jinja2 Autoescape for Classic UI
 
+> **Lifecycle: completed**
+
+> **Status: completed.** Autoescape is enabled and regression-tested. The
+> classic templates named below were subsequently deleted except for the login
+> template; this file is the historical security implementation record.
+
 ## Problem
 CodeQL alert #69 — Reflected XSS in `couchpotato/__init__.py`.
 

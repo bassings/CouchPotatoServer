@@ -1,5 +1,7 @@
 # CouchPotatoServer — Claude Context
 
+> **Legacy runtime: retired; `/old/*`: redirect-only.**
+
 > Restructured 2026-07-13: process detail moved to `docs/development-process.md`,
 > tech debt + lessons to `docs/technical-debt.md`. This file is the short core —
 > read it at the start of every session.
@@ -132,7 +134,7 @@ persona from memory; `AGENTS.md` is the review rubric they apply.
 |---|---|---|
 | Database | SQLite via `SQLiteAdapter` | Replaced CodernityDB (unmaintained, Py3 issues). Vendored `libs/CodernityDB/` stays for one-time migration — don't remove |
 | Web framework | FastAPI/Uvicorn | Replaced Tornado — modern async, better typing |
-| UI | htmx + Tailwind + Alpine.js at `/` | Legacy `/old/` UI being retired — see `specs/UI-MIGRATION.md` |
+| UI | htmx + Tailwind + Alpine.js at `/` | The legacy UI is retired; `/old/*` redirects to `/` while the parity backlog remains in `specs/UI-MIGRATION.md` |
 | UI design system | `docs/design-system/README.md` | **Visual source of truth.** Conform new UI against `docs/design-system/CONFORMANCE.md` (CI-gated) |
 | Container base | `python:3.14-alpine` + `su-exec` | Debian base carried ~119 OS CVEs; Alpine ships 0. Healthcheck uses Python `urllib` (no curl in image) |
 

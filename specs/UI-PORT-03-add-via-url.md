@@ -1,5 +1,10 @@
 # UI-PORT-03 — Add-by-URL in the new UI (replaces the broken legacy bookmarklet)
 
+> **Lifecycle: completed**
+
+> **Status: completed.** Add-by-URL is available in the current UI; descriptions
+> of the legacy embed below are historical context.
+
 ## Problem
 
 The legacy "userscript / bookmarklet / add-via-URL" feature is broken today (the

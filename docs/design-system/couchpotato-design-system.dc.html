@@ -82,7 +82,7 @@
     <header id="overview" style="position:relative; padding:64px 56px 52px; border-bottom:1px solid var(--cp-border); background:radial-gradient(120% 90% at 0% 0%, rgba(53,197,244,.08), transparent 60%);">
       <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:18px;">Design System · v3 · htmx UI</div>
       <h1 style="font-size:52px; font-weight:600; line-height:1.04; letter-spacing:-.03em; max-width:780px;">The visual language of <span style="color:#35c5f4;">CouchPotato</span></h1>
-      <p style="margin-top:22px; max-width:640px; font-size:17px; line-height:1.6; color:var(--cp-muted); font-weight:300;">The system of record for the modernised movie manager — Inter, a single cyan accent, dark-first theming and a Heroicons set. The classic MooTools interface is being retired; everything worth keeping lives here.</p>
+      <p style="margin-top:22px; max-width:640px; font-size:17px; line-height:1.6; color:var(--cp-muted); font-weight:300;">The system of record for the modernised movie manager — Inter, a single cyan accent, dark-first theming and a Heroicons set. The classic MooTools interface is retired; everything worth keeping lives here.</p>
       <p style="margin-top:14px; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--cp-faint); line-height:1.7;">Jump via the sidebar — it tracks your scroll position. Toggle dark / light at the bottom-left to flip every token live.</p>
       <div style="display:flex; gap:30px; margin-top:40px; flex-wrap:wrap;">
         <sc-for list="{{ heroStats }}" as="s" hint-placeholder-count="4">
@@ -620,8 +620,8 @@
     <!-- Migration -->
     <section id="migration" style="padding:0 56px 56px;">
       <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">12 — Migration</div>
-      <h2 style="font-size:30px; font-weight:600; margin-bottom:8px; letter-spacing:-.02em;">Retiring the classic UI</h2>
-      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-bottom:32px; font-weight:300;">The MooTools interface still ships behind <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">/old/</code>. These are the patterns worth carrying into the htmx UI — and the ones to leave behind.</p>
+      <h2 style="font-size:30px; font-weight:600; margin-bottom:8px; letter-spacing:-.02em;">Lessons from the classic UI</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-bottom:32px; font-weight:300;">The former MooTools interface and its assets are retired; <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">/old/</code> now redirects to the current UI. These are the patterns carried into the htmx UI — and the ones left behind.</p>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px;">
 
         <div style="border:1px solid rgba(61,220,132,.25); border-radius:12px; padding:26px; background:rgba(61,220,132,.04);">

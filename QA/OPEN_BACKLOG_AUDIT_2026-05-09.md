@@ -1,5 +1,10 @@
 # Open Backlog Audit - 2026-05-09
 
+> **Lifecycle: historical**
+>
+> Point-in-time dependency and alert inventory; paths and findings below are
+> evidence from the audited revision, not current implementation guidance.
+
 Branch: `qa/open-backlog-audit-agent`  
 Base HEAD audited: `899976b9fe086d4ef0f5fb750cbd03bfcff8d226`
 

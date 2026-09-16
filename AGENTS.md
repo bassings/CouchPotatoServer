@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> **Legacy runtime: retired; `/old/*`: redirect-only.**
+
 ## Project Context
 
 CouchPotatoServer is a media-management web application with a Python backend, a browser-based UI, SQLite-backed state, Docker deployment, and GitHub Actions release automation.
@@ -92,8 +94,8 @@ Treat these as high-priority review findings:
 - `couchpotato/core/db/sqlite_adapter.py` is the active database adapter.
   Vendored `libs/CodernityDB/` remains solely for supported migration and must
   not be removed as routine cleanup.
-- The current UI is served at `/`; the legacy `/old/` interface is being
-  retired under `specs/UI-MIGRATION.md`.
+- The current UI is served at `/`; the retired `/old/*` routes redirect to it.
+  Remaining feature-parity work is tracked in `specs/UI-MIGRATION.md`.
 - `docs/design-system/README.md` and
   `docs/design-system/CONFORMANCE.md` define the UI design system and its
   enforced conformance rules.

@@ -27,7 +27,7 @@ class Charts(Plugin):
         charts = fireEvent('automation.get_chart_list', merge = True)
         ignored = splitString(Env.prop('charts_ignore', default = ''))
 
-        # Create a list the movie/list.js can use
+        # Create the serializable chart list returned by this API.
         for chart in charts:
             medias = []
             for media in chart.get('list', []):

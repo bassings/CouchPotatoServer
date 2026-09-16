@@ -1,5 +1,10 @@
 # CouchPotato QA Findings
 
+> **Lifecycle: historical**
+>
+> Point-in-time findings from before the legacy UI was retired. References to
+> Classic UI authentication below describe that old build, not current routes.
+
 **Test Date:** 2026-02-16
 **Version:** v3.0.11 (docker)
 **Tester:** QA Automation

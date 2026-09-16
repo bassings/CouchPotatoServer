@@ -14,7 +14,7 @@ from couchpotato.core.plugins.base import Plugin
 log = CPLog(__name__)
 
 
-## This is here to load the static files
+# Plugin entry point retained for downloader subsystem discovery.
 class Downloader(Plugin):
     pass
 
@@ -251,4 +251,3 @@ class ReleaseDownloadList(list):
         }
 
         return mergeDicts(defaults, result)
-
