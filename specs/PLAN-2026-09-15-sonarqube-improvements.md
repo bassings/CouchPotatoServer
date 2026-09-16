@@ -258,6 +258,11 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-OPS-7:** Keep processing enabled iTunes feeds while safely skipping
   URLs whose enable flag is missing, and remove the redundant always-true XML
   root check reported as `python:S5727` without changing feed parsing.
+- **AC-QA-12:** Provider-level regressions prove missing enable flags fail
+  closed for iTunes, IMDb watchlists, and Letterboxd without suppressing an
+  earlier enabled entry. Reversing the shared bounds predicate must fail.
+- **AC-SIMP-9:** Replace the recurring direct enable-list indexing class with
+  one shared bounds helper used by all three affected automation providers.
 
 ## Implementation sequence
 
@@ -306,6 +311,9 @@ within the authority explicitly granted by the owner.
 - [x] **T11 — bound iTunes automation configuration** — state: completed.
   Treat a missing per-URL enable flag as disabled, retain enabled-feed parsing,
   and remove the redundant parsed-root condition. Covers AC-QA-11, AC-OPS-7.
+- [x] **T12 — enforce bounded automation enable flags** — state: completed.
+  Replace sibling direct flag indexing in IMDb and Letterboxd, and T11's local
+  guard, with one tested fail-closed mechanism. Covers AC-QA-12, AC-SIMP-9.
 
 All tasks also cover AC-SIMP-3..4 and AC-QA-6.
 
@@ -501,5 +509,21 @@ All tasks also cover AC-SIMP-3..4 and AC-QA-6.
   a root or raises into the existing per-feed handler. Security/privacy, QA,
   and product/operability reviews are clean. The full release gate passed
   4,265 Python unit tests, 42 integration tests, 214 UI unit tests, 176
+  Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
+  checks.
+- 2026-09-17: PR #370 merged as `c943de1c4f44f7a01c80e897db12196368729f69`.
+  The exact-version and exact-revision Sonar analysis closed both the targeted
+  iTunes `S5727` finding and its existing `S3776` complexity finding. Code
+  smells fell from 1,081 to 1,079, open issues from 1,096 to 1,094, coverage
+  rose from 56.8% to 56.9%, and the gate remains OK with 15 bugs and zero
+  vulnerabilities or hotspots. Hosted review identified the same missing-flag
+  failure class in IMDb and Letterboxd; T12 converts the repeated instance
+  class into a shared mechanism rather than another pair of local patches.
+- 2026-09-17: T12 completed locally. Both sibling provider regressions were
+  red with the same out-of-range failure. One shared fail-closed helper now
+  bounds iTunes, IMDb, and Letterboxd enable-list access; reversing its strict
+  upper bound failed all three real provider regressions. Security/privacy,
+  QA, and product/operability reviews are clean. The full release gate passed
+  4,267 Python unit tests, 42 integration tests, 214 UI unit tests, 176
   Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
   checks.

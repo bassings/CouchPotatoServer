@@ -3,7 +3,7 @@ import re
 from bs4 import BeautifulSoup
 from couchpotato.core.helpers.variable import tryInt, splitString, removeEmpty
 from couchpotato.core.logger import CPLog
-from couchpotato.core.media.movie.providers.automation.base import Automation
+from couchpotato.core.media.movie.providers.automation.base import Automation, isListItemEnabled
 
 
 log = CPLog(__name__)
@@ -43,7 +43,7 @@ class Letterboxd(Automation):
         for username in urls:
 
             index += 1
-            if not enablers[index]:
+            if not isListItemEnabled(enablers, index):
                 continue
 
             soup = BeautifulSoup(self.getHTMLData(self.url % (username, 1)), 'lxml')
