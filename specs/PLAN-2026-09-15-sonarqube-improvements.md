@@ -430,7 +430,7 @@ within the authority explicitly granted by the owner.
   `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
   parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
   AC-SEC-9, and AC-SIMP-13.
-- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: in-progress.
+- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: awaiting-ci #378.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
@@ -830,3 +830,7 @@ T9 and T14 exceptions stated above.
   brackets. Adversarial 10k/20k/40k authority parsing scaled approximately
   linearly, and NZBGet's sole credential-inserting call path was unchanged.
   T19 is locally healthy for delivery.
+- 2026-09-17: Opened PR #378 after the full pre-push gate passed 4,312 Python
+  unit tests (14 skipped, 5 xfailed), 42 integration tests, 214 UI-unit tests,
+  176 Chromium flows, 2 isolation checks, 10 mobile checks, and 96
+  accessibility checks. T19 is awaiting hosted CI and cloud review.
