@@ -719,3 +719,8 @@ T9 and T14 exceptions stated above.
   diff hygiene clean. The configured changed-file mutation scope does not
   include this downloader; the explicit naive-clock mutation remains the
   load-bearing proof. Independent review remains pending.
+- 2026-09-17: T17's corrected exact tip passed security/privacy, QA/reliability,
+  operability/product, and fresh-verification review with every criterion clean.
+  The complete release gate passed 4,320 Python unit tests, 42 integration
+  tests, 214 UI unit tests, 176 Chromium flows, 2 isolation checks, 10 mobile
+  checks, and 96 accessibility checks. T17 is locally healthy for delivery.
