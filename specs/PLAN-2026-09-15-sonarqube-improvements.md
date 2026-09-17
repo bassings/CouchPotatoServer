@@ -335,6 +335,20 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-13:** Replace the super-linear token regex with a bounded standard-
   library HTML parser local to the uTorrent adapter; add no dependency and do
   not refactor unrelated downloader behavior.
+- **AC-QA-18:** `cleanHost` detects already-present HTTP Basic Auth without a
+  regular expression, preserves that URL unchanged, and continues to insert
+  configured credentials when userinfo is absent. Focused tests cover both
+  branches and fail if this decision path calls `re.findall`.
+- **AC-SEC-10:** The already-authenticated-URL warning contains no embedded or
+  configured username/password, hostname, port, path, query, or other URL
+  content. The returned URL remains behavior-compatible; this slice changes
+  disclosure at the logging boundary, not credential storage semantics.
+- **AC-OPS-12:** A URL parser failure cannot crash host cleanup and retains the
+  existing best-effort credential insertion behavior. No downloader request,
+  authentication, SSL, trailing-slash, or protocol-selection behavior changes.
+- **AC-SIMP-14:** Replace the one super-linear Basic Auth regex with one bounded
+  standard-library URL authority check; add no dependency and do not refactor
+  unrelated variable helpers or downloader adapters.
 
 ## Implementation sequence
 
@@ -411,11 +425,15 @@ within the authority explicitly granted by the owner.
   Repair Sonar's high-reliability-impact `python:S6903` deprecation finding
   without changing the existing five-minute completion race policy. Covers AC-QA-16,
   AC-OPS-10, and AC-SIMP-12.
-- [ ] **T18 — make uTorrent token parsing byte-safe and bounded** — state: awaiting-ci #377.
+- [x] **T18 — make uTorrent token parsing byte-safe and bounded** — state: merged #377.
   Replace the failing string regex at live issue
   `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
   parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
   AC-SEC-9, and AC-SIMP-13.
+- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: in-progress.
+  Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
+  URL construction behavior, and remove credential/local-network disclosure
+  from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -786,3 +804,20 @@ T9 and T14 exceptions stated above.
   unit tests (14 skipped, 5 xfailed), 42 integration tests, 214 UI-unit tests,
   176 Chromium flows, 2 isolation checks, 10 mobile checks, and 96
   accessibility checks. T18 is awaiting hosted CI and cloud review.
+- 2026-09-17: T18 merged as PR #377 after all 16 hosted checks and cloud review
+  passed. Exact-master analysis `240df92f-be48-4c62-93e6-687405a6950f`
+  measured merge commit `cc05fec4eb7052e785a3b99a6e049210e0eb9b47`,
+  closed issue `f3570b64-354a-4d63-b964-83b74d555e8d` as `FIXED`, and reduced
+  open code smells from 830 to 829 and MAJOR smells from 335 to 334 while
+  retaining 61.2% coverage. T19 starts from that exact master revision.
+- 2026-09-17: T19's red tests proved the old `cleanHost` warning passed the
+  entire credential-bearing URL to logging and that auth detection called
+  `re.findall`; the missing-auth branch consequently failed when regex use was
+  forbidden. Production now uses bounded `urlsplit` authority fields, emits a
+  fixed URL-free warning, and treats parser failure as absent userinfo so the
+  existing best-effort insertion remains. An always-absent-auth mutation
+  produced double userinfo and was killed by the preservation regression.
+  The complete helper/plan set passed 110 tests with 12 skips, and the fast
+  gate collected 4,331 Python unit items (4,312 passed, 14 skipped, 5 xfailed),
+  then passed 42 integration and 214 UI-unit tests; Ruff, conformance, and the
+  323-file trap guard are clean. Independent local review remains pending.
