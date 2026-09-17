@@ -411,7 +411,7 @@ within the authority explicitly granted by the owner.
   Repair Sonar's high-reliability-impact `python:S6903` deprecation finding
   without changing the existing five-minute completion race policy. Covers AC-QA-16,
   AC-OPS-10, and AC-SIMP-12.
-- [ ] **T18 — make uTorrent token parsing byte-safe and bounded** — state: locally-clean.
+- [ ] **T18 — make uTorrent token parsing byte-safe and bounded** — state: in-progress.
   Replace the failing string regex at live issue
   `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
   parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
