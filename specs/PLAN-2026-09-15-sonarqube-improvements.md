@@ -293,6 +293,20 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   request and explicit failure collection; introduce no dependency or service
   endpoint.
 
+### Final reliability-finding adjudication
+
+- **AC-QA-15:** Every SonarQube issue classified as a bug after T15 has a
+  call-site review and specific executable or source evidence. A finding is
+  accepted only when that evidence shows the reported failure cannot escape
+  its intended boundary, has no runtime effect, or is the test mechanism
+  itself.
+- **AC-OPS-9:** Record the exact `master` revision, analysis timestamp, quality
+  gate, aggregate measures, and the complete surviving bug inventory. Do not
+  change issue status in SonarQube; that remains an owner-controlled action.
+- **AC-SIMP-11:** Do not churn production code merely to lower the count. The
+  two harmless parameter-shadowing findings remain named cleanup debt rather
+  than being presented as reliability repairs.
+
 ## Implementation sequence
 
 Each item is an independent review unit. External delivery is not implied by
@@ -355,11 +369,15 @@ within the authority explicitly granted by the owner.
   `PLAN-2026-09-07-post-sonarqube-followups.md`; T14 must not rewrite or gate
   that file, and its lifecycle remains an explicit owner-reconciliation task.
   Covers AC-SIMP-4 and AC-QA-6.
-- [ ] **T15 — repair the retained standalone health probe** — state: in-progress.
+- [x] **T15 — repair the retained standalone health probe** — state: merged #374.
   Replace the Python-2-labelled, bytes-incompatible, assertion-wrapping probe
   with one Python 3 root-page check while its deletion still requires the
   production-only AC-OPS-12 grep. Covers AC-QA-14, AC-SEC-8, AC-OPS-8, and
   AC-SIMP-10.
+- [x] **T16 — adjudicate the final reliability inventory** — state: completed.
+  Review all nine post-T15 bug findings at their call sites, retain the
+  evidence for each accepted finding, and separate harmless cleanup debt from
+  runtime defects. Covers AC-QA-15, AC-OPS-9, and AC-SIMP-11.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -632,3 +650,31 @@ T9 and T14 exceptions stated above.
   further read after that threshold is observed. A read already in progress
   can consume its own capped timeout, so the plan does not claim a hard
   five-second wall-clock deadline.
+- 2026-09-17: PR #374 merged as
+  `dcccb91ba6528117313d2c825d305f3bfbd17c52` with every hosted check and
+  cloud review clean. Two complete local gates passed 4,297 Python unit tests,
+  42 integration tests, 214 UI unit tests, 176 Chromium flows, 2 isolation
+  checks, 10 mobile checks, and 96 accessibility checks. The exact-master
+  Sonar analysis at `2026-09-17T00:00:47+0000` closed all three health-probe
+  `python:S5779` bugs: bugs fell from 12 to 9, smells from 835 to 831, and
+  coverage rose from 60.9% to 61.2%. Duplication remained 1.6%; the gate is OK
+  with zero vulnerabilities or security hotspots.
+- 2026-09-17: T16 reviewed the complete nine-finding reliability inventory.
+  All are accepted with call-site evidence; none is silently dismissed in
+  SonarQube:
+
+  | Finding | Adjudication and evidence |
+  |---|---|
+  | `python:S8904` `awesomehd.py:37` | False positive. `.get_text()` is executed only inside `if soup.find('error'):`; `test_awesomehd_missing_authkey_skips_results_with_actionable_error` also exercises the adjacent missing-element boundary. |
+  | `python:S8904` `bithdtv.py:83` | False positive. The exact `nfo_pre` value is guarded by `toUnicode(nfo_pre.text) if nfo_pre else ''`, so `None.text` is unreachable. |
+  | `python:S8904` `thepiratebay.py:71` | Accepted tolerant parser behavior. The optional pagination lookup is inside its own `try/except`; failure retains the initialized single-page bound and result parsing continues. Provider parser tests execute this implementation with the pinned parser. |
+  | `python:S5779` `test_race_conditions.py:298` | Intentional test mechanism. A worker-thread assertion is caught into `errors`, and the owning test fails on `assert len(errors) == 0`; forcing the worker assertion to fail is propagated and makes that final assertion fail. |
+  | `typescript:S5845` `category-editor.spec.ts:90` | False positive from inference across untyped JavaScript. `categoryToForm` uses `c._id ?? ''`; the test deliberately proves numeric `_id=0` survives instead of becoming the string fallback. |
+  | `Web:PageWithoutTitleCheck` `base.html:3` | False positive. The same template's `<head>` contains `<title>{% block title %}CouchPotato{% endblock %}</title>`. |
+  | `python:S5863` `test_password_storage.py:67` | False positive. Two calls with the same password must differ because bcrypt generates a fresh random salt; a fixed-salt mutation fails this regression while authentication tests prove both hashes remain usable. |
+  | `python:S1226` `newznab.py:170` | No runtime defect. The interface-compatible `host` argument is intentionally not consulted; the method enumerates configured hosts and passes each configured value to the base matcher. The loop-name shadow is cleanup debt only. |
+  | `python:S1226` `torrentpotato.py:151` | Same bounded cleanup class as Newznab: configured hosts are deliberately enumerated, the interface argument is unused, and the loop variable is passed immediately to the base matcher. |
+
+  The exact scan reports no other SonarQube bugs. T16 therefore closes the
+  reliability backlog without changing SonarQube issue state or mislabelling
+  the two minor naming cleanups as production fixes.

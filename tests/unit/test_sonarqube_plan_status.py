@@ -71,6 +71,29 @@ def test_plan_checkboxes_agree_with_explicit_states():
     assert not errors, f'inconsistent task status: {errors}'
 
 
+def test_final_reliability_inventory_names_all_nine_surviving_findings():
+    text = PLAN.read_text(encoding='utf-8')
+    inventory = text.split(
+        'T16 reviewed the complete nine-finding reliability inventory.', 1
+    )[1].split('The exact scan reports no other SonarQube bugs.', 1)[0]
+    rows = re.findall(
+        r'^\s*\| `([^`]+)` `([^`]+)` \|', inventory, re.MULTILINE
+    )
+
+    assert len(rows) == 9
+    assert set(rows) == {
+        ('python:S8904', 'awesomehd.py:37'),
+        ('python:S8904', 'bithdtv.py:83'),
+        ('python:S8904', 'thepiratebay.py:71'),
+        ('python:S5779', 'test_race_conditions.py:298'),
+        ('typescript:S5845', 'category-editor.spec.ts:90'),
+        ('Web:PageWithoutTitleCheck', 'base.html:3'),
+        ('python:S5863', 'test_password_storage.py:67'),
+        ('python:S1226', 'newznab.py:170'),
+        ('python:S1226', 'torrentpotato.py:151'),
+    }
+
+
 @pytest.mark.parametrize(
     'task_line',
     [
