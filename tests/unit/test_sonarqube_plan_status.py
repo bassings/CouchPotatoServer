@@ -18,6 +18,10 @@ LIFECYCLE_WORDS = re.compile(
     r'\b(?:await(?:ing|s)?|pending|building|queued|blocked|in-progress|outstanding)\b',
     re.IGNORECASE,
 )
+PASSED_COLLECTION_TOTAL = re.compile(
+    r'\bpassed(?::)?\s+[\d,]+\s+Python unit(?: tests?)?\b',
+    re.IGNORECASE,
+)
 
 
 def _task_status_errors(text):
@@ -69,6 +73,34 @@ def _task_status_errors(text):
 def test_plan_checkboxes_agree_with_explicit_states():
     errors = _task_status_errors(PLAN.read_text(encoding='utf-8'))
     assert not errors, f'inconsistent task status: {errors}'
+
+
+def test_plan_does_not_report_collected_python_items_as_all_passed():
+    text = PLAN.read_text(encoding='utf-8')
+    assert not PASSED_COLLECTION_TOTAL.search(text)
+
+
+@pytest.mark.parametrize(
+    'claim',
+    [
+        'The full gate passed 4,320 Python unit tests.',
+        'Verification passed: 4,320 Python unit tests.',
+        'The gate passed 4320 Python unit.',
+    ],
+)
+def test_python_verification_wording_rejects_passed_collection_totals(claim):
+    assert PASSED_COLLECTION_TOTAL.search(claim)
+
+
+@pytest.mark.parametrize(
+    'claim',
+    [
+        'The gate covered 4,320 collected Python unit-test items.',
+        'Python unit: 4,301 passed, 14 skipped, 5 xfailed.',
+    ],
+)
+def test_python_verification_wording_accepts_precise_outcomes(claim):
+    assert not PASSED_COLLECTION_TOTAL.search(claim)
 
 
 def test_final_reliability_inventory_names_all_nine_surviving_findings():
