@@ -282,7 +282,19 @@ def _has_basic_auth(host):
         parsed = urlsplit(host)
         return bool(parsed.username and parsed.password)
     except ValueError:
-        return False
+        # urlsplit rejects malformed bracketed IPv6 before exposing userinfo.
+        # Preserve existing credentials even on that best-effort cleanup path:
+        # inserting another pair would both disclose configured credentials and
+        # make the already-invalid URL still harder for the operator to repair.
+        scheme_at = host.find('://')
+        if scheme_at == -1:
+            return False
+        authority = host[scheme_at + 3:]
+        for delimiter in '/?#':
+            authority = authority.split(delimiter, 1)[0]
+        userinfo, separator, _host = authority.rpartition('@')
+        username, password_separator, password = userinfo.partition(':')
+        return bool(separator and password_separator and username and password)
 
 
 def cleanHost(host, protocol = True, ssl = False, username = None, password = None):

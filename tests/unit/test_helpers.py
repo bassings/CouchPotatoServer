@@ -138,6 +138,23 @@ class TestCleanHostBasicAuth:
 
         assert result == 'http://configured-user:configured-secret@media.internal:8080/'
 
+    def test_malformed_ipv6_with_existing_auth_does_not_duplicate_credentials(self):
+        host = 'http://embedded-user:embedded-secret@[::1:8080/path'
+
+        with patch('couchpotato.core.helpers.variable.log.error') as log_error:
+            result = cleanHost(
+                host,
+                username = 'configured-user',
+                password = 'configured-secret',
+            )
+
+        assert result == host + '/'
+        log_error.assert_called_once_with(
+            'Cleanhost error: auth already defined in URL; '
+            'please remove BasicAuth from URL.'
+        )
+        assert 'configured-user:configured-secret@embedded-user' not in result
+
 
 class TestRemovePyc:
     """removePyc() runs at CouchPotato.py import time, before anything else

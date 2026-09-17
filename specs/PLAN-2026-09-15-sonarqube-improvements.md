@@ -343,8 +343,10 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   configured username/password, hostname, port, path, query, or other URL
   content. The returned URL remains behavior-compatible; this slice changes
   disclosure at the logging boundary, not credential storage semantics.
-- **AC-OPS-12:** A URL parser failure cannot crash host cleanup and retains the
-  existing best-effort credential insertion behavior. No downloader request,
+- **AC-OPS-12:** A URL parser failure cannot crash host cleanup: configured
+  credentials are still inserted when userinfo is absent, while recognizable
+  existing userinfo is preserved without duplication even when malformed IPv6
+  brackets make `urlsplit` reject the URL. No downloader request,
   authentication, SSL, trailing-slash, or protocol-selection behavior changes.
 - **AC-SIMP-14:** Replace the one super-linear Basic Auth regex with one bounded
   standard-library URL authority check; add no dependency and do not refactor
@@ -430,7 +432,7 @@ within the authority explicitly granted by the owner.
   `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
   parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
   AC-SEC-9, and AC-SIMP-13.
-- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: awaiting-ci #378.
+- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: queued #378.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
@@ -834,3 +836,14 @@ T9 and T14 exceptions stated above.
   unit tests (14 skipped, 5 xfailed), 42 integration tests, 214 UI-unit tests,
   176 Chromium flows, 2 isolation checks, 10 mobile checks, and 96
   accessibility checks. T19 is awaiting hosted CI and cloud review.
+- 2026-09-17: All 16 hosted checks passed, but cloud review found that malformed
+  bracketed IPv6 with existing userinfo made `urlsplit` raise before exposing
+  the credentials; the fallback then inserted a second credential pair. A new
+  focused regression reproduced the exact double-userinfo result red. The
+  bounded parse-failure fallback now inspects only the URL authority, preserves
+  recognizable existing username/password, and retains best-effort insertion
+  when userinfo is absent; all four focused Basic Auth tests pass. The repaired
+  fast gate collected 4,332 Python items (4,313 passed, 14 skipped, 5 xfailed),
+  then passed all 42 integration and 214 UI-unit tests with lint, conformance,
+  and the 323-file trap guard clean. T19 is ready for independent local review
+  before the required fix push.
