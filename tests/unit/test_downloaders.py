@@ -486,7 +486,10 @@ class TestPutIO:
         from couchpotato.core.downloaders.putio import main as putio_main
 
         # finished 10 minutes ago -> past the 5 minute race-condition window
-        finished = (datetime.datetime.utcnow() - datetime.timedelta(minutes=10))
+        finished = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=10)
+        )
         finished_at_str = finished.strftime('%Y-%m-%dT%H:%M:%S')
 
         transfer = self._resource(id=7, name='Some.Movie', status='COMPLETED',
@@ -504,7 +507,10 @@ class TestPutIO:
         from couchpotato.core.downloaders.putio import main as putio_main
 
         # finished 10 seconds ago -> still inside the 5 minute window
-        finished = (datetime.datetime.utcnow() - datetime.timedelta(seconds=10))
+        finished = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(seconds=10)
+        )
         finished_at_str = finished.strftime('%Y-%m-%dT%H:%M:%S')
 
         transfer = self._resource(id=8, name='Some.Movie', status='COMPLETED',
@@ -516,6 +522,52 @@ class TestPutIO:
             result = putio.getAllDownloadStatus([8])
 
         assert result[0]['status'] == 'busy'
+
+    @pytest.mark.parametrize(
+        ('finished_at', 'expected_status'),
+        [
+            ('2026-09-17T11:57:00', 'busy'),
+            ('2026-09-17T11:55:00', 'completed'),
+            ('2026-09-17T11:50:00', 'completed'),
+        ],
+    )
+    def test_getAllDownloadStatus_compares_finished_at_in_aware_utc(
+        self, finished_at, expected_status,
+    ):
+        """Put.io timestamps are UTC even though the API omits an offset."""
+        putio = self._make_putio({'oauth_token': 'tok', 'download': True})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        fixed_now = datetime.datetime(
+            2026, 9, 17, 12, 0, 0, tzinfo=datetime.timezone.utc,
+        )
+
+        class AwareUtcDatetime(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                assert tz is datetime.timezone.utc
+                return fixed_now
+
+            @classmethod
+            def utcnow(cls):
+                raise AssertionError('naive utcnow must not drive age comparisons')
+
+        transfer = self._resource(
+            id=81,
+            name='Some.Movie',
+            status='COMPLETED',
+            estimated_time=0,
+            file_id=57,
+            finished_at=finished_at,
+        )
+
+        with patch.object(putio_main.datetime, 'datetime', AwareUtcDatetime), \
+             patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client_cls.return_value.Transfer.list.return_value = [transfer]
+
+            result = putio.getAllDownloadStatus([81])
+
+        assert result[0]['status'] == expected_status
 
     def test_getAllDownloadStatus_busy_when_still_transferring(self):
         putio = self._make_putio({'oauth_token': 'tok', 'download': False})

@@ -307,6 +307,21 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   two harmless parameter-shadowing findings remain named cleanup debt rather
   than being presented as reliability repairs.
 
+### Maintainability backlog continuation
+
+- **AC-QA-16:** Put.io completion-age comparisons parse the API's naive
+  `finished_at` value as UTC and compare it with an aware UTC current time.
+  Focused tests prove a completion younger than five minutes remains `busy`
+  while completions exactly five minutes old and older are `completed`;
+  restoring a naive current time must fail rather than silently passing the
+  regression.
+- **AC-OPS-10:** The repair preserves the existing five-minute race window,
+  transfer filtering, download-disabled behavior, and in-progress download
+  list behavior. It introduces no local-time or host-timezone dependency.
+- **AC-SIMP-12:** Keep the timezone repair local to the Put.io age comparison;
+  do not refactor unrelated downloader control flow merely to reduce the
+  SonarQube count.
+
 ## Implementation sequence
 
 Each item is an independent review unit. External delivery is not implied by
@@ -375,9 +390,13 @@ within the authority explicitly granted by the owner.
   production-only AC-OPS-12 grep. Covers AC-QA-14, AC-SEC-8, AC-OPS-8, and
   AC-SIMP-10.
 - [x] **T16 — adjudicate the final reliability inventory** — state: completed.
-  Review all nine post-T15 bug findings at their call sites, retain the
+  Review all nine post-T15 `BUG`-typed findings at their call sites, retain the
   evidence for each accepted finding, and separate harmless cleanup debt from
   runtime defects. Covers AC-QA-15, AC-OPS-9, and AC-SIMP-11.
+- [ ] **T17 — make Put.io completion age timezone-aware** — state: awaiting-ci #376.
+  Repair Sonar's high-reliability-impact `python:S6903` deprecation finding
+  without changing the existing five-minute completion race policy. Covers AC-QA-16,
+  AC-OPS-10, and AC-SIMP-12.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -436,13 +455,14 @@ T9 and T14 exceptions stated above.
   284 checker tests, 27 Chromium interaction tests, 214 UI unit tests, and the
   affected accessibility checks; security/product and operability reviews
   reported no findings.
-- 2026-09-15: Final combined verification passed: 4,178 Python unit tests, 42
+- 2026-09-15: Final combined verification covered 4,178 collected Python
+  unit-test items, 42
   Python integration tests, 214 UI unit tests, and 282 Playwright tests across
   Chromium, accessibility, and mobile, with Ruff, the 317-file trap gate, UI
   conformance, and diff hygiene clean. T1's post-commit live validation and T6
   remain deliberately pending until the work is committed on clean `master`.
-- 2026-09-16: Opened PR #354 after the mandatory pre-push gate passed 4,184
-  Python unit, 42 integration, 214 UI unit, 176 Chromium, 2 isolation, 10
+- 2026-09-16: Opened PR #354 after the mandatory pre-push gate covered 4,184
+  collected Python unit-test items, 42 integration, 214 UI unit, 176 Chromium, 2 isolation, 10
   mobile, and 96 accessibility tests. T1 through T5 are awaiting CI. T1's live
   clean-`master` proof and dependent T6 remain post-merge work.
 - 2026-09-16: PR #354's first Python CI run exposed a clean-runner dependency
@@ -501,7 +521,8 @@ T9 and T14 exceptions stated above.
   Windows-import tests pass. Removing that check made the optimized regression
   fail, so the test killed the relevant mutation. QA review added direct
   normal-interpreter sentinel coverage; fresh security, QA, product, and
-  verification reviews are clean. The full gate passed 4,233 Python unit, 42
+  verification reviews are clean. The full gate covered 4,233 collected
+  Python unit-test items, 42
   integration, 214 UI unit, 176 Chromium, 2 isolation, 10 mobile, and 96
   accessibility tests. T7 is locally healthy for delivery.
 - 2026-09-16: PR review found two completed task blocks that still described
@@ -522,8 +543,8 @@ T9 and T14 exceptions stated above.
   shadowing broad `except OSError: pass` kills the non-EINTR regression test.
   Security review found and drove removal of both the original filename and
   the implicit `exc_info` traceback from the real logger path; security, QA,
-  and operability lenses are clean. The full release gate passed 4,261 Python
-  unit tests, 42 integration tests, 214 UI unit tests, 176 Chromium flows, 2
+  and operability lenses are clean. The full release gate covered 4,261
+  collected Python unit-test items, 42 integration tests, 214 UI unit tests, 176 Chromium flows, 2
   isolation checks, 10 mobile checks, and 96 accessibility checks.
 - 2026-09-16: PR #367 merged as `848709951dcb98c05ffc2495226b8057291d5d35`.
   The exact-version and exact-revision Sonar analysis closed the targeted
@@ -538,8 +559,8 @@ T9 and T14 exceptions stated above.
   formatter, and replaced the numeric EINTR sentinel. Reversing the EINTR
   predicate made both required tests fail. QA found and drove a narrow policy
   exception for only the T8-introduced complexity regression; security, QA,
-  and operability re-reviews are clean. The full release gate passed 4,263
-  Python unit tests, 42 integration tests, 214 UI unit tests, 176 Chromium
+  and operability re-reviews are clean. The full release gate covered 4,263
+  collected Python unit-test items, 42 integration tests, 214 UI unit tests, 176 Chromium
   flows, 2 isolation checks, 10 mobile checks, and 96 accessibility checks.
 - 2026-09-17: PR #368 merged as `62cf23aab13ae16933f22be160eaf05ad0d4e11a`.
   The exact-version and exact-revision Sonar analysis closed T9's `S3776`
@@ -553,7 +574,7 @@ T9 and T14 exceptions stated above.
   could miss a wrapped nested conditional; the guard now walks every
   descendant, and an independently applied wrapped mutation fails it.
   Security, QA, and operability re-reviews are clean. The full release gate
-  passed 4,264 Python unit tests, 42 integration tests, 214 UI unit tests, 176
+  covered 4,264 collected Python unit-test items, 42 integration tests, 214 UI unit tests, 176
   Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
   checks.
 - 2026-09-17: PR #369 merged as `53d52ef646c2f84c30cdf29010507f93d2aa4e9b`.
@@ -572,8 +593,8 @@ T9 and T14 exceptions stated above.
   `>=` to `>` failed at the original access, killing the targeted mutation.
   The redundant parsed-root condition is removed because `fromstring` returns
   a root or raises into the existing per-feed handler. Security/privacy, QA,
-  and product/operability reviews are clean. The full release gate passed
-  4,265 Python unit tests, 42 integration tests, 214 UI unit tests, 176
+  and product/operability reviews are clean. The full release gate covered
+  4,265 collected Python unit-test items, 42 integration tests, 214 UI unit tests, 176
   Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
   checks.
 - 2026-09-17: PR #370 merged as `c943de1c4f44f7a01c80e897db12196368729f69`.
@@ -588,8 +609,8 @@ T9 and T14 exceptions stated above.
   red with the same out-of-range failure. One shared fail-closed helper now
   bounds iTunes, IMDb, and Letterboxd enable-list access; reversing its strict
   upper bound failed all three real provider regressions. Security/privacy,
-  QA, and product/operability reviews are clean. The full release gate passed
-  4,267 Python unit tests, 42 integration tests, 214 UI unit tests, 176
+  QA, and product/operability reviews are clean. The full release gate covered
+  4,267 collected Python unit-test items, 42 integration tests, 214 UI unit tests, 176
   Chromium flows, 2 isolation checks, 10 mobile checks, and 96 accessibility
   checks.
 - 2026-09-17: PR #371 merged as
@@ -626,7 +647,8 @@ T9 and T14 exceptions stated above.
   and legacy-bundle-removal tests to remain green.
 - 2026-09-17: PR #373 merged as
   `7a993cb396eb17a64e07a8aa4e59e17ebe2938e4` with every hosted check and
-  cloud review clean. Two complete local gates passed 4,283 Python unit tests,
+  cloud review clean. Two complete local gates each covered 4,283 collected
+  Python unit-test items,
   42 integration tests, 214 UI unit tests, 176 Chromium flows, 2 isolation
   checks, 10 mobile checks, and 96 accessibility checks. The exact-master
   Sonar analysis closed the updater, Trakt, and PutIO bugs with no replacement
@@ -652,7 +674,8 @@ T9 and T14 exceptions stated above.
   five-second wall-clock deadline.
 - 2026-09-17: PR #374 merged as
   `dcccb91ba6528117313d2c825d305f3bfbd17c52` with every hosted check and
-  cloud review clean. Two complete local gates passed 4,297 Python unit tests,
+  cloud review clean. Two complete local gates each covered 4,297 collected
+  Python unit-test items,
   42 integration tests, 214 UI unit tests, 176 Chromium flows, 2 isolation
   checks, 10 mobile checks, and 96 accessibility checks. The exact-master
   Sonar analysis at `2026-09-17T00:00:47+0000` closed all three health-probe
@@ -676,5 +699,43 @@ T9 and T14 exceptions stated above.
   | `python:S1226` `torrentpotato.py:151` | Same bounded cleanup class as Newznab: configured hosts are deliberately enumerated, the interface argument is unused, and the loop variable is passed immediately to the base matcher. |
 
   The exact scan reports no other SonarQube bugs. T16 therefore closes the
-  reliability backlog without changing SonarQube issue state or mislabelling
+  `BUG`-typed inventory without changing SonarQube issue state or mislabelling
   the two minor naming cleanups as production fixes.
+- 2026-09-17: Reconciled after the owner clarified that the terminal condition
+  includes all maintainability findings, not only `BUG`-typed findings. The
+  live inventory contains 831 open code smells, including 42 with reliability
+  impact. T17 starts from the sole Sonar-classified high-reliability critical
+  finding: Put.io compares a naive UTC timestamp with `datetime.utcnow()`.
+  Call-site review shows this is a low-risk deprecation cleanup rather than a
+  present wrong-result defect because both operands currently represent naive
+  UTC. Read-only
+  triage of the remaining Python, browser/template, blocker, and critical
+  findings is running in parallel; the user-owned modified post-Sonar plan
+  remains outside this worktree and untouched.
+- 2026-09-17: T17 reached green after an explicit red test rejected the naive
+  `utcnow()` path in both younger-than-five-minute and older-than-five-minute
+  cases. Production now uses an aware UTC clock and attaches UTC to Put.io's
+  offset-less API timestamp. Restoring the naive clock failed both regression
+  cases; the complete 20-test Put.io group and focused Ruff/diff checks pass.
+  Independent Harness review and the broader gate remain pending.
+- 2026-09-17: T17's fast repository gate collected 4,319 Python unit-test
+  items (4,300 passed, 14 skipped, 5 xfailed) and passed 214 UI unit tests,
+  with Ruff, the 323-file trap guard, UI conformance, and
+  diff hygiene clean. The configured changed-file mutation scope does not
+  include this downloader; the explicit naive-clock mutation remains the
+  load-bearing proof. Independent review remains pending.
+- 2026-09-17: T17's corrected exact tip passed security/privacy, QA/reliability,
+  operability/product, and fresh-verification review with every criterion clean.
+  The complete release gate collected 4,320 Python unit-test items (4,301
+  passed, 14 skipped, 5 xfailed) and passed 42 integration tests, 214 UI unit
+  tests, 176 Chromium flows, 2 isolation checks, 10 mobile
+  checks, and 96 accessibility checks. T17 is locally healthy for delivery.
+- 2026-09-17: Final evidence review found the recurring class of calling
+  pytest's collected total a passed-test count. A structural guard first failed
+  on the historical wording, every unverifiable historical total now says
+  `collected`/`covered`, and T17 records the exact 4,301 passed, 14 skipped,
+  and 5 xfailed outcomes. Reintroducing the old phrase makes the guard fail.
+- 2026-09-17: Opened PR #376 after the final pre-push gate covered 4,326
+  collected Python unit-test items and passed 42 integration, 214 UI unit, 176
+  Chromium, 2 isolation, 10 mobile, and 96 accessibility tests. T17 is
+  awaiting hosted CI and cloud review.
