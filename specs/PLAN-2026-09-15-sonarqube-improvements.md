@@ -820,4 +820,13 @@ T9 and T14 exceptions stated above.
   The complete helper/plan set passed 110 tests with 12 skips, and the fast
   gate collected 4,331 Python unit items (4,312 passed, 14 skipped, 5 xfailed),
   then passed 42 integration and 214 UI-unit tests; Ruff, conformance, and the
-  323-file trap guard are clean. Independent local review remains pending.
+  323-file trap guard are clean.
+- 2026-09-17: Two independent clean-agent reviews measured exact commit
+  `a79f10e39e74eabe0f9a42eab2fa9ae503fdba3d` and tree
+  `b42214c9731cc85af5567e95738a5985f94b1a94` as clean across security,
+  privacy, operability, QA, reliability, product, and simplicity. Their URL
+  matrix covered encoded, colon-bearing, and raw-`@` credentials; IPv6;
+  path/query decoys; incomplete userinfo; absent userinfo; and malformed
+  brackets. Adversarial 10k/20k/40k authority parsing scaled approximately
+  linearly, and NZBGet's sole credential-inserting call path was unchanged.
+  T19 is locally healthy for delivery.
