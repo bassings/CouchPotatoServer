@@ -712,7 +712,7 @@ T9 and T14 exceptions stated above.
   `utcnow()` path in both younger-than-five-minute and older-than-five-minute
   cases. Production now uses an aware UTC clock and attaches UTC to Put.io's
   offset-less API timestamp. Restoring the naive clock failed both regression
-  cases; the complete 19-test Put.io group and focused Ruff/diff checks pass.
+  cases; the complete 20-test Put.io group and focused Ruff/diff checks pass.
   Independent Harness review and the broader gate remain pending.
 - 2026-09-17: T17's fast repository gate passed 4,319 Python unit tests and
   214 UI unit tests, with Ruff, the 323-file trap guard, UI conformance, and
