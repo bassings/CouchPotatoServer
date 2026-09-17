@@ -432,7 +432,7 @@ within the authority explicitly granted by the owner.
   `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
   parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
   AC-SEC-9, and AC-SIMP-13.
-- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: queued #378.
+- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: awaiting-ci #378.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
@@ -847,3 +847,12 @@ T9 and T14 exceptions stated above.
   then passed all 42 integration and 214 UI-unit tests with lint, conformance,
   and the 323-file trap guard clean. T19 is ready for independent local review
   before the required fix push.
+- 2026-09-17: Two independent clean-agent reviews measured exact repair commit
+  `ff08eb4b5b72f9856b219e363c637655b0e9b12f` and tree
+  `2b396f0051ad07b65284a70e48deeae068537cc0` as clean. Their matrix exercised
+  ten real `urlsplit` failure cases, including malformed IPv6 and NFKC-invalid
+  authorities; normal, colon-rich, percent-encoded, and raw-`@` credentials;
+  absent/incomplete userinfo; and path/query/fragment decoys. Existing auth was
+  preserved without duplication or disclosure, absent auth retained configured
+  insertion, and 10k/20k/40k failure inputs scaled approximately linearly. The
+  repair will now receive its required full pre-push gate and hosted rerun.
