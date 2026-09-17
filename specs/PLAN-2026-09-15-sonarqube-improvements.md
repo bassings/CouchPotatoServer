@@ -393,7 +393,7 @@ within the authority explicitly granted by the owner.
   Review all nine post-T15 `BUG`-typed findings at their call sites, retain the
   evidence for each accepted finding, and separate harmless cleanup debt from
   runtime defects. Covers AC-QA-15, AC-OPS-9, and AC-SIMP-11.
-- [ ] **T17 — make Put.io completion age timezone-aware** — state: building.
+- [ ] **T17 — make Put.io completion age timezone-aware** — state: awaiting-ci #376.
   Repair Sonar's high-reliability-impact `python:S6903` deprecation finding
   without changing the existing five-minute completion race policy. Covers AC-QA-16,
   AC-OPS-10, and AC-SIMP-12.
@@ -735,3 +735,7 @@ T9 and T14 exceptions stated above.
   on the historical wording, every unverifiable historical total now says
   `collected`/`covered`, and T17 records the exact 4,301 passed, 14 skipped,
   and 5 xfailed outcomes. Reintroducing the old phrase makes the guard fail.
+- 2026-09-17: Opened PR #376 after the final pre-push gate covered 4,326
+  collected Python unit-test items and passed 42 integration, 214 UI unit, 176
+  Chromium, 2 isolation, 10 mobile, and 96 accessibility tests. T17 is
+  awaiting hosted CI and cloud review.
