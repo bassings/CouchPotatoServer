@@ -411,7 +411,7 @@ within the authority explicitly granted by the owner.
   Repair Sonar's high-reliability-impact `python:S6903` deprecation finding
   without changing the existing five-minute completion race policy. Covers AC-QA-16,
   AC-OPS-10, and AC-SIMP-12.
-- [ ] **T18 — make uTorrent token parsing byte-safe and bounded** — state: in-progress.
+- [ ] **T18 — make uTorrent token parsing byte-safe and bounded** — state: awaiting-ci #377.
   Replace the failing string regex at live issue
   `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
   parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
@@ -782,3 +782,7 @@ T9 and T14 exceptions stated above.
   response-closure, and body-disclosure mutations, verified real `urllib`
   response closure, and measured approximately linear parsing at 10k/20k
   adversarial input. T18 is locally healthy for delivery.
+- 2026-09-17: Opened PR #377 after the full pre-push gate passed 4,309 Python
+  unit tests (14 skipped, 5 xfailed), 42 integration tests, 214 UI-unit tests,
+  176 Chromium flows, 2 isolation checks, 10 mobile checks, and 96
+  accessibility checks. T18 is awaiting hosted CI and cloud review.
