@@ -307,6 +307,21 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   two harmless parameter-shadowing findings remain named cleanup debt rather
   than being presented as reliability repairs.
 
+### Maintainability backlog continuation
+
+- **AC-QA-16:** Put.io completion-age comparisons parse the API's naive
+  `finished_at` value as UTC and compare it with an aware UTC current time.
+  Focused tests prove a completion younger than five minutes remains `busy`
+  while completions exactly five minutes old and older are `completed`;
+  restoring a naive current time must fail rather than silently passing the
+  regression.
+- **AC-OPS-10:** The repair preserves the existing five-minute race window,
+  transfer filtering, download-disabled behavior, and in-progress download
+  list behavior. It introduces no local-time or host-timezone dependency.
+- **AC-SIMP-12:** Keep the timezone repair local to the Put.io age comparison;
+  do not refactor unrelated downloader control flow merely to reduce the
+  SonarQube count.
+
 ## Implementation sequence
 
 Each item is an independent review unit. External delivery is not implied by
@@ -375,9 +390,13 @@ within the authority explicitly granted by the owner.
   production-only AC-OPS-12 grep. Covers AC-QA-14, AC-SEC-8, AC-OPS-8, and
   AC-SIMP-10.
 - [x] **T16 — adjudicate the final reliability inventory** — state: completed.
-  Review all nine post-T15 bug findings at their call sites, retain the
+  Review all nine post-T15 `BUG`-typed findings at their call sites, retain the
   evidence for each accepted finding, and separate harmless cleanup debt from
   runtime defects. Covers AC-QA-15, AC-OPS-9, and AC-SIMP-11.
+- [ ] **T17 — make Put.io completion age timezone-aware** — state: building.
+  Repair Sonar's high-reliability-impact `python:S6903` deprecation finding
+  without changing the existing five-minute completion race policy. Covers AC-QA-16,
+  AC-OPS-10, and AC-SIMP-12.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -676,5 +695,27 @@ T9 and T14 exceptions stated above.
   | `python:S1226` `torrentpotato.py:151` | Same bounded cleanup class as Newznab: configured hosts are deliberately enumerated, the interface argument is unused, and the loop variable is passed immediately to the base matcher. |
 
   The exact scan reports no other SonarQube bugs. T16 therefore closes the
-  reliability backlog without changing SonarQube issue state or mislabelling
+  `BUG`-typed inventory without changing SonarQube issue state or mislabelling
   the two minor naming cleanups as production fixes.
+- 2026-09-17: Reconciled after the owner clarified that the terminal condition
+  includes all maintainability findings, not only `BUG`-typed findings. The
+  live inventory contains 831 open code smells, including 42 with reliability
+  impact. T17 starts from the sole Sonar-classified high-reliability critical
+  finding: Put.io compares a naive UTC timestamp with `datetime.utcnow()`.
+  Call-site review shows this is a low-risk deprecation cleanup rather than a
+  present wrong-result defect because both operands currently represent naive
+  UTC. Read-only
+  triage of the remaining Python, browser/template, blocker, and critical
+  findings is running in parallel; the user-owned modified post-Sonar plan
+  remains outside this worktree and untouched.
+- 2026-09-17: T17 reached green after an explicit red test rejected the naive
+  `utcnow()` path in both younger-than-five-minute and older-than-five-minute
+  cases. Production now uses an aware UTC clock and attaches UTC to Put.io's
+  offset-less API timestamp. Restoring the naive clock failed both regression
+  cases; the complete 19-test Put.io group and focused Ruff/diff checks pass.
+  Independent Harness review and the broader gate remain pending.
+- 2026-09-17: T17's fast repository gate passed 4,319 Python unit tests and
+  214 UI unit tests, with Ruff, the 323-file trap guard, UI conformance, and
+  diff hygiene clean. The configured changed-file mutation scope does not
+  include this downloader; the explicit naive-clock mutation remains the
+  load-bearing proof. Independent review remains pending.

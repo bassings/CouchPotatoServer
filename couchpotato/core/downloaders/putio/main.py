@@ -96,8 +96,10 @@ class PutIO(DownloaderBase):
                       # Assume we are done
                       status = 'completed'
                       if not self.downloading_list:
-                          now = datetime.datetime.utcnow()
-                          date_time = datetime.datetime.strptime(t.finished_at,"%Y-%m-%dT%H:%M:%S")
+                          now = datetime.datetime.now(datetime.timezone.utc)
+                          date_time = datetime.datetime.strptime(
+                              t.finished_at, "%Y-%m-%dT%H:%M:%S"
+                          ).replace(tzinfo=datetime.timezone.utc)
                           # We need to make sure a race condition didn't happen
                           if (now - date_time) < datetime.timedelta(minutes=5):
                               # 5 minutes haven't passed so we wait
