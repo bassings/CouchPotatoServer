@@ -3,6 +3,7 @@ from datetime import timedelta
 from hashlib import sha1
 import http.cookiejar as cookielib
 import http.client as httplib
+from html.parser import HTMLParser
 import json
 import os
 import re
@@ -25,6 +26,30 @@ from urllib.request import BaseHandler as MultipartPostHandler  # was vendored m
 log = CPLog(__name__)
 
 autoload = 'uTorrent'
+
+
+class _UTorrentTokenParser(HTMLParser):
+    """Extract text only from the token element returned by uTorrent Web UI."""
+
+    def __init__(self):
+        super().__init__()
+        self._inside_token = False
+        self._parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'div' and dict(attrs).get('id') == 'token':
+            self._inside_token = True
+
+    def handle_endtag(self, tag):
+        if tag == 'div' and self._inside_token:
+            self._inside_token = False
+
+    def handle_data(self, data):
+        if self._inside_token:
+            self._parts.append(data)
+
+    def get_token(self):
+        return ''.join(self._parts).strip()
 
 
 class uTorrent(DownloaderBase):
@@ -279,8 +304,17 @@ class uTorrentAPI:
         return False
 
     def get_token(self):
-        request = self.opener.open(self.url + 'token.html')
-        token = re.findall('<div.*?>(.*?)</', request.read())[0]
+        with self.opener.open(self.url + 'token.html') as request:
+            body = request.read()
+
+        if isinstance(body, bytes):
+            body = body.decode('utf-8', errors = 'replace')
+
+        parser = _UTorrentTokenParser()
+        parser.feed(body)
+        token = parser.get_token()
+        if not token:
+            raise ValueError('uTorrent token response did not contain a token')
         return token
 
     def add_torrent_uri(self, filename, torrent, add_folder = False):

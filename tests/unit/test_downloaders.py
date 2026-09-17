@@ -2655,6 +2655,48 @@ class TestUTorrentDownloadFile:
         assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
 
 
+class TestUTorrentAPIToken:
+    """uTorrent Web UI token responses are bytes and contain one exact token div."""
+
+    @staticmethod
+    def _api_with_response(payload):
+        from couchpotato.core.downloaders.utorrent import uTorrentAPI
+
+        api = uTorrentAPI.__new__(uTorrentAPI)
+        api.url = 'http://utorrent.invalid/gui/'
+        api.opener = MagicMock()
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = payload
+        api.opener.open.return_value = response
+        return api, response
+
+    def test_get_token_decodes_bytes_and_selects_exact_token_div(self):
+        api, response = self._api_with_response(
+            b'<html><div>decoy</div><div id="token">TOKEN-123</div></html>'
+        )
+
+        assert api.get_token() == 'TOKEN-123'
+        api.opener.open.assert_called_once_with(
+            'http://utorrent.invalid/gui/token.html'
+        )
+        response.__enter__.assert_called_once_with()
+        response.__exit__.assert_called_once()
+
+    def test_get_token_closes_malformed_response_without_disclosing_body(self):
+        private_body = b'<html>PRIVATE-TOKEN-LIKE-VALUE</html>'
+        api, response = self._api_with_response(private_body)
+
+        with pytest.raises(ValueError) as raised:
+            api.get_token()
+
+        message = str(raised.value)
+        assert message == 'uTorrent token response did not contain a token'
+        assert 'PRIVATE-TOKEN-LIKE-VALUE' not in message
+        response.__enter__.assert_called_once_with()
+        response.__exit__.assert_called_once()
+
+
 class TestDelugeCheckTorrent:
     """Tests for DelugeRPC._check_torrent()'s torrent-FILE info-hash path,
     both in isolation and through the production add_torrent_file() fallback

@@ -321,6 +321,20 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-12:** Keep the timezone repair local to the Put.io age comparison;
   do not refactor unrelated downloader control flow merely to reduce the
   SonarQube count.
+- **AC-QA-17:** uTorrent token acquisition accepts the byte response returned
+  by `urllib`, extracts the contents of the exact `div#token` element rather
+  than a preceding decoy element, and rejects a response without that element
+  with a stable explicit error. A focused regression must fail against the
+  current string-regex-on-bytes implementation.
+- **AC-OPS-11:** The token response is closed on both successful and malformed
+  responses. Token parsing remains compatible with the existing uTorrent Web
+  UI endpoint and does not change authentication or request refresh behavior.
+- **AC-SEC-9:** A malformed token response must not copy its body, token-like
+  values, credentials, URL, or local-network details into the exception or a
+  log message.
+- **AC-SIMP-13:** Replace the super-linear token regex with a bounded standard-
+  library HTML parser local to the uTorrent adapter; add no dependency and do
+  not refactor unrelated downloader behavior.
 
 ## Implementation sequence
 
@@ -393,10 +407,15 @@ within the authority explicitly granted by the owner.
   Review all nine post-T15 `BUG`-typed findings at their call sites, retain the
   evidence for each accepted finding, and separate harmless cleanup debt from
   runtime defects. Covers AC-QA-15, AC-OPS-9, and AC-SIMP-11.
-- [ ] **T17 — make Put.io completion age timezone-aware** — state: awaiting-ci #376.
+- [x] **T17 — make Put.io completion age timezone-aware** — state: merged #376.
   Repair Sonar's high-reliability-impact `python:S6903` deprecation finding
   without changing the existing five-minute completion race policy. Covers AC-QA-16,
   AC-OPS-10, and AC-SIMP-12.
+- [ ] **T18 — make uTorrent token parsing byte-safe and bounded** — state: in-progress.
+  Replace the failing string regex at live issue
+  `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
+  parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
+  AC-SEC-9, and AC-SIMP-13.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -739,3 +758,19 @@ T9 and T14 exceptions stated above.
   collected Python unit-test items and passed 42 integration, 214 UI unit, 176
   Chromium, 2 isolation, 10 mobile, and 96 accessibility tests. T17 is
   awaiting hosted CI and cloud review.
+- 2026-09-17: T17 merged as PR #376 after all 16 hosted checks and the cloud
+  review passed. Exact-master Sonar analysis
+  `e2bfb10a-5b7d-4042-a956-d86ff4715e89` measured merge commit
+  `3882511e15324e10af548767b1138eaabbeb795a`, closed the Put.io
+  `python:S6903` issue as `FIXED`, reduced open code smells from 831 to 830 and
+  critical smells from 198 to 197, and retained 61.2% coverage. T18 starts
+  from that exact master revision.
+- 2026-09-17: T18's red tests reproduced the production Python 3 failure:
+  `urllib` returned bytes and the string regex raised `TypeError`. The bounded
+  standard-library parser now selects only `div#token`, closes both successful
+  and malformed responses, and emits a fixed body-free error when the element
+  is absent. Mutating the selector to accept every `div` made the decoy-token
+  regression fail. All 168 downloader tests and the 323-file trap guard pass.
+  The fast repository gate collected 4,328 Python unit items (4,309 passed,
+  14 skipped, 5 xfailed), then passed 42 integration and 214 UI-unit tests;
+  Ruff and UI conformance are clean. Independent local review remains pending.
