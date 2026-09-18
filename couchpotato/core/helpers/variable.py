@@ -561,6 +561,7 @@ def _keyword_password_at(name, marker):
     prefix_end = newline if newline != -1 else marker - 1
     prefix_start = name.rfind('\n', 0, prefix_end) + 1
     prefix = name[prefix_start:prefix_end]
+    match_start = prefix_start
     if not prefix and newline != -1:
         # If the first line is empty, regex search can start within a later
         # whitespace-only line. Prefer the earliest non-empty segment; on the
@@ -571,14 +572,16 @@ def _keyword_password_at(name, marker):
             if next_newline == -1:
                 if marker - line_start > 1:
                     prefix = name[line_start:marker - 1]
+                    match_start = line_start
                 break
             if next_newline > line_start:
                 prefix = name[line_start:next_newline]
+                match_start = line_start
                 break
             line_start = next_newline + 1
     if not prefix:
         return None
-    return prefix.strip('. '), password.strip()
+    return prefix.strip('. '), password.strip(), match_start
 
 
 def _keyword_password(name):
@@ -605,9 +608,11 @@ def _keyword_password(name):
     elif on_final < len(match_name) and match_name[on_final] == '=':
         cross_equals = on_final
 
+    cross_line_results = []
+
     # A marker at the first non-whitespace position of the final line can also
-    # begin a match on the preceding line: the required ``\s+`` consumes the
-    # newline. Greediness selects it before an earlier line's suffix marker.
+    # begin a match on a preceding line: the required ``\s+`` consumes the
+    # newline.
     has_earlier_line_prefix = any(
         match_name[index] != '\n'
         for index in range(max(0, last_line_start - 1))
@@ -615,7 +620,7 @@ def _keyword_password(name):
     if has_earlier_line_prefix and _is_password_keyword(match_name, on_final):
         result = _keyword_password_at(match_name, on_final)
         if result:
-            return result
+            cross_line_results.append((result[2], -on_final, result[:2]))
 
     if cross_equals is not None:
         keyword_end = cross_equals
@@ -625,7 +630,12 @@ def _keyword_password(name):
         if _is_password_keyword(match_name, marker):
             result = _keyword_password_at(match_name, marker)
             if result:
-                return result
+                cross_line_results.append((result[2], -marker, result[:2]))
+
+    if cross_line_results:
+        # re.search chooses the leftmost match start; its greedy first group
+        # chooses the later marker only when candidate starts are identical.
+        return min(cross_line_results)[2]
 
     # With no earlier match, greediness chooses the rightmost marker on the
     # final line. Per-character comparison preserves source offsets for Unicode
@@ -634,7 +644,7 @@ def _keyword_password(name):
         if _is_password_keyword(match_name, marker):
             result = _keyword_password_at(match_name, marker)
             if result:
-                return result
+                return result[:2]
     return None
 
 

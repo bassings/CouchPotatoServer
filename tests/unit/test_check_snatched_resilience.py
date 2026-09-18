@@ -119,6 +119,7 @@ class TestScanForPassword:
                 ('password=second', 'z'),
             ),
             ('x password=\n password = ', ('x password=', '')),
+            ('t\nPassword=\npassword=x', ('t', 'password=x')),
             ('name password =\n', None),
             ('name password = \n', ('name', '')),
             ('name password =\n\n', None),
@@ -185,6 +186,7 @@ class TestCreateNzbName:
                 'a password\n=second password = z',
                 'a{{second password = z}}',
             ),
+            ('t\nPassword=\npassword=x', 't{{password=x}}'),
         ],
     )
     def test_password_newlines_preserve_generated_names(self, release_name, expected):

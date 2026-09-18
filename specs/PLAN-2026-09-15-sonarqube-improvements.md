@@ -927,4 +927,12 @@ T9 and T14 exceptions stated above.
   focused tests, 177,155 structured competing-marker cases, and 400,000 seeded
   random cases match the prior parser. The repeated 16k/32k/64k/128k multiline
   input now measures approximately 0.000009/0.000015/0.000027/0.000049 seconds.
-  A new full gate and clean re-review are pending.
+  QA re-review found one remaining case where both constant cross-line
+  candidates exist: their precedence depends on the regex match start rather
+  than marker kind. Its parser and caller assertions failed before repair. The
+  parser now compares those candidates by leftmost start, using the later marker
+  only for equal starts, exactly reflecting search then greediness. All 55
+  focused tests, 579,194 structured cases, and 500,000 seeded random cases now
+  agree with the prior parser; the repeated multiline benchmark remains bounded
+  at approximately 0.000005/0.000002/0.000001/0.000002 seconds. A new full gate
+  and clean re-review are pending.
