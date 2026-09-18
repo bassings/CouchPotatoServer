@@ -447,7 +447,7 @@ within the authority explicitly granted by the owner.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
-- [ ] **T20 — make release password scanning bounded** — state: building.
+- [ ] **T20 — make release password scanning bounded** — state: ready.
   Replace live issue `13424fcf-7147-4f58-aa8f-1012fecd4cbf` while preserving
   both supported release-name password formats and caller behavior. Covers
   AC-QA-19, AC-OPS-13, and AC-SIMP-15.
@@ -934,5 +934,12 @@ T9 and T14 exceptions stated above.
   only for equal starts, exactly reflecting search then greediness. All 55
   focused tests, 579,194 structured cases, and 500,000 seeded random cases now
   agree with the prior parser; the repeated multiline benchmark remains bounded
-  at approximately 0.000005/0.000002/0.000001/0.000002 seconds. A new full gate
-  and clean re-review are pending.
+  at approximately 0.000005/0.000002/0.000001/0.000002 seconds. The exact-tip
+  fast gate then collected 4,367
+  Python unit items (4,348 passed, 14 skipped, 5 xfailed), and passed all 42
+  integration and 214 UI-unit tests with Ruff, conformance, and the 323-file
+  trap guard clean. Independent security and QA re-reviews both returned CLEAN
+  on tree `5823781977b72812d5861b5a55d8ed848e8b6bec`; their additional differential
+  corpora covered 611,150 and 750,000 cases respectively, with linear
+  adversarial scaling. T20 is ready for the final clean-tree review gate and
+  push.
