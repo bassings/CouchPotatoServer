@@ -447,7 +447,7 @@ within the authority explicitly granted by the owner.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
-- [ ] **T20 — make release password scanning bounded** — state: ready.
+- [ ] **T20 — make release password scanning bounded** — state: in-progress.
   Replace live issue `13424fcf-7147-4f58-aa8f-1012fecd4cbf` while preserving
   both supported release-name password formats and caller behavior. Covers
   AC-QA-19, AC-OPS-13, and AC-SIMP-15.
