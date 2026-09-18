@@ -507,8 +507,145 @@ def longestBracketedName(name):
     return max(_bracketedGroups(name), key = len).strip()
 
 
-# From SABNZBD
-re_password = [re.compile(r'(.+){{([^{}]+)}}$'), re.compile(r'(.+)\s+password\s*=\s*(.+)$', re.I)]
+def _brace_password(name):
+    # Python's ``$`` accepts a match immediately before exactly one terminal
+    # newline. Keep that legacy boundary without putting untrusted provider
+    # names back through a backtracking expression.
+    match_name = name[:-1] if name.endswith('\n') else name
+    if not match_name.endswith('}}'):
+        return None
+    marker = match_name.rfind('{{', 0, -2)
+    if marker <= 0:
+        return None
+    password = match_name[marker + 2:-2]
+    if not password or '{' in password or '}' in password:
+        return None
+    prefix_start = match_name.rfind('\n', 0, marker) + 1
+    prefix = match_name[prefix_start:marker]
+    if not prefix:
+        return None
+    return prefix.strip('. '), password.strip()
+
+
+def _is_password_keyword(name, marker):
+    keyword = 'password'
+    return 0 <= marker <= len(name) - len(keyword) and all(
+        name[marker + offset].casefold() == expected
+        for offset, expected in enumerate(keyword)
+    )
+
+
+def _keyword_password_at(name, marker):
+    if not marker or not name[marker - 1].isspace():
+        return None
+
+    equals = marker + len('password')
+    while equals < len(name) and name[equals].isspace():
+        equals += 1
+    if equals == len(name) or name[equals] != '=':
+        return None
+
+    raw_password = name[equals + 1:]
+    if not raw_password:
+        return None
+    password = raw_password.lstrip()
+    if not password:
+        # ``\s*`` must leave one character for the legacy ``.+`` group, even
+        # when the entire suffix is whitespace.
+        password = raw_password[-1]
+
+    whitespace_start = marker - 1
+    while whitespace_start and name[whitespace_start - 1].isspace():
+        whitespace_start -= 1
+    newline = name.find('\n', whitespace_start, marker)
+    prefix_end = newline if newline != -1 else marker - 1
+    prefix_start = name.rfind('\n', 0, prefix_end) + 1
+    prefix = name[prefix_start:prefix_end]
+    match_start = prefix_start
+    if not prefix and newline != -1:
+        # If the first line is empty, regex search can start within a later
+        # whitespace-only line. Prefer the earliest non-empty segment; on the
+        # marker's own line ``.+`` must leave one character for ``\s+``.
+        line_start = newline + 1
+        while line_start < marker:
+            next_newline = name.find('\n', line_start, marker)
+            if next_newline == -1:
+                if marker - line_start > 1:
+                    prefix = name[line_start:marker - 1]
+                    match_start = line_start
+                break
+            if next_newline > line_start:
+                prefix = name[line_start:next_newline]
+                match_start = line_start
+                break
+            line_start = next_newline + 1
+    if not prefix:
+        return None
+    return prefix.strip('. '), password.strip(), match_start
+
+
+def _keyword_password(name):
+    match_name = name[:-1] if name.endswith('\n') else name
+    if match_name.endswith('\n'):
+        return None
+
+    keyword_length = len('password')
+    last_line_start = match_name.rfind('\n') + 1
+
+    # A match beginning before the final line wins because re.search chooses
+    # the leftmost start before the greedy first group chooses a marker. There
+    # can be only one such candidate: its '=' is either the last non-whitespace
+    # character before the final line, or the first one on that line.
+    before_final = last_line_start - 1
+    while before_final >= 0 and match_name[before_final].isspace():
+        before_final -= 1
+    on_final = last_line_start
+    while on_final < len(match_name) and match_name[on_final].isspace():
+        on_final += 1
+    cross_equals = None
+    if before_final >= 0 and match_name[before_final] == '=':
+        cross_equals = before_final
+    elif on_final < len(match_name) and match_name[on_final] == '=':
+        cross_equals = on_final
+
+    cross_line_results = []
+
+    # A marker at the first non-whitespace position of the final line can also
+    # begin a match on a preceding line: the required ``\s+`` consumes the
+    # newline.
+    has_earlier_line_prefix = any(
+        match_name[index] != '\n'
+        for index in range(max(0, last_line_start - 1))
+    )
+    if has_earlier_line_prefix and _is_password_keyword(match_name, on_final):
+        result = _keyword_password_at(match_name, on_final)
+        if result:
+            cross_line_results.append((result[2], -on_final, result[:2]))
+
+    if cross_equals is not None:
+        keyword_end = cross_equals
+        while keyword_end and match_name[keyword_end - 1].isspace():
+            keyword_end -= 1
+        marker = keyword_end - keyword_length
+        if _is_password_keyword(match_name, marker):
+            result = _keyword_password_at(match_name, marker)
+            if result:
+                cross_line_results.append((result[2], -marker, result[:2]))
+
+    if cross_line_results:
+        # re.search chooses the leftmost match start; its greedy first group
+        # chooses the later marker only when candidate starts are identical.
+        return min(cross_line_results)[2]
+
+    # With no earlier match, greediness chooses the rightmost marker on the
+    # final line. Per-character comparison preserves source offsets for Unicode
+    # while retaining re.IGNORECASE's long-s match.
+    for marker in range(len(match_name) - keyword_length, last_line_start - 1, -1):
+        if _is_password_keyword(match_name, marker):
+            result = _keyword_password_at(match_name, marker)
+            if result:
+                return result[:2]
+    return None
 
 
 def scanForPassword(name):
@@ -521,13 +658,7 @@ def scanForPassword(name):
     if not name or not isinstance(name, str):
         return None
 
-    m = None
-    for reg in re_password:
-        m = reg.search(name)
-        if m: break
-
-    if m:
-        return m.group(1).strip('. '), m.group(2).strip()
+    return _brace_password(name) or _keyword_password(name)
 
 
 under_pat = re.compile(r'_([a-z])')

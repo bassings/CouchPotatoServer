@@ -62,6 +62,79 @@ class TestScanForPassword:
     def test_a_plain_name_has_no_password(self):
         assert scanForPassword('Some.Movie.2026.1080p.BluRay') is None
 
+    def test_password_scan_does_not_call_backtracking_regexes(self):
+        trap = MagicMock()
+        trap.search.side_effect = AssertionError('password scan used a regex')
+
+        with patch(
+            'couchpotato.core.helpers.variable.re_password',
+            [trap, trap],
+            create = True,
+        ):
+            assert scanForPassword('Some.Movie.2026{{brace-secret}}') == (
+                'Some.Movie.2026', 'brace-secret',
+            )
+            assert scanForPassword('Some.Movie.2026 PASSWORD = keyword-secret') == (
+                'Some.Movie.2026', 'keyword-secret',
+            )
+
+    def test_keyword_scan_does_not_slice_rejected_multiline_suffixes(self):
+        class NoMultilineSuffix(str):
+            def __getitem__(self, key):
+                value = super().__getitem__(key)
+                if isinstance(key, slice) and key.stop is None and '\n' in value:
+                    raise AssertionError('keyword scan copied a rejected multiline suffix')
+                return value
+
+        name = NoMultilineSuffix(('x password = secret\n' * 100) + 'tail')
+
+        assert scanForPassword(name) is None
+
+    @pytest.mark.parametrize(
+        ('name', 'expected'),
+        [
+            ('name{{one}}{{two}}', ('name{{one}}', 'two')),
+            ('name...   password\t=  secret  ', ('name', 'secret')),
+            ('name password = first password = second', ('name password = first', 'second')),
+            ('prefix\nname{{secret}}', ('name', 'secret')),
+            ('prefix\nname\n password = secret', ('name', 'secret')),
+            ('name\t\tpassword = secret', ('name\t', 'secret')),
+            ('name{{secret}}\n', ('name', 'secret')),
+            ('name{{secret}}\n\n', None),
+            ('name password = secret\n', ('name', 'secret')),
+            ('name password =\nsecret', ('name', 'secret')),
+            ('x password=\n\r', ('x', '')),
+            (
+                'a password\n=second password = z',
+                ('a', 'second password = z'),
+            ),
+            ('\n  password = ', ('', '')),
+            ('\n \n password = ', ('', '')),
+            (
+                'a\n password=second password = z',
+                ('a', 'second password = z'),
+            ),
+            (
+                '\n  password=second password = z',
+                ('password=second', 'z'),
+            ),
+            ('x password=\n password = ', ('x password=', '')),
+            ('t\nPassword=\npassword=x', ('t', 'password=x')),
+            ('name password =\n', None),
+            ('name password = \n', ('name', '')),
+            ('name password =\n\n', None),
+            ('name{{ \tsecret\r }}', ('name', 'secret')),
+            ('name password = \t', ('name', '')),
+            ('İ name password = secret', ('İ name', 'secret')),
+            ('name paſſword = secret', ('name', 'secret')),
+            ('name{{contains{brace}}', None),
+            ('name password without equals', None),
+            ('a\n p', None),
+        ],
+    )
+    def test_password_scan_preserves_format_boundaries(self, name, expected):
+        assert scanForPassword(name) == expected
+
 
 class TestCreateNzbName:
     """The caller, which reaches scanForPassword with whatever `info` holds."""
@@ -102,6 +175,27 @@ class TestCreateNzbName:
             )
 
         assert name.startswith('Some.Movie.2026.1080p')
+
+    @pytest.mark.parametrize(
+        ('release_name', 'expected'),
+        [
+            ('name{{secret}}\n', 'name{{secret}}'),
+            ('name password =\n', 'name password'),
+            ('name password = \n', 'name{{}}'),
+            (
+                'a password\n=second password = z',
+                'a{{second password = z}}',
+            ),
+            ('t\nPassword=\npassword=x', 't{{password=x}}'),
+        ],
+    )
+    def test_password_newlines_preserve_generated_names(self, release_name, expected):
+        plugin = self._plugin()
+
+        with patch.object(type(plugin), 'cpTag', return_value='', create=True):
+            name = plugin.createNzbName({'name': release_name}, {'title': 'Movie'})
+
+        assert name == expected
 
     def test_no_name_no_title_and_no_id_uses_the_literal_fallback(self):
         """The last tier of the chain, which nothing else covers -- a name is
