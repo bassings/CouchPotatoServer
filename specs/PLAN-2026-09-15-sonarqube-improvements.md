@@ -916,5 +916,15 @@ T9 and T14 exceptions stated above.
   retaining cross-line whitespace without repeated suffix copies. All 45
   focused tests and an expanded exact 400,000-case differential corpus pass.
   The reviewer's 16k/32k/64k/128k input now scales approximately linearly at
-  0.068/0.137/0.272/0.545 seconds. A new full gate and clean re-review are
-  pending.
+  0.068/0.137/0.272/0.545 seconds. A fresh verifier then found that a competing
+  marker on the final line changed selection when an earlier match could span a
+  newline: the legacy regex chooses the leftmost match start before applying
+  greediness within that line. Parser and caller reproductions both failed
+  before repair. The bounded parser now checks the at-most-one cross-line
+  prefix and suffix candidates in legacy priority order, then scans the final
+  line right-to-left. Additional whitespace-only-line and short-final-line
+  boundaries were added as each differential counterexample was found. All 53
+  focused tests, 177,155 structured competing-marker cases, and 400,000 seeded
+  random cases match the prior parser. The repeated 16k/32k/64k/128k multiline
+  input now measures approximately 0.000009/0.000015/0.000027/0.000049 seconds.
+  A new full gate and clean re-review are pending.

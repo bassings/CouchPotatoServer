@@ -527,57 +527,114 @@ def _brace_password(name):
     return prefix.strip('. '), password.strip()
 
 
+def _is_password_keyword(name, marker):
+    keyword = 'password'
+    return 0 <= marker <= len(name) - len(keyword) and all(
+        name[marker + offset].casefold() == expected
+        for offset, expected in enumerate(keyword)
+    )
+
+
+def _keyword_password_at(name, marker):
+    if not marker or not name[marker - 1].isspace():
+        return None
+
+    equals = marker + len('password')
+    while equals < len(name) and name[equals].isspace():
+        equals += 1
+    if equals == len(name) or name[equals] != '=':
+        return None
+
+    raw_password = name[equals + 1:]
+    if not raw_password:
+        return None
+    password = raw_password.lstrip()
+    if not password:
+        # ``\s*`` must leave one character for the legacy ``.+`` group, even
+        # when the entire suffix is whitespace.
+        password = raw_password[-1]
+
+    whitespace_start = marker - 1
+    while whitespace_start and name[whitespace_start - 1].isspace():
+        whitespace_start -= 1
+    newline = name.find('\n', whitespace_start, marker)
+    prefix_end = newline if newline != -1 else marker - 1
+    prefix_start = name.rfind('\n', 0, prefix_end) + 1
+    prefix = name[prefix_start:prefix_end]
+    if not prefix and newline != -1:
+        # If the first line is empty, regex search can start within a later
+        # whitespace-only line. Prefer the earliest non-empty segment; on the
+        # marker's own line ``.+`` must leave one character for ``\s+``.
+        line_start = newline + 1
+        while line_start < marker:
+            next_newline = name.find('\n', line_start, marker)
+            if next_newline == -1:
+                if marker - line_start > 1:
+                    prefix = name[line_start:marker - 1]
+                break
+            if next_newline > line_start:
+                prefix = name[line_start:next_newline]
+                break
+            line_start = next_newline + 1
+    if not prefix:
+        return None
+    return prefix.strip('. '), password.strip()
+
+
 def _keyword_password(name):
     match_name = name[:-1] if name.endswith('\n') else name
     if match_name.endswith('\n'):
         return None
-    keyword = 'password'
-    last_start = len(match_name) - len(keyword)
-    last_line_start = match_name.rfind('\n') + 1
-    last_nonspace_before_final_line = last_line_start - 1
-    while (
-        last_nonspace_before_final_line >= 0 and
-        match_name[last_nonspace_before_final_line].isspace()
-    ):
-        last_nonspace_before_final_line -= 1
 
-    # Compare one source character to one keyword character. Lowercasing the
-    # whole name changes offsets for Unicode characters such as U+0130, while
-    # per-character casefolding also retains re.IGNORECASE's long-s match.
-    for marker in range(last_start, -1, -1):
-        if not all(
-            match_name[marker + offset].casefold() == expected
-            for offset, expected in enumerate(keyword)
-        ):
-            continue
-        if marker and match_name[marker - 1].isspace():
-            equals = marker + len('password')
-            while equals < len(match_name) and match_name[equals].isspace():
-                equals += 1
-            if equals < len(match_name) and match_name[equals] == '=':
-                if (
-                    equals < last_line_start and
-                    equals != last_nonspace_before_final_line
-                ):
-                    continue
-                raw_password = match_name[equals + 1:]
-                if not raw_password:
-                    continue
-                password = raw_password.lstrip()
-                if not password:
-                    # ``\s*`` must leave one character for the legacy ``.+``
-                    # group, even when the entire suffix is whitespace.
-                    password = raw_password[-1]
-                whitespace_start = marker - 1
-                while whitespace_start and match_name[whitespace_start - 1].isspace():
-                    whitespace_start -= 1
-                newline = match_name.find('\n', whitespace_start, marker)
-                prefix_end = newline if newline != -1 else marker - 1
-                prefix_start = match_name.rfind('\n', 0, prefix_end) + 1
-                prefix = match_name[prefix_start:prefix_end]
-                if not prefix:
-                    continue
-                return prefix.strip('. '), password.strip()
+    keyword_length = len('password')
+    last_line_start = match_name.rfind('\n') + 1
+
+    # A match beginning before the final line wins because re.search chooses
+    # the leftmost start before the greedy first group chooses a marker. There
+    # can be only one such candidate: its '=' is either the last non-whitespace
+    # character before the final line, or the first one on that line.
+    before_final = last_line_start - 1
+    while before_final >= 0 and match_name[before_final].isspace():
+        before_final -= 1
+    on_final = last_line_start
+    while on_final < len(match_name) and match_name[on_final].isspace():
+        on_final += 1
+    cross_equals = None
+    if before_final >= 0 and match_name[before_final] == '=':
+        cross_equals = before_final
+    elif on_final < len(match_name) and match_name[on_final] == '=':
+        cross_equals = on_final
+
+    # A marker at the first non-whitespace position of the final line can also
+    # begin a match on the preceding line: the required ``\s+`` consumes the
+    # newline. Greediness selects it before an earlier line's suffix marker.
+    has_earlier_line_prefix = any(
+        match_name[index] != '\n'
+        for index in range(max(0, last_line_start - 1))
+    )
+    if has_earlier_line_prefix and _is_password_keyword(match_name, on_final):
+        result = _keyword_password_at(match_name, on_final)
+        if result:
+            return result
+
+    if cross_equals is not None:
+        keyword_end = cross_equals
+        while keyword_end and match_name[keyword_end - 1].isspace():
+            keyword_end -= 1
+        marker = keyword_end - keyword_length
+        if _is_password_keyword(match_name, marker):
+            result = _keyword_password_at(match_name, marker)
+            if result:
+                return result
+
+    # With no earlier match, greediness chooses the rightmost marker on the
+    # final line. Per-character comparison preserves source offsets for Unicode
+    # while retaining re.IGNORECASE's long-s match.
+    for marker in range(len(match_name) - keyword_length, last_line_start - 1, -1):
+        if _is_password_keyword(match_name, marker):
+            result = _keyword_password_at(match_name, marker)
+            if result:
+                return result
     return None
 
 

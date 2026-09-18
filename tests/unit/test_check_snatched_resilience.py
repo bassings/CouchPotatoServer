@@ -104,6 +104,21 @@ class TestScanForPassword:
             ('name password = secret\n', ('name', 'secret')),
             ('name password =\nsecret', ('name', 'secret')),
             ('x password=\n\r', ('x', '')),
+            (
+                'a password\n=second password = z',
+                ('a', 'second password = z'),
+            ),
+            ('\n  password = ', ('', '')),
+            ('\n \n password = ', ('', '')),
+            (
+                'a\n password=second password = z',
+                ('a', 'second password = z'),
+            ),
+            (
+                '\n  password=second password = z',
+                ('password=second', 'z'),
+            ),
+            ('x password=\n password = ', ('x password=', '')),
             ('name password =\n', None),
             ('name password = \n', ('name', '')),
             ('name password =\n\n', None),
@@ -113,6 +128,7 @@ class TestScanForPassword:
             ('name paſſword = secret', ('name', 'secret')),
             ('name{{contains{brace}}', None),
             ('name password without equals', None),
+            ('a\n p', None),
         ],
     )
     def test_password_scan_preserves_format_boundaries(self, name, expected):
@@ -165,6 +181,10 @@ class TestCreateNzbName:
             ('name{{secret}}\n', 'name{{secret}}'),
             ('name password =\n', 'name password'),
             ('name password = \n', 'name{{}}'),
+            (
+                'a password\n=second password = z',
+                'a{{second password = z}}',
+            ),
         ],
     )
     def test_password_newlines_preserve_generated_names(self, release_name, expected):
