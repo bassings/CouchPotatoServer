@@ -508,51 +508,62 @@ def longestBracketedName(name):
 
 
 def _brace_password(name):
-    if not name.endswith('}}'):
+    # Python's ``$`` accepts a match immediately before exactly one terminal
+    # newline. Keep that legacy boundary without putting untrusted provider
+    # names back through a backtracking expression.
+    match_name = name[:-1] if name.endswith('\n') else name
+    if not match_name.endswith('}}'):
         return None
-    marker = name.rfind('{{', 0, -2)
+    marker = match_name.rfind('{{', 0, -2)
     if marker <= 0:
         return None
-    password = name[marker + 2:-2]
+    password = match_name[marker + 2:-2]
     if not password or '{' in password or '}' in password:
         return None
-    prefix_start = name.rfind('\n', 0, marker) + 1
-    prefix = name[prefix_start:marker]
+    prefix_start = match_name.rfind('\n', 0, marker) + 1
+    prefix = match_name[prefix_start:marker]
     if not prefix:
         return None
-    return prefix.strip('. '), password.strip()
+    return prefix.strip('. '), password.strip('. ')
 
 
 def _keyword_password(name):
-    lower_name = name.lower()
-    markers = []
-    search_from = 0
-    while True:
-        marker = lower_name.find('password', search_from)
-        if marker == -1:
-            break
-        markers.append(marker)
-        search_from = marker + len('password')
+    match_name = name[:-1] if name.endswith('\n') else name
+    keyword = 'password'
+    last_start = len(match_name) - len(keyword)
 
-    for marker in reversed(markers):
-        if marker and name[marker - 1].isspace():
+    # Compare one source character to one keyword character. Lowercasing the
+    # whole name changes offsets for Unicode characters such as U+0130, while
+    # per-character casefolding also retains re.IGNORECASE's long-s match.
+    for marker in range(last_start, -1, -1):
+        if not all(
+            match_name[marker + offset].casefold() == expected
+            for offset, expected in enumerate(keyword)
+        ):
+            continue
+        if marker and match_name[marker - 1].isspace():
             equals = marker + len('password')
-            while equals < len(name) and name[equals].isspace():
+            while equals < len(match_name) and match_name[equals].isspace():
                 equals += 1
-            if equals < len(name) and name[equals] == '=':
-                raw_password = name[equals + 1:]
+            if equals < len(match_name) and match_name[equals] == '=':
+                raw_password = match_name[equals + 1:]
+                if not raw_password or '\n' in raw_password:
+                    continue
                 password = raw_password.lstrip()
-                if password or raw_password:
-                    whitespace_start = marker - 1
-                    while whitespace_start and name[whitespace_start - 1].isspace():
-                        whitespace_start -= 1
-                    newline = name.find('\n', whitespace_start, marker)
-                    prefix_end = newline if newline != -1 else marker - 1
-                    prefix_start = name.rfind('\n', 0, prefix_end) + 1
-                    prefix = name[prefix_start:prefix_end]
-                    if not prefix:
-                        continue
-                    return prefix.strip('. '), password.strip()
+                if not password:
+                    # ``\s*`` must leave one character for the legacy ``.+``
+                    # group, even when the entire suffix is whitespace.
+                    password = raw_password[-1]
+                whitespace_start = marker - 1
+                while whitespace_start and match_name[whitespace_start - 1].isspace():
+                    whitespace_start -= 1
+                newline = match_name.find('\n', whitespace_start, marker)
+                prefix_end = newline if newline != -1 else marker - 1
+                prefix_start = match_name.rfind('\n', 0, prefix_end) + 1
+                prefix = match_name[prefix_start:prefix_end]
+                if not prefix:
+                    continue
+                return prefix.strip('. '), password.strip('. ')
     return None
 
 

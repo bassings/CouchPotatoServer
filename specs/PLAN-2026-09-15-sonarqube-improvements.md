@@ -447,7 +447,7 @@ within the authority explicitly granted by the owner.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
-- [ ] **T20 — make release password scanning bounded** — state: queued.
+- [ ] **T20 — make release password scanning bounded** — state: review.
   Replace live issue `13424fcf-7147-4f58-aa8f-1012fecd4cbf` while preserving
   both supported release-name password formats and caller behavior. Covers
   AC-QA-19, AC-OPS-13, and AC-SIMP-15.
@@ -890,4 +890,19 @@ T9 and T14 exceptions stated above.
   killing both targeted mutations. The final fast gate collected 4,341 Python
   unit items (4,322 passed, 14 skipped, 5 xfailed), then passed all 42 integration
   and 214 UI-unit tests with Ruff, conformance, and the 323-file trap guard
-  clean. T20 is ready for independent local review.
+  clean. Independent security and QA review then found two compatibility gaps
+  absent from the first corpus: whole-string lowercasing changed source offsets
+  after expanding Unicode characters and failed the legacy long-s match, while
+  terminal-newline and non-space whitespace behavior differed from the prior
+  regexes. Seven new parser/caller assertions failed before the first repair;
+  two more whitespace assertions failed after a deterministic differential run
+  exposed that separate boundary. The position-preserving repair now passes all
+  42 focused tests and a revised 200,000-case corpus containing Unicode and
+  carriage-return/tab boundaries. Removing terminal-newline normalization made
+  five tests fail; replacing the casefold comparison with exact matching made
+  two fail. Repeated-invalid-marker 10k/20k/40k timings remain approximately
+  linear: 0.0072/0.0145/0.0293 seconds for braces and
+  0.0233/0.0451/0.0907 seconds for keywords. The post-repair fast gate
+  collected 4,354 Python unit items (4,335 passed, 14 skipped, 5 xfailed), then
+  passed all 42 integration and 214 UI-unit tests with Ruff, conformance, and
+  the 323-file trap guard clean. Clean re-review is pending.

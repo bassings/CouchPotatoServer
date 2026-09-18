@@ -87,6 +87,16 @@ class TestScanForPassword:
             ('prefix\nname{{secret}}', ('name', 'secret')),
             ('prefix\nname\n password = secret', ('name', 'secret')),
             ('name\t\tpassword = secret', ('name\t', 'secret')),
+            ('name{{secret}}\n', ('name', 'secret')),
+            ('name{{secret}}\n\n', None),
+            ('name password = secret\n', ('name', 'secret')),
+            ('name password =\n', None),
+            ('name password = \n', ('name', '')),
+            ('name password =\n\n', None),
+            ('name{{ \tsecret\r }}', ('name', '\tsecret\r')),
+            ('name password = \t', ('name', '\t')),
+            ('İ name password = secret', ('İ name', 'secret')),
+            ('name paſſword = secret', ('name', 'secret')),
             ('name{{contains{brace}}', None),
             ('name password without equals', None),
         ],
@@ -134,6 +144,22 @@ class TestCreateNzbName:
             )
 
         assert name.startswith('Some.Movie.2026.1080p')
+
+    @pytest.mark.parametrize(
+        ('release_name', 'expected'),
+        [
+            ('name{{secret}}\n', 'name{{secret}}'),
+            ('name password =\n', 'name password'),
+            ('name password = \n', 'name{{}}'),
+        ],
+    )
+    def test_password_newlines_preserve_generated_names(self, release_name, expected):
+        plugin = self._plugin()
+
+        with patch.object(type(plugin), 'cpTag', return_value='', create=True):
+            name = plugin.createNzbName({'name': release_name}, {'title': 'Movie'})
+
+        assert name == expected
 
     def test_no_name_no_title_and_no_id_uses_the_literal_fallback(self):
         """The last tier of the chain, which nothing else covers -- a name is
