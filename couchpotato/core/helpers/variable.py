@@ -529,14 +529,22 @@ def _brace_password(name):
 
 def _keyword_password(name):
     match_name = name[:-1] if name.endswith('\n') else name
+    if match_name.endswith('\n'):
+        return None
     keyword = 'password'
     last_start = len(match_name) - len(keyword)
     last_line_start = match_name.rfind('\n') + 1
+    last_nonspace_before_final_line = last_line_start - 1
+    while (
+        last_nonspace_before_final_line >= 0 and
+        match_name[last_nonspace_before_final_line].isspace()
+    ):
+        last_nonspace_before_final_line -= 1
 
     # Compare one source character to one keyword character. Lowercasing the
     # whole name changes offsets for Unicode characters such as U+0130, while
     # per-character casefolding also retains re.IGNORECASE's long-s match.
-    for marker in range(last_start, last_line_start - 1, -1):
+    for marker in range(last_start, -1, -1):
         if not all(
             match_name[marker + offset].casefold() == expected
             for offset, expected in enumerate(keyword)
@@ -547,6 +555,11 @@ def _keyword_password(name):
             while equals < len(match_name) and match_name[equals].isspace():
                 equals += 1
             if equals < len(match_name) and match_name[equals] == '=':
+                if (
+                    equals < last_line_start and
+                    equals != last_nonspace_before_final_line
+                ):
+                    continue
                 raw_password = match_name[equals + 1:]
                 if not raw_password:
                     continue

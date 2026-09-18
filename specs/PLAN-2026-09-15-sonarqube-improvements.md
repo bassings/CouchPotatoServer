@@ -908,8 +908,13 @@ T9 and T14 exceptions stated above.
   the 323-file trap guard clean. Security re-review then found that each keyword
   marker before a newline copied and searched the remaining suffix, making a
   repeated multiline name quadratic. A slice-guard regression failed on the
-  old loop before the repair. The parser now limits keyword candidates to the
-  final line before slicing; all 43 focused tests and the exact 200,000-case
-  differential corpus pass. The reviewer's 16k/32k/64k/128k input now measures
-  approximately 0.000005/0.000002/0.000001/0.000001 seconds because earlier
-  lines are rejected once. A new full gate and clean re-review are pending.
+  old loop before the repair. QA review then showed that limiting candidates to
+  the final line lost the legacy regex's ability to consume newlines in the
+  whitespace after `=`; both counterexamples failed before the second repair.
+  The parser now precomputes the last non-whitespace position before the final
+  line and permits only the one earlier `=` that can legally own that suffix,
+  retaining cross-line whitespace without repeated suffix copies. All 45
+  focused tests and an expanded exact 400,000-case differential corpus pass.
+  The reviewer's 16k/32k/64k/128k input now scales approximately linearly at
+  0.068/0.137/0.272/0.545 seconds. A new full gate and clean re-review are
+  pending.

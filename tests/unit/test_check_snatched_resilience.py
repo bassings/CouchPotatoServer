@@ -102,6 +102,8 @@ class TestScanForPassword:
             ('name{{secret}}\n', ('name', 'secret')),
             ('name{{secret}}\n\n', None),
             ('name password = secret\n', ('name', 'secret')),
+            ('name password =\nsecret', ('name', 'secret')),
+            ('x password=\n\r', ('x', '')),
             ('name password =\n', None),
             ('name password = \n', ('name', '')),
             ('name password =\n\n', None),
