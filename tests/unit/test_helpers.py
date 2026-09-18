@@ -6,12 +6,13 @@ and variable helpers (tryInt, tryFloat, getImdb, etc.).
 import os
 import re
 import time
+from unittest.mock import patch
 from urllib.parse import urlparse
 
 import pytest
 
 from couchpotato.core.helpers.encoding import toUnicode, toSafeString, simplifyString
-from couchpotato.core.helpers.variable import removePyc, tryInt, getImdb, isLocalIP, longestBracketedName
+from couchpotato.core.helpers.variable import cleanHost, removePyc, tryInt, getImdb, isLocalIP, longestBracketedName
 
 pytestmark = pytest.mark.unit
 
@@ -82,6 +83,77 @@ class TestVariableHelpers:
     def test_getImdb_returns_falsy_for_no_match(self):
         result = getImdb('no imdb here')
         assert not result
+
+
+class TestCleanHostBasicAuth:
+    def test_existing_auth_is_preserved_without_disclosing_url_or_credentials(self):
+        host = 'http://embedded-user:embedded-secret@media.internal:8080/api?key=private'
+
+        with patch('couchpotato.core.helpers.variable.log.error') as log_error:
+            result = cleanHost(
+                host,
+                username = 'configured-user',
+                password = 'configured-secret',
+            )
+
+        assert result == host + '/'
+        log_error.assert_called_once_with(
+            'Cleanhost error: auth already defined in URL; '
+            'please remove BasicAuth from URL.'
+        )
+        rendered_call = repr(log_error.call_args)
+        for private_value in (
+            'embedded-user',
+            'embedded-secret',
+            'media.internal',
+            'configured-user',
+            'configured-secret',
+            'private',
+        ):
+            assert private_value not in rendered_call
+
+    def test_configured_auth_is_inserted_when_url_has_no_userinfo(self):
+        with patch(
+            'couchpotato.core.helpers.variable.re.findall',
+            side_effect = AssertionError('cleanHost auth detection used a regex'),
+        ):
+            result = cleanHost(
+                'media.internal:8080',
+                username = 'configured-user',
+                password = 'configured-secret',
+            )
+
+        assert result == 'http://configured-user:configured-secret@media.internal:8080/'
+
+    def test_url_parser_failure_keeps_best_effort_credential_insertion(self):
+        with patch(
+            'couchpotato.core.helpers.variable.urlsplit',
+            side_effect = ValueError('malformed URL'),
+        ):
+            result = cleanHost(
+                'media.internal:8080',
+                username = 'configured-user',
+                password = 'configured-secret',
+            )
+
+        assert result == 'http://configured-user:configured-secret@media.internal:8080/'
+
+    def test_malformed_ipv6_with_existing_auth_does_not_duplicate_credentials(self):
+        host = 'http://embedded-user:embedded-secret@[::1:8080/path'
+
+        with patch('couchpotato.core.helpers.variable.log.error') as log_error:
+            result = cleanHost(
+                host,
+                username = 'configured-user',
+                password = 'configured-secret',
+            )
+
+        assert result == host + '/'
+        log_error.assert_called_once_with(
+            'Cleanhost error: auth already defined in URL; '
+            'please remove BasicAuth from URL.'
+        )
+        assert 'configured-user:configured-secret@embedded-user' not in result
 
 
 class TestRemovePyc:

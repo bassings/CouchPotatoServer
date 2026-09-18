@@ -335,6 +335,22 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-13:** Replace the super-linear token regex with a bounded standard-
   library HTML parser local to the uTorrent adapter; add no dependency and do
   not refactor unrelated downloader behavior.
+- **AC-QA-18:** `cleanHost` detects already-present HTTP Basic Auth without a
+  regular expression, preserves that URL unchanged, and continues to insert
+  configured credentials when userinfo is absent. Focused tests cover both
+  branches and fail if this decision path calls `re.findall`.
+- **AC-SEC-10:** The already-authenticated-URL warning contains no embedded or
+  configured username/password, hostname, port, path, query, or other URL
+  content. The returned URL remains behavior-compatible; this slice changes
+  disclosure at the logging boundary, not credential storage semantics.
+- **AC-OPS-12:** A URL parser failure cannot crash host cleanup: configured
+  credentials are still inserted when userinfo is absent, while recognizable
+  existing userinfo is preserved without duplication even when malformed IPv6
+  brackets make `urlsplit` reject the URL. No downloader request,
+  authentication, SSL, trailing-slash, or protocol-selection behavior changes.
+- **AC-SIMP-14:** Replace the one super-linear Basic Auth regex with one bounded
+  standard-library URL authority check; add no dependency and do not refactor
+  unrelated variable helpers or downloader adapters.
 
 ## Implementation sequence
 
@@ -411,11 +427,15 @@ within the authority explicitly granted by the owner.
   Repair Sonar's high-reliability-impact `python:S6903` deprecation finding
   without changing the existing five-minute completion race policy. Covers AC-QA-16,
   AC-OPS-10, and AC-SIMP-12.
-- [ ] **T18 — make uTorrent token parsing byte-safe and bounded** — state: awaiting-ci #377.
+- [x] **T18 — make uTorrent token parsing byte-safe and bounded** — state: merged #377.
   Replace the failing string regex at live issue
   `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
   parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
   AC-SEC-9, and AC-SIMP-13.
+- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: awaiting-ci #378.
+  Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
+  URL construction behavior, and remove credential/local-network disclosure
+  from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -786,3 +806,53 @@ T9 and T14 exceptions stated above.
   unit tests (14 skipped, 5 xfailed), 42 integration tests, 214 UI-unit tests,
   176 Chromium flows, 2 isolation checks, 10 mobile checks, and 96
   accessibility checks. T18 is awaiting hosted CI and cloud review.
+- 2026-09-17: T18 merged as PR #377 after all 16 hosted checks and cloud review
+  passed. Exact-master analysis `240df92f-be48-4c62-93e6-687405a6950f`
+  measured merge commit `cc05fec4eb7052e785a3b99a6e049210e0eb9b47`,
+  closed issue `f3570b64-354a-4d63-b964-83b74d555e8d` as `FIXED`, and reduced
+  open code smells from 830 to 829 and MAJOR smells from 335 to 334 while
+  retaining 61.2% coverage. T19 starts from that exact master revision.
+- 2026-09-17: T19's red tests proved the old `cleanHost` warning passed the
+  entire credential-bearing URL to logging and that auth detection called
+  `re.findall`; the missing-auth branch consequently failed when regex use was
+  forbidden. Production now uses bounded `urlsplit` authority fields, emits a
+  fixed URL-free warning, and treats parser failure as absent userinfo so the
+  existing best-effort insertion remains. An always-absent-auth mutation
+  produced double userinfo and was killed by the preservation regression.
+  The complete helper/plan set passed 110 tests with 12 skips, and the fast
+  gate collected 4,331 Python unit items (4,312 passed, 14 skipped, 5 xfailed),
+  then passed 42 integration and 214 UI-unit tests; Ruff, conformance, and the
+  323-file trap guard are clean.
+- 2026-09-17: Two independent clean-agent reviews measured exact commit
+  `a79f10e39e74eabe0f9a42eab2fa9ae503fdba3d` and tree
+  `b42214c9731cc85af5567e95738a5985f94b1a94` as clean across security,
+  privacy, operability, QA, reliability, product, and simplicity. Their URL
+  matrix covered encoded, colon-bearing, and raw-`@` credentials; IPv6;
+  path/query decoys; incomplete userinfo; absent userinfo; and malformed
+  brackets. Adversarial 10k/20k/40k authority parsing scaled approximately
+  linearly, and NZBGet's sole credential-inserting call path was unchanged.
+  T19 is locally healthy for delivery.
+- 2026-09-17: Opened PR #378 after the full pre-push gate passed 4,312 Python
+  unit tests (14 skipped, 5 xfailed), 42 integration tests, 214 UI-unit tests,
+  176 Chromium flows, 2 isolation checks, 10 mobile checks, and 96
+  accessibility checks. T19 is awaiting hosted CI and cloud review.
+- 2026-09-17: All 16 hosted checks passed, but cloud review found that malformed
+  bracketed IPv6 with existing userinfo made `urlsplit` raise before exposing
+  the credentials; the fallback then inserted a second credential pair. A new
+  focused regression reproduced the exact double-userinfo result red. The
+  bounded parse-failure fallback now inspects only the URL authority, preserves
+  recognizable existing username/password, and retains best-effort insertion
+  when userinfo is absent; all four focused Basic Auth tests pass. The repaired
+  fast gate collected 4,332 Python items (4,313 passed, 14 skipped, 5 xfailed),
+  then passed all 42 integration and 214 UI-unit tests with lint, conformance,
+  and the 323-file trap guard clean. T19 is ready for independent local review
+  before the required fix push.
+- 2026-09-17: Two independent clean-agent reviews measured exact repair commit
+  `ff08eb4b5b72f9856b219e363c637655b0e9b12f` and tree
+  `2b396f0051ad07b65284a70e48deeae068537cc0` as clean. Their matrix exercised
+  ten real `urlsplit` failure cases, including malformed IPv6 and NFKC-invalid
+  authorities; normal, colon-rich, percent-encoded, and raw-`@` credentials;
+  absent/incomplete userinfo; and path/query/fragment decoys. Existing auth was
+  preserved without duplication or disclosure, absent auth retained configured
+  insertion, and 10k/20k/40k failure inputs scaled approximately linearly. The
+  repair will now receive its required full pre-push gate and hosted rerun.

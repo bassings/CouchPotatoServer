@@ -8,6 +8,7 @@ import shutil
 import string
 import traceback
 from pathlib import Path, PurePath
+from urllib.parse import urlsplit
 
 from couchpotato.core.helpers.encoding import simplifyString, toSafeString, ss, sp, toUnicode
 from couchpotato.core.logger import CPLog
@@ -276,6 +277,26 @@ def getExt(filename):
     return suffix[1:] if suffix else ''
 
 
+def _has_basic_auth(host):
+    try:
+        parsed = urlsplit(host)
+        return bool(parsed.username and parsed.password)
+    except ValueError:
+        # urlsplit rejects malformed bracketed IPv6 before exposing userinfo.
+        # Preserve existing credentials even on that best-effort cleanup path:
+        # inserting another pair would both disclose configured credentials and
+        # make the already-invalid URL still harder for the operator to repair.
+        scheme_at = host.find('://')
+        if scheme_at == -1:
+            return False
+        authority = host[scheme_at + 3:]
+        for delimiter in '/?#':
+            authority = authority.split(delimiter, 1)[0]
+        userinfo, separator, _host = authority.rpartition('@')
+        username, password_separator, password = userinfo.partition(':')
+        return bool(separator and password_separator and username and password)
+
+
 def cleanHost(host, protocol = True, ssl = False, username = None, password = None):
     """Return a cleaned up host with given url options set
 
@@ -301,14 +322,13 @@ def cleanHost(host, protocol = True, ssl = False, username = None, password = No
         host = host.split('://', 1)[-1]
 
     if protocol and username and password:
-        try:
-            auth = re.findall('^(?:.+?//)(.+?):(.+?)@(?:.+)$', host)
-            if auth:
-                log.error('Cleanhost error: auth already defined in url: %s, please remove BasicAuth from url.', host)
-            else:
-                host = host.replace('://', '://%s:%s@' % (username, password), 1)
-        except Exception:
-            pass
+        if _has_basic_auth(host):
+            log.error(
+                'Cleanhost error: auth already defined in URL; '
+                'please remove BasicAuth from URL.'
+            )
+        else:
+            host = host.replace('://', '://%s:%s@' % (username, password), 1)
 
     host = host.rstrip('/ ')
     if protocol:
