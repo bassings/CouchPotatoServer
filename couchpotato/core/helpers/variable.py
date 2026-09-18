@@ -524,7 +524,7 @@ def _brace_password(name):
     prefix = match_name[prefix_start:marker]
     if not prefix:
         return None
-    return prefix.strip('. '), password.strip('. ')
+    return prefix.strip('. '), password.strip()
 
 
 def _keyword_password(name):
@@ -563,7 +563,7 @@ def _keyword_password(name):
                 prefix = match_name[prefix_start:prefix_end]
                 if not prefix:
                     continue
-                return prefix.strip('. '), password.strip('. ')
+                return prefix.strip('. '), password.strip()
     return None
 
 

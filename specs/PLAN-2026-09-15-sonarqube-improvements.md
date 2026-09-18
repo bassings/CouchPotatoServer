@@ -895,8 +895,8 @@ T9 and T14 exceptions stated above.
   after expanding Unicode characters and failed the legacy long-s match, while
   terminal-newline and non-space whitespace behavior differed from the prior
   regexes. Seven new parser/caller assertions failed before the first repair;
-  two more whitespace assertions failed after a deterministic differential run
-  exposed that separate boundary. The position-preserving repair now passes all
+  two whitespace assertions also pin the prior full-trim behavior. The
+  position-preserving repair now passes all
   42 focused tests and a revised 200,000-case corpus containing Unicode and
   carriage-return/tab boundaries. Removing terminal-newline normalization made
   five tests fail; replacing the casefold comparison with exact matching made
