@@ -507,8 +507,53 @@ def longestBracketedName(name):
     return max(_bracketedGroups(name), key = len).strip()
 
 
-# From SABNZBD
-re_password = [re.compile(r'(.+){{([^{}]+)}}$'), re.compile(r'(.+)\s+password\s*=\s*(.+)$', re.I)]
+def _brace_password(name):
+    if not name.endswith('}}'):
+        return None
+    marker = name.rfind('{{', 0, -2)
+    if marker <= 0:
+        return None
+    password = name[marker + 2:-2]
+    if not password or '{' in password or '}' in password:
+        return None
+    prefix_start = name.rfind('\n', 0, marker) + 1
+    prefix = name[prefix_start:marker]
+    if not prefix:
+        return None
+    return prefix.strip('. '), password.strip()
+
+
+def _keyword_password(name):
+    lower_name = name.lower()
+    markers = []
+    search_from = 0
+    while True:
+        marker = lower_name.find('password', search_from)
+        if marker == -1:
+            break
+        markers.append(marker)
+        search_from = marker + len('password')
+
+    for marker in reversed(markers):
+        if marker and name[marker - 1].isspace():
+            equals = marker + len('password')
+            while equals < len(name) and name[equals].isspace():
+                equals += 1
+            if equals < len(name) and name[equals] == '=':
+                raw_password = name[equals + 1:]
+                password = raw_password.lstrip()
+                if password or raw_password:
+                    whitespace_start = marker - 1
+                    while whitespace_start and name[whitespace_start - 1].isspace():
+                        whitespace_start -= 1
+                    newline = name.find('\n', whitespace_start, marker)
+                    prefix_end = newline if newline != -1 else marker - 1
+                    prefix_start = name.rfind('\n', 0, prefix_end) + 1
+                    prefix = name[prefix_start:prefix_end]
+                    if not prefix:
+                        continue
+                    return prefix.strip('. '), password.strip()
+    return None
 
 
 def scanForPassword(name):
@@ -521,13 +566,7 @@ def scanForPassword(name):
     if not name or not isinstance(name, str):
         return None
 
-    m = None
-    for reg in re_password:
-        m = reg.search(name)
-        if m: break
-
-    if m:
-        return m.group(1).strip('. '), m.group(2).strip()
+    return _brace_password(name) or _keyword_password(name)
 
 
 under_pat = re.compile(r'_([a-z])')

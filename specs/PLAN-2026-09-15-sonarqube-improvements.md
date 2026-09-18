@@ -351,6 +351,17 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-14:** Replace the one super-linear Basic Auth regex with one bounded
   standard-library URL authority check; add no dependency and do not refactor
   unrelated variable helpers or downloader adapters.
+- **AC-QA-19:** `scanForPassword` preserves the two supported SABnzbd naming
+  formats, their precedence, case-insensitive keyword handling, whitespace
+  trimming, and last-marker behavior without calling a regular-expression
+  search. Boundary tests cover repeated markers, malformed braces, and missing
+  separators; deterministic differential input agrees with the prior parser.
+- **AC-OPS-13:** Missing and non-string release names remain ordinary
+  no-password results, and the sole production caller retains its existing
+  title fallback and generated-name behavior.
+- **AC-SIMP-15:** Replace both super-linear password regexes with bounded string
+  scans local to `variable.py`; add no dependency and do not refactor the
+  caller or unrelated helpers.
 
 ## Implementation sequence
 
@@ -432,10 +443,14 @@ within the authority explicitly granted by the owner.
   `f3570b64-354a-4d63-b964-83b74d555e8d` with exact, bounded token-element
   parsing and deterministic response closure. Covers AC-QA-17, AC-OPS-11,
   AC-SEC-9, and AC-SIMP-13.
-- [ ] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: awaiting-ci #378.
+- [x] **T19 — make `cleanHost` auth detection bounded and secret-safe** — state: merged #378.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
+- [ ] **T20 — make release password scanning bounded** — state: queued.
+  Replace live issue `13424fcf-7147-4f58-aa8f-1012fecd4cbf` while preserving
+  both supported release-name password formats and caller behavior. Covers
+  AC-QA-19, AC-OPS-13, and AC-SIMP-15.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -856,3 +871,23 @@ T9 and T14 exceptions stated above.
   preserved without duplication or disclosure, absent auth retained configured
   insertion, and 10k/20k/40k failure inputs scaled approximately linearly. The
   repair will now receive its required full pre-push gate and hosted rerun.
+- 2026-09-18: PR #378 merged as
+  `ea5e6d92943e39a821b14f408b529db6fa15f0ec` after all 16 hosted checks,
+  cloud review, and a clean rerun of one transient accessibility contrast
+  failure. Exact-master analysis `225544b5-0422-416c-bdbd-5dd0069e6c42`
+  closed `acaf5cc5-25b0-4950-8ac8-57a78990f81d` as `FIXED`, reduced open code
+  smells from 829 to 826 and MAJOR smells from 334 to 331, and raised coverage
+  from 61.2% to 61.3%.
+- 2026-09-19: T20 red evidence replaced both password regex objects with traps;
+  the existing implementation called `.search` and failed. Two bounded string
+  helpers now pass all focused password tests. A deterministic 200,000-case
+  differential corpus, including embedded newlines, matched the prior parser.
+  An additional repeated-invalid-marker benchmark exposed and removed a
+  quadratic line-prefix reconstruction path; 10k/20k/40k markers then measured
+  approximately 0.0015/0.0030/0.0062 seconds. Other adversarial
+  10k/20k/40k inputs scaled approximately linearly for both brace and keyword
+  formats. Removing either parser branch made its format regressions fail,
+  killing both targeted mutations. The final fast gate collected 4,341 Python
+  unit items (4,322 passed, 14 skipped, 5 xfailed), then passed all 42 integration
+  and 214 UI-unit tests with Ruff, conformance, and the 323-file trap guard
+  clean. T20 is ready for independent local review.

@@ -62,6 +62,38 @@ class TestScanForPassword:
     def test_a_plain_name_has_no_password(self):
         assert scanForPassword('Some.Movie.2026.1080p.BluRay') is None
 
+    def test_password_scan_does_not_call_backtracking_regexes(self):
+        trap = MagicMock()
+        trap.search.side_effect = AssertionError('password scan used a regex')
+
+        with patch(
+            'couchpotato.core.helpers.variable.re_password',
+            [trap, trap],
+            create = True,
+        ):
+            assert scanForPassword('Some.Movie.2026{{brace-secret}}') == (
+                'Some.Movie.2026', 'brace-secret',
+            )
+            assert scanForPassword('Some.Movie.2026 PASSWORD = keyword-secret') == (
+                'Some.Movie.2026', 'keyword-secret',
+            )
+
+    @pytest.mark.parametrize(
+        ('name', 'expected'),
+        [
+            ('name{{one}}{{two}}', ('name{{one}}', 'two')),
+            ('name...   password\t=  secret  ', ('name', 'secret')),
+            ('name password = first password = second', ('name password = first', 'second')),
+            ('prefix\nname{{secret}}', ('name', 'secret')),
+            ('prefix\nname\n password = secret', ('name', 'secret')),
+            ('name\t\tpassword = secret', ('name\t', 'secret')),
+            ('name{{contains{brace}}', None),
+            ('name password without equals', None),
+        ],
+    )
+    def test_password_scan_preserves_format_boundaries(self, name, expected):
+        assert scanForPassword(name) == expected
+
 
 class TestCreateNzbName:
     """The caller, which reaches scanForPassword with whatever `info` holds."""
