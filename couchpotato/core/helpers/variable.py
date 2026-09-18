@@ -531,11 +531,12 @@ def _keyword_password(name):
     match_name = name[:-1] if name.endswith('\n') else name
     keyword = 'password'
     last_start = len(match_name) - len(keyword)
+    last_line_start = match_name.rfind('\n') + 1
 
     # Compare one source character to one keyword character. Lowercasing the
     # whole name changes offsets for Unicode characters such as U+0130, while
     # per-character casefolding also retains re.IGNORECASE's long-s match.
-    for marker in range(last_start, -1, -1):
+    for marker in range(last_start, last_line_start - 1, -1):
         if not all(
             match_name[marker + offset].casefold() == expected
             for offset, expected in enumerate(keyword)
@@ -547,7 +548,7 @@ def _keyword_password(name):
                 equals += 1
             if equals < len(match_name) and match_name[equals] == '=':
                 raw_password = match_name[equals + 1:]
-                if not raw_password or '\n' in raw_password:
+                if not raw_password:
                     continue
                 password = raw_password.lstrip()
                 if not password:

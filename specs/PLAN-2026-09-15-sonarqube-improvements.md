@@ -447,7 +447,7 @@ within the authority explicitly granted by the owner.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
-- [ ] **T20 — make release password scanning bounded** — state: review.
+- [ ] **T20 — make release password scanning bounded** — state: building.
   Replace live issue `13424fcf-7147-4f58-aa8f-1012fecd4cbf` while preserving
   both supported release-name password formats and caller behavior. Covers
   AC-QA-19, AC-OPS-13, and AC-SIMP-15.
@@ -905,4 +905,11 @@ T9 and T14 exceptions stated above.
   0.0233/0.0451/0.0907 seconds for keywords. The post-repair fast gate
   collected 4,354 Python unit items (4,335 passed, 14 skipped, 5 xfailed), then
   passed all 42 integration and 214 UI-unit tests with Ruff, conformance, and
-  the 323-file trap guard clean. Clean re-review is pending.
+  the 323-file trap guard clean. Security re-review then found that each keyword
+  marker before a newline copied and searched the remaining suffix, making a
+  repeated multiline name quadratic. A slice-guard regression failed on the
+  old loop before the repair. The parser now limits keyword candidates to the
+  final line before slicing; all 43 focused tests and the exact 200,000-case
+  differential corpus pass. The reviewer's 16k/32k/64k/128k input now measures
+  approximately 0.000005/0.000002/0.000001/0.000001 seconds because earlier
+  lines are rejected once. A new full gate and clean re-review are pending.

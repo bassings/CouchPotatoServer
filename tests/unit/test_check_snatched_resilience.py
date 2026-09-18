@@ -78,6 +78,18 @@ class TestScanForPassword:
                 'Some.Movie.2026', 'keyword-secret',
             )
 
+    def test_keyword_scan_does_not_slice_rejected_multiline_suffixes(self):
+        class NoMultilineSuffix(str):
+            def __getitem__(self, key):
+                value = super().__getitem__(key)
+                if isinstance(key, slice) and key.stop is None and '\n' in value:
+                    raise AssertionError('keyword scan copied a rejected multiline suffix')
+                return value
+
+        name = NoMultilineSuffix(('x password = secret\n' * 100) + 'tail')
+
+        assert scanForPassword(name) is None
+
     @pytest.mark.parametrize(
         ('name', 'expected'),
         [
