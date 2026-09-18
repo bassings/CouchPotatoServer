@@ -362,6 +362,13 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-15:** Replace both super-linear password regexes with bounded string
   scans local to `variable.py`; add no dependency and do not refactor the
   caller or unrelated helpers.
+- **AC-QA-20:** Preserve the complete T20 password-parser behavior and bounded
+  scaling while keeping every keyword-parser helper at no more than eight
+  explicit decision nodes. The structural guard must fail on the merged T20
+  implementation before the refactor and pass afterward.
+- **AC-SIMP-16:** Resolve both T20-introduced `python:S3776` findings by
+  extracting named parser decisions, without restoring regex parsing, adding a
+  dependency, or changing the public `scanForPassword` boundary.
 
 ## Implementation sequence
 
@@ -447,10 +454,14 @@ within the authority explicitly granted by the owner.
   Replace live issue `acaf5cc5-25b0-4950-8ac8-57a78990f81d` without changing
   URL construction behavior, and remove credential/local-network disclosure
   from its error log. Covers AC-QA-18, AC-SEC-10, AC-OPS-12, and AC-SIMP-14.
-- [ ] **T20 — make release password scanning bounded** — state: in-progress.
+- [x] **T20 — make release password scanning bounded** — state: merged #379.
   Replace live issue `13424fcf-7147-4f58-aa8f-1012fecd4cbf` while preserving
   both supported release-name password formats and caller behavior. Covers
   AC-QA-19, AC-OPS-13, and AC-SIMP-15.
+- [ ] **T21 — split password parser decisions** — state: in-progress.
+  Resolve live issues `42794452-9679-4251-b024-fc4de366ba53` and
+  `0cb42ac4-630b-417c-95b7-17455ae2980e` introduced by T20, while retaining its
+  bounded behavior and compatibility corpus. Covers AC-QA-20 and AC-SIMP-16.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -943,3 +954,23 @@ T9 and T14 exceptions stated above.
   corpora covered 611,150 and 750,000 cases respectively, with linear
   adversarial scaling. T20 is ready for the final clean-tree review gate and
   push.
+- 2026-09-19: PR #379 merged as
+  `b24f524b603c95bbc681c5768d9a1f7aaa26618f` after all 16 hosted checks.
+  Exact-master analysis `7db2b4e9-de95-4ee9-958f-1185b15cc1b6` closed
+  `13424fcf-7147-4f58-aa8f-1012fecd4cbf` as `FIXED`, reduced MAJOR smells from
+  331 to 330, and raised coverage from 61.3% to 61.4%. It also identified two
+  CRITICAL cognitive-complexity regressions in the replacement parser, so T21
+  starts before the next provider finding. Its structural branch-budget test
+  is red on the merged implementation: `_keyword_password_at` has 18 decision
+  nodes and `_keyword_password` has 23, both above the budget of eight.
+- 2026-09-19: T21 extracted the keyword parser's value, prefix, cross-line,
+  and final-line decisions into named helpers; the branch-budget guard is now
+  green with every helper at eight decision nodes or fewer. All 56 focused
+  parser/caller tests pass, as do 500,000 seeded comparisons against the
+  original regex oracle. The 16k/32k/64k/128k repeated multiline adversary
+  remained bounded at approximately 0.000004/0.000002/0.000002/0.000002
+  seconds. Deleting cross-line candidate selection made seven focused tests
+  fail, proving those compatibility assertions are load-bearing. The fast gate
+  collected 4,368 Python unit-test items (4,349 passed, 14 skipped, 5 xfailed),
+  then passed 42 integration tests and 214 UI-unit tests with Ruff,
+  conformance, and the 323-file trap guard clean.

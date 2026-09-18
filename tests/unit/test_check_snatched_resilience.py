@@ -26,14 +26,44 @@ Three separate defects chain together:
 release was blocking status checks for the other 16.
 """
 
+import ast
+import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from couchpotato.core.helpers import variable as variable_helpers
 from couchpotato.core.helpers.variable import scanForPassword
 
 
 class TestScanForPassword:
+
+    def test_keyword_parser_helpers_keep_branching_bounded(self):
+        """The bounded parser must stay split into reviewable decisions.
+
+        Sonar raised two CRITICAL cognitive-complexity regressions when the
+        original regex replacement concentrated the compatibility rules in
+        two functions. This guard keeps each keyword-parser helper small while
+        the behavioural and differential tests protect the legacy semantics.
+        """
+        module = ast.parse(inspect.getsource(variable_helpers))
+        helpers = [
+            node for node in module.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name.startswith('_keyword_password')
+        ]
+        decision_nodes = (
+            ast.BoolOp, ast.comprehension, ast.For, ast.If, ast.IfExp, ast.While,
+        )
+
+        assert helpers
+        decisions = {
+            helper.name: sum(
+                isinstance(node, decision_nodes) for node in ast.walk(helper)
+            )
+            for helper in helpers
+        }
+        assert max(decisions.values()) <= 8, decisions
 
     @pytest.mark.parametrize('value', [None, '', 0, [], {}], ids=repr)
     def test_falsy_input_is_not_a_password(self, value):
