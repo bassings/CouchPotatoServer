@@ -106,11 +106,18 @@ class TheMovieDb(MovieProvider):
 
         raw = None
         try:
+            if search_type:
+                effective_search_type = search_type
+            elif limit > 1:
+                effective_search_type = 'ngram'
+            else:
+                effective_search_type = 'phrase'
+
             name_year = fireEvent(SCANNER_NAME_YEAR, q, single = True)
             raw = self.request('search/movie', {
                 'query': name_year.get('name', q),
                 'year': name_year.get('year'),
-                'search_type': search_type if search_type else ('ngram' if limit > 1 else 'phrase')
+                'search_type': effective_search_type
             }, return_key = 'results')
         except Exception:
             log.error('Failed searching TMDB for "%s": %s', q, traceback.format_exc())
@@ -215,24 +222,35 @@ class TheMovieDb(MovieProvider):
     def parseMovie(self, movie, extended = True):
 
         # Do request, append other items
-        movie = self.request('movie/%s' % movie.get('id'), {
-            'append_to_response': 'alternative_titles' + (',images,casts' if extended else ''),
+        movie_path_template = 'movie/%s'
+        append_to_response = 'alternative_titles'
+        if extended:
+            append_to_response += ',images,casts'
+
+        movie = self.request(movie_path_template % movie.get('id'), {
+            'append_to_response': append_to_response,
             'language': 'en'
         })
         if not movie:
             return
 
-        movie_default = movie if self.default_language == 'en' else self.request('movie/%s' % movie.get('id'), {
-            'append_to_response': 'alternative_titles' + (',images,casts' if extended else ''),
-			'language': self.default_language
-        })
+        movie_path = movie_path_template % movie.get('id')
+        if self.default_language == 'en':
+            movie_default = movie
+        else:
+            movie_default = self.request(movie_path, {
+                'append_to_response': append_to_response,
+                'language': self.default_language
+            })
 
         movie_default = movie_default or movie
 
-        movie_others = [ self.request('movie/%s' % movie.get('id'), {
-            'append_to_response': 'alternative_titles' + (',images,casts' if extended else ''),
-			'language': language
-        }) for language in self.languages] if self.languages else []
+        movie_others = []
+        for language in self.languages or []:
+            movie_others.append(self.request(movie_path, {
+                'append_to_response': append_to_response,
+                'language': language
+            }))
 
         # Images
         poster = self.getImage(movie, type = 'poster', size = 'w154')

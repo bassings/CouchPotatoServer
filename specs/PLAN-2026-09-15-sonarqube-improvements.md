@@ -551,6 +551,23 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-26:** Limit production changes to the three BeautifulSoup keyword
   replacements. Do not combine the adjacent complexity, naming, or comparison
   findings into this slice.
+- **AC-QA-36:** TMDB search preserves the existing truthy explicit
+  `search_type` override and otherwise selects `ngram` only when `limit > 1`,
+  with `phrase` for the single-result case.
+- **AC-QA-37:** `parseMovie` keeps the original request order and identity
+  boundary: the English request uses the caller's movie id, then default and
+  additional language requests use the canonical id returned by that response.
+- **AC-QA-38:** Extended and non-extended parsing send the same
+  `append_to_response` value to every language request and preserve the merged
+  title result. A module-wide AST guard rejects nested conditional expressions.
+- **AC-SEC-18:** TMDB request parameters remain server-controlled and the slice
+  adds no logging, response disclosure, credential handling, or outbound host.
+- **AC-OPS-27:** Preserve request count, order, paths, language iteration,
+  fallback behavior, exception handling, and the `None` result on a failed
+  initial request.
+- **AC-SIMP-27:** Replace only the nested conditional expressions and their
+  immediately repeated literals. Add no helper, dependency, cache, retry, or
+  adjacent provider cleanup.
 
 ## Implementation sequence
 
@@ -671,11 +688,14 @@ within the authority explicitly granted by the owner.
   before their loops advance, then adjudicate all four non-escaping S1515
   closures only after exact-master verification. Covers AC-QA-31..33,
   AC-SEC-17, AC-OPS-24..25, and AC-SIMP-25.
-- [ ] **T28 — replace deprecated BeautifulSoup text filters** *(needs: T27)*
-  — state: awaiting-ci. Replace the three deprecated keywords without changing
+- [x] **T28 — replace deprecated BeautifulSoup text filters** *(needs: T27)*
+  — state: merged #393. Replace the three deprecated keywords without changing
   provider parsing or pagination, and enforce the production-wide recurrence
   guard. Covers AC-QA-34..35, AC-OPS-26, and AC-SIMP-26.
-- [ ] **T29 — flatten TMDB nested conditionals** *(needs: T28)* — state: queued.
+- [ ] **T29 — flatten TMDB nested conditionals** *(needs: T28)* — state: awaiting-ci.
+  Make the three existing choices explicit while preserving TMDB request
+  identity, order, parameters, and title merging. Covers AC-QA-36..38,
+  AC-SEC-18, AC-OPS-27, and AC-SIMP-27.
 - [ ] **T30 — use native wizard groups** *(needs: T29)* — state: queued.
 - [ ] **T31 — use native release status and region semantics** *(needs: T30)*
   — state: queued.
@@ -1363,3 +1383,29 @@ T9 and T14 exceptions stated above.
   (14 skipped, 5 expected failures), 42 integration tests, and 214 UI unit
   tests. The complete rebased diff is at the mandatory independent local
   review gate before push.
+- 2026-09-19: T29 starts locally on T28's pinned reviewed tree. Its focused 58
+  provider tests and Ruff are green; external delivery remains strictly
+  blocked on the preceding merges and exact-master Sonar checks.
+- 2026-09-19: T28 merged as PR #393 at
+  `0df966e121589a20d45137d2e266ca1eb020531d` after all hosted checks passed,
+  including CodeQL for Python, JavaScript, and Actions, Claude review, Docker,
+  accessibility, and the full UI E2E matrix. Exact-master analysis
+  `539d32c3-69aa-4c92-b336-245dd0c936d7` reported the same merge SHA as its
+  revision and project version after 4,428 Python/integration tests and 214 UI
+  unit tests passed. Exact issue `38a71bc3-be40-4f6d-9773-85aeb9db87fa`
+  closed as `FIXED`; open code smells fell from 812 to 811 and major findings
+  from 320 to 319. T29 is now unblocked on the exact merge.
+- 2026-09-19: T29 rebased onto T28's exact merge and retained the response-ID
+  behavior where later language requests use the canonical ID returned by the
+  English response. Its final local fast gate passed Ruff, conformance, the
+  327-file trap scan, 4,396 unit tests (14 skipped, 5 expected failures), 42
+  integration tests, and 214 UI unit tests. The complete rebased diff is at
+  the mandatory independent local review gate before push.
+- 2026-09-19: T29's first final review found the new characterization covered
+  only one successful additional language, allowing reversal, truncation,
+  `languages=None` breakage, exception swallowing, falsey `search_type` drift,
+  and loss of the default-language fallback to survive. The recurring branch-
+  coverage class was addressed as one mechanism: 65 focused provider tests now
+  pin two-language order and titles, `None` and empty lists, secondary-request
+  exception propagation, all supported falsey search-type inputs, and fallback
+  to the English response. The full fast gate was rerun clean after the repair.
