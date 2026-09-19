@@ -1044,7 +1044,7 @@ within the authority explicitly granted by the owner.
   — state: merged #405.
   Covers AC-QA-51..53, AC-SEC-24, AC-DATA-4, AC-PROD-13, and AC-SIMP-35.
 - [ ] **T39 — remove direct first-item materialization as one rule-family batch**
-  *(needs: T38)* — state: building.
+  *(needs: T38)* — state: awaiting-ci #406.
   Resolve all four live medium-reliability `python:S8519` findings in scanner,
   profile, renamer, and searcher code, with site-specific behavior coverage and
   one recurrence guard. Covers AC-QA-54..56, AC-SEC-25..26, AC-DATA-5..9,
@@ -2102,3 +2102,10 @@ T9 and T14 exceptions stated above.
   and proves the third pass requests only the first; restoring eager
   materialization consumes the second, hits the poisoned tail, and fails the
   focused contract. Both mutations were restored before re-verification.
+- 2026-09-20: T39's amended commit `1d91ff38` passed the complete Harness
+  review across security, QA, data, operability, and fresh verification. The
+  exact amended tree passed 4,499 Python tests (14 skipped, five expected
+  failures), and two independent code reviewers returned no findings after
+  reproducing scanner, profile, renamer, searcher, zero-word, and recurrence
+  mutations in isolated checkouts. PR #406 is open at the reviewed production
+  tip; this tracking-only commit awaits its own local review before push.
