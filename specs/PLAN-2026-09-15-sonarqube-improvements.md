@@ -782,7 +782,7 @@ within the authority explicitly granted by the owner.
   retaining security, keyboard, focus, mobile, and exact-submission behavior.
   Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
 - [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
-  — state: building.
+  — state: awaiting-ci #401.
 - [ ] **T35 — use native ordered settings lists** *(needs: T34)* — state: queued.
 - [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
   — state: queued.
@@ -1638,3 +1638,13 @@ T9 and T14 exceptions stated above.
   vacuous-pass path in the recurrence guard when pytest runs outside the
   repository root. T34 remains open while a correction anchors discovery to
   the test file and asserts the production template set is non-empty.
+- 2026-09-20: The T34 correction reproduced the former false-green from
+  `tests/unit`, then anchored template discovery to the test file and added
+  explicit missing-root and empty-set failures. The corrected guard discovers
+  all 35 tracked production HTML templates from either working directory;
+  missing-root, empty-set, and reintroduced-attribute mutations all fail as
+  intended. The proportionate gate completed with 4,409 Python unit tests, 42
+  integration tests, and 214 UI unit tests passing. Two independent code
+  reviewers and an independent verifier were clean at
+  `7e8cd6760d15e8f4ece56c7faba4435b7bf01344`; correction PR #401 is open for
+  hosted CI.
