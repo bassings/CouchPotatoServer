@@ -62,10 +62,9 @@
     </div>
 
     {# ── Profile list ── #}
-    <div class="space-y-2" role="list" aria-label="Quality profiles">
+    <ol class="space-y-2" role="list" aria-label="Quality profiles">
       <template x-for="(profile, pi) in profiles" :key="profile._id">
-        <div class="bg-cp-card border border-white/[0.05] rounded-lg px-4 py-3"
-             role="listitem">
+        <li class="bg-cp-card border border-white/[0.05] rounded-lg px-4 py-3">
           <div class="flex items-start justify-between gap-3">
 
             {# Profile name + reorder buttons #}
@@ -134,9 +133,9 @@
               </button>
             </div>
           </div>
-        </div>
+        </li>
       </template>
-    </div>
+    </ol>
 
   </div>
 
@@ -210,10 +209,9 @@
           </p>
 
           {# Quality rows #}
-          <div class="space-y-1.5 mb-3" role="list" aria-label="Qualities in this profile">
+          <ol class="space-y-1.5 mb-3" role="list" aria-label="Qualities in this profile">
             <template x-for="(type, ti) in formState.types" :key="ti">
-              <div class="flex items-center gap-2 bg-white/[0.02] border border-white/[0.04] rounded-md px-2.5 py-2"
-                   role="listitem">
+              <li class="flex items-center gap-2 bg-white/[0.02] border border-white/[0.04] rounded-md px-2.5 py-2">
 
                 {# Reorder up/down #}
                 <div class="flex flex-col gap-0.5 shrink-0">
@@ -277,9 +275,9 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
                   </svg>
                 </button>
-              </div>
+              </li>
             </template>
-          </div>
+          </ol>
 
           {# Add quality dropdown #}
           <div class="flex gap-2 items-center">

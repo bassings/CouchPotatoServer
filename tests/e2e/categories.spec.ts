@@ -107,15 +107,24 @@ test.describe('Category management', () => {
   });
 
   test('categories tab loads and shows the list (and header chrome is hidden)', async ({ page }) => {
-    const panel = await openCategoriesTab(page);
+    const panel = await createTestCategory(page);
 
-    // Should not be in an error state
-    const errEl = panel.locator('[role="alert"]');
-    if (await errEl.isVisible()) {
-      throw new Error('Categories panel showed error: ' + (await errEl.textContent()));
-    }
+    // Success and error are mutually exclusive; assert the error path is absent
+    // instead of conditionally skipping the check when it is hidden.
+    await expect(panel.locator('[role="alert"]')).toBeHidden();
 
     await expect(panel.getByRole('button', { name: /new category/i })).toBeVisible();
+
+    const categoryList = panel.getByRole('list', { name: 'Categories' });
+    await expect(categoryList).toBeVisible();
+    await expect(categoryList).toHaveJSProperty('tagName', 'OL');
+    await expect(categoryList).toHaveAttribute('role', 'list');
+    const categoryItems = categoryList.getByRole('listitem');
+    expect(await categoryItems.count(), 'no categories rendered').toBeGreaterThan(0);
+    for (const item of await categoryItems.all()) {
+      await expect(item).toHaveJSProperty('tagName', 'LI');
+      await expect(item).not.toHaveAttribute('role');
+    }
 
     // The settings-level header chrome (Advanced toggle, auto-save indicator) MUST
     // NOT render on a custom-panel tab — categories has its own save flow. Guards
