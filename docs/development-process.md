@@ -248,7 +248,8 @@ image.
 
 ## SAST / security gates
 
-- **CodeQL** (`codeql.yml`) — Python + JS static analysis, per-PR + weekly.
+- **CodeQL** (`codeql.yml`) — Python, JavaScript/TypeScript, and GitHub Actions
+  static analysis, per-PR + weekly.
 - **dependency-review** (`dependency-review.yml`) — blocks PRs that add deps
   with known high/critical vulns.
 - **Trivy** image scan in the `docker` job — fails on fixable HIGH/CRITICAL

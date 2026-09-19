@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze (${{ matrix.language }})
+    name: Analyze (${{ matrix.check_name }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -23,7 +23,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [python, javascript]
+        include:
+          - language: python
+            check_name: python
+          - language: javascript-typescript
+            check_name: javascript
+          - language: actions
+            check_name: actions
 
     steps:
       - name: Checkout
