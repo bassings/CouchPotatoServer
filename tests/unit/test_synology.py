@@ -19,6 +19,7 @@ carries file uploads (the nzb/torrent payload itself) -- the shorter value
 risks breaking a slow-but-working setup, which would be a fix that causes
 an outage.
 """
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -144,6 +145,29 @@ class TestSynologyRPCTimeout:
         payload), so the shorter value risks breaking a slow-but-working
         setup."""
         assert synology_module._REQUEST_TIMEOUT == 60
+
+
+class TestSynologyRPCResponseContract:
+    """S3516: successful requests return server data, not the failure value."""
+
+    def test_success_and_transport_failure_return_distinct_results(self):
+        rpc = SynologyRPC('mynas', 5000)
+        server_payload = {'success': True, 'data': {'task_id': 'download-1'}}
+        mock_response = MagicMock()
+        mock_response.text = json.dumps(server_payload)
+
+        with patch.object(synology_module.requests, 'post', return_value=mock_response):
+            success = rpc._req(rpc.download_url, {})
+        with patch.object(
+            synology_module.requests,
+            'post',
+            side_effect=synology_module.requests.ConnectionError,
+        ):
+            failure = rpc._req(rpc.download_url, {})
+
+        assert success == server_payload
+        assert failure == {'success': False}
+        assert success != failure
 
 
 class TestSynologyInterruptPropagation:

@@ -385,6 +385,60 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-18:** Resolve live `python:S5806` issue
   `3e8c98da-8ab3-4710-97b8-b41d8f72e349` by renaming only the local FilmId
   variable, without changing parsing, requests, logging, or provider behavior.
+- **AC-QA-23:** A hermetic characterization executes the real
+  `SynologyRPC._req` method with a successful JSON response and a transport
+  failure. It proves the success result is the complete decoded server payload,
+  the handled-failure result is exactly `{'success': False}`, and the two
+  outcomes differ.
+- **AC-QA-24:** The characterization is load-bearing: temporarily removing the
+  successful response assignment makes the new success assertion fail because
+  `_req` returns the failure sentinel, restoring production byte-for-byte makes
+  it pass, and no production change remains in the slice.
+- **AC-QA-25:** Before every push, the focused Synology suites, Ruff, trap
+  checks, applicable fast/full repository gate, Harness review, and at least
+  two independent local code reviews are clean. Hosted CI and cloud review
+  must pass before merge.
+- **AC-SEC-11:** The test uses only synthetic host, payload, and task data,
+  performs no live NAS or Sonar request, and contains no credential, API token,
+  private path, LAN address, media title, or captured server response.
+- **AC-SEC-12:** False-positive adjudication occurs only after a fresh
+  successful exact-master analysis reports the merge SHA as both revision and
+  project version and the exact issue still identifies `python:S3516` on
+  `SynologyRPC._req`; any identity drift aborts the action.
+- **AC-SEC-13:** Read the owner-only administrator token as data rather than
+  sourcing it, expose it only to the fixed trusted Sonar origin, disable
+  environment proxies and redirects, apply a bounded timeout, and never place
+  it in argv, environment, output, logs, comments, temporary files, repository
+  files, or shell history.
+- **AC-SEC-14:** The adjudication comment contains only the exact merge and
+  analysis identities, synthetic executable evidence, the distinct-return
+  rationale, and an expiry condition requiring re-evaluation if `_req`'s
+  return contract or exception boundary changes.
+- **AC-OPS-15:** The slice changes characterization and plan evidence only; it
+  does not alter Synology requests, authentication, TLS behavior, timeout,
+  retry behavior, logging, dependencies, workflows, or deployment.
+- **AC-OPS-16:** No administrator action occurs before protected `master`
+  contains the reviewed test and all required hosted checks have passed. Record
+  the exact PR head and merge SHA.
+- **AC-OPS-17:** Run `make sonar` from a clean checkout of fetched
+  `origin/master`; require Compute Engine `SUCCESS`, plausible coverage inputs,
+  and full-SHA equality among checkout, revision, project version, and merge.
+- **AC-OPS-18:** Re-fetch issue
+  `b6e7673f-30ed-4cf5-aa62-8298652e195f` after that analysis. If it remains
+  open with the same rule, component, and method, transition only that issue to
+  false positive and verify its changelog; if Sonar already closes it, perform
+  no administrator mutation.
+- **AC-PROD-3:** Preserve the complete Synology response contract consumed by
+  login and task creation. Do not restructure working production control flow
+  merely to influence the analyzer.
+- **AC-SIMP-19:** Add no helper, dependency, alternate return type, logging
+  change, exception-boundary change, or production refactor for this evidenced
+  analyzer mistake.
+- **AC-SIMP-20:** Continue the live backlog in descending severity, prioritising
+  real reliability, security/privacy, data-loss, external-input, and production
+  operability risk within each severity. Each later slice covers one coherent
+  behavior class and is re-ranked only after merge and exact-master analysis;
+  no severity-wide, rule-wide, path-wide, or bulk dismissal is permitted.
 
 ## Implementation sequence
 
@@ -482,9 +536,15 @@ within the authority explicitly granted by the owner.
   Replace live issue `893fdc54-72f9-4fdd-a6c8-ff7503ecdb14` while preserving
   valid provider behavior and failing closed before the metadata request.
   Covers AC-QA-21, AC-OPS-14, and AC-SIMP-17.
-- [ ] **T23 — remove AppleTrailers builtin shadow** — state: in-progress.
+- [x] **T23 — remove AppleTrailers builtin shadow** — state: merged #382.
   Resolve the S5806 finding introduced on T22's touched method with a local-only
   rename and a structural regression guard. Covers AC-QA-22 and AC-SIMP-18.
+- [ ] **T24 — adjudicate the Synology response-contract blocker** — state: in-progress.
+  Preserve the working downloader, merge a load-bearing characterization of its
+  distinct success and handled-failure results, then accept only exact issue
+  `b6e7673f-30ed-4cf5-aa62-8298652e195f` if an exact-master analysis still
+  reports the same false-positive identity. Covers AC-QA-23..25, AC-SEC-11..14,
+  AC-OPS-15..18, AC-PROD-3, and AC-SIMP-19..20.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -1046,3 +1106,21 @@ T9 and T14 exceptions stated above.
   Python unit-test items (4,361 passed, 14 skipped, 5 xfailed), then passed 42
   integration tests and 214 UI-unit tests with conformance and the 324-file
   trap guard clean.
+- 2026-09-19: T23 merged as PR #382 at
+  `2603014677e74c2cf47d0aa8fe53e361c76c2bd9` after the hosted gate passed.
+  The next exact-master analysis, `12d7de29-472f-4924-b1aa-18f43605b8c5`,
+  measured current master `d39cc1cb108a9f70fe58804ac1b9e2be3caf15b1`,
+  closed T23's S5806 issue, and reported 823 open code smells: 1 blocker, 197
+  critical, 328 major, 295 minor, and 2 info, with 61.5% coverage and 1.6%
+  duplication. T24 starts from the sole blocker.
+- 2026-09-19: T24 plan review found the blocker is an analyzer mistake, not a
+  downloader defect: successful `_req` calls return the decoded server payload,
+  while handled transport failures return `{'success': False}` and downstream
+  login/task creation consume the success payload. The test-first
+  characterization is green on production; a temporary mutation that discarded
+  the decoded payload failed the success assertion for the intended reason,
+  and restoring production byte-for-byte returned all 35 focused and adjacent
+  Synology tests to green. Security, QA, simplicity, product, and operability
+  lenses require a test-only slice, full review/delivery gates, exact-master
+  analysis identity, and a single verified false-positive transition with an
+  expiry condition.
