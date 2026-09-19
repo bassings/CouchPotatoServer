@@ -568,6 +568,23 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-27:** Replace only the nested conditional expressions and their
   immediately repeated literals. Add no helper, dependency, cache, retry, or
   adjacent provider cleanup.
+- **AC-A11Y-6:** The enabled tracker controls, Usenet client controls, and
+  torrent client controls use native `fieldset` grouping with the same dynamic
+  or heading-derived accessible names. No generic `role="group"` remains in the
+  wizard template.
+- **AC-DESIGN-3:** At the repository's phone viewport, two simultaneously
+  enabled private trackers and both selected downloader types keep every group
+  and interactive descendant within the layout viewport, with no document
+  overflow.
+- **AC-QA-39:** A structural guard pins all three native groups, and a real
+  browser test drives the wizard through provider and downloader selection
+  before measuring the rendered controls. The test must not pass with an
+  absent or hidden group.
+- **AC-PROD-7:** Provider enabling, downloader selection, labels, values,
+  transitions, conditional visibility, and wizard navigation remain unchanged.
+- **AC-SIMP-28:** Limit production changes to replacing the three generic
+  grouping containers with native fieldsets. Add no wrapper, JavaScript state,
+  layout utility, copy, or unrelated wizard cleanup.
 
 ## Implementation sequence
 
@@ -692,11 +709,14 @@ within the authority explicitly granted by the owner.
   — state: merged #393. Replace the three deprecated keywords without changing
   provider parsing or pagination, and enforce the production-wide recurrence
   guard. Covers AC-QA-34..35, AC-OPS-26, and AC-SIMP-26.
-- [ ] **T29 — flatten TMDB nested conditionals** *(needs: T28)* — state: awaiting-ci.
+- [x] **T29 — flatten TMDB nested conditionals** *(needs: T28)* — state: merged #394.
   Make the three existing choices explicit while preserving TMDB request
   identity, order, parameters, and title merging. Covers AC-QA-36..38,
   AC-SEC-18, AC-OPS-27, and AC-SIMP-27.
-- [ ] **T30 — use native wizard groups** *(needs: T29)* — state: queued.
+- [ ] **T30 — use native wizard groups** *(needs: T29)* — state: awaiting-ci.
+  Replace three generic group roles with native fieldsets while preserving the
+  complete wizard flow and phone layout. Covers AC-A11Y-6, AC-DESIGN-3,
+  AC-QA-39, AC-PROD-7, and AC-SIMP-28.
 - [ ] **T31 — use native release status and region semantics** *(needs: T30)*
   — state: queued.
 - [ ] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: queued.
@@ -1409,3 +1429,35 @@ T9 and T14 exceptions stated above.
   pin two-language order and titles, `None` and empty lists, secondary-request
   exception propagation, all supported falsey search-type inputs, and fallback
   to the English response. The full fast gate was rerun clean after the repair.
+- 2026-09-19: T30 starts locally on T29's clean focused-test tree. The three
+  generic wizard groups are native fieldsets with pinned accessible names; a
+  Pixel 5 browser test drives two tracker groups and both downloader groups,
+  asserts visible controls, group bounds, descendant bounds, and document
+  width. The unit guard, 10 existing wizard Chromium tests, and the new mobile
+  test are green. Removing the speculative `min-w-0` utility did not fail the
+  browser proof, so no layout class was added solely to clear the finding.
+- 2026-09-19: T29 merged as PR #394 at
+  `12b43ff1c9dd51989465849c0b2a58e6039c10f9` after all hosted checks passed,
+  including CodeQL for Python, JavaScript, and Actions, Claude review, Docker,
+  accessibility, and the full UI E2E matrix. Exact-master analysis
+  `4731ea90-1d08-432c-a86a-efc9b1057c08` reported the same merge SHA as its
+  revision after 4,457 Python/integration tests and 214 UI unit tests passed.
+  All four targeted TMDB findings closed as `FIXED`; open code smells fell
+  from 811 to 807, with critical findings falling from 195 to 193 and major
+  findings from 319 to 317. T30 is now rebased onto that verified merge.
+- 2026-09-19: T30's rebased local gate passed Ruff, conformance, the 328-file
+  trap scan, 4,439 Python tests (14 skipped, 5 expected failures), 214 UI unit
+  tests, 10 existing wizard Chromium tests, and its Pixel 5 flow. The three
+  exact pre-merge S6819 issues remain open: `cb6900a6-9f36-4991-ae8e-1f14639caea0`,
+  `2a0abba3-eabd-4f8a-af30-52ceb777ab00`, and
+  `eb60a0ce-4ac6-478c-a761-9e62f78a6b65`. Two independent clean reviewers
+  verified accessible group names, the focused axe scan, and phone bounds;
+  reverting a fieldset killed the structural test and forcing a 500px minimum
+  width killed the mobile test at 541px in a 393px viewport.
+- 2026-09-20: T30's first hosted run correctly rejected the unsupported plan
+  state word `done`; `merged #394` passes the 30-test lifecycle guard. Cloud
+  review then alleged native fieldset border chrome. A real Pixel 5 run before
+  any production change measured `0px` on all four computed border widths for
+  every new group, disproving the visual-regression hypothesis. The mobile
+  test now pins those computed widths so a future reset regression cannot make
+  the same claim true silently; no speculative production class was added.

@@ -338,6 +338,20 @@ def test_the_loop_checker_does_not_double_count_a_nested_loop():
 
 # --- the guard, run against the real templates -------------------------------
 
+def test_wizard_uses_native_fieldsets_for_control_groups():
+    wizard = TEMPLATES_DIR / 'wizard.html'
+    soup = BeautifulSoup(_strip_jinja_comments(wizard.read_text()), 'html.parser')
+    fieldsets = soup.find_all('fieldset')
+
+    assert [fieldset.get(':aria-label') for fieldset in fieldsets] == [
+        'tracker.name', None, None
+    ]
+    assert [fieldset.get('aria-labelledby') for fieldset in fieldsets] == [
+        None, 'wizard-usenet-client-heading', 'wizard-torrent-client-heading'
+    ]
+    assert soup.find_all(attrs={'role': 'group'}) == []
+
+
 @pytest.mark.parametrize('path', SCOPE_FILES, ids=lambda p: p.name)
 def test_every_interactive_field_has_an_accessible_name(path):
     """AC-A11Y-1 / AC-QA-4. Currently RED for wizard.html: 61 labels, 63
