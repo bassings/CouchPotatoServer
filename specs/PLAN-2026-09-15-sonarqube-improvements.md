@@ -782,7 +782,7 @@ within the authority explicitly granted by the owner.
   retaining security, keyboard, focus, mobile, and exact-submission behavior.
   Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
 - [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
-  — state: building.
+  — state: awaiting-ci #400.
 - [ ] **T35 — use native ordered settings lists** *(needs: T34)* — state: queued.
 - [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
   — state: queued.
@@ -1619,3 +1619,10 @@ T9 and T14 exceptions stated above.
   and exact accessible name are browser-tested; that static-analysis false
   positive was documented and accepted. Open smells fell from 801 to 800 and
   major findings from 311 to 310. T34 starts on that exact verified merge.
+- 2026-09-20: T34 removes both production `frameborder` instances and adds a
+  guard across all 35 production HTML templates. The guard failed red on the
+  two base offenders and killed independent recurrence mutations in each
+  template. Two Chromium trailer workflows, 4,409 Python unit tests, 42
+  integration tests, and 214 UI unit tests passed. Two independent code
+  reviews and fresh verification were clean at
+  `2e354a1f62b97137725ab5c31c8b16fbacd55c92`; PR #400 is open for hosted CI.
