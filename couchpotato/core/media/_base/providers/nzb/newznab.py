@@ -171,8 +171,8 @@ class Base(NZBProvider, RSS):
 
         hosts = self.getHosts()
 
-        for host in hosts:
-            result = super().belongsTo(url, host = host['host'], provider = provider)
+        for configured_host in hosts:
+            result = super().belongsTo(url, host = configured_host['host'], provider = provider)
             if result:
                 return result
 
