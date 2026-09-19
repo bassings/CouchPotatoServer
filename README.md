@@ -144,4 +144,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Target Python 3.14 (what 
 
 ## License
 
-[GPL-3.0](license.txt)
+Copyright (C) 2011 Ruud Burger.
+
+Licensed under [GPL-3.0-or-later](LICENSE).
