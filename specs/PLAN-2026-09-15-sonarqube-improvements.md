@@ -909,7 +909,7 @@ within the authority explicitly granted by the owner.
 - [x] **T36 — flatten release-view sort conditionals** *(needs: T35)*
   — state: merged #403.
   Covers AC-A11Y-10, AC-QA-45..47, AC-SEC-22, AC-PROD-11, and AC-SIMP-33.
-- [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: building.
+- [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: awaiting-ci #404.
   Covers AC-QA-48..50, AC-SEC-23, AC-DATA-3, AC-PROD-12, and AC-SIMP-34.
 - [ ] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
   — state: queued.
@@ -1861,3 +1861,8 @@ T9 and T14 exceptions stated above.
   or contract row killed every mutation before restoration. The restored
   focused gate passed 121 tests with Ruff clean, and the broad gate passed
   4,465 Python tests (14 skipped, 5 expected failures).
+- 2026-09-20: T37 passed every Harness review criterion and two independent
+  local code reviews on exact commit `f22bd8e3`. Reviewers reproduced base/head
+  equivalence across the required cases, 511 varied and hostile codec values,
+  the structural failures, and all behavior mutation kills. PR #404 is open
+  for hosted CI and cloud review.
