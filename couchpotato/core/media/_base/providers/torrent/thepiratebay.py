@@ -67,10 +67,9 @@ class Base(TorrentMagnetProvider):
                     if not results_table:
                         return
 
-                    try:
-                        total_pages = len(soup.find('div', attrs = {'align': 'center'}).find_all('a'))
-                    except Exception:
-                        pass
+                    pagination = soup.find('div', attrs = {'align': 'center'})
+                    if pagination is not None:
+                        total_pages = len(pagination.find_all('a'))
 
                     entries = results_table.find_all('tr')
                     for result in entries[1:]:

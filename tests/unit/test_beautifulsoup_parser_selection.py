@@ -542,3 +542,36 @@ def test_awesomehd_missing_authkey_skips_results_with_actionable_error():
     logger.error.assert_called_once_with(
         "Awesome-HD response did not include an auth key; skipping results."
     )
+
+
+def test_awesomehd_error_element_is_logged_and_skips_results():
+    from couchpotato.core.media._base.providers.torrent.awesomehd import Base as AwesomeHD
+
+    provider = _bare_provider(
+        AwesomeHD,
+        getHTMLData="<html><body><error>Invalid credentials</error></body></html>",
+        conf=lambda key: {"passkey": "pass", "only_internal": False}.get(key),
+    )
+    results = []
+
+    with patch("couchpotato.core.media._base.providers.torrent.awesomehd.log") as logger:
+        provider._search({"identifier": "tt1"}, {}, results)
+
+    assert results == []
+    logger.info.assert_called_once_with("Invalid credentials")
+    logger.error.assert_not_called()
+
+
+def test_bithdtv_missing_detail_table_returns_empty_description():
+    from couchpotato.core.media._base.providers.torrent.bithdtv import Base as BitHDTV
+
+    provider = _bare_provider(
+        BitHDTV,
+        getCache="<html><body><p>No description supplied</p></body></html>",
+    )
+    item = {"id": "2", "detail_url": "unused"}
+
+    result = provider.getMoreInfo(item)
+
+    assert result is item
+    assert result["description"] == ""
