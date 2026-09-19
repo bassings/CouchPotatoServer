@@ -755,7 +755,7 @@ within the authority explicitly granted by the owner.
   preserving live status, keyboard scrolling, phone behavior, and isolated E2E
   fixture ownership. Covers AC-A11Y-7, AC-DESIGN-4, AC-QA-40, AC-DATA-2,
   AC-PROD-8, and AC-SIMP-29.
-- [ ] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: building.
+- [ ] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: awaiting-ci #398.
   Use one tuple prefix check while preserving endpoint and TLS behavior.
   Covers AC-QA-41, AC-SEC-19, AC-OPS-28, and AC-SIMP-30.
 - [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: queued.
@@ -1559,3 +1559,8 @@ T9 and T14 exceptions stated above.
   only those schemes. Seventy rTorrent-selected downloader tests are green;
   independently removing either scheme kills the guard while the restored tree
   passes Ruff and two clean reviews.
+- 2026-09-20: T32 reached PR #398 at reviewed SHA
+  `588ab5df57496b459abeac4e179b28879fd0f7b9`. Its exact-base fast gate passed
+  Ruff, conformance, the 329-file trap scan, 4,407 unit tests (14 skipped,
+  5 expected failures), 42 integration tests, and 214 UI unit tests. Hosted CI
+  and cloud review are in progress.
