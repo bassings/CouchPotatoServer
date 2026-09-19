@@ -618,6 +618,25 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   attempt, failure logging, and return behavior for every existing scheme.
 - **AC-SIMP-30:** Replace only the duplicated prefix predicate. Add no helper,
   URL normalization, dependency, or adjacent downloader cleanup.
+- **AC-A11Y-8:** Replacement candidates are native same-name radios in a
+  fieldset with a native legend. Space selects, arrow keys move focus and
+  selection, the group contributes one Tab stop, and each filename is the
+  radio's accessible name without custom ARIA state.
+- **AC-DESIGN-5:** Candidate rows preserve their selected/unselected styling,
+  truncation, minimum touch target, bounded scrolling, and phone-width layout
+  after the control changes from a button to a labelled radio.
+- **AC-QA-42:** Unit and browser tests pin the native structure and full
+  keyboard model, confirm disabled/enabled transitions, mobile overflow, and
+  exact request submission for a filename containing quote, script, and HTML
+  payload characters.
+- **AC-SEC-20:** Candidates remain server-produced choices with no free-text
+  path input. Hostile filenames render only as text, execute no script or image
+  handler, and round-trip verbatim as the selected `source` parameter.
+- **AC-PROD-9:** Loading, error, empty, selection, cancellation, confirmation,
+  focus trapping/return, and replacement request behavior remain unchanged.
+- **AC-SIMP-31:** Delete the custom radio role, ARIA checked state, and manual
+  arrow-key state machine in favor of native controls. Add no replacement
+  interaction abstraction or unrelated modal refactor.
 
 ## Implementation sequence
 
@@ -755,10 +774,13 @@ within the authority explicitly granted by the owner.
   preserving live status, keyboard scrolling, phone behavior, and isolated E2E
   fixture ownership. Covers AC-A11Y-7, AC-DESIGN-4, AC-QA-40, AC-DATA-2,
   AC-PROD-8, and AC-SIMP-29.
-- [ ] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: awaiting-ci #398.
+- [x] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: merged #398.
   Use one tuple prefix check while preserving endpoint and TLS behavior.
   Covers AC-QA-41, AC-SEC-19, AC-OPS-28, and AC-SIMP-30.
-- [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: queued.
+- [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: awaiting-ci #399.
+  Replace the custom radio-button state machine with native radios while
+  retaining security, keyboard, focus, mobile, and exact-submission behavior.
+  Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
 - [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
   — state: queued.
 - [ ] **T35 — use native ordered settings lists** *(needs: T34)* — state: queued.
@@ -1564,3 +1586,24 @@ T9 and T14 exceptions stated above.
   Ruff, conformance, the 329-file trap scan, 4,407 unit tests (14 skipped,
   5 expected failures), 42 integration tests, and 214 UI unit tests. Hosted CI
   and cloud review are in progress.
+- 2026-09-20: T32 merged as PR #398 at
+  `172339ae2c9634b97ff9e94c1276b0b9462777fb` after the full hosted matrix
+  passed, including Claude review, three-language CodeQL, accessibility,
+  Docker, and desktop/mobile E2E. Exact-master analysis
+  `8bd7c1ac-1a5a-41db-b579-8e114151a184` reported that SHA as revision and
+  project version after 4,449 Python tests (14 skipped, 5 expected failures)
+  and 214 UI unit tests passed. S8513 issue
+  `25d90f0e-3318-4a1e-81d5-9dce379e67f9` closed as `FIXED`; open smells fell
+  from 802 to 801 and major findings from 312 to 311. The post-CI Harness
+  security, QA, operability, product, and fresh-verification lenses all
+  measured tree `827c8a56f722ca688079d3bf5188352e03851d53` and returned clean.
+- 2026-09-20: T33 starts on that exact verified merge. Native same-name radios
+  and a fieldset replace the custom ARIA/button state machine and its manual
+  arrow-key method. Backend/template coverage, nine functional browser tests,
+  27 accessibility tests, and five mobile tests are green. Three targeted
+  production mutations (native control type, exact bound value, and accessible
+  group name) were killed; the configured mutation runner correctly reports
+  this template outside its scope. The broad local gate passed 4,408 Python
+  unit tests, 42 integration tests, and 214 UI unit tests. Two independent
+  code reviewers and fresh acceptance-criteria verification were clean at
+  `4065b768b04c27fe45f55694323843e715afe9ee`; PR #399 is open for hosted CI.

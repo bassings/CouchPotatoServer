@@ -194,6 +194,35 @@ test.describe('Operator replace modal: candidate data and submit (FEAT-011)', ()
     ).toBe(trickyName);
   });
 
+  test('hostile candidate names stay text and submit verbatim', async ({ page }) => {
+    const hostileName = `x'; alert(1); //</script><img src=x onerror=alert(2)>.mkv`;
+    let dialogs = 0;
+    page.on('dialog', async (dialog) => {
+      dialogs += 1;
+      await dialog.dismiss();
+    });
+    await page.route(CANDIDATE_ROUTE, (route) =>
+      route.fulfill(candidatesResponse([hostileName])));
+
+    const replaceRequests: URL[] = [];
+    await page.route(REPLACE_ROUTE, (route) => {
+      replaceRequests.push(new URL(route.request().url()));
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
+    });
+
+    const modal = await openReplaceModal(page, REVIEW_MOVIE_ID);
+    const radio = modal.getByRole('radio', { name: hostileName, exact: true });
+    await expect(radio).toBeVisible();
+    await expect(modal.locator('img[src="x"]')).toHaveCount(0);
+    expect(dialogs, 'a candidate filename must never execute script').toBe(0);
+
+    await radio.click();
+    await modal.locator('[data-testid="operator-replace-confirm"]').click();
+    await expect.poll(() => replaceRequests.length).toBe(1);
+    expect(replaceRequests[0].searchParams.get('source')).toBe(hostileName);
+    expect(dialogs, 'selecting a hostile filename must not execute script').toBe(0);
+  });
+
   test('the confirm control cannot fire a replacement until a candidate is chosen (point 3)', async ({ page }) => {
     await page.route(CANDIDATE_ROUTE, (route) => route.fulfill(candidatesResponse(CANDIDATES)));
     let replaceRequests = 0;
