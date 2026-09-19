@@ -802,6 +802,87 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   dependency, configuration, validation, sentinel normalization, broader
   conditional sweep, or changes to profile selection, locking, release
   cleanup, persistence, or re-search behavior.
+- **AC-QA-54:** Focused behavior contracts preserve all four live
+  `python:S8519` call sites. Scanner identification passes only the first
+  movie filename to `getReleaseNameYear`, does not consume a later hostile
+  iterable item, still uses `None` for an empty movie collection, and still
+  suppresses the filename for DVDs. `ProfilePlugin.default()`
+  returns the first ordered profile document without consuming a later row and
+  does not invent a default for an empty database. Renamer processing logs the
+  first insertion-ordered destination and passes the complete unchanged map to
+  `_moveRenamedFiles`. Searcher matching retains the existing numeric, Roman,
+  ordinary-word, zero-word, and multi-word decisions.
+- **AC-QA-55:** One repository-anchored, CWD-independent AST guard scans a
+  non-empty set of production Python files and rejects a zero subscript whose
+  direct value is `list(...)`. Synthetic tests prove it catches name,
+  attribute-call, and nested-call arguments while allowing non-zero indexes,
+  slices, ordinary `list(...)`, and ordering-dependent
+  `sorted(list(...))[0]`. Its exact-master red run reports exactly the four
+  open S8519 locations, and the repaired tree reports none.
+- **AC-QA-56:** TDD evidence records behavior characterization green on exact
+  master, hostile one-pass scanner/profile iterables red because the old code
+  over-consumes them, and AC-QA-55 red at all four reported locations. Each
+  production site is independently restored to direct `list(...)[0]` and the
+  diff-confirmed mutation is killed by the guard; behavior mutations changing
+  scanner fallback/selection, profile selection, renamer destination order,
+  or sequel classification are killed by the owning focused contract. The
+  restored focused suites, Ruff, `make check-traps`, mutation gate where
+  configured, and proportionate broad repository gate pass.
+- **AC-SEC-25:** Replace only unnecessary first-item materialization while
+  preserving branch eligibility and downstream values. Add no request route,
+  authentication or authorization change, new logging, exception detail,
+  filesystem/database/network operation, or new exposure of media titles,
+  library paths, profile data, identifiers, or credentials. Scanner identity
+  and renamer file-movement boundaries remain unchanged.
+- **AC-SEC-26:** The recurrence mechanism parses source statically without
+  importing or executing scanned modules, reading runtime configuration or
+  databases, following media paths, contacting services, or printing source
+  contents or secret-bearing values. It distinguishes direct materialization
+  from the ordering-dependent `sorted(list(...))[0]` cleanup expressions.
+- **AC-DATA-5:** For every non-empty ordered iterable, the selected value is
+  exactly its first yielded item without sorting, reordering, changing the
+  producer, or exhausting the remainder. Concrete list, dictionary-values,
+  database-generator, and singleton-set inputs retain their existing result.
+- **AC-DATA-6:** Scanner tests drive the fuzzy title/year fallback with
+  distinct filenames in known order and prove the first alone supplies the
+  chosen search identifier and `identity_source='search'`. Empty and DVD
+  boundaries do not lose, reassign, or hide scan results; malformed group
+  shapes remain outside this local refactor.
+- **AC-DATA-7:** Real-`SQLiteAdapter` coverage inserts distinct ordered profile
+  documents and proves `default()` returns the complete lowest-order document
+  through the unchanged `db.all('profile', limit=1, with_doc=True)` query. No
+  profile order, quality preference, persisted document, or empty-database
+  fallback is invented.
+- **AC-DATA-8:** Renamer coverage builds distinguishable multipart
+  destinations, proves the log names the first inserted destination, and
+  proves `_moveRenamedFiles` receives the complete identical mapping and
+  insertion order. Destination construction, collision handling, replacement
+  authorization, cleanup, and deletion remain outside the production change.
+- **AC-DATA-9:** Searcher coverage proves the sole set member remains the value
+  classified under the existing `len(movie_extra) == 1` invariant; the change
+  adds no ordering to the set and changes no release acceptance decision.
+- **AC-OPS-29:** The batch removes all four live S8519 full-iterable
+  materializations without adding retries, queries, filesystem work, log
+  volume, or newly logged paths. A single exact-master Sonar analysis closes
+  issues `0fa83481-33ae-4b43-a0ed-05a367014a11`,
+  `75d2a704-db6a-4adc-b669-5924f87fdb80`,
+  `b641564d-612d-4df2-bfa2-cfa926012bf1`, and
+  `b2647db8-ff0f-4789-be06-dc3bbd70f121` while retaining successful scanner,
+  profile, renamer, and searcher operation.
+- **AC-SIMP-36:** Treat the four S8519 findings as one exact rule-family batch
+  using local iterator-first idioms. Add no production helper, shared `first`
+  abstraction, dependency, unrelated first-index sweep, or behavioral
+  refactor.
+- **AC-SIMP-37:** Preserve each local empty and ordering contract explicitly:
+  scanner keeps its local `None` fallback, profile produces no default row,
+  renamer remains behind its non-empty guard and uses insertion order, and
+  searcher remains behind its singleton-set guard.
+- **AC-SIMP-38:** Keep the narrow AST recurrence guard in a dedicated Sonar
+  reliability contract test rather than broadening `check_test_traps.py`, whose
+  responsibility is false-green test and shell patterns.
+- **AC-SIMP-39:** Leave `couchpotato/core/plugins/renamer/cleanup.py`'s two
+  `sorted(list(...))[0]` expressions unchanged because they intentionally
+  select by sorted order and are not members of the direct S8519 class.
 
 ## Implementation sequence
 
@@ -959,9 +1040,27 @@ within the authority explicitly granted by the owner.
   Covers AC-A11Y-10, AC-QA-45..47, AC-SEC-22, AC-PROD-11, and AC-SIMP-33.
 - [x] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: merged #404.
   Covers AC-QA-48..50, AC-SEC-23, AC-DATA-3, AC-PROD-12, and AC-SIMP-34.
-- [ ] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
-  — state: awaiting-ci #405.
+- [x] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
+  — state: merged #405.
   Covers AC-QA-51..53, AC-SEC-24, AC-DATA-4, AC-PROD-13, and AC-SIMP-35.
+- [ ] **T39 — remove direct first-item materialization as one rule-family batch**
+  *(needs: T38)* — state: awaiting-ci #406.
+  Resolve all four live medium-reliability `python:S8519` findings in scanner,
+  profile, renamer, and searcher code, with site-specific behavior coverage and
+  one recurrence guard. Covers AC-QA-54..56, AC-SEC-25..26, AC-DATA-5..9,
+  AC-OPS-29, and AC-SIMP-36..39.
+- [ ] **T40 — bound the test-trap regular expressions as one file batch**
+  *(needs: T39)* — state: queued. Resolve the five medium-reliability
+  `python:S8786` findings in `scripts/check_test_traps.py` with equivalence and
+  adversarial runtime coverage plus a recurrence mechanism.
+- [ ] **T41 — bound server-side application regular expressions by contract**
+  *(needs: T40)* — state: queued. Address the remaining server-side S8786
+  findings, beginning with `couchpotato/core/plugins/log/main.py`, in
+  behavior-compatible provider/logging groups rather than unrelated one-off
+  PRs.
+- [ ] **T42 — bound browser-side regular expressions by workflow** *(needs: T41)*
+  — state: queued. Address the two JavaScript S8786 findings with UI behavior,
+  accessibility, and mobile coverage.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -1959,3 +2058,54 @@ T9 and T14 exceptions stated above.
 - 2026-09-20: Both independent final-tip reviewers found no issues on tracking
   commit `437a663d` (tree `0adc1444`), so the branch passed the local review
   gate and opened as PR #405. Hosted CI, CodeQL, and cloud review are running.
+- 2026-09-20: PR #405 merged as exact master `6f8b9780`; its tree exactly
+  matched the reviewed PR head. All required hosted checks, three CodeQL
+  language analyses, cloud review, and post-CI Harness verification were
+  clean. Exact-master Sonar CE task `045940f3` closed issue
+  `3b21ab1b-9a27-4fab-a208-df9a6257b266` as fixed; open smells fell from 790
+  to 789 while coverage stayed 62.1%, duplication stayed 1.6%, and all ratings
+  remained A.
+- 2026-09-20: The owner clarified that reliability, not maintainability, is
+  the active priority. Exact Sonar facets report 36 reliability-impact issues:
+  28 medium and 8 low. T37 and T38 correctly did not move that count because
+  their resolved issues affected maintainability only. The queue now uses
+  `impactSoftwareQualities=RELIABILITY` and impact severity, not legacy code
+  smell severity.
+- 2026-09-20: T39 plan cycle batched all four live medium-reliability S8519
+  findings by defect type. Security, QA, data, simplicity, and operability
+  lenses require four local iterator-first changes, per-site behavior proof,
+  and one narrow AST recurrence guard while excluding intentional
+  sorted-first cleanup expressions. Exact-master characterization passed 120
+  focused tests (one skipped, four expected failures); T39 is building from
+  exact master `6f8b9780`.
+- 2026-09-20: T39's red phase found exactly the four live direct
+  `list(...)[0]` sites; hostile scanner and profile iterables also failed by
+  proving the old expressions consumed beyond their first item, and the empty
+  profile case raised rather than producing the event-compatible no-result.
+  Four local iterator-first changes made all 18 initial focused tests green.
+  Independent, diff-confirmed mutations restored the old syntax at each site
+  and were killed by the shared guard; separate scanner selection, profile
+  selection, renamer order, and sequel-classification mutations were killed by
+  their behavior contracts. The restored focused gate passed 140 tests (one
+  skipped, four expected failures), Ruff and the venv-backed test-trap gate
+  were clean, and the broad gate passed 4,497 Python tests (14 skipped, five
+  expected failures). The configured changed-file mutation target reported
+  no in-scope files, so the eight explicit mutations are the mutation evidence
+  for this batch.
+- 2026-09-20: T39 fresh verification found two low evidence gaps rather than a
+  production defect: the searcher matrix named but did not explicitly drive
+  both zero-word boundaries, and the scanner's hostile tail did not carry the
+  distinct second filename AC-DATA-6 promised. Two zero-word rows now cover
+  empty parsed and movie names; removing the zero-word guard makes the former
+  accept `Matrix` and the focused test fails. The scanner iterable now exposes
+  two distinct filenames on its first two passes, records every yielded item,
+  and proves the third pass requests only the first; restoring eager
+  materialization consumes the second, hits the poisoned tail, and fails the
+  focused contract. Both mutations were restored before re-verification.
+- 2026-09-20: T39's amended commit `1d91ff38` passed the complete Harness
+  review across security, QA, data, operability, and fresh verification. The
+  exact amended tree passed 4,499 Python tests (14 skipped, five expected
+  failures), and two independent code reviewers returned no findings after
+  reproducing scanner, profile, renamer, searcher, zero-word, and recurrence
+  mutations in isolated checkouts. PR #406 is open at the reviewed production
+  tip; this tracking-only commit awaits its own local review before push.

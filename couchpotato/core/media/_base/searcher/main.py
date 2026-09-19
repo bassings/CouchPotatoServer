@@ -193,7 +193,7 @@ class Searcher(SearcherBase):
 
                 # If there's exactly 1 missing word and it's a number/roman numeral (sequel), reject
                 if len(movie_extra) == 1:
-                    missing_word = list(movie_extra)[0]
+                    missing_word = next(iter(movie_extra))
                     # Check for Arabic numerals (2, 3, 4) or Roman numerals (ii, iii, iv, v, vi, vii, viii, ix, x)
                     roman_numerals = {'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii'}
                     if missing_word.isdigit() or missing_word.lower() in roman_numerals:

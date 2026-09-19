@@ -246,7 +246,8 @@ class ProfilePlugin(Plugin):
 
     def default(self):
         db = get_db()
-        return list(db.all('profile', limit = 1, with_doc = True))[0]['doc']
+        profile = next(iter(db.all('profile', limit = 1, with_doc = True)), None)
+        return profile['doc'] if profile is not None else None
 
     def saveOrder(self, **kwargs):
 
