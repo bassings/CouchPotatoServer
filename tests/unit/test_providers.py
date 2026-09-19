@@ -8,7 +8,7 @@ import json
 import os
 import sys
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock, Mock
+from unittest.mock import call, patch, MagicMock, PropertyMock, Mock
 from base64 import b64encode
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -590,6 +590,96 @@ class TestTorrentPotatoProvider:
             p._searchOnHost({'host': 'http://example.com/'}, {}, {}, results)
 
         assert len(results) == 0
+
+
+@pytest.fixture(params=('newznab', 'torrentpotato'))
+def configured_host_owner(request):
+    """Return each multi-host provider and the parent matcher it delegates to."""
+    if request.param == 'newznab':
+        from couchpotato.core.media._base.providers.nzb.base import NZBProvider
+        from couchpotato.core.media._base.providers.nzb.newznab import Base
+        parent = NZBProvider
+    else:
+        from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
+        from couchpotato.core.media._base.providers.torrent.torrentpotato import Base
+        parent = TorrentProvider
+
+    return object.__new__(Base), parent
+
+
+class TestConfiguredHostOwnership:
+    """Provider ownership checks every configured host, even when disabled."""
+
+    hosts = [
+        {'host': 'https://first.example', 'use': '1'},
+        {'host': 'https://disabled.example', 'use': '0'},
+        {'host': 'https://last.example', 'use': '1'},
+    ]
+
+    def expected_calls(self, provider):
+        return [
+            call(
+                provider,
+                'https://last.example/releases/42',
+                host=configured['host'],
+                provider='saved-provider',
+            )
+            for configured in self.hosts
+        ]
+
+    def test_returns_a_later_match_after_ordered_misses(self, configured_host_owner):
+        provider, parent = configured_host_owner
+        provider.getHosts = Mock(return_value=self.hosts)
+        match = object()
+
+        with patch.object(
+            parent,
+            'belongsTo',
+            autospec=True,
+            side_effect=(None, None, match),
+        ) as parent_match:
+            result = provider.belongsTo(
+                'https://last.example/releases/42',
+                provider='saved-provider',
+                host='caller-supplied.example',
+            )
+
+        assert result is match
+        assert parent_match.call_args_list == self.expected_calls(provider)
+
+    def test_first_match_short_circuits(self, configured_host_owner):
+        provider, parent = configured_host_owner
+        provider.getHosts = Mock(return_value=self.hosts)
+        match = object()
+
+        with patch.object(
+            parent,
+            'belongsTo',
+            autospec=True,
+            side_effect=(match, AssertionError('called after the first match')),
+        ) as parent_match:
+            result = provider.belongsTo(
+                'https://last.example/releases/42',
+                provider='saved-provider',
+                host='caller-supplied.example',
+            )
+
+        assert result is match
+        assert parent_match.call_args_list == self.expected_calls(provider)[:1]
+
+    def test_all_misses_examine_every_configured_host(self, configured_host_owner):
+        provider, parent = configured_host_owner
+        provider.getHosts = Mock(return_value=self.hosts)
+
+        with patch.object(parent, 'belongsTo', autospec=True, return_value=None) as parent_match:
+            result = provider.belongsTo(
+                'https://last.example/releases/42',
+                provider='saved-provider',
+                host='caller-supplied.example',
+            )
+
+        assert result is None
+        assert parent_match.call_args_list == self.expected_calls(provider)
 
 
 # ===========================================================================

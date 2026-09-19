@@ -20,9 +20,9 @@ without changing application behavior or weakening failure detection.
   undefined states remain new-category states.
 - [x] AC-QA-5: The focused Python and Vitest suites, repository fast gate, and
   required independent reviews are clean.
-- [ ] AC-REL-1: Exact-master Sonar closes issue
+- [x] AC-REL-1: Exact-master Sonar closes issue
   `bf52926a-676a-4d51-9a9d-164d7e059222` (`python:S5779`) as fixed.
-- [ ] AC-REL-2: Exact-master Sonar closes issue
+- [x] AC-REL-2: Exact-master Sonar closes issue
   `0ffb6f0c-2ee4-487d-a163-4a06888b46f6` (`typescript:S5845`) as fixed.
 - [x] AC-SEC-1: No production lock behavior, exception suppression, logging,
   authorization, persistence, or network behavior changes.
