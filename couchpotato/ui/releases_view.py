@@ -260,6 +260,9 @@ def sort_columns(controls, movie_id, web_base = '/'):
 
     for key, label in SORT_COLUMNS:
         is_active = controls['sort'] == key
+        aria_sort = 'none'
+        if is_active:
+            aria_sort = 'descending' if controls['dir'] == 'desc' else 'ascending'
         # Clicking the active column reverses it; an inactive column starts
         # descending, which is what "show me the biggest/newest" means.
         direction = 'asc' if is_active and controls['dir'] == 'desc' else 'desc'
@@ -268,7 +271,7 @@ def sort_columns(controls, movie_id, web_base = '/'):
         columns.append({
             'key': key,
             'label': label,
-            'aria_sort': ('descending' if controls['dir'] == 'desc' else 'ascending') if is_active else 'none',
+            'aria_sort': aria_sort,
             'is_active': is_active,
             'hx_get': '%spartial/movie/%s/releases?%s' % (base, safe_movie_id, query),
             'href': '%smovie/%s?%s' % (base, safe_movie_id, query),

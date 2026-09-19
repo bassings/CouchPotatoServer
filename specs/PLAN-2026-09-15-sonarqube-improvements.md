@@ -679,6 +679,45 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   structural/browser tests; add no helper, component abstraction, dependency,
   JavaScript behavior, test-only production attribute, style redesign, broader
   role sweep, or adjacent settings cleanup.
+- **AC-A11Y-10:** Flattening the release-table `aria_sort` calculation
+  preserves its complete semantic matrix: the default view exposes `none` on
+  every sortable header; exactly the active header exposes `descending` or
+  `ascending` for the current direction; every inactive header remains `none`.
+  Native sort links, accessible names, stable focus-restoration ids, 44px
+  targets, focus treatment, htmx attributes, Tab order, and Enter activation
+  remain unchanged.
+- **AC-QA-45:** A parameterized unit truth table covers inactive/active crossed
+  with `asc`/`desc`. Every row asserts `is_active`, current `aria_sort`, and the
+  next `sort`/`dir` in both `href` and `hx_get`; inactive columns remain `none`,
+  returned key/label order remains `SORT_COLUMNS`, filters remain in both URLs,
+  and the default sort still marks no column active.
+- **AC-QA-46:** A repository-anchored, CWD-independent AST guard proves the
+  module and `sort_columns` function exist and rejects any conditional
+  expression nested inside another conditional expression in
+  `couchpotato/ui/releases_view.py`. It fails on the current line 271, passes
+  after the flat branch, and kills both the exact old syntax and a wrapped
+  nested equivalent.
+- **AC-QA-47:** TDD evidence records the behavior characterization green on the
+  base, the AST guard red for line 271, both green after the minimum refactor,
+  and independently killed mutations that reintroduce nested syntax, invert
+  active ascending/descending ARIA state, assign a direction to an inactive
+  column, and alter active/inactive next-click direction.
+- **AC-SEC-22:** Change only fixed-string `aria_sort` derivation. Preserve
+  normalized sort/direction allowlists and defaults, `_query()` URL encoding,
+  `quote(movie_id, safe='')`, `href`/`hx_get` construction, and malformed-query
+  success behavior. Add no HTML-capable value, logging, telemetry, network or
+  authorization change, or exposure of release names, titles, identifiers,
+  paths, or credentials.
+- **AC-PROD-11:** The refactor is user-invisible: column order and labels,
+  visible active arrow, filters, row ordering, focus behavior, and URLs remain
+  unchanged. An inactive column starts descending, the active column reverses,
+  and current ARIA state never reuses the intentionally opposite next-click
+  direction. Add no copy, control, persistence, analytics, or telemetry.
+- **AC-SIMP-33:** Replace only the nested `aria_sort` expression with a local
+  `none` default and a direct active-column branch selecting `descending` or
+  `ascending`. Add no helper, abstraction, dependency, configuration,
+  template/browser change, broader conditional sweep, or adjacent sorting,
+  filtering, validation, query, or URL refactor.
 
 ## Implementation sequence
 
@@ -825,14 +864,15 @@ within the authority explicitly granted by the owner.
   Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
 - [x] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
   — state: merged #401.
-- [ ] **T35 — use native ordered settings lists** *(needs: T34)*
-  — state: awaiting-ci #402.
+- [x] **T35 — use native ordered settings lists** *(needs: T34)*
+  — state: merged #402.
   Replace the three generic ordered settings collections with native lists
   while preserving layout, accessible names, controls, and persisted order.
   Covers AC-A11Y-9, AC-DESIGN-6, AC-QA-43..44, AC-SEC-21, AC-PROD-10, and
   AC-SIMP-32.
 - [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
-  — state: queued.
+  — state: building.
+  Covers AC-A11Y-10, AC-QA-45..47, AC-SEC-22, AC-PROD-11, and AC-SIMP-33.
 - [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: queued.
 - [ ] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
   — state: queued.
@@ -1726,3 +1766,33 @@ T9 and T14 exceptions stated above.
   to reject redundant `listitem` roles. Any Sonar complaint about those three
   necessary roles must be adjudicated with this cross-browser evidence rather
   than removed.
+- 2026-09-20: T35 merged as PR #402 at exact master
+  `d4d59b733ef6d8aba87e5fabded463554c92382e`; every hosted gate and the post-CI
+  Harness review passed. Exact Sonar analysis
+  `61d87754-a369-4206-8369-47793c286517` closed all six targeted Web:S6819
+  issues. Three new Web:S6822 complaints about the documented markerless-list
+  Safari compatibility roles were commented with platform and mutation-test
+  evidence and resolved `FALSE-POSITIVE`. Open smells fell from 798 to 792 and
+  majors from 308 to 302; coverage stayed 62.0%, duplication 1.6%, and the
+  reliability, security, and maintainability ratings remained A.
+- 2026-09-20: T36 plan cycle completed with security, QA, simplicity, product,
+  design, and accessibility coverage. It scoped the implementation to the
+  single nested `aria_sort` expression and requires a four-row current-state /
+  next-click truth table plus a module-scoped AST regression guard; no design
+  criterion was added because markup and visible behavior must remain
+  byte-identical.
+- 2026-09-20: T36 behavior characterization passed on the base, then the new
+  AST guard failed red on the nested conditional at line 271. The minimum flat
+  branch made the focused suite green. Manual mutations independently
+  reintroduced the exact and a wrapped nested expression, inverted active ARIA
+  direction, assigned a direction to inactive columns, and changed next-click
+  direction; the AST or four-row truth-table test killed each mutation. Ruff
+  and 111 focused release/plan tests passed. The broad gate then passed 4,457
+  Python tests (14 skipped, 5 expected failures) and all 6 release-control
+  browser tests.
+- 2026-09-20: T36 QA review found the AST collector was function-scoped even
+  though AC-QA-46 deliberately requires a module-level recurrence mechanism.
+  The collector now walks the parsed module while retaining the explicit
+  `sort_columns` existence check; a behavior-preserving nested expression
+  inserted into unrelated `_clean` failed at its own line, proving the shared
+  S3358 mechanism is enforced across `releases_view.py`.

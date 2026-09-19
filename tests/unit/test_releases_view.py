@@ -10,6 +10,8 @@ raise -- a 500 on the movie detail page is not an acceptable response to a
 stale bookmark.
 """
 
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 
 from couchpotato.ui.releases_view import DEFAULT_CONTROLS, normalise_controls
@@ -410,6 +412,52 @@ class TestFilterOptions:
 
 
 class TestSortColumns:
+
+    @pytest.mark.parametrize(
+        'is_active, current_dir, expected_aria_sort, expected_next_dir',
+        [
+            (False, 'asc', 'none', 'desc'),
+            (False, 'desc', 'none', 'desc'),
+            (True, 'asc', 'ascending', 'desc'),
+            (True, 'desc', 'descending', 'asc'),
+        ],
+    )
+    def test_current_aria_state_and_next_click_direction_are_independent(
+        self,
+        is_active,
+        current_dir,
+        expected_aria_sort,
+        expected_next_dir,
+    ):
+        from couchpotato.ui.releases_view import SORT_COLUMNS, sort_columns
+
+        controls = dict(
+            DEFAULT_CONTROLS,
+            source = 'nzb',
+            quality = '1080p',
+            status = 'available',
+            sort = 'size' if is_active else 'score',
+            dir = current_dir,
+        )
+        columns = sort_columns(controls, 'movie-1', '/cp')
+        target = next(column for column in columns if column['key'] == 'size')
+
+        assert tuple((column['key'], column['label']) for column in columns) == SORT_COLUMNS
+        assert target['is_active'] is is_active
+        assert target['aria_sort'] == expected_aria_sort
+        assert all(
+            column['aria_sort'] == 'none'
+            for column in columns
+            if not column['is_active']
+        )
+
+        for url_key in ('href', 'hx_get'):
+            params = parse_qs(urlparse(target[url_key]).query)
+            assert params['sort'] == ['size']
+            assert params['dir'] == [expected_next_dir]
+            assert params['source'] == ['nzb']
+            assert params['quality'] == ['1080p']
+            assert params['status'] == ['available']
 
     def test_each_sortable_column_gets_a_link_carrying_the_current_filters(self):
         from couchpotato.ui.releases_view import sort_columns
