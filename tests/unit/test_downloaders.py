@@ -4,11 +4,13 @@ VENDORED-02: Put.io downloader tests (maintained putiopy client).
 
 Uses unittest.mock to avoid real network calls.
 """
+import ast
 import datetime
 import inspect
 import json
 import os
 import sys
+from pathlib import Path
 import pytest
 from unittest.mock import patch, MagicMock, PropertyMock
 from base64 import b64encode
@@ -2080,6 +2082,33 @@ class TestRTorrentDownloaderConnect:
         }
         values.update(overrides)
         return lambda k, **kw: values.get(k, kw.get('default', ''))
+
+    def test_httprpc_scheme_detection_uses_one_tuple_prefix_check(self):
+        source_path = (
+            Path(__file__).resolve().parents[2]
+            / 'couchpotato/core/downloaders/rtorrent_.py'
+        )
+        tree = ast.parse(source_path.read_text(encoding='utf-8'), filename=str(source_path))
+        assignments = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == 'is_httprpc'
+                for target in node.targets
+            )
+        ]
+
+        assert len(assignments) == 1
+        check = assignments[0]
+        assert isinstance(check, ast.Call)
+        assert isinstance(check.func, ast.Attribute)
+        assert check.func.attr == 'startswith'
+        assert len(check.args) == 1
+        assert isinstance(check.args[0], ast.Tuple)
+        assert [item.value for item in check.args[0].elts] == [
+            'httprpc://', 'httprpc+https://'
+        ]
 
     def test_connect_succeeds_when_client_version_call_works(self):
         rt = self._make_downloader()
