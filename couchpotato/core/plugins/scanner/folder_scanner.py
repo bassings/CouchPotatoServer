@@ -493,7 +493,7 @@ class FolderScannerMixin:
                 if len(identifier) > 2:
                     try:
                         try:
-                            filename = list(group['files'].get('movie'))[0]
+                            filename = next(iter(group['files'].get('movie') or ()), None)
                         except Exception:
                             filename = None
 

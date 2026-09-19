@@ -2319,7 +2319,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             log.debug('No rename_files built for %s, skipping', media_title)
             return
 
-        log.info('Processing: %s -> %s', media_title, list(rename_files.values())[0] if rename_files else 'unknown')
+        log.info('Processing: %s -> %s', media_title, next(iter(rename_files.values())))
 
         # Create destination folder if needed
         for src, dst in rename_files.items():

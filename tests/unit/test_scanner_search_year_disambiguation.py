@@ -117,6 +117,91 @@ def _stub_name_year(monkeypatch, scanner_instance, name_year):
     )
 
 
+class _TracksDistinctFilesAndPoisonsThirdTail:
+    """Permit the two earlier identity passes, then reject over-consumption.
+
+    ``determineMedia`` first checks CP tags and filename IMDb ids.  The S8519
+    site is the third pass over movie files; requesting only that pass's first
+    item is valid, while converting it to a list asks for the poisoned tail.
+    """
+
+    def __init__(self, first, second):
+        self.files = [first, second]
+        self.iterations = 0
+        self.consumed_by_pass = []
+
+    def __iter__(self):
+        self.iterations += 1
+        consumed = []
+        self.consumed_by_pass.append(consumed)
+        for file_path in self.files:
+            consumed.append(file_path)
+            yield file_path
+        if self.iterations >= 3:
+            raise AssertionError('scanner materialized past the first filename')
+
+
+def test_fuzzy_fallback_reads_only_the_first_movie_filename(scanner, monkeypatch):
+    second_filename = '/dl/A.Different.Movie.1999.avi'
+    movie_files = _TracksDistinctFilesAndPoisonsThirdTail(
+        DEFAULT_FILENAME, second_filename,
+    )
+    group = _group()
+    group['files']['movie'] = movie_files
+    observed_filenames = []
+
+    def _name_year(_self, identifier, file_name=None):
+        observed_filenames.append(file_name)
+        return {'name': 'Some Movie', 'year': 2020}
+
+    monkeypatch.setattr(type(scanner), 'getReleaseNameYear', _name_year, raising=False)
+    _stub_search(monkeypatch, {
+        'Some Movie 2020': [{'imdb': 'tt1234567', 'year': 2020}],
+    })
+
+    result = scanner.determineMedia(group)
+
+    assert result['identifier'] == 'tt1234567'
+    assert group['identity_source'] == 'search'
+    assert observed_filenames == [DEFAULT_FILENAME]
+    assert movie_files.iterations == 3
+    assert movie_files.consumed_by_pass[:2] == [
+        [DEFAULT_FILENAME, second_filename],
+        [DEFAULT_FILENAME, second_filename],
+    ]
+    assert movie_files.consumed_by_pass[2] == [DEFAULT_FILENAME]
+
+
+@pytest.mark.parametrize(
+    ('movie_files', 'is_dvd', 'expected_filename'),
+    [
+        pytest.param([], False, None, id='empty_movie_collection'),
+        pytest.param([DEFAULT_FILENAME], True, None, id='dvd_suppresses_filename'),
+    ],
+)
+def test_fuzzy_fallback_keeps_filename_none_boundaries(
+    scanner, monkeypatch, movie_files, is_dvd, expected_filename,
+):
+    group = _group(is_dvd=is_dvd)
+    group['files']['movie'] = movie_files
+    observed_filenames = []
+
+    def _name_year(_self, identifier, file_name=None):
+        observed_filenames.append(file_name)
+        return {'name': 'Some Movie', 'year': 2020}
+
+    monkeypatch.setattr(type(scanner), 'getReleaseNameYear', _name_year, raising=False)
+    _stub_search(monkeypatch, {
+        'Some Movie 2020': [{'imdb': 'tt1234567', 'year': 2020}],
+    })
+
+    result = scanner.determineMedia(group)
+
+    assert result['identifier'] == 'tt1234567'
+    assert group['identity_source'] == 'search'
+    assert observed_filenames == [expected_filename]
+
+
 # There are TWO `movie.search` call sites in the fallback: the primary
 # query, always tried first, and a second one built from `name_year['other']`
 # -- reached only when the primary query returns nothing. FIX 5 (round-one
