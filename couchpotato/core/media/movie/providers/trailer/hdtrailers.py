@@ -69,12 +69,12 @@ class HDTrailers(TrailerProvider):
 
         try:
             html = BeautifulSoup(data, 'lxml', parse_only = self.only_tables_tags)
-            result_table = html.find_all('h2', text = re.compile(movie_name))
+            result_table = html.find_all('h2', string = re.compile(movie_name))
 
             for h2 in result_table:
                 if 'trailer' in h2.lower():
                     parent = h2.parent.parent.parent
-                    trailerLinks = parent.find_all('a', text = re.compile('480p|720p|1080p'))
+                    trailerLinks = parent.find_all('a', string = re.compile('480p|720p|1080p'))
                     try:
                         for trailer in trailerLinks:
                             results[trailer].insert(0, trailer.parent['href'])

@@ -539,6 +539,18 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   either production handler, `ResultList.append`, `list(filter(...))`, or
   `sorted(..., key=...)` ever defers or stores its callback beyond the current
   iteration.
+- **AC-QA-34:** No production module that imports BeautifulSoup may pass the
+  deprecated `text=` keyword to `find` or `find_all`. A repository-wide AST
+  guard discovers the calls dynamically and fails if the keyword returns.
+- **AC-QA-35:** HDTrailers keeps its provider-link and no-match behavior on
+  complete and unfinished HTML, including the currently characterized failure
+  for a matching alternative heading. IPTorrents keeps traversing the real
+  multi-page `Next` navigation path and returns the same result fields.
+- **AC-OPS-26:** The keyword migration changes no request, parser, pagination,
+  provider admission, logging, response-body handling, or failure behavior.
+- **AC-SIMP-26:** Limit production changes to the three BeautifulSoup keyword
+  replacements. Do not combine the adjacent complexity, naming, or comparison
+  findings into this slice.
 
 ## Implementation sequence
 
@@ -654,11 +666,29 @@ within the authority explicitly granted by the owner.
   without changing subtitle search decisions or the scanner-produced data
   contract. Covers AC-QA-28..30, AC-SEC-16, AC-OPS-21..23, AC-PROD-5..6, and
   AC-SIMP-22..24.
-- [ ] **T27 — characterize synchronous loop callbacks** — state: awaiting-ci.
+- [x] **T27 — characterize synchronous loop callbacks** — state: merged #392.
   Prove the production `ResultList.append` boundary consumes provider callbacks
   before their loops advance, then adjudicate all four non-escaping S1515
   closures only after exact-master verification. Covers AC-QA-31..33,
   AC-SEC-17, AC-OPS-24..25, and AC-SIMP-25.
+- [ ] **T28 — replace deprecated BeautifulSoup text filters** *(needs: T27)*
+  — state: awaiting-ci. Replace the three deprecated keywords without changing
+  provider parsing or pagination, and enforce the production-wide recurrence
+  guard. Covers AC-QA-34..35, AC-OPS-26, and AC-SIMP-26.
+- [ ] **T29 — flatten TMDB nested conditionals** *(needs: T28)* — state: queued.
+- [ ] **T30 — use native wizard groups** *(needs: T29)* — state: queued.
+- [ ] **T31 — use native release status and region semantics** *(needs: T30)*
+  — state: queued.
+- [ ] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: queued.
+- [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: queued.
+- [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
+  — state: queued.
+- [ ] **T35 — use native ordered settings lists** *(needs: T34)* — state: queued.
+- [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
+  — state: queued.
+- [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: queued.
+- [ ] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
+  — state: queued.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -1304,3 +1334,32 @@ T9 and T14 exceptions stated above.
   after separately bypassing each real handler invocation and observing the
   intended focused failure. The test-only slice is ready for hosted CI and
   cloud review; all four Sonar transitions remain post-merge work.
+- 2026-09-19: T28 starts from T27's reviewed head while its required cloud
+  review is quota-blocked. Red evidence found all three production `text=`
+  filters; the production-wide AST guard, HDTrailers behavior coverage, and
+  real two-page IPTorrents navigation are green after the exact keyword-only
+  replacements. Restoring any one deprecated keyword kills the guard. T29
+  through T38 are recorded as a strictly sequential local queue; no additional
+  remote branch is created before T27 merges and receives exact-master Sonar
+  verification.
+- 2026-09-19: T28 review found the first IPTorrents fixture never reached the
+  changed pagination selector. A production-shaped two-response test now
+  asserts both page URLs and both result payloads; changing `Next` to a missing
+  label kills it. The repaired 34-test provider/parser suite, Ruff, the
+  327-file trap scan, and security, QA, product, and fresh-verification lenses
+  are clean. External delivery remains blocked on the preceding merge and its
+  exact-master Sonar verification.
+- 2026-09-19: T27 merged as PR #392 at
+  `98282f89497c95e3978d250d48aeb8b38f91c231` after every required hosted
+  check passed, including the post-quota Claude review. Exact-master analysis
+  `93ec27c6-9c2b-4bc9-953b-8b63f3cbd7d4` reported that same full SHA as both
+  revision and project version after 4,425 Python/integration tests and 214 UI
+  unit tests passed. All four S1515 issues retained their reviewed identities;
+  each was individually transitioned to false positive with its distinct
+  synchronous-consumption evidence and expiry condition, and each comment and
+  changelog transition was re-fetched and verified. T28 is now unblocked.
+- 2026-09-19: T28 rebased cleanly onto the exact T27 merge. Its final local
+  fast gate passed Ruff, conformance, the 327-file trap scan, 4,386 unit tests
+  (14 skipped, 5 expected failures), 42 integration tests, and 214 UI unit
+  tests. The complete rebased diff is at the mandatory independent local
+  review gate before push.

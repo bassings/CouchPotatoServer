@@ -59,7 +59,7 @@ class Base(TorrentProvider):
                 try:
                     page_nav = html.find('span', attrs = {'class': 'page_nav'})
                     if page_nav:
-                        next_link = page_nav.find("a", text = "Next")
+                        next_link = page_nav.find("a", string = "Next")
                         if next_link:
                             final_page_link = next_link.previous_sibling.previous_sibling
                             pages = int(final_page_link.string)

@@ -100,6 +100,34 @@ def _literal_parser(call):
     return None
 
 
+def _deprecated_beautifulsoup_text_keywords(source, filename="<source>"):
+    """Find deprecated ``text=`` filters in modules that use BeautifulSoup."""
+    tree = ast.parse(source, filename=filename)
+    uses_beautifulsoup = any(
+        (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "bs4"
+            and any(imported.name == "BeautifulSoup" for imported in node.names)
+        )
+        or (
+            isinstance(node, ast.Import)
+            and any(imported.name == "bs4" for imported in node.names)
+        )
+        for node in ast.walk(tree)
+    )
+    if not uses_beautifulsoup:
+        return []
+
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"find", "find_all"}
+        and any(keyword.arg == "text" for keyword in node.keywords)
+    ]
+
+
 def test_guard_recognises_aliased_calls_and_parser_forms():
     calls = _beautifulsoup_calls(
         """
@@ -141,6 +169,19 @@ ModuleSoup(payload, features='lxml')
     assert [_has_explicit_parser(call) for call in calls] == [False, True, True]
 
 
+def test_guard_recognises_deprecated_beautifulsoup_text_keyword():
+    calls = _deprecated_beautifulsoup_text_keywords(
+        """
+from bs4 import BeautifulSoup
+html = BeautifulSoup(payload, 'lxml')
+html.find('a', text='Next')
+html.find_all('h2', string='Trailer')
+"""
+    )
+
+    assert len(calls) == 1
+
+
 def test_every_production_beautifulsoup_call_names_a_parser():
     found = []
     implicit = []
@@ -156,6 +197,19 @@ def test_every_production_beautifulsoup_call_names_a_parser():
     assert found, "anti-vacuity: no production BeautifulSoup calls were discovered"
     assert not implicit, "BeautifulSoup calls without an explicit parser:\n%s" % "\n".join(
         implicit
+    )
+
+
+def test_production_beautifulsoup_filters_do_not_use_deprecated_text_keyword():
+    deprecated = []
+
+    for path in _python_files():
+        source = path.read_text(encoding="utf-8")
+        for call in _deprecated_beautifulsoup_text_keywords(source, filename=str(path)):
+            deprecated.append("%s:%d" % (path.relative_to(REPO_ROOT), call.lineno))
+
+    assert not deprecated, "BeautifulSoup calls using deprecated text= filters:\n%s" % "\n".join(
+        deprecated
     )
 
 
@@ -480,6 +534,52 @@ def test_torrent_search_providers_keep_candidate_fields(malformed):
     scenetime._searchOnTitle("title", {"info": {"year": 2025}}, {}, scenetime_results)
     assert [(item["id"], item["name"], item["size"]) for item in scenetime_results] == [
         ("606", "Scene Name", "5 GB")
+    ]
+
+
+def test_iptorrents_next_link_traverses_every_reported_page():
+    from couchpotato.core.media._base.providers.torrent.iptorrents import Base as IPTorrents
+
+    def page(torrent_id, name, navigation=""):
+        return """<html><body>%s<table id="torrents"><tr><th>head</th></tr><tr>
+        <td>x</td><td><a href="/details.php?id=%s">%s</a></td><td>x</td>
+        <td><a href="/download/%s.torrent">get</a></td>
+        <td class="ac t_seeders">6</td><td>2 GB</td>
+        <td class="ac t_leechers">3</td>
+        </tr></table></body></html>""" % (navigation, torrent_id, name, torrent_id)
+
+    page_navigation = (
+        '<span class="page_nav"><a>1</a> <a>2</a> <a>Next</a></span>'
+    )
+    get_html = Mock(
+        side_effect=[
+            page("303", "First Page", page_navigation),
+            page("304", "Second Page"),
+        ]
+    )
+    provider = _bare_provider(
+        IPTorrents,
+        conf=False,
+        buildUrl="https://example.invalid/search?free=%s&page=%d",
+        shuttingDown=False,
+        getHTMLData=get_html,
+        getRequestHeaders={},
+        parseSize=lambda value: value,
+    )
+    results = []
+
+    provider._searchOnTitle("title", {}, {}, results)
+
+    assert [request.args[0] for request in get_html.call_args_list] == [
+        "https://example.invalid/search?free=&page=1",
+        "https://example.invalid/search?free=&page=2",
+    ]
+    assert [
+        (item["id"], item["name"], item["size"], item["seeders"], item["leechers"])
+        for item in results
+    ] == [
+        ("303", "First Page", "2 GB", 6, 3),
+        ("304", "Second Page", "2 GB", 6, 3),
     ]
 
 
