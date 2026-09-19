@@ -251,6 +251,25 @@ DONE_RELEASE = {
     'name': 'E2E.Seed.Movie.2024.720p.WEBRip-GRP4',
 }
 
+#: Dedicated browser fixture for the release-list profile-mismatch empty state.
+#: It must not reuse DONE_RELEASE_MOVIE_ID: that movie exists solely to keep a
+#: completed release from restatusing the shared Wanted-page fixtures and is
+#: deliberately protected from direct E2E use.
+PROFILE_HIDDEN_PROFILE_ID = 'e2e-seed-profile-hidden-001'
+PROFILE_HIDDEN_MOVIE_ID = 'e2e-seed-movie-009'
+PROFILE_HIDDEN_IMDB_ID = 'tt9999909'
+PROFILE_HIDDEN_RELEASE = {
+    'suffix': '1',
+    'protocol': 'nzb',
+    'quality': '720p',
+    'status': 'done',
+    'size': 4096,
+    'seeders': None,
+    'score': 50.0,
+    'age': 1,
+    'name': 'E2E.Profile.Hidden.Release.720p-GRP9',
+}
+
 
 #: A dedicated profile carrying manual_confirmation=True, so the two
 #: review-gate movies below actually land IN the review gate. Status
@@ -387,7 +406,9 @@ def verify(data_dir):
     fixture's only genuine has_releases=False candidate. FEAT-010 (AC-QA-10)
     adds the two dedicated review-gate movies: 'downloaded', so the review
     queue has something real to exercise instead of quietly reverting to a
-    default status.
+    default status. The release-semantics fixture is relational rather than
+    just a status: its movie must use the dedicated profile, its sole release
+    must be done, and that release's quality must be excluded by the profile.
     """
     db = _open_adapter(data_dir)
     try:
@@ -401,6 +422,7 @@ def verify(data_dir):
                 (MOVIE_ID, 'active'),
                 (DESTRUCTIVE_MOVIE_ID, 'active'),
                 (DONE_RELEASE_MOVIE_ID, 'done'),
+                (PROFILE_HIDDEN_MOVIE_ID, 'done'),
                 (REVIEW_MOVIE_ID, 'downloaded'),
                 (REVIEW_DESTRUCTIVE_MOVIE_ID, 'downloaded'),
             ]
@@ -421,6 +443,64 @@ def verify(data_dir):
                 problems.append(
                     '%s has status %r, expected %r' % (movie_id, status, expected)
                 )
+
+        try:
+            hidden_movie = db.get('id', PROFILE_HIDDEN_MOVIE_ID)
+            hidden_profile = db.get('id', PROFILE_HIDDEN_PROFILE_ID)
+        except Exception as exc:
+            problems.append(
+                'profile-hidden fixture relationship could not be read: %s: %s' % (
+                    type(exc).__name__, exc))
+        else:
+            if hidden_movie.get('profile_id') != PROFILE_HIDDEN_PROFILE_ID:
+                problems.append(
+                    '%s has profile_id %r, expected %r' % (
+                        PROFILE_HIDDEN_MOVIE_ID,
+                        hidden_movie.get('profile_id'),
+                        PROFILE_HIDDEN_PROFILE_ID,
+                    )
+                )
+
+            try:
+                hidden_releases = [
+                    row['doc'] for row in db.all('id', with_doc=True)
+                    if row['doc'].get('_t') == 'release'
+                    and row['doc'].get('media_id') == PROFILE_HIDDEN_MOVIE_ID
+                ]
+            except Exception as exc:
+                problems.append(
+                    '%s releases could not be read: %s: %s' % (
+                        PROFILE_HIDDEN_MOVIE_ID, type(exc).__name__, exc))
+            else:
+                if len(hidden_releases) != 1:
+                    problems.append(
+                        '%s has %d releases, expected exactly 1' % (
+                            PROFILE_HIDDEN_MOVIE_ID, len(hidden_releases))
+                    )
+                else:
+                    hidden_release = hidden_releases[0]
+                    expected_quality = PROFILE_HIDDEN_RELEASE['quality']
+                    if hidden_release.get('status') != PROFILE_HIDDEN_RELEASE['status']:
+                        problems.append(
+                            '%s release status is %r, expected %r' % (
+                                PROFILE_HIDDEN_MOVIE_ID,
+                                hidden_release.get('status'),
+                                PROFILE_HIDDEN_RELEASE['status'],
+                            )
+                        )
+                    if hidden_release.get('quality') != expected_quality:
+                        problems.append(
+                            '%s release quality is %r, expected %r' % (
+                                PROFILE_HIDDEN_MOVIE_ID,
+                                hidden_release.get('quality'),
+                                expected_quality,
+                            )
+                        )
+                    if expected_quality in hidden_profile.get('qualities', []):
+                        problems.append(
+                            '%s includes release quality %r; expected it to be excluded' % (
+                                PROFILE_HIDDEN_PROFILE_ID, expected_quality)
+                        )
         return problems
     finally:
         db.close()
@@ -571,6 +651,18 @@ def seed(data_dir, password=None):
             'manual_confirmation': True,
         })
 
+        created['profile_hidden_profile'] = _upsert(db, PROFILE_HIDDEN_PROFILE_ID, {
+            '_t': 'profile',
+            'label': 'E2E Profile With No Matching Release',
+            'order': 997,
+            'core': False,
+            'hide': True,
+            'qualities': ['2160p'],
+            'wait_for': [0],
+            'finish': [True],
+            'manual_confirmation': False,
+        })
+
         for movie_id, imdb_id, movie_title, movie_status, profile_id, releases in (
               (MOVIE_ID, IMDB_ID, 'E2E Seed Movie', 'active', PROFILE_ID, RELEASES),
               (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie', 'active', PROFILE_ID, RELEASES),
@@ -579,6 +671,10 @@ def seed(data_dir, password=None):
               # already 'done' (not 'active') so it never depends on the
               # restatus pass and never appears in the Wanted grid at all.
               (DONE_RELEASE_MOVIE_ID, DONE_RELEASE_IMDB_ID, 'E2E Done Release Movie', 'done', PROFILE_ID, [DONE_RELEASE]),
+              # Browser coverage for the native profile-mismatch status owns
+              # this fixture. Its 720p release is intentionally excluded by
+              # the dedicated 2160p-only profile.
+              (PROFILE_HIDDEN_MOVIE_ID, PROFILE_HIDDEN_IMDB_ID, 'E2E Profile Hidden Release Movie', 'done', PROFILE_HIDDEN_PROFILE_ID, [PROFILE_HIDDEN_RELEASE]),
               # T1.9: zero releases, so this is the fixture's only movie the
               # fixed has_releases=False filter actually puts on the Wanted
               # page -- see WANTED_MOVIE_ID's comment above.

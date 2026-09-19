@@ -585,6 +585,28 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-28:** Limit production changes to replacing the three generic
   grouping containers with native fieldsets. Add no wrapper, JavaScript state,
   layout utility, copy, or unrelated wizard cleanup.
+- **AC-A11Y-7:** The profile-mismatch message uses the native `output` status
+  semantics without a redundant role. The horizontally overflowing releases
+  table is contained by a natively named `section`, remains in the tab order,
+  shows a visible focus indicator, and scrolls from the keyboard.
+- **AC-DESIGN-4:** At phone width, the release region genuinely overflows and
+  its own bounds remain inside the viewport; focusing and scrolling it changes
+  the region's horizontal position without moving or widening the document.
+  This semantic-only slice does not claim to repair the page's measured,
+  pre-existing document-wide overflow from other content.
+- **AC-QA-40:** Route tests pin the native elements and absence of redundant
+  roles. Mobile browser tests prove implicit status exposure and the real
+  focus/ArrowRight scrolling path rather than only inspecting markup.
+- **AC-DATA-2:** Browser coverage for the profile-mismatch state owns a
+  dedicated movie, profile, and release. The fixture verifier asserts their
+  exact relationship and existing protected seed movies cannot be consumed by
+  E2E specs.
+- **AC-PROD-8:** Release filtering, displayed copy, table contents, status
+  updates, action controls, and seed-data behavior outside the dedicated test
+  fixture remain unchanged.
+- **AC-SIMP-29:** Limit production UI changes to the native `output` and
+  `section` substitutions. Retain the existing accessible name and tabindex;
+  add no JavaScript keyboard handler, role duplication, or style refactor.
 
 ## Implementation sequence
 
@@ -713,12 +735,15 @@ within the authority explicitly granted by the owner.
   Make the three existing choices explicit while preserving TMDB request
   identity, order, parameters, and title merging. Covers AC-QA-36..38,
   AC-SEC-18, AC-OPS-27, and AC-SIMP-27.
-- [ ] **T30 — use native wizard groups** *(needs: T29)* — state: awaiting-ci.
+- [x] **T30 — use native wizard groups** *(needs: T29)* — state: merged #395.
   Replace three generic group roles with native fieldsets while preserving the
   complete wizard flow and phone layout. Covers AC-A11Y-6, AC-DESIGN-3,
   AC-QA-39, AC-PROD-7, and AC-SIMP-28.
 - [ ] **T31 — use native release status and region semantics** *(needs: T30)*
-  — state: queued.
+  — state: building. Replace redundant roles with native elements while
+  preserving live status, keyboard scrolling, phone behavior, and isolated E2E
+  fixture ownership. Covers AC-A11Y-7, AC-DESIGN-4, AC-QA-40, AC-DATA-2,
+  AC-PROD-8, and AC-SIMP-29.
 - [ ] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: queued.
 - [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: queued.
 - [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
@@ -1461,3 +1486,38 @@ T9 and T14 exceptions stated above.
   every new group, disproving the visual-regression hypothesis. The mobile
   test now pins those computed widths so a future reset regression cannot make
   the same claim true silently; no speculative production class was added.
+- 2026-09-19: T31 starts locally on T30. The release mismatch status and table
+  scroller use native output/section semantics while retaining the focusable
+  named overflow region. Review converted the original markup-only proof into
+  a Pixel 5 test with genuine overflow, visible focus, and ArrowRight scrolling,
+  then isolated the mismatch state behind a dedicated seeded movie/profile/
+  release and an executable fixture-ownership guard. The focused 83 unit tests
+  and full 12-test mobile project are green; two reviewers are clean.
+- 2026-09-20: T30 merged as PR #395 at
+  `9faf9bae720c18f00692ef5fcf35dd46cfb33481` after the complete hosted matrix
+  passed. Exact-master analysis `7732d9d2-ef45-4969-a817-5823629572dd`
+  reported that merge SHA after 4,439 Python tests (14 skipped, 5 expected
+  failures) and 214 UI unit tests passed. All three targeted S6819 findings
+  closed as `FIXED`; open code smells fell from 807 to 804 and major findings
+  from 317 to 314. T31 is rebased onto that verified merge. Its exact open
+  S6819 targets are `777e51e0-37ac-49d3-b1d7-847b18a02ab9` and
+  `1ed8125d-8b2a-4ae5-a46c-f2aed668e9e2`; the adjacent S6845 finding remains
+  outside this replacement because keyboard scrolling requires the overflow
+  region to stay focusable and is covered by executable browser evidence.
+- 2026-09-20: T31's exact-base gate passed Ruff, conformance, the 329-file
+  trap scan, 4,441 Python tests (14 skipped, 5 expected failures), 214 UI unit
+  tests, 113 focused route/fixture/plan tests, and all 13 mobile tests. The
+  complete rebased diff is at the mandatory independent local review gate.
+- 2026-09-20: T31's first independent review found three mechanisms that were
+  weaker than their claims. The focus assertion accepted a transparent
+  outline, the mobile criterion overclaimed repair of document overflow that
+  is already present on the exact T30 base, and `verify()` checked only the
+  mismatch movie's status. The test now requires a non-transparent rendered
+  outline, keeps the scroller's bounds inside the viewport and proves keyboard
+  scrolling neither moves nor widens the document. The criterion now names
+  that owned boundary explicitly. A seven-case database-mutation matrix now
+  requires `verify()` to reject the wrong movie/profile link, an included
+  release quality, wrong release status or quality, missing or extra release,
+  and a missing profile. After the first-round corrections, 4,444
+  Python tests passed (14 skipped, 5 expected failures), all 214 UI unit tests
+  passed, and all 13 mobile-browser tests passed.
