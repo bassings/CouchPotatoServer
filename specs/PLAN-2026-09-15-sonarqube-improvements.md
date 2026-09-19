@@ -637,6 +637,48 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-31:** Delete the custom radio role, ARIA checked state, and manual
   arrow-key state machine in favor of native controls. Add no replacement
   interaction abstraction or unrelated modal refactor.
+- **AC-A11Y-9:** Categories, Quality profiles, and Qualities in this profile
+  are native labelled ordered lists whose repeated rows are native list items;
+  each `ol` retains the documented `role="list"` compatibility mechanism so
+  Safari/VoiceOver exposes markerless lists, while no explicit `listitem` roles
+  remain. The conversion adds no tab stops and preserves every existing control
+  name, disabled boundary, focus treatment, keyboard action, and phone-width
+  touch target.
+- **AC-DESIGN-6:** The three ordered lists retain their existing list and row
+  classes and render without visible markers, native indentation, or native
+  margins. At the real 393px viewport in both themes, rows, text, and controls
+  remain within their panels and the layout viewport with no new document
+  overflow or change to spacing, borders, backgrounds, radii, or padding.
+- **AC-QA-43:** A repository-anchored structural test pins exactly the three
+  labelled `ol` elements, their `template[x-for]` and keys, and their repeated
+  `li` rows, while requiring the WebKit compatibility `list` role on each `ol`
+  and rejecting explicit `listitem` roles in the two target templates. The test
+  is observed failing on the current generic elements before production markup
+  changes and on native markerless lists without the compatibility role.
+- **AC-QA-44:** Non-vacuous Chromium coverage makes all three lists visible
+  and populated, resolves them by list role and exact accessible name,
+  proves their rendered `OL`/`LI` identity, compatibility `list` roles, and
+  absence of explicit `listitem` roles, and verifies marker/margin/padding reset
+  plus phone-width containment. Existing category, profile, and quality reorder
+  tests retain exact-order, reload-persistence, boundary, and restoration
+  assertions without a new conditional assertion body.
+- **AC-SEC-21:** Preserve every existing `x-for`, key, text-only binding,
+  event, disabled state, item/index binding, request, submitted id/order value,
+  and private-path exposure boundary. Add no HTML-capable rendering,
+  authentication or authorization change, logging, telemetry, or third-party
+  request.
+- **AC-PROD-10:** Categories, profiles, and qualities render in the same
+  application-defined order with unchanged visible contents, controls,
+  loading/error/empty states, CRUD behavior, quality finish behavior, and
+  persisted/reloaded order. The semantic conversion adds no visible numbering,
+  indentation, copy, or workflow change.
+- **AC-SIMP-32:** Limit production changes to substituting the three list
+  containers and paired repeated rows with `ol`/`li`, retaining `role="list"`
+  only as the shared Safari/VoiceOver compatibility mechanism and deleting the
+  three redundant `listitem` roles. Update only directly coupled
+  structural/browser tests; add no helper, component abstraction, dependency,
+  JavaScript behavior, test-only production attribute, style redesign, broader
+  role sweep, or adjacent settings cleanup.
 
 ## Implementation sequence
 
@@ -781,9 +823,14 @@ within the authority explicitly granted by the owner.
   Replace the custom radio-button state machine with native radios while
   retaining security, keyboard, focus, mobile, and exact-submission behavior.
   Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
-- [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
-  — state: awaiting-ci #401.
-- [ ] **T35 — use native ordered settings lists** *(needs: T34)* — state: queued.
+- [x] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
+  — state: merged #401.
+- [ ] **T35 — use native ordered settings lists** *(needs: T34)*
+  — state: awaiting-ci #402.
+  Replace the three generic ordered settings collections with native lists
+  while preserving layout, accessible names, controls, and persisted order.
+  Covers AC-A11Y-9, AC-DESIGN-6, AC-QA-43..44, AC-SEC-21, AC-PROD-10, and
+  AC-SIMP-32.
 - [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
   — state: queued.
 - [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: queued.
@@ -1648,3 +1695,34 @@ T9 and T14 exceptions stated above.
   reviewers and an independent verifier were clean at
   `7e8cd6760d15e8f4ece56c7faba4435b7bf01344`; correction PR #401 is open for
   hosted CI.
+- 2026-09-20: T34 correction PR #401 passed every applicable hosted check,
+  including three-language CodeQL, Python, Docker, and cloud review, then
+  merged at `e13f4ef3a8321c5f76cad6f90c59ce597e203ecf`. Post-CI security, QA,
+  accessibility, design, product, and fresh-verification lenses were clean.
+  Exact-master Sonar analysis `0fc32caf-63e2-4b03-ab94-f3ec9e492c55`
+  reported that SHA as both revision and project version after 4,451 Python
+  tests (14 skipped, 5 expected failures) and 214 UI tests passed. The T34
+  issue remains closed as `FIXED`; open smells remain 798, with 308 major, 193
+  critical, 295 minor, 2 info, and 0 blocker findings. Coverage remains 62.0%
+  and duplication 1.6%.
+- 2026-09-20: T35 plan cycle completed with security, QA, simplicity,
+  product, design, and accessibility coverage. It scoped the work to the
+  three labelled ordered settings collections and their directly coupled
+  tests, with native semantics, unchanged layout and persistence, and
+  non-vacuous structural/browser proof.
+- 2026-09-20: T35 failed red because Categories was not a native `ol`, then
+  passed after the three list containers and repeated rows changed to native
+  `ol`/`li` elements with all classes and Alpine bindings retained. Independent
+  regressions of Categories, Quality profiles, and Qualities in this profile
+  each killed the structural test. The complete local gate passed 4,410 Python
+  unit tests, 42 integration tests, 214 UI unit tests, 177 desktop browser
+  tests, 2 worker-isolation tests, 15 mobile tests, and 97 accessibility tests;
+  the focused settings suites additionally proved all three populated lists,
+  persisted ordering, and 393px light/dark containment.
+- 2026-09-20: The mandatory general review gate found that Tailwind Preflight's
+  marker reset can cause Safari/VoiceOver to remove otherwise-native lists from
+  the accessibility tree. T35 therefore retains the documented `role="list"`
+  compatibility mechanism on each native `ol`; tests require it and continue
+  to reject redundant `listitem` roles. Any Sonar complaint about those three
+  necessary roles must be adjudicated with this cross-browser evidence rather
+  than removed.

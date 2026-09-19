@@ -64,10 +64,9 @@
     </div>
 
     {# ── Category list ── #}
-    <div class="space-y-2" role="list" aria-label="Categories">
+    <ol class="space-y-2" role="list" aria-label="Categories">
       <template x-for="(category, ci) in categories" :key="category._id">
-        <div class="bg-cp-card border border-white/[0.05] rounded-lg px-4 py-3"
-             role="listitem">
+        <li class="bg-cp-card border border-white/[0.05] rounded-lg px-4 py-3">
           <div class="flex items-center justify-between gap-3">
 
             {# Category name + reorder buttons #}
@@ -138,9 +137,9 @@
               </button>
             </div>
           </div>
-        </div>
+        </li>
       </template>
-    </div>
+    </ol>
 
   </div>
 

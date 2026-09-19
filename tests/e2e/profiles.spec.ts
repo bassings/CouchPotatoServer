@@ -52,14 +52,14 @@ async function createTestProfile(page: Page, qualityCount = 1) {
   await expect(modal).toBeVisible();
   await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
 
-  const qualityList = modal.locator('[role="list"][aria-label="Qualities in this profile"]');
+  const qualityList = modal.getByRole('list', { name: 'Qualities in this profile' });
   for (let i = 0; i < qualityCount; i++) {
     await modal.locator('select').first().selectOption({ index: 1 });
     await modal.getByRole('button', { name: /^add$/i }).click();
     // Wait for the row to land before selecting the next one: the select's
     // options are derived from the rows, so racing it would re-add the same
     // quality and silently produce a profile one quality short.
-    await expect(qualityList.locator('[role="listitem"]')).toHaveCount(i + 1);
+    await expect(qualityList.getByRole('listitem')).toHaveCount(i + 1);
   }
 
   await modal.getByRole('button', { name: /create profile/i }).click();
@@ -102,6 +102,17 @@ test.describe('Quality Profiles', () => {
 
     await expect(panel.getByRole('button', { name: /new profile/i })).toBeVisible();
 
+    const profileList = panel.getByRole('list', { name: 'Quality profiles' });
+    await expect(profileList).toBeVisible();
+    await expect(profileList).toHaveJSProperty('tagName', 'OL');
+    await expect(profileList).toHaveAttribute('role', 'list');
+    const profileItems = profileList.getByRole('listitem');
+    expect(await profileItems.count(), 'no quality profiles rendered').toBeGreaterThan(0);
+    for (const item of await profileItems.all()) {
+      await expect(item).toHaveJSProperty('tagName', 'LI');
+      await expect(item).not.toHaveAttribute('role');
+    }
+
     // The settings-level header chrome (Advanced toggle, auto-save indicator) is
     // driven by settingsPanel state and must NOT render on a custom-panel tab —
     // profiles has its own save flow. Guards the header.html customPanelTabs fix.
@@ -122,8 +133,13 @@ test.describe('Quality Profiles', () => {
     await modal.locator('select').first().selectOption({ index: 1 });
     await modal.getByRole('button', { name: /^add$/i }).click();
 
-    const qualityList = modal.locator('[role="list"][aria-label="Qualities in this profile"]');
-    await expect(qualityList.locator('[role="listitem"]').first()).toBeVisible();
+    const qualityList = modal.getByRole('list', { name: 'Qualities in this profile' });
+    await expect(qualityList).toHaveJSProperty('tagName', 'OL');
+    await expect(qualityList).toHaveAttribute('role', 'list');
+    const firstQuality = qualityList.getByRole('listitem').first();
+    await expect(firstQuality).toBeVisible();
+    await expect(firstQuality).toHaveJSProperty('tagName', 'LI');
+    await expect(firstQuality).not.toHaveAttribute('role');
 
     await modal.getByRole('button', { name: /create profile/i }).click();
 
@@ -186,7 +202,9 @@ test.describe('Quality Profiles', () => {
     const modal = page.getByTestId('edit-modal');
     await expect(modal).toBeVisible();
 
-    const qualityItems = modal.locator('[role="list"][aria-label="Qualities in this profile"] [role="listitem"]');
+    const qualityItems = modal
+      .getByRole('list', { name: 'Qualities in this profile' })
+      .getByRole('listitem');
     await expect(qualityItems).toHaveCount(2);
 
     const labels = await qualityItems.locator('span.flex-1').allTextContents();
@@ -259,7 +277,7 @@ test.describe('Quality Profiles', () => {
     // created by the app's own profile.fill(), per worker, per run, so their
     // absence is a regression -- and a strictly worse one than the disabled
     // Delete button this test guards.
-    const builtInRow = panel.locator('[role="listitem"]', { hasText: 'built-in' }).first();
+    const builtInRow = panel.getByRole('listitem').filter({ hasText: 'built-in' }).first();
     await expect(builtInRow, 'no built-in profile rendered at all').toBeVisible();
     await expect(builtInRow.getByRole('button', { name: /delete profile/i })).toBeDisabled();
   });
