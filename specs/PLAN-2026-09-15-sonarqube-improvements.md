@@ -369,6 +369,16 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-16:** Resolve both T20-introduced `python:S3776` findings by
   extracting named parser decisions, without restoring regex parsing, adding a
   dependency, or changing the public `scanForPassword` boundary.
+- **AC-QA-21:** AppleTrailers extracts the FilmId from the fetched page without
+  a regular expression, preserves the legacy single-line greedy boundary, and
+  continues to request the same metadata URL and search by title/year. Valid,
+  competing-marker, malformed, and adversarial inputs have focused coverage.
+- **AC-OPS-14:** A missing or malformed FilmId returns no movie and makes no
+  downstream metadata request; malformed provider-controlled page content is
+  not copied into the error log.
+- **AC-SIMP-17:** Replace live `python:S8786` issue
+  `893fdc54-72f9-4fdd-a6c8-ff7503ecdb14` with one bounded string parser local
+  to the AppleTrailers adapter, adding no dependency or unrelated refactor.
 
 ## Implementation sequence
 
@@ -458,10 +468,14 @@ within the authority explicitly granted by the owner.
   Replace live issue `13424fcf-7147-4f58-aa8f-1012fecd4cbf` while preserving
   both supported release-name password formats and caller behavior. Covers
   AC-QA-19, AC-OPS-13, and AC-SIMP-15.
-- [ ] **T21 — split password parser decisions** — state: in-progress.
+- [x] **T21 — split password parser decisions** — state: merged #380.
   Resolve live issues `42794452-9679-4251-b024-fc4de366ba53` and
   `0cb42ac4-630b-417c-95b7-17455ae2980e` introduced by T20, while retaining its
   bounded behavior and compatibility corpus. Covers AC-QA-20 and AC-SIMP-16.
+- [ ] **T22 — bound AppleTrailers FilmId parsing** — state: in-progress.
+  Replace live issue `893fdc54-72f9-4fdd-a6c8-ff7503ecdb14` while preserving
+  valid provider behavior and failing closed before the metadata request.
+  Covers AC-QA-21, AC-OPS-14, and AC-SIMP-17.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -974,3 +988,41 @@ T9 and T14 exceptions stated above.
   collected 4,368 Python unit-test items (4,349 passed, 14 skipped, 5 xfailed),
   then passed 42 integration tests and 214 UI-unit tests with Ruff,
   conformance, and the 323-file trap guard clean.
+- 2026-09-19: PR #380 merged as
+  `2125bcf22884b1777094a5efc7e5f34b14d0b25d` after all hosted checks.
+  Exact-master analysis `3b0a5df3-a7fb-4b1f-b979-15165a5c234a` closed both
+  T21 issues as `FIXED`, introduced no new findings, reduced open code smells
+  from 827 to 825, and raised coverage from 61.4% to 61.5%. T22 starts with
+  the next confirmed external-input finding in AppleTrailers.
+- 2026-09-19: T22 red evidence showed the provider's regex accepting an empty
+  FilmId, taking approximately 60 seconds on 20,000 repeated delimiters, and
+  calling regex search on the valid path. A bounded line parser now passes all
+  eleven focused provider tests, including no downstream request for malformed
+  input. Five hundred thousand seeded inputs match the legacy regex for valid
+  IDs; the deliberate empty-ID and replacement-character rejections are the
+  only policy differences. The
+  10k/20k/40k/80k malformed adversary measured approximately
+  0.000014/0.000024/0.000047/0.000103 seconds. Replacing the greedy final
+  delimiter selection with the first delimiter made the competing-marker test
+  fail, proving that compatibility assertion is load-bearing. The fast gate
+  collected 4,379 Python unit-test items (4,360 passed, 14 skipped, 5 xfailed),
+  then passed 42 integration tests and 214 UI-unit tests with Ruff,
+  conformance, and the 324-file trap guard clean.
+- 2026-09-19: T22 security review found one recurring test-mechanism gap with
+  two instances: all focused tests still passed when malformed page content
+  was raised into the traceback logger, and when newlines were removed before
+  parsing so separate-line fragments formed one FilmId. The malformed-input
+  test now asserts the error logger is untouched, and an explicit split-line
+  case pins the legacy regex's newline boundary. Both assertions fail under
+  their respective mutations.
+- 2026-09-19: PR #381's hosted review found that the real HTTP/cache boundary
+  returns response content as bytes while the first parser revision accepted
+  only strings. A production-shaped bytes test failed before remediation and
+  now passes after explicit UTF-8 decoding with replacement, keeping malformed
+  byte sequences bounded and out of exception logs.
+- 2026-09-19: Both local remediation reviewers then found the same malformed-
+  byte boundary gap: a replacement character inside FilmId could still reach
+  the metadata URL. Tests now prove corruption outside a valid ASCII ID remains
+  recoverable, while corruption inside the ID fails closed without a request
+  or error log. Removing either replacement decoding or the replacement-
+  character rejection kills the focused suite.
