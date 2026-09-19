@@ -1950,3 +1950,9 @@ T9 and T14 exceptions stated above.
   failed the intended tests. The amended focused gate passed 27 tests with
   Ruff clean, and the amended broad gate passed 4,477 Python tests (14 skipped,
   5 expected failures).
+- 2026-09-20: The amended T38 commit `367e453f` passed every Harness criterion
+  across security, QA, data, product, and fresh verification. Two independent
+  clean-agent local reviewers then returned no findings and safe-to-ship
+  judgments; they reproduced exact old/new equivalence, durable SQLite
+  precedence, direct method ownership, and nested-syntax mutation failures on
+  tree `fd168b0e`.
