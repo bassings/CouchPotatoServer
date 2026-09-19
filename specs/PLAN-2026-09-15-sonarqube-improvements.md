@@ -825,7 +825,8 @@ within the authority explicitly granted by the owner.
   Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
 - [x] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
   — state: merged #401.
-- [ ] **T35 — use native ordered settings lists** *(needs: T34)* — state: building.
+- [ ] **T35 — use native ordered settings lists** *(needs: T34)*
+  — state: awaiting-ci #402.
   Replace the three generic ordered settings collections with native lists
   while preserving layout, accessible names, controls, and persisted order.
   Covers AC-A11Y-9, AC-DESIGN-6, AC-QA-43..44, AC-SEC-21, AC-PROD-10, and
