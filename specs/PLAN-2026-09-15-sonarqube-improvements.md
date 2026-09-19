@@ -439,6 +439,33 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   operability risk within each severity. Each later slice covers one coherent
   behavior class and is re-ranked only after merge and exact-master analysis;
   no severity-wide, rule-wide, path-wide, or bulk dismissal is permitted.
+- **AC-QA-26:** A focused AST test identifies the two dictionary-draining loops
+  by their `movie_files.popitem()` and `valid_files.popitem()` bodies and
+  requires each predicate to be exactly `not self.shuttingDown()`. It fails on
+  the current redundant predicates and passes after the production edit.
+- **AC-QA-27:** Independently reintroducing `True and` into either targeted
+  predicate makes that focused test fail for the intended loop. Restoring the
+  reviewed source returns the focused scanner suite to green.
+- **AC-DATA-1:** The production diff changes only the two exact loop headers.
+  It preserves loop bodies, dictionary traversal and item order, filtering,
+  callbacks, partial results, exception boundaries, shutdown call cadence,
+  and the separate active-thread throttling loop.
+- **AC-SEC-15:** The slice adds no logging, filesystem or network operation,
+  credential handling, dependency, configuration, workflow, or external
+  mutation. Test inputs and diagnostics contain no media paths or titles.
+- **AC-OPS-19:** Shutdown remains checked exactly once before every attempted
+  iteration; a true result prevents entry and a false result permits entry,
+  exactly as before.
+- **AC-PROD-4:** The change is intentionally invisible to users: scan results,
+  processing order, callbacks, logs, configuration, and UI remain unchanged.
+- **AC-SIMP-21:** Resolve only live `python:S5797` issues
+  `8c3654e9-4617-4fdd-b1cf-22ee48fbca2c` and
+  `d0f3bd28-4e54-498f-a17d-0bd9ba958741` by removing their redundant constant
+  operands; add no helper, abstraction, or adjacent cleanup.
+- **AC-OPS-20:** Before each push, focused scanner tests, Ruff, repository gates,
+  Harness review, and two independent local code reviews are clean. After
+  merge, an exact-master Sonar analysis closes both issue keys without a
+  replacement finding before the backlog is re-ranked.
 
 ## Implementation sequence
 
@@ -539,12 +566,16 @@ within the authority explicitly granted by the owner.
 - [x] **T23 — remove AppleTrailers builtin shadow** — state: merged #382.
   Resolve the S5806 finding introduced on T22's touched method with a local-only
   rename and a structural regression guard. Covers AC-QA-22 and AC-SIMP-18.
-- [ ] **T24 — adjudicate the Synology response-contract blocker** — state: in-progress.
+- [x] **T24 — adjudicate the Synology response-contract blocker** — state: merged #384.
   Preserve the working downloader, merge a load-bearing characterization of its
   distinct success and handled-failure results, then accept only exact issue
   `b6e7673f-30ed-4cf5-aa62-8298652e195f` if an exact-master analysis still
   reports the same false-positive identity. Covers AC-QA-23..25, AC-SEC-11..14,
   AC-OPS-15..18, AC-PROD-3, and AC-SIMP-19..20.
+- [ ] **T25 — simplify scanner loop predicates** — state: in-progress.
+  Remove the redundant constant from the two exact S5797 predicates without
+  touching scanner behavior or adjacent high-risk data flow. Covers AC-QA-26..27,
+  AC-DATA-1, AC-SEC-15, AC-OPS-19..20, AC-PROD-4, and AC-SIMP-21.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -1124,3 +1155,22 @@ T9 and T14 exceptions stated above.
   lenses require a test-only slice, full review/delivery gates, exact-master
   analysis identity, and a single verified false-positive transition with an
   expiry condition.
+- 2026-09-19: PR #384 merged at
+  `2d1d7f3c92869278e9265068724e0f4080757c2c` after all hosted checks.
+  Exact-master analysis `797f6bed-a383-4ef0-831e-ffa814e19915` retained the
+  sole S3516 blocker with the same identity, so only issue
+  `b6e7673f-30ed-4cf5-aa62-8298652e195f` was transitioned to false positive
+  with its executable evidence and expiry condition. The verified backlog now
+  has no blocker findings and 197 critical findings.
+- 2026-09-19: T25 planning selected the two remaining S5797 findings as one
+  behavior-neutral scanner slice. Security, QA, data, operability, product,
+  and simplicity lenses constrain the production diff to the two redundant
+  constant operands. A focused AST test failed on both original predicates,
+  passed after the exact edits, and independently failed when either redundant
+  operand was restored; all 69 focused and adjacent scanner tests are green.
+- 2026-09-19: T25 passed the full local gate: Ruff, conformance, and the
+  326-file trap scan; 4,368 unit tests (14 skipped, 5 expected failures), 42
+  integration tests, 214 UI-unit tests, 176 Chromium tests, 2 isolation tests,
+  10 mobile tests, and 96 accessibility tests. Two independent code reviewers
+  and the security, QA, data, operability, product, simplicity, and fresh-
+  verification Harness lenses returned clean on the complete worktree.
