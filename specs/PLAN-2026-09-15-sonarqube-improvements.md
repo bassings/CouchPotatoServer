@@ -739,8 +739,8 @@ within the authority explicitly granted by the owner.
   Replace three generic group roles with native fieldsets while preserving the
   complete wizard flow and phone layout. Covers AC-A11Y-6, AC-DESIGN-3,
   AC-QA-39, AC-PROD-7, and AC-SIMP-28.
-- [ ] **T31 — use native release status and region semantics** *(needs: T30)*
-  — state: building. Replace redundant roles with native elements while
+- [x] **T31 — use native release status and region semantics** *(needs: T30)*
+  — state: merged #396. Replace redundant roles with native elements while
   preserving live status, keyboard scrolling, phone behavior, and isolated E2E
   fixture ownership. Covers AC-A11Y-7, AC-DESIGN-4, AC-QA-40, AC-DATA-2,
   AC-PROD-8, and AC-SIMP-29.
@@ -1521,3 +1521,14 @@ T9 and T14 exceptions stated above.
   and a missing profile. After the first-round corrections, 4,444
   Python tests passed (14 skipped, 5 expected failures), all 214 UI unit tests
   passed, and all 13 mobile-browser tests passed.
+- 2026-09-20: T31 merged as PR #396 at
+  `1fab0f163ecc8218172c04a97e0b6ffb0b5801d2` after every hosted check passed,
+  including Python, UI E2E, mobile accessibility, Docker, three-language
+  CodeQL, and Claude review. Exact-master analysis
+  `6fc87502-613c-4f12-b436-30c224e95005` used 4,448 passing Python tests
+  (14 skipped, 5 expected failures) and 214 passing UI unit tests. Both S6819
+  targets closed as `FIXED`; open smells fell from 804 to 803 and major
+  findings from 314 to 312. The expanded fixture verifier also introduced
+  critical S3776 `99cc2f87-9499-4e84-9243-2935710f9f49`; its relationship
+  checks are now extracted behind the already load-bearing seven-case mutation
+  matrix before T32 begins.
