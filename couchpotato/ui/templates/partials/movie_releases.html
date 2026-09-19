@@ -49,9 +49,9 @@
 <div id="movie-releases" class="mt-8 max-w-5xl" x-data="releaseDownloader()" x-init="init()">
   {% if not total_releases and raw_release_count %}
   <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
-  <p class="text-xs text-cp-muted" role="status">
+  <output class="block text-xs text-cp-muted">
     No releases match the selected profile qualities.
-  </p>
+  </output>
   {% elif total_releases %}
   <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
 
@@ -140,13 +140,13 @@
     </p>
   </form>
 
-  {# tabindex + role/aria-label so a keyboard user can actually scroll this:
-     a plain overflow-x-auto div is not in the tab order and has no
+  {# tabindex + native named section so a keyboard user can actually scroll this:
+     a plain overflow-x-auto container is not in the tab order and has no
      accessible name, so without these a keyboard-only user has no way to
      reach the columns that scroll off-screen -- worse now that Size and
      Seeders added two more. #}
-  <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto"
-       tabindex="0" role="region" aria-label="Releases table, scrolls horizontally">
+  <section class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto"
+           tabindex="0" aria-label="Releases table, scrolls horizontally">
     <table class="w-full text-xs">
       <caption class="sr-only">Available releases for {{ title }}</caption>
       <thead>
@@ -339,6 +339,6 @@
         {% endif %}
       </tbody>
     </table>
-  </div>
+  </section>
   {% endif %}
 </div>

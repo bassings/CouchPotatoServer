@@ -343,6 +343,100 @@ class TestDoneReleaseIsolation:
             seed_e2e_data.IMDB_ID, seed_e2e_data.DESTRUCTIVE_IMDB_ID,
         )
 
+    def test_the_done_release_movie_is_not_consumed_by_an_e2e_spec(self):
+        """The fixture isolates restatus behavior only while browser tests do
+        not navigate to or mutate it.  Make that ownership rule executable."""
+        offenders = []
+        for spec in sorted((REPO_ROOT / 'tests' / 'e2e').glob('*.ts')):
+            if seed_e2e_data.DONE_RELEASE_MOVIE_ID in spec.read_text():
+                offenders.append(spec.name)
+
+        assert offenders == [], (
+            'DONE_RELEASE_MOVIE_ID is protected seed infrastructure; add a '
+            'dedicated fixture for these specs: %s' % ', '.join(offenders)
+        )
+
+    def test_profile_hidden_release_fixture_is_real_and_dedicated(self, tmp_path):
+        db = self._seed_and_open(tmp_path)
+        try:
+            movie = db.get('id', seed_e2e_data.PROFILE_HIDDEN_MOVIE_ID)
+            profile = db.get('id', seed_e2e_data.PROFILE_HIDDEN_PROFILE_ID)
+            releases = self._releases_for(db, seed_e2e_data.PROFILE_HIDDEN_MOVIE_ID)
+
+            assert movie['profile_id'] == profile['_id']
+            assert movie['status'] == 'done'
+            assert len(releases) == 1
+            assert releases[0]['status'] == 'done'
+            assert releases[0]['quality'] not in profile['qualities']
+            assert seed_e2e_data.PROFILE_HIDDEN_MOVIE_ID not in (
+                seed_e2e_data.MOVIE_ID,
+                seed_e2e_data.DESTRUCTIVE_MOVIE_ID,
+                seed_e2e_data.DONE_RELEASE_MOVIE_ID,
+                seed_e2e_data.REVIEW_MOVIE_ID,
+                seed_e2e_data.REVIEW_DESTRUCTIVE_MOVIE_ID,
+            )
+        finally:
+            db.close()
+
+    @pytest.mark.parametrize(
+        ('mutation', 'expected_fragment'),
+        [
+            pytest.param('wrong-profile-link', 'profile_id', id='wrong-profile-link'),
+            pytest.param('included-quality', 'expected it to be excluded', id='included-quality'),
+            pytest.param('wrong-release-status', 'release status', id='wrong-release-status'),
+            pytest.param('wrong-release-quality', 'release quality', id='wrong-release-quality'),
+            pytest.param('missing-release', '0 releases, expected exactly 1', id='missing-release'),
+            pytest.param('extra-release', '2 releases, expected exactly 1', id='extra-release'),
+            pytest.param('missing-profile', 'relationship could not be read', id='missing-profile'),
+        ],
+    )
+    def test_verify_rejects_every_broken_profile_hidden_relationship(
+        self, tmp_path, mutation, expected_fragment,
+    ):
+        """One mutation matrix makes every field in the relational fixture
+        verifier load-bearing; adding a relationship requires adding its
+        broken-state case here rather than another partial verifier test.
+        """
+        data_dir = str(tmp_path / "seed-fixture-data")
+        seed_e2e_data.seed(data_dir)
+        db = seed_e2e_data._open_adapter(data_dir)
+        try:
+            movie = db.get('id', seed_e2e_data.PROFILE_HIDDEN_MOVIE_ID)
+            profile = db.get('id', seed_e2e_data.PROFILE_HIDDEN_PROFILE_ID)
+            releases = self._releases_for(db, seed_e2e_data.PROFILE_HIDDEN_MOVIE_ID)
+            assert len(releases) == 1
+            release = releases[0]
+
+            if mutation == 'wrong-profile-link':
+                db.update({**movie, 'profile_id': seed_e2e_data.PROFILE_ID})
+            elif mutation == 'included-quality':
+                db.update({
+                    **profile,
+                    'qualities': [seed_e2e_data.PROFILE_HIDDEN_RELEASE['quality']],
+                })
+            elif mutation == 'wrong-release-status':
+                db.update({**release, 'status': 'available'})
+            elif mutation == 'wrong-release-quality':
+                db.update({**release, 'quality': '1080p'})
+            elif mutation == 'missing-release':
+                db.delete(release)
+            elif mutation == 'extra-release':
+                extra_release = {
+                    key: value for key, value in release.items()
+                    if key not in {'_id', '_rev'}
+                }
+                extra_release['_id'] = 'e2e-seed-release-009-extra'
+                db.insert(extra_release)
+            elif mutation == 'missing-profile':
+                db.delete(profile)
+            else:  # pragma: no cover - the parametrization is closed above
+                raise AssertionError('unknown relationship mutation: %s' % mutation)
+        finally:
+            db.close()
+
+        problems = seed_e2e_data.verify(data_dir)
+        assert any(expected_fragment in problem for problem in problems), problems
+
 
 class TestWantedOnlyMovieHasNoReleases:
     """T1.9 (2026-08-05).
@@ -407,11 +501,13 @@ class TestWantedOnlyMovieHasNoReleases:
             seed_e2e_data.MOVIE_ID,
             seed_e2e_data.DESTRUCTIVE_MOVIE_ID,
             seed_e2e_data.DONE_RELEASE_MOVIE_ID,
+            seed_e2e_data.PROFILE_HIDDEN_MOVIE_ID,
         )
         assert seed_e2e_data.WANTED_MOVIE_IMDB_ID not in (
             seed_e2e_data.IMDB_ID,
             seed_e2e_data.DESTRUCTIVE_IMDB_ID,
             seed_e2e_data.DONE_RELEASE_IMDB_ID,
+            seed_e2e_data.PROFILE_HIDDEN_IMDB_ID,
         )
 
     def test_verify_checks_the_wanted_movie_is_active(self, tmp_path):
@@ -482,6 +578,7 @@ class TestReviewGateMovies:
             seed_e2e_data.MOVIE_ID,
             seed_e2e_data.DESTRUCTIVE_MOVIE_ID,
             seed_e2e_data.DONE_RELEASE_MOVIE_ID,
+            seed_e2e_data.PROFILE_HIDDEN_MOVIE_ID,
         ) + tuple(mid for mid, _imdb, _title in seed_e2e_data.WANTED_MOVIE_IDS)
         assert seed_e2e_data.REVIEW_MOVIE_ID not in other_movie_ids
         assert seed_e2e_data.REVIEW_DESTRUCTIVE_MOVIE_ID not in other_movie_ids
@@ -490,6 +587,7 @@ class TestReviewGateMovies:
             seed_e2e_data.IMDB_ID,
             seed_e2e_data.DESTRUCTIVE_IMDB_ID,
             seed_e2e_data.DONE_RELEASE_IMDB_ID,
+            seed_e2e_data.PROFILE_HIDDEN_IMDB_ID,
         ) + tuple(imdb for _mid, imdb, _title in seed_e2e_data.WANTED_MOVIE_IDS)
         assert seed_e2e_data.REVIEW_IMDB_ID not in other_imdb_ids
         assert seed_e2e_data.REVIEW_DESTRUCTIVE_IMDB_ID not in other_imdb_ids
@@ -599,14 +697,15 @@ class TestReviewGateMovies:
         finally:
             db.close()
 
-        # 3 pre-existing dedicated movies (MOVIE_ID, DESTRUCTIVE_MOVIE_ID,
-        # DONE_RELEASE_MOVIE_ID) + 3 no-release movies (WANTED_MOVIE_IDS) +
-        # the 2 new review-gate movies. A wrong count here means this test
+        # 4 pre-existing dedicated movies (MOVIE_ID, DESTRUCTIVE_MOVIE_ID,
+        # DONE_RELEASE_MOVIE_ID, PROFILE_HIDDEN_MOVIE_ID) + 3 no-release
+        # movies (WANTED_MOVIE_IDS) + the 2 review-gate movies. A wrong count
+        # here means this test
         # would otherwise silently check fewer titles than the fixture
         # actually seeds, which is exactly the kind of vacuous pass rule 11
         # warns about.
-        assert len(titles) == 8, (
-            'expected 8 seeded movie titles (6 pre-existing + 2 review-gate), '
+        assert len(titles) == 9, (
+            'expected 9 seeded movie titles (7 non-review + 2 review-gate), '
             'got %d: %r' % (len(titles), titles)
         )
 

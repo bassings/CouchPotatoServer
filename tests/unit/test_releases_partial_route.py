@@ -8,6 +8,7 @@ real app, register a stub `media.get` handler, and drive the route.
 import re
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from couchpotato.api import api, api_locks
@@ -281,6 +282,11 @@ class TestReleasesPartialRoute:
             resp = client.get('/partial/movie/movie-1/releases')
             assert resp.status_code == 200
             assert 'No releases match the selected profile qualities' in resp.text
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            status = soup.find('output')
+            assert status is not None
+            assert status.get('role') is None
+            assert status.get_text(' ', strip=True) == 'No releases match the selected profile qualities.'
             assert '<table' not in resp.text, (
                 'nothing matches the profile, so there is nothing to put in a table'
             )
@@ -517,9 +523,11 @@ class TestMovieDetailHtmxBranch:
         two more.
         """
         resp = client.get('/partial/movie/movie-1/releases')
-        assert 'tabindex="0"' in resp.text
-        assert 'role="region"' in resp.text
-        assert 'aria-label="Releases table' in resp.text
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        wrapper = soup.find('section', attrs={'aria-label': re.compile(r'^Releases table')})
+        assert wrapper is not None
+        assert wrapper.get('tabindex') == '0'
+        assert wrapper.get('role') is None
 
 
 class TestSeederHealthColour:
