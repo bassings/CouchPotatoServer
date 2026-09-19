@@ -388,6 +388,72 @@ def _upsert(db, doc_id, doc):
     return True
 
 
+def _verify_profile_hidden_fixture(db):
+    """Return every broken relationship in the profile-mismatch fixture."""
+    problems = []
+    try:
+        hidden_movie = db.get('id', PROFILE_HIDDEN_MOVIE_ID)
+        hidden_profile = db.get('id', PROFILE_HIDDEN_PROFILE_ID)
+    except Exception as exc:
+        return [
+            'profile-hidden fixture relationship could not be read: %s: %s' % (
+                type(exc).__name__, exc)
+        ]
+
+    if hidden_movie.get('profile_id') != PROFILE_HIDDEN_PROFILE_ID:
+        problems.append(
+            '%s has profile_id %r, expected %r' % (
+                PROFILE_HIDDEN_MOVIE_ID,
+                hidden_movie.get('profile_id'),
+                PROFILE_HIDDEN_PROFILE_ID,
+            )
+        )
+
+    try:
+        hidden_releases = [
+            row['doc'] for row in db.all('id', with_doc=True)
+            if row['doc'].get('_t') == 'release'
+            and row['doc'].get('media_id') == PROFILE_HIDDEN_MOVIE_ID
+        ]
+    except Exception as exc:
+        problems.append(
+            '%s releases could not be read: %s: %s' % (
+                PROFILE_HIDDEN_MOVIE_ID, type(exc).__name__, exc)
+        )
+        return problems
+
+    if len(hidden_releases) != 1:
+        problems.append(
+            '%s has %d releases, expected exactly 1' % (
+                PROFILE_HIDDEN_MOVIE_ID, len(hidden_releases))
+        )
+        return problems
+
+    hidden_release = hidden_releases[0]
+    expected_quality = PROFILE_HIDDEN_RELEASE['quality']
+    if hidden_release.get('status') != PROFILE_HIDDEN_RELEASE['status']:
+        problems.append(
+            '%s release status is %r, expected %r' % (
+                PROFILE_HIDDEN_MOVIE_ID,
+                hidden_release.get('status'),
+                PROFILE_HIDDEN_RELEASE['status'],
+            )
+        )
+    if hidden_release.get('quality') != expected_quality:
+        problems.append(
+            '%s release quality is %r, expected %r' % (
+                PROFILE_HIDDEN_MOVIE_ID,
+                hidden_release.get('quality'),
+                expected_quality,
+            )
+        )
+    if expected_quality in hidden_profile.get('qualities', []):
+        problems.append(
+            '%s includes release quality %r; expected it to be excluded' % (
+                PROFILE_HIDDEN_PROFILE_ID, expected_quality)
+        )
+    return problems
+
 
 def verify(data_dir):
     """Read back what seed() wrote and fail loudly if it is not there.
@@ -444,63 +510,7 @@ def verify(data_dir):
                     '%s has status %r, expected %r' % (movie_id, status, expected)
                 )
 
-        try:
-            hidden_movie = db.get('id', PROFILE_HIDDEN_MOVIE_ID)
-            hidden_profile = db.get('id', PROFILE_HIDDEN_PROFILE_ID)
-        except Exception as exc:
-            problems.append(
-                'profile-hidden fixture relationship could not be read: %s: %s' % (
-                    type(exc).__name__, exc))
-        else:
-            if hidden_movie.get('profile_id') != PROFILE_HIDDEN_PROFILE_ID:
-                problems.append(
-                    '%s has profile_id %r, expected %r' % (
-                        PROFILE_HIDDEN_MOVIE_ID,
-                        hidden_movie.get('profile_id'),
-                        PROFILE_HIDDEN_PROFILE_ID,
-                    )
-                )
-
-            try:
-                hidden_releases = [
-                    row['doc'] for row in db.all('id', with_doc=True)
-                    if row['doc'].get('_t') == 'release'
-                    and row['doc'].get('media_id') == PROFILE_HIDDEN_MOVIE_ID
-                ]
-            except Exception as exc:
-                problems.append(
-                    '%s releases could not be read: %s: %s' % (
-                        PROFILE_HIDDEN_MOVIE_ID, type(exc).__name__, exc))
-            else:
-                if len(hidden_releases) != 1:
-                    problems.append(
-                        '%s has %d releases, expected exactly 1' % (
-                            PROFILE_HIDDEN_MOVIE_ID, len(hidden_releases))
-                    )
-                else:
-                    hidden_release = hidden_releases[0]
-                    expected_quality = PROFILE_HIDDEN_RELEASE['quality']
-                    if hidden_release.get('status') != PROFILE_HIDDEN_RELEASE['status']:
-                        problems.append(
-                            '%s release status is %r, expected %r' % (
-                                PROFILE_HIDDEN_MOVIE_ID,
-                                hidden_release.get('status'),
-                                PROFILE_HIDDEN_RELEASE['status'],
-                            )
-                        )
-                    if hidden_release.get('quality') != expected_quality:
-                        problems.append(
-                            '%s release quality is %r, expected %r' % (
-                                PROFILE_HIDDEN_MOVIE_ID,
-                                hidden_release.get('quality'),
-                                expected_quality,
-                            )
-                        )
-                    if expected_quality in hidden_profile.get('qualities', []):
-                        problems.append(
-                            '%s includes release quality %r; expected it to be excluded' % (
-                                PROFILE_HIDDEN_PROFILE_ID, expected_quality)
-                        )
+        problems.extend(_verify_profile_hidden_fixture(db))
         return problems
     finally:
         db.close()
