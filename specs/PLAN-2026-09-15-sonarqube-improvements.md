@@ -466,6 +466,54 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   Harness review, and two independent local code reviews are clean. After
   merge, an exact-master Sonar analysis closes both issue keys without a
   replacement finding before the backlog is re-ranked.
+- **AC-QA-28:** A focused `searchSingle` test supplies multiple
+  `subtitle_language` entries with overlapping available languages and one
+  genuinely missing configured language. It proves every nested value is
+  flattened and deduplicated and only the missing language is requested.
+- **AC-QA-29:** A focused AST regression test rejects empty-list-seeded
+  `sum(..., [])` flattening in `Subtitle.searchSingle` and requires the linear
+  `chain.from_iterable(...)` mechanism. It fails on the pre-change source and
+  passes after the production edit.
+- **AC-QA-30:** Restoring the old `sum(..., [])` expression makes the structural
+  test fail, while independently replacing `chain.from_iterable(values)` with
+  non-flattening `chain(values)` makes the multi-entry behavior test fail.
+  Restoring the reviewed source returns the focused suite to green.
+- **AC-SEC-16:** The subtitle slice changes only in-memory flattening and its
+  synthetic tests. It adds no logging, filesystem or network operation,
+  credential handling, dependency, configuration, workflow, or external
+  mutation, and fixtures disclose no real media title, path, host, or secret.
+- **AC-OPS-21:** For the scanner-produced `dict[path, list[alpha2]]` contract,
+  flattening remains eager and preserves all current operational decisions:
+  available languages suppress downloads unless forced, empty mappings remain
+  valid, and logging, exception boundaries, return values, provider calls, and
+  save behavior do not change.
+- **AC-OPS-22:** The replacement traverses nested language lists linearly,
+  without repeated cumulative list allocation, a runtime dependency, or a new
+  configuration requirement, and remains compatible with the production
+  Python 3 environment.
+- **AC-OPS-23:** Before push, focused subtitle tests, Ruff, repository gates,
+  Harness review, and two independent local reviews are clean. After merge, an
+  exact-master Sonar analysis closes issue
+  `49dfbcdf-5c02-4e1a-bf65-294730029b44` without a replacement finding before
+  the backlog is re-ranked.
+- **AC-PROD-5:** With the same configured languages, detected sidecars, and
+  `force` setting, users receive exactly the same search decisions: every
+  available alpha-2 language is skipped, every missing configured language is
+  eligible, duplicates do not matter, and force mode searches all configured
+  languages.
+- **AC-PROD-6:** The slice is otherwise invisible: it changes no setting,
+  provider selection, request payload beyond the preserved language set, saved
+  path, log, UI behavior, return value, or failure behavior. Its only user
+  benefit is avoiding increasingly expensive intermediate-list construction.
+- **AC-SIMP-22:** The production change is limited to importing
+  `itertools.chain` and replacing the exact empty-list-seeded `sum` expression
+  with `set(chain.from_iterable(group['subtitle_language'].values()))`.
+- **AC-SIMP-23:** Add only focused proof for complete linear flattening. Add no
+  helper, abstraction, compatibility layer, dependency, cache, normalization,
+  or speculative support for new subtitle-language shapes.
+- **AC-SIMP-24:** Do not sweep other `sum(..., [])` occurrences, refactor
+  adjacent subtitle download/save logic, alter scanner production code, or
+  combine another Sonar finding into this slice.
 
 ## Implementation sequence
 
@@ -572,10 +620,15 @@ within the authority explicitly granted by the owner.
   `b6e7673f-30ed-4cf5-aa62-8298652e195f` if an exact-master analysis still
   reports the same false-positive identity. Covers AC-QA-23..25, AC-SEC-11..14,
   AC-OPS-15..18, AC-PROD-3, and AC-SIMP-19..20.
-- [ ] **T25 — simplify scanner loop predicates** — state: in-progress.
+- [x] **T25 — simplify scanner loop predicates** — state: merged #385.
   Remove the redundant constant from the two exact S5797 predicates without
   touching scanner behavior or adjacent high-risk data flow. Covers AC-QA-26..27,
   AC-DATA-1, AC-SEC-15, AC-OPS-19..20, AC-PROD-4, and AC-SIMP-21.
+- [ ] **T26 — flatten available subtitle languages linearly** — state: awaiting-ci.
+  Replace live reliability issue `49dfbcdf-5c02-4e1a-bf65-294730029b44`
+  without changing subtitle search decisions or the scanner-produced data
+  contract. Covers AC-QA-28..30, AC-SEC-16, AC-OPS-21..23, AC-PROD-5..6, and
+  AC-SIMP-22..24.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -1174,3 +1227,21 @@ T9 and T14 exceptions stated above.
   10 mobile tests, and 96 accessibility tests. Two independent code reviewers
   and the security, QA, data, operability, product, simplicity, and fresh-
   verification Harness lenses returned clean on the complete worktree.
+- 2026-09-19: T25 merged as PR #385 at
+  `9258ffea3a5861b8cfc985090a182267f8522e47`; exact-master Sonar analysis
+  closed both S5797 issue keys as `FIXED`. Subsequent reliability work through
+  PR #389 left exact master at `41e860703d2b3a012ab5fa3f54bbb5f6c3584f23`
+  with zero open bugs and 820 open code smells. T26 selects the remaining
+  non-complexity HIGH reliability finding before broader maintainability work.
+- 2026-09-19: T26 plan review selected one local `itertools.chain` replacement
+  plus deterministic structural and multi-entry behavioral proof. Security,
+  QA, operability, product, and simplicity lenses vetoed adjacent subtitle or
+  scanner refactors, broader input contracts, timing tests, new dependencies,
+  and any change to logging, network, filesystem, provider, or failure behavior.
+- 2026-09-19: T26 red evidence isolated the old `sum(..., [])` expression while
+  32 surrounding tests stayed green. The exact `chain.from_iterable`
+  replacement passes all 33 focused tests. Restoring `sum` kills the structural
+  guard, while replacing `from_iterable` with plain `chain` kills the
+  multi-entry behavior test. The fast gate passed Ruff, conformance, the
+  327-file trap scan, 4,381 unit tests (14 skipped, 5 expected failures), 42
+  integration tests, and 214 UI-unit tests.
