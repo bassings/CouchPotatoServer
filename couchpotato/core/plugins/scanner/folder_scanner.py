@@ -213,7 +213,7 @@ class FolderScannerMixin:
 
         # Filter out old/extracting files
         valid_files = {}
-        while True and not self.shuttingDown():
+        while not self.shuttingDown():
             try:
                 identifier, group = movie_files.popitem()
             except Exception:
@@ -256,7 +256,7 @@ class FolderScannerMixin:
 
         # Determine file types
         processed_movies = {}
-        while True and not self.shuttingDown():
+        while not self.shuttingDown():
             try:
                 identifier, group = valid_files.popitem()
             except Exception:
