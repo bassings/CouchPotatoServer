@@ -2,6 +2,7 @@
 
 Uses unittest.mock to avoid real HTTP calls.
 """
+import ast
 import re
 from pathlib import Path
 import json
@@ -30,6 +31,26 @@ def setup_env():
 # ===========================================================================
 # TMDB Info Provider
 # ===========================================================================
+
+
+def test_themoviedb_has_no_nested_conditional_expressions():
+    provider_path = (
+        Path(__file__).resolve().parents[2]
+        / "couchpotato/core/media/movie/providers/info/themoviedb.py"
+    )
+    tree = ast.parse(provider_path.read_text(encoding="utf-8"), filename=str(provider_path))
+    nested = [
+        expression.lineno
+        for expression in ast.walk(tree)
+        if isinstance(expression, ast.IfExp)
+        and any(
+            child is not expression and isinstance(child, ast.IfExp)
+            for child in ast.walk(expression)
+        )
+    ]
+
+    assert not nested, "nested conditional expressions at lines: %s" % nested
+
 
 class TestTMDBProvider:
     """Tests for TheMovieDb info provider."""
@@ -129,6 +150,121 @@ class TestTMDBProvider:
             result = p.parseMovie({'id': 999})
             assert result is None
 
+    @pytest.mark.parametrize(
+        ("extended", "append_to_response"),
+        [
+            (False, "alternative_titles"),
+            (True, "alternative_titles,images,casts"),
+        ],
+    )
+    def test_parseMovie_requests_each_language_with_one_response_shape(
+        self, extended, append_to_response
+    ):
+        p = self._make_provider()
+        p.default_language = "de"
+        p.languages = ["fr", "es"]
+
+        def response(_path, params):
+            language = params["language"]
+            return {
+                "id": 551,
+                "title": {
+                    "en": "English",
+                    "de": "Deutsch",
+                    "fr": "Français",
+                    "es": "Español",
+                }[language],
+                "original_title": "Original",
+                "alternative_titles": {"titles": []},
+            }
+
+        with patch.object(p, "request", side_effect=response) as request:
+            result = p.parseMovie({"id": 550}, extended=extended)
+
+        assert result["titles"] == [
+            "Deutsch",
+            "English",
+            "Español",
+            "Français",
+            "Original",
+        ]
+        assert request.call_args_list == [
+            call(
+                "movie/550" if language == "en" else "movie/551",
+                {"append_to_response": append_to_response, "language": language},
+            )
+            for language in ("en", "de", "fr", "es")
+        ]
+
+    @pytest.mark.parametrize("languages", [None, []])
+    def test_parseMovie_tolerates_no_additional_languages(self, languages):
+        p = self._make_provider()
+        p.default_language = "de"
+        p.languages = languages
+
+        def response(_path, params):
+            language = params["language"]
+            return {
+                "id": 551,
+                "title": {"en": "English", "de": "Deutsch"}[language],
+                "original_title": "Original",
+                "alternative_titles": {"titles": []},
+            }
+
+        with patch.object(p, "request", side_effect=response) as request:
+            result = p.parseMovie({"id": 550}, extended=False)
+
+        assert result["titles"] == ["Deutsch", "English", "Original"]
+        assert [args.args[1]["language"] for args in request.call_args_list] == [
+            "en",
+            "de",
+        ]
+
+    def test_parseMovie_propagates_an_additional_language_request_failure(self):
+        p = self._make_provider()
+        p.default_language = "en"
+        p.languages = ["fr", "es"]
+        english = {
+            "id": 551,
+            "title": "English",
+            "original_title": "Original",
+            "alternative_titles": {"titles": []},
+        }
+
+        with patch.object(
+            p,
+            "request",
+            side_effect=[english, RuntimeError("secondary language failed")],
+        ):
+            with pytest.raises(RuntimeError, match="secondary language failed"):
+                p.parseMovie({"id": 550}, extended=False)
+
+    def test_parseMovie_falls_back_when_the_default_language_request_is_empty(self):
+        p = self._make_provider()
+        p.default_language = "de"
+        p.languages = None
+        english = {
+            "id": 551,
+            "title": "English",
+            "original_title": "Original",
+            "alternative_titles": {"titles": []},
+        }
+
+        with patch.object(p, "request", side_effect=[english, None]) as request:
+            result = p.parseMovie({"id": 550}, extended=False)
+
+        assert result["titles"] == ["English", "Original"]
+        assert [args.args for args in request.call_args_list] == [
+            (
+                "movie/550",
+                {"append_to_response": "alternative_titles", "language": "en"},
+            ),
+            (
+                "movie/551",
+                {"append_to_response": "alternative_titles", "language": "de"},
+            ),
+        ]
+
     def test_search_returns_results(self):
         p = self._make_provider()
         search_results = [
@@ -196,6 +332,26 @@ class TestTMDBProvider:
                 'limit=5 would normally flip search_type to "ngram", but an '
                 'explicit search_type must win'
             )
+
+    @pytest.mark.parametrize(
+        ("search_type", "limit", "expected"),
+        [
+            ("", 5, "ngram"),
+            (False, 1, "phrase"),
+            (0, 5, "ngram"),
+        ],
+    )
+    def test_falsey_search_type_uses_the_limit_derived_default(
+        self, search_type, limit, expected
+    ):
+        p = self._make_provider()
+        with patch.object(p, "isDisabled", return_value=False), patch(
+            "couchpotato.core.media.movie.providers.info.themoviedb.fireEvent",
+            return_value={"name": "Fight Club", "year": 1999},
+        ), patch.object(p, "request", return_value=None) as request:
+            p.search("Fight Club", limit=limit, search_type=search_type)
+
+        assert request.call_args.args[1]["search_type"] == expected
 
     def test_search_returns_exactly_limit_results_from_a_larger_raw_list(self):
         """BUG-018 round-two review, FIX 1: `search`'s truncation loop
