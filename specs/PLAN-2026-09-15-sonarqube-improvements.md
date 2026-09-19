@@ -754,6 +754,54 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   `codec_id` read and a direct `if`/`elif` mapping for AVC and HEVC, retaining
   the original value otherwise. Add no helper, abstraction, dependency,
   configuration, broader conditional sweep, or adjacent scanner cleanup.
+- **AC-QA-51:** A focused parameterized characterization records the persisted
+  `category_id` for the complete force-readd precedence matrix: a truthy
+  race-winner category beats both a different requested category and an
+  omitted category; a falsey race-winner category falls through to the
+  requested value; and a genuine-found re-add uses a non-empty requested
+  category while omitted, explicit-`None`, and empty-string inputs persist
+  `None`. Pin the existing `"-1"` boundary exactly as observed on the base.
+  Every row reaches `db.update` and asserts its stored value.
+- **AC-QA-52:** A repository-anchored, CWD-independent AST guard proves the
+  module and `MovieBase.add` exist and rejects a conditional expression nested
+  beneath another conditional expression anywhere in
+  `couchpotato/core/media/movie/_base/main.py`. It fails on the current line
+  640 and on a wrapped equivalent, then passes after flattening. This
+  module-wide guard is the recurrence mechanism for this defect class.
+- **AC-QA-53:** TDD evidence records AC-QA-51 green on exact master, AC-QA-52
+  red on line 640, and both green after the minimum refactor. Independently
+  applied and diff-confirmed mutations restore exact and wrapped nested syntax,
+  let a requested category overwrite a truthy race winner, preserve a stale
+  genuine-found category when none was requested, alter the falsey-winner
+  fallback, and change the empty/`"-1"` boundaries; each intended test must
+  fail before restoration. The restored category-integrity and completed-movie
+  re-add suites, targeted Ruff check, and required repository gate pass.
+- **AC-SEC-24:** Change only the in-memory spelling of `MovieBase.add`
+  category selection: a truthy race-winner `previous_category` still wins;
+  otherwise a non-empty supplied `category_id` still wins; otherwise the
+  existing `m.get('category_id') or None` fallback remains. Add no request
+  surface, authentication or authorization change, category validation change,
+  logging, external I/O, extra database operation, or exposure of movie or
+  category identifiers.
+- **AC-DATA-4:** Real-`SQLiteAdapter` integration coverage proves category
+  precedence survives persistence: a genuine-found re-add leaves one media
+  document and reloads the requested category; a simulated stale lookup plus
+  unique-conflict path re-fetches the exact IMDb media key, attempts one
+  insert, performs one update, leaves one media document, and reloads the
+  race winner's category rather than the losing request's category.
+- **AC-PROD-13:** The refactor is user-invisible: a race-losing add preserves
+  the concurrent winner's non-empty category; an ordinary existing-movie
+  re-add uses the caller's non-empty category; omitted or empty categories
+  leave the movie uncategorized; and the legacy `"-1"` result remains
+  unchanged. Persisted and returned category behavior matches the base, with
+  no new prompt, setting, copy, telemetry, or failure state.
+- **AC-SIMP-35:** Replace only the nested `category_id` conditional with a
+  direct `if`/`elif`/`else` assignment preserving exact truthiness and
+  evaluation order: truthy `previous_category`, else non-`None` and non-empty
+  `cat_id`, else `m.get('category_id') or None`. Add no helper, extraction,
+  dependency, configuration, validation, sentinel normalization, broader
+  conditional sweep, or changes to profile selection, locking, release
+  cleanup, persistence, or re-search behavior.
 
 ## Implementation sequence
 
@@ -909,10 +957,11 @@ within the authority explicitly granted by the owner.
 - [x] **T36 — flatten release-view sort conditionals** *(needs: T35)*
   — state: merged #403.
   Covers AC-A11Y-10, AC-QA-45..47, AC-SEC-22, AC-PROD-11, and AC-SIMP-33.
-- [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: awaiting-ci #404.
+- [x] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: merged #404.
   Covers AC-QA-48..50, AC-SEC-23, AC-DATA-3, AC-PROD-12, and AC-SIMP-34.
 - [ ] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
-  — state: queued.
+  — state: building.
+  Covers AC-QA-51..53, AC-SEC-24, AC-DATA-4, AC-PROD-13, and AC-SIMP-35.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -1866,3 +1915,38 @@ T9 and T14 exceptions stated above.
   equivalence across the required cases, 511 varied and hostile codec values,
   the structural failures, and all behavior mutation kills. PR #404 is open
   for hosted CI and cloud review.
+- 2026-09-20: PR #404 merged as exact master `a7def54c`. All hosted checks and
+  two independent post-CI Harness reviewers were clean. Sonar CE task
+  `0cafffd1-c312-4a22-b250-bf159b62aad1` produced exact-version analysis
+  `de6559a3-d1cd-485f-b988-1fc7cf7ac03c`; issue
+  `ae4168d2-fc2e-4689-8313-e42c42e21ee5` closed as fixed. Open smells fell
+  from 791 to 790 and majors from 301 to 300; coverage rose from 62.0% to
+  62.1%, duplication stayed 1.6%, and all three ratings remained A.
+- 2026-09-20: T38 plan cycle completed with security, QA, simplicity, and
+  product coverage. Existing tests pin three main precedence paths but omit
+  explicit `None`, empty, `"-1"`, falsey race-winner, and full race-winner
+  combinations. T38 therefore requires a persisted-value behavior matrix, a
+  module-wide nested-conditional recurrence guard, and explicit precedence and
+  boundary mutation evidence. Scope is limited to a direct `if`/`elif`/`else`;
+  the legacy `"-1"` behavior is deliberately preserved rather than repaired.
+- 2026-09-20: T38 behavior characterization passed nine persisted category
+  precedence and boundary cases on exact master. The module guard then failed
+  red on the nested expression at line 640, and both passed after the minimum
+  direct branch. Independent, diff-confirmed mutations restored exact and
+  wrapped nested syntax, let the request overwrite a truthy race winner,
+  preserved a stale genuine-found category, changed falsey-winner handling,
+  accepted an empty category, and normalized `"-1"`; the intended guard or
+  contract row killed all seven mutations before restoration. The focused
+  gate passed 21 tests with Ruff clean, and the broad gate passed 4,472 Python
+  tests (14 skipped, 5 expected failures).
+- 2026-09-20: T38's first Harness review found two low-severity evidence gaps.
+  The AST guard accepted an `add` owned by the wrong class, the same mechanism
+  weakness present in T37's scanner guard; a shared, independently tested
+  class-method ownership assertion now protects both guards. The data lens
+  also required durable evidence beyond a fake `db.update`; AC-DATA-4 and two
+  real-SQLite reload tests now cover genuine-found and conflict/refetch paths,
+  including exact lookup, operation counts, cardinality, and stored category.
+  Mutations removing class-name ownership and reversing race-winner precedence
+  failed the intended tests. The amended focused gate passed 27 tests with
+  Ruff clean, and the amended broad gate passed 4,477 Python tests (14 skipped,
+  5 expected failures).

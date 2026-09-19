@@ -16,8 +16,13 @@ import threading
 import time
 from unittest.mock import patch
 
+import pytest
+
 from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
 from couchpotato.core.media.movie._base.main import MovieBase
+
+
+_CATEGORY_OMITTED = object()
 
 
 def _base_params(imdb_id='tt0133093', profile_id='profile-1'):
@@ -360,7 +365,139 @@ class TestMovieAddInsertRace:
             "overwrite it with the losing call's category (cat-B)"
         )
 
-    def _run_genuine_found_readd(self, existing_category, passed_category):
+    def test_race_loss_category_survives_real_adapter_reload(self, tmp_path):
+        """The conflict/refetch path must durably preserve the winner's category."""
+        adapter = SQLiteAdapter()
+        adapter.create(str(tmp_path / 'category_race_db'))
+        winner = {
+            '_id': 'winner-media-id',
+            '_t': 'media',
+            'type': 'movie',
+            'status': 'active',
+            'profile_id': None,
+            'category_id': 'cat-A',
+            'identifiers': {'imdb': 'tt0133093'},
+            'info': {'titles': ['The Matrix']},
+            'tags': [],
+        }
+        adapter.insert(winner)
+
+        class _ConflictProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.media_gets = []
+                self.insert_calls = 0
+                self.update_calls = 0
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+            def get(self, index, key, with_doc=False):
+                if index == 'media':
+                    self.media_gets.append((key, with_doc))
+                    if len(self.media_gets) == 1:
+                        raise KeyError('simulated stale lookup before unique conflict')
+                return self.wrapped.get(index, key, with_doc=with_doc)
+
+            def insert(self, data):
+                self.insert_calls += 1
+                raise sqlite3.IntegrityError('simulated unique identifier conflict')
+
+            def update(self, data):
+                self.update_calls += 1
+                return self.wrapped.update(data)
+
+        proxy = _ConflictProxy(adapter)
+        plugin = MovieBase.__new__(MovieBase)
+        plugin.conf = lambda *a, **k: False
+
+        with (
+            patch('couchpotato.core.media.movie._base.main.get_db', return_value=proxy),
+            patch(
+                'couchpotato.core.media.movie._base.main.fireEvent',
+                side_effect=_fire_event_returning(
+                    [], {'_id': 'winner-media-id', 'title': 'The Matrix'}
+                ),
+            ),
+        ):
+            result = plugin.add(
+                params={
+                    **_base_params(profile_id=None),
+                    'category_id': 'cat-B',
+                },
+                force_readd=True,
+                search_after=False,
+                update_after=False,
+                notify_after=False,
+                status='done',
+            )
+
+        try:
+            assert result is not False
+            assert proxy.media_gets == [
+                ('imdb-tt0133093', True),
+                ('imdb-tt0133093', True),
+            ]
+            assert proxy.insert_calls == 1
+            assert proxy.update_calls == 1
+            media_docs = [doc for doc in adapter.all('id') if doc.get('_t') == 'media']
+            assert len(media_docs) == 1
+            reloaded = adapter.get('id', 'winner-media-id')
+            assert reloaded['category_id'] == 'cat-A'
+        finally:
+            adapter.close()
+
+    def test_genuine_found_category_survives_real_adapter_reload(self, tmp_path):
+        """An ordinary re-add must durably persist the requested category."""
+        adapter = SQLiteAdapter()
+        adapter.create(str(tmp_path / 'category_readd_db'))
+        adapter.insert({
+            '_id': 'media-1',
+            '_t': 'media',
+            'type': 'movie',
+            'status': 'active',
+            'profile_id': None,
+            'category_id': 'cat-existing',
+            'identifiers': {'imdb': 'tt0133093'},
+            'info': {'titles': ['The Matrix']},
+            'tags': [],
+        })
+        plugin = MovieBase.__new__(MovieBase)
+        plugin.conf = lambda *a, **k: False
+
+        with (
+            patch('couchpotato.core.media.movie._base.main.get_db', return_value=adapter),
+            patch(
+                'couchpotato.core.media.movie._base.main.fireEvent',
+                side_effect=_fire_event_returning(
+                    [], {'_id': 'media-1', 'title': 'The Matrix'}
+                ),
+            ),
+        ):
+            result = plugin.add(
+                params={
+                    **_base_params(profile_id=None),
+                    'category_id': 'cat-new',
+                },
+                force_readd=True,
+                search_after=False,
+                update_after=False,
+                notify_after=False,
+                status='done',
+            )
+
+        try:
+            assert result is not False
+            media_docs = [doc for doc in adapter.all('id') if doc.get('_t') == 'media']
+            assert len(media_docs) == 1
+            reloaded = adapter.get('id', 'media-1')
+            assert reloaded['category_id'] == 'cat-new'
+        finally:
+            adapter.close()
+
+    def _run_genuine_found_readd(
+        self, existing_category, passed_category=_CATEGORY_OMITTED
+    ):
         """Drive a GENUINE (non-race) found re-add: the movie already exists,
         db.get('media') succeeds first try (no IntegrityError), force_readd
         runs. Returns the category_id persisted via db.update."""
@@ -385,7 +522,7 @@ class TestMovieAddInsertRace:
             'info': {'titles': ['The Matrix'], 'title': 'The Matrix'},
             'profile_id': None,
         }
-        if passed_category is not None:
+        if passed_category is not _CATEGORY_OMITTED:
             params['category_id'] = passed_category
 
         with (
@@ -436,13 +573,88 @@ class TestMovieAddInsertRace:
         the genuine-found path and start preserving the existing category,
         which would be a behavior change vs master.
         """
-        persisted = self._run_genuine_found_readd(
-            existing_category='cat-existing', passed_category=None
-        )
+        persisted = self._run_genuine_found_readd(existing_category='cat-existing')
         assert persisted is None, (
             "genuine found re-add with no category must match master (None); "
             "race-loss preservation must not leak into the genuine-found path"
         )
+
+    @pytest.mark.parametrize(
+        ('passed_category', 'expected_category'),
+        [
+            pytest.param(None, None, id='explicit-none'),
+            pytest.param('', None, id='empty'),
+            pytest.param('-1', '-1', id='legacy-minus-one'),
+        ],
+    )
+    def test_genuine_found_readd_preserves_category_boundaries(
+        self, passed_category, expected_category
+    ):
+        persisted = self._run_genuine_found_readd(
+            existing_category='cat-existing', passed_category=passed_category
+        )
+        assert persisted == expected_category
+
+    def _run_race_losing_category_readd(
+        self, winner_category, passed_category=_CATEGORY_OMITTED
+    ):
+        winner_doc = {
+            '_id': 'winner-media-id',
+            '_t': 'media',
+            'type': 'movie',
+            'status': 'active',
+            'profile_id': None,
+            'category_id': winner_category,
+            'identifiers': {'imdb': 'tt0133093'},
+            'info': {'titles': ['The Matrix']},
+            'tags': [],
+        }
+        fake_db = _RacingFakeDB(winner_doc)
+        plugin = MovieBase.__new__(MovieBase)
+        plugin.conf = lambda *a, **k: False
+        params = _base_params(profile_id=None)
+        if passed_category is not _CATEGORY_OMITTED:
+            params['category_id'] = passed_category
+
+        with (
+            patch('couchpotato.core.media.movie._base.main.get_db', return_value=fake_db),
+            patch(
+                'couchpotato.core.media.movie._base.main.fireEvent',
+                side_effect=_fire_event_returning(
+                    [], {'_id': 'winner-media-id', 'title': 'The Matrix'}
+                ),
+            ),
+        ):
+            result = plugin.add(
+                params=params,
+                force_readd=True,
+                search_after=False,
+                update_after=False,
+                notify_after=False,
+                status='done',
+            )
+
+        assert result is not False
+        assert fake_db.updated, 'force_readd must persist through db.update'
+        return fake_db.updated[-1]['category_id']
+
+    @pytest.mark.parametrize(
+        ('winner_category', 'passed_category', 'expected_category'),
+        [
+            pytest.param('cat-A', 'cat-B', 'cat-A', id='winner-beats-request'),
+            pytest.param(
+                'cat-A', _CATEGORY_OMITTED, 'cat-A', id='winner-beats-omission'
+            ),
+            pytest.param('', 'cat-B', 'cat-B', id='falsey-winner-falls-through'),
+        ],
+    )
+    def test_race_losing_readd_preserves_category_precedence(
+        self, winner_category, passed_category, expected_category
+    ):
+        persisted = self._run_race_losing_category_readd(
+            winner_category=winner_category, passed_category=passed_category
+        )
+        assert persisted == expected_category
 
     def test_real_threads_racing_add_same_imdb_produce_one_doc(self, tmp_path):
         """REG-004 review: real threads calling MovieBase.add() concurrently

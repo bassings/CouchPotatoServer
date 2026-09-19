@@ -637,7 +637,13 @@ class MovieBase(MovieTypeBase):
                             fireEvent('release.delete', release['_id'], single = True)
 
                 m['profile_id'] = (params.get('profile_id') or default_profile.get('_id')) if not previous_profile else previous_profile
-                m['category_id'] = previous_category if previous_category else (cat_id if cat_id is not None and len(cat_id) > 0 else (m.get('category_id') or None))
+                if previous_category:
+                    category_id = previous_category
+                elif cat_id is not None and len(cat_id) > 0:
+                    category_id = cat_id
+                else:
+                    category_id = m.get('category_id') or None
+                m['category_id'] = category_id
                 m['last_edit'] = int(time.time())
                 m['tags'] = []
 
