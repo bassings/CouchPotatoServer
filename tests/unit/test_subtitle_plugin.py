@@ -8,8 +8,11 @@ All subliminal network/filesystem calls are mocked at the plugin boundary
 (download_best_subtitles / save_subtitles / scan_video / Video.fromname) so
 these tests never touch the network or a real cache file.
 """
+import ast
+import inspect
 import os
 import sys
+import textwrap
 from unittest.mock import MagicMock
 
 import pytest
@@ -184,6 +187,32 @@ class TestScanVideo:
 # ===========================================================================
 
 class TestSearchSingle:
+    def test_available_languages_use_linear_flattening(self):
+        source = textwrap.dedent(inspect.getsource(Subtitle.searchSingle))
+        tree = ast.parse(source)
+        assignments = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == 'available_languages'
+                for target in node.targets
+            )
+        ]
+
+        assert len(assignments) == 1
+        set_call = assignments[0].value
+        assert isinstance(set_call, ast.Call)
+        assert isinstance(set_call.func, ast.Name)
+        assert set_call.func.id == 'set'
+        assert len(set_call.args) == 1
+
+        flatten_call = set_call.args[0]
+        assert isinstance(flatten_call, ast.Call)
+        assert isinstance(flatten_call.func, ast.Attribute)
+        assert isinstance(flatten_call.func.value, ast.Name)
+        assert flatten_call.func.value.id == 'chain'
+        assert flatten_call.func.attr == 'from_iterable'
+
     def test_disabled_plugin_returns_none(self):
         plugin = _make_subtitle({'languages': 'en'})
         plugin.isDisabled = lambda: True
@@ -261,6 +290,27 @@ class TestSearchSingle:
 
         assert result is True
         download_mock.assert_not_called()
+
+    def test_flattens_all_available_language_entries(self, monkeypatch):
+        plugin = _make_subtitle({'languages': 'en, nl, fr, de'})
+        video = object()
+        monkeypatch.setattr(plugin, 'scanVideo', lambda filename: video)
+
+        download_mock = MagicMock(return_value={})
+        monkeypatch.setattr(subtitle_module.subliminal, 'download_best_subtitles', download_mock)
+
+        group = _group(
+            ['/movies/movie.mkv'],
+            subtitle_language={
+                '/movies/movie.en.srt': ['en', 'nl'],
+                '/movies/movie.fr.srt': ['nl', 'fr'],
+            },
+        )
+        result = plugin.searchSingle(group)
+
+        assert result is True
+        download_mock.assert_called_once()
+        assert download_mock.call_args.args[1] == {Language.fromalpha2('de')}
 
     def test_alpha2_sidecar_language_satisfies_wanted_language(self, monkeypatch):
         """VENDORED-05 review (end-to-end): a wanted 'pt' must be treated as

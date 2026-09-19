@@ -1,5 +1,6 @@
 import os
 import traceback
+from itertools import chain
 
 from babelfish import Language
 import subliminal
@@ -51,7 +52,7 @@ class Subtitle(Plugin):
             if not wanted_languages:
                 return True
 
-            available_languages = set(sum(group['subtitle_language'].values(), []))
+            available_languages = set(chain.from_iterable(group['subtitle_language'].values()))
             force = self.conf('force')
 
             files = [toUnicode(x) for x in group['files']['movie']]
