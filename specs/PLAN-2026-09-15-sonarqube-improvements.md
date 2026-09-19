@@ -960,7 +960,7 @@ within the authority explicitly granted by the owner.
 - [x] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: merged #404.
   Covers AC-QA-48..50, AC-SEC-23, AC-DATA-3, AC-PROD-12, and AC-SIMP-34.
 - [ ] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
-  — state: building.
+  — state: awaiting-ci #405.
   Covers AC-QA-51..53, AC-SEC-24, AC-DATA-4, AC-PROD-13, and AC-SIMP-35.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
@@ -1956,3 +1956,6 @@ T9 and T14 exceptions stated above.
   judgments; they reproduced exact old/new equivalence, durable SQLite
   precedence, direct method ownership, and nested-syntax mutation failures on
   tree `fd168b0e`.
+- 2026-09-20: Both independent final-tip reviewers found no issues on tracking
+  commit `437a663d` (tree `0adc1444`), so the branch passed the local review
+  gate and opened as PR #405. Hosted CI, CodeQL, and cloud review are running.
