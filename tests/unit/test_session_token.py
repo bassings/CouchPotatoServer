@@ -248,8 +248,15 @@ class TestHostileTokenValuesDoNotRaise:
         '', '.', 'nodots', '.' * 10, 'é', 'a\x00b', '123.é',
         'not-base64!!.also-not', '9' * 400, 'x' * 100_000,
         str(NOW + 60) + '.' + 'A' * 100_000,
+    ], ids=[
+        'empty', 'separator-only', 'no-separator', 'many-separators',
+        'non-ascii', 'nul-byte', 'non-ascii-signature', 'invalid-base64',
+        'long-expiry', 'oversized-payload', 'oversized-signature',
     ])
-    def test_a_hostile_cookie_value_is_refused_rather_than_raising(self, value):
+    def test_a_hostile_cookie_value_is_refused_rather_than_raising(self, value, request):
+        assert len(request.node.name) < 200, (
+            'verbose CI output must not include the full hostile input'
+        )
         assert verify_session_token(value, SECRET, now=NOW) is False
 
     @pytest.mark.parametrize('value', [None, 12345, b'bytes', ['list']])
