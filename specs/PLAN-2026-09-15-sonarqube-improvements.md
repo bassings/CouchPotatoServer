@@ -718,6 +718,42 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   `ascending`. Add no helper, abstraction, dependency, configuration,
   template/browser change, broader conditional sweep, or adjacent sorting,
   filtering, validation, query, or URL refactor.
+- **AC-QA-48:** A focused parameterized `getMeta` characterization drives a
+  fake `enzyme.MKV` result through AVC, HEVC, unknown, exact-match near-miss,
+  empty, explicit-`None`, and missing-`codec_id` cases. It asserts AVC remains
+  `H264`, HEVC remains `x265`, every other present value is returned unchanged,
+  and a missing attribute returns `''` without collapsing the result to `{}`.
+- **AC-QA-49:** A repository-anchored, CWD-independent AST guard proves the
+  module and `getMeta` method exist and rejects a conditional expression nested
+  beneath another conditional expression anywhere in
+  `couchpotato/core/plugins/scanner/media_parser.py`. It fails on the current
+  lines 165-167 and on a wrapped equivalent, then passes after flattening. This
+  module-wide guard is the recurrence mechanism while separately planned
+  nested expressions remain elsewhere in the repository.
+- **AC-QA-50:** TDD evidence records AC-QA-48 green on exact master, AC-QA-49
+  red on the intended expression, and both green after the minimum refactor.
+  Independently applied and diff-confirmed mutations restore exact and wrapped
+  nested syntax, swap each fixed mapping, discard the unknown fallback, alter
+  the missing-attribute default, and broaden an exact comparison; each intended
+  test must fail before restoration returns the focused suite to green.
+- **AC-SEC-23:** Change only the in-memory exact-string normalization of the
+  first parsed video track's `codec_id`. Add no dynamic evaluation, logging,
+  error detail, filesystem/database/network operation, authorization change,
+  or new exposure of codec metadata, titles, media paths, identifiers, or
+  credentials; retain the parser exception and serialization boundaries.
+- **AC-DATA-3:** Preserve the complete video-codec data contract: AVC maps to
+  `H264`, HEVC maps to `x265`, exact-match near misses and all other present
+  values (including `None`) pass through unchanged, and a missing attribute
+  yields `''`. Audio, titles, dimensions, channels, quality scoring, NFO output,
+  database state, and media files remain outside the production diff.
+- **AC-PROD-12:** The refactor is user-invisible: scanning identical media
+  returns identical codec, audio, title, dimension, and channel metadata;
+  empty-track and parse-failure behavior are unchanged, and enzyme duration
+  remains unexposed. Add no setting, copy, persistence, analytics, or telemetry.
+- **AC-SIMP-34:** Replace only the nested video-codec expression with one local
+  `codec_id` read and a direct `if`/`elif` mapping for AVC and HEVC, retaining
+  the original value otherwise. Add no helper, abstraction, dependency,
+  configuration, broader conditional sweep, or adjacent scanner cleanup.
 
 ## Implementation sequence
 
@@ -870,10 +906,11 @@ within the authority explicitly granted by the owner.
   while preserving layout, accessible names, controls, and persisted order.
   Covers AC-A11Y-9, AC-DESIGN-6, AC-QA-43..44, AC-SEC-21, AC-PROD-10, and
   AC-SIMP-32.
-- [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
-  — state: awaiting-ci #403.
+- [x] **T36 — flatten release-view sort conditionals** *(needs: T35)*
+  — state: merged #403.
   Covers AC-A11Y-10, AC-QA-45..47, AC-SEC-22, AC-PROD-11, and AC-SIMP-33.
-- [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: queued.
+- [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: awaiting-ci #404.
+  Covers AC-QA-48..50, AC-SEC-23, AC-DATA-3, AC-PROD-12, and AC-SIMP-34.
 - [ ] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
   — state: queued.
 
@@ -1801,3 +1838,31 @@ T9 and T14 exceptions stated above.
   reviewers then returned clean; one compared base and head behavior across
   11,664 valid sort, direction, filter, identifier, and web-base combinations
   without a difference. PR #403 is open for hosted CI and cloud review.
+- 2026-09-20: PR #403 merged as exact master `5a7119af`. All hosted checks and
+  the post-CI Harness review were clean. Sonar CE task
+  `26313856-4787-466f-86a9-f35aaaa12ac6` produced exact-version analysis
+  `e003576d-3a3e-45ed-aeeb-6769a6ea4328`; issue
+  `32683d94-37bc-4cf3-936b-06eb008fc3ec` closed as fixed. Open smells fell
+  from 792 to 791 and majors from 302 to 301; coverage stayed 62.0%,
+  duplication 1.6%, and all three ratings remained A.
+- 2026-09-20: T37 plan cycle completed with security, data, QA, simplicity,
+  and product coverage. The existing suite characterized only enzyme's absent
+  path, so T37 requires a seven-case codec contract, a module-wide nested-
+  conditional recurrence guard, and explicit mapping, fallback, default, and
+  exact-comparison mutation evidence. The production scope is only the codec
+  read plus flat AVC/HEVC branches; adjacent scanner metadata remains fixed.
+- 2026-09-20: T37 behavior characterization passed seven AVC, HEVC, unknown,
+  near-miss, empty, explicit-`None`, and missing-attribute cases on exact
+  master. The module guard then failed red on the nested expression at line
+  166, and both passed after the minimum flat branch. Independent mutations
+  reintroduced exact and wrapped nested expressions, changed each fixed codec
+  mapping, discarded unknown/`None` passthrough, changed the missing-attribute
+  default, and broadened matching to be case-insensitive; the intended guard
+  or contract row killed every mutation before restoration. The restored
+  focused gate passed 121 tests with Ruff clean, and the broad gate passed
+  4,465 Python tests (14 skipped, 5 expected failures).
+- 2026-09-20: T37 passed every Harness review criterion and two independent
+  local code reviews on exact commit `f22bd8e3`. Reviewers reproduced base/head
+  equivalence across the required cases, 511 varied and hostile codec values,
+  the structural failures, and all behavior mutation kills. PR #404 is open
+  for hosted CI and cloud review.

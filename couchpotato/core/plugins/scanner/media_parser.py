@@ -162,9 +162,12 @@ class MediaParserMixin:
                 return {}
 
             vt = video_tracks[0]
-            vc = ('H264' if getattr(vt, 'codec_id', '') == 'V_MPEG4/ISO/AVC'
-                  else 'x265' if getattr(vt, 'codec_id', '') == 'V_MPEGH/ISO/HEVC'
-                  else getattr(vt, 'codec_id', ''))
+            codec_id = getattr(vt, 'codec_id', '')
+            vc = codec_id
+            if codec_id == 'V_MPEG4/ISO/AVC':
+                vc = 'H264'
+            elif codec_id == 'V_MPEGH/ISO/HEVC':
+                vc = 'x265'
 
             ac = ''
             if audio_tracks:
