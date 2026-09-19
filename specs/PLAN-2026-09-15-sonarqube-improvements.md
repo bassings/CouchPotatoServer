@@ -782,7 +782,7 @@ within the authority explicitly granted by the owner.
   retaining security, keyboard, focus, mobile, and exact-submission behavior.
   Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
 - [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
-  — state: awaiting-ci #400.
+  — state: awaiting-ci #401.
 - [ ] **T35 — use native ordered settings lists** *(needs: T34)* — state: queued.
 - [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
   — state: queued.
@@ -1625,4 +1625,26 @@ T9 and T14 exceptions stated above.
   template. Two Chromium trailer workflows, 4,409 Python unit tests, 42
   integration tests, and 214 UI unit tests passed. Two independent code
   reviews and fresh verification were clean at
-  `2e354a1f62b97137725ab5c31c8b16fbacd55c92`; PR #400 is open for hosted CI.
+  `2e354a1f62b97137725ab5c31c8b16fbacd55c92`; PR #400 subsequently passed
+  every hosted check and merged at
+  `2e82a52e053ef34d327ca57d7b1e1d0a455ba1f9`.
+- 2026-09-20: Exact-master analysis
+  `8165cee6-e767-400a-8e72-61c058c817a6` reported the T34 merge SHA as both
+  revision and project version after 4,451 Python tests (14 skipped, 5
+  expected failures) and 214 UI tests passed. Web:S1827 issue
+  `fe8e9347-1432-4dd1-ac8b-68b47d9b9a5d` closed as `FIXED`; removing both
+  obsolete instances closed two major findings, taking open smells from 800
+  to 798 and major findings from 310 to 308. Post-CI QA then reproduced a
+  vacuous-pass path in the recurrence guard when pytest runs outside the
+  repository root. T34 remains open while a correction anchors discovery to
+  the test file and asserts the production template set is non-empty.
+- 2026-09-20: The T34 correction reproduced the former false-green from
+  `tests/unit`, then anchored template discovery to the test file and added
+  explicit missing-root and empty-set failures. The corrected guard discovers
+  all 35 tracked production HTML templates from either working directory;
+  missing-root, empty-set, and reintroduced-attribute mutations all fail as
+  intended. The proportionate gate completed with 4,409 Python unit tests, 42
+  integration tests, and 214 UI unit tests passing. Two independent code
+  reviewers and an independent verifier were clean at
+  `7e8cd6760d15e8f4ece56c7faba4435b7bf01344`; correction PR #401 is open for
+  hosted CI.
