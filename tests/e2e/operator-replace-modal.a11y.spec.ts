@@ -8,7 +8,7 @@ import AxeBuilder from '@axe-core/playwright';
  * criteria for the "Replace with this file" operator modal
  * (movie_detail.html, operatorReplaceModal()), primarily AC-A11Y-1/2/3
  * (keyboard operability and the focus trap), AC-A11Y-5 (announcer, focus
- * return), AC-A11Y-7/8 (accessible names, dialog semantics, radiogroup),
+ * return), AC-A11Y-7/8 (accessible names, dialog semantics, radio group),
  * AC-A11Y-9 (no colour-only signalling), AC-A11Y-10 (a full axe scan with
  * the modal OPEN, both themes) and AC-A11Y-11/14 (contrast and target size
  * measured from the rendered page).
@@ -30,7 +30,7 @@ import AxeBuilder from '@axe-core/playwright';
  * TDD RED phase: no production template or script has been touched by this
  * task. Some assertions below may already hold against the current markup
  * (the dialog shell already carries role="dialog"/aria-modal/a labelled
- * heading, and the radiogroup already carries an aria-label) -- those are
+ * heading, and the radio group already carries an accessible name) -- those are
  * kept anyway because they are exactly the properties a later change could
  * regress silently, and this file is what would catch it. The genuinely new
  * failures this task's own briefing predicts, and this file is built to
@@ -39,8 +39,8 @@ import AxeBuilder from '@axe-core/playwright';
  * review-queue card control, at base.html's own
  * `[data-testid="review-mark-failed"]` comment); the confirm control's
  * target size (px-4/py-2/text-xs does not obviously clear 44x44); the
- * candidate radios having no arrow-key handling at all (grep across
- * movie_detail.html finds no "Arrow" keydown anywhere near the radiogroup);
+ * candidate radios originally having no arrow-key handling at all (the
+ * picker now delegates the complete keyboard model to native radios);
  * and the page behind the modal having no aria-hidden/inert applied, so a
  * screen reader's browse-mode cursor can still reach it while the dialog is
  * open.
@@ -622,10 +622,10 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
   // group name, arrow-key operability, and each accessible name is the
   // file name.
   // -------------------------------------------------------------------
-  test('the candidates are a radiogroup with an accessible group name (point 5)', async ({ page }) => {
+  test('the candidates are a radio group with an accessible group name (point 5)', async ({ page }) => {
     const modal = await openReplaceModal(page, REVIEW_MOVIE_ID);
 
-    const group = modal.getByRole('radiogroup');
+    const group = modal.getByRole('group', { name: 'Choose a replacement file' });
     await expect(group).toHaveCount(1);
     await expect(group).toHaveAccessibleName(/./);
   });
@@ -642,6 +642,33 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
     }
   });
 
+  test('the native radio group is one Tab stop and Space selects a candidate', async ({ page }) => {
+    const modal = await openReplaceModal(page, REVIEW_MOVIE_ID);
+    const first = modal.getByRole('radio', { name: CANDIDATES[0], exact: true });
+    const second = modal.getByRole('radio', { name: CANDIDATES[1], exact: true });
+    const cancel = modal.getByRole('button', { name: 'Cancel' });
+
+    await expect(first).toHaveJSProperty('tagName', 'INPUT');
+    await expect(first).toHaveAttribute('type', 'radio');
+    await expect(first).toHaveAttribute('name', 'operator-replacement-candidate');
+    await expect(second).toHaveAttribute('name', 'operator-replacement-candidate');
+    await expect(first).not.toBeChecked();
+    await expect(second).not.toBeChecked();
+
+    await first.focus();
+    await page.keyboard.press('Space');
+    await expect(first).toBeChecked();
+
+    await page.keyboard.press('Tab');
+    await expect(
+      cancel,
+      'a same-name native radio group contributes one Tab stop, so Tab from the checked radio must leave the group',
+    ).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(first).toBeFocused();
+  });
+
   test('ArrowDown moves selection to the next candidate, and ArrowUp to the previous (point 5)', async ({ page }) => {
     const modal = await openReplaceModal(page, REVIEW_MOVIE_ID);
 
@@ -654,17 +681,17 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
     await page.keyboard.press('ArrowDown');
     await expect(
       second,
-      'ArrowDown from the first candidate must move focus AND selection to the next candidate (WAI-ARIA radiogroup pattern)',
+      'ArrowDown from the first candidate must move focus AND selection to the next candidate (native radio-group behavior)',
     ).toBeFocused();
-    await expect(second).toHaveAttribute('aria-checked', 'true');
-    await expect(first).toHaveAttribute('aria-checked', 'false');
+    await expect(second).toBeChecked();
+    await expect(first).not.toBeChecked();
 
     await page.keyboard.press('ArrowUp');
     await expect(
       first,
       'ArrowUp from the second candidate must move focus AND selection back to the first',
     ).toBeFocused();
-    await expect(first).toHaveAttribute('aria-checked', 'true');
+    await expect(first).toBeChecked();
   });
 
   // -------------------------------------------------------------------
@@ -861,12 +888,11 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
 
       // Real keyboard traversal, matching a keyboard-only user end to end:
       // Close is auto-focused on open; Tab order is then
-      // close -> radio 1 -> radio 2 -> Cancel -> Confirm (Confirm only
+      // close -> the radio group -> Cancel -> Confirm (Confirm only
       // joins the tab order once a candidate is selected, per
       // :disabled="!selected" -- same order already proven by the point 2
       // focus-trap tests above).
       const radio1 = modal.getByRole('radio', { name: CANDIDATES[0], exact: true });
-      const radio2 = modal.getByRole('radio', { name: CANDIDATES[1], exact: true });
       const cancelBtn = modal.getByRole('button', { name: 'Cancel', exact: true });
       const confirmBtn = modal.locator('[data-testid="operator-replace-confirm"]');
 
@@ -884,13 +910,10 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
       await expect(radio1).toBeFocused();
       await assertRing('first radio', radio1);
 
-      await page.keyboard.press(' '); // native button activation selects it
-      await expect(radio1).toHaveAttribute('aria-checked', 'true');
+      await page.keyboard.press(' '); // native radio activation selects it
+      await expect(radio1).toBeChecked();
 
-      await page.keyboard.press('Tab'); // radio 1 -> radio 2
-      await expect(radio2).toBeFocused();
-
-      await page.keyboard.press('Tab'); // radio 2 -> Cancel
+      await page.keyboard.press('Tab'); // radio group -> Cancel
       await expect(cancelBtn).toBeFocused();
       await assertRing('cancel', cancelBtn);
 

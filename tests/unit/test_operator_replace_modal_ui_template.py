@@ -33,6 +33,8 @@ import problem.
 
 import re
 
+from bs4 import BeautifulSoup
+
 from couchpotato.environment import Env
 from couchpotato.ui import _jinja, _releases_ctx
 
@@ -189,18 +191,40 @@ class TestOperatorReplaceModalOffersNoFreeTextPathEntry:
     """The operator picks a candidate the server produced; they never type
     or submit a path, and the modal must not offer any way to."""
 
-    def test_modal_contains_no_input_element(self):
+    def test_modal_contains_no_text_capable_path_entry(self):
         html = _render(_movie_with_trigger())
         region = _modal_region(html)
 
         assert region is not None, (
             'expected a data-testid="%s" modal in the rendered page' % MODAL_TESTID
         )
-        assert '<input' not in region, (
-            'the modal must offer no free-text path entry -- found an <input> '
-            'inside it: candidates must be chosen from a rendered list, never '
-            'typed'
+        soup = BeautifulSoup(region, 'html.parser')
+        text_capable_types = {'', 'text', 'search', 'url', 'email', 'tel', 'password', 'file'}
+        assert not [
+            field for field in soup.find_all('input')
+            if (field.get('type') or '').lower() in text_capable_types
+        ]
+        assert soup.find('textarea') is None
+        assert soup.find(attrs={'contenteditable': True}) is None
+
+    def test_candidates_are_server_bound_native_radios(self):
+        html = _render(_movie_with_trigger())
+        region = _modal_region(html)
+        soup = BeautifulSoup(region, 'html.parser')
+        radios = soup.find_all('input', attrs={'type': 'radio'})
+
+        assert radios, 'the candidate picker must render native radio inputs'
+        assert {radio.get('name') for radio in radios} == {
+            'operator-replacement-candidate'
+        }
+        assert all(radio.get('x-model') == 'selected' for radio in radios)
+        assert all(radio.get(':value') == 'candidate' for radio in radios)
+        assert all(radio.parent.name == 'label' for radio in radios)
+        assert all(
+            radio.parent.find('span', attrs={'x-text': 'candidate'}) is not None
+            for radio in radios
         )
+        assert soup.find(attrs={'role': 'radio'}) is None
 
 
 class TestOperatorReplaceTriggerOpensTheDesignSystemModal:

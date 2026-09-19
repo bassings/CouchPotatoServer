@@ -169,7 +169,7 @@ test.describe('FEAT-011 Operator replace modal -- mobile (393px)', () => {
     const manyCandidates = Array.from({ length: 30 }, (_, i) => `Candidate.File.${i.toString().padStart(2, '0')}.2024.mkv`);
     const modal = await openReplaceModal(page, REVIEW_MOVIE_ID, manyCandidates);
 
-    const list = modal.locator('[role="radiogroup"]');
+    const list = modal.locator('[data-testid="operator-replace-candidates"]');
     await expect(list).toBeVisible();
 
     const metrics = await list.evaluate((el) => ({

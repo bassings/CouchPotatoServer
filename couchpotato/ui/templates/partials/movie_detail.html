@@ -425,13 +425,11 @@
 
                 <!-- Body: the destructive confirmation, plus the
                      candidate picker (FEAT-011 step two). Candidates are
-                     offered as role="radio" BUTTONS, never as a text
+                     offered as server-bound native radios, never as a text
                      entry field: test_operator_replace_modal_ui_template
                      .py's TestOperatorReplaceModalOffersNoFreeTextPathEntry
-                     already pins zero form-input elements anywhere inside
-                     this modal, and a button carrying role="radio" plus
-                     aria-checked satisfies getByRole('radio', ...) with
-                     no free-text entry surface at all (AC-SEC-1). -->
+                     permits those radios while rejecting every text-capable
+                     input surface (AC-SEC-1). -->
                 <div class="px-4 py-4 text-sm text-cp-text">
                   <p>
                     Replacing <strong>{{ title }}</strong> will permanently
@@ -467,33 +465,29 @@
                     </p>
                   </template>
 
-                  <!-- Populated: one radio-role button per candidate,
+                  <!-- Populated: one native radio per candidate,
                        named after the file verbatim so the value sent
                        back on confirm is exactly what the server offered. -->
                   <template x-if="!loading && !loadError && candidates.length > 0">
-                    <!-- AC-A11Y-1/point 5: arrow keys move focus AND
-                         selection between candidates (WAI-ARIA radiogroup
-                         pattern), scoped to $event.currentTarget rather
-                         than $el -- this list is teleported to <body>
-                         (x-teleport on the ancestor template), so $el (the
-                         un-teleported wrapper) would not contain it, same
-                         reasoning trapFocus() below already follows. -->
-                    <div role="radiogroup" aria-label="Choose a replacement file"
-                         @keydown.arrow-down.prevent="moveSelection($event, 1)"
-                         @keydown.arrow-up.prevent="moveSelection($event, -1)"
-                         class="mt-3 max-h-[400px] overflow-y-auto space-y-1">
+                    <!-- Native same-name radios provide one group Tab stop,
+                         all four arrow keys, Space selection, and checked
+                         state without a second JavaScript state machine. -->
+                    <fieldset data-testid="operator-replace-candidates"
+                              class="mt-3 m-0 min-w-0 w-full max-h-[400px] overflow-y-auto space-y-1 border-0 p-0">
+                      <legend class="sr-only">Choose a replacement file</legend>
                       <template x-for="candidate in candidates" :key="candidate">
-                        <button type="button"
-                                role="radio"
-                                :aria-checked="selected === candidate ? 'true' : 'false'"
-                                @click="selected = candidate"
-                                :title="candidate"
-                                :class="selected === candidate ? 'bg-cp-accent/10 border-cp-accent/30' : 'border-white/[0.05] hover:bg-white/[0.03]'"
-                                class="w-full text-left px-2 py-1.5 rounded-md border text-xs truncate">
-                          <span x-text="candidate"></span>
-                        </button>
+                        <label :title="candidate"
+                               :class="selected === candidate ? 'bg-cp-accent/10 border-cp-accent/30' : 'border-white/[0.05] hover:bg-white/[0.03]'"
+                               class="w-full min-w-0 min-h-6 flex items-center gap-2 px-2 py-1.5 rounded-md border text-xs cursor-pointer">
+                          <input type="radio"
+                                 name="operator-replacement-candidate"
+                                 x-model="selected"
+                                 :value="candidate"
+                                 class="w-6 h-6 shrink-0 accent-cp-accent">
+                          <span class="min-w-0 flex-1 truncate" x-text="candidate"></span>
+                        </label>
                       </template>
-                    </div>
+                    </fieldset>
                   </template>
                 </div>
 
@@ -714,32 +708,12 @@ function operatorReplaceModal() {
       }
     },
 
-    // Point 5 (WAI-ARIA radiogroup pattern): ArrowDown/ArrowUp move BOTH
-    // focus and selection between candidates. Scoped to
-    // event.currentTarget (the radiogroup div the listener is bound to),
-    // matching trapFocus()'s own pattern below, rather than this.$el --
-    // the candidate list is teleported to <body> (x-teleport), so this.$el
-    // (the un-teleported wrapper) would not contain it.
-    moveSelection(event, direction) {
-      const radios = Array.from(event.currentTarget.querySelectorAll('[role="radio"]'));
-      if (radios.length === 0) {
-        return;
-      }
-      let index = radios.indexOf(document.activeElement);
-      if (index === -1) {
-        index = 0;
-      }
-      const nextIndex = (index + direction + radios.length) % radios.length;
-      this.selected = this.candidates[nextIndex];
-      radios[nextIndex].focus();
-    },
-
     notify(message, type) {
       window.dispatchEvent(new CustomEvent('cp-toast', { detail: { message, type } }));
     },
 
     // Point 1: fetch the candidate list, offered only as a choice from
-    // this server-produced set (the picker's role="radio" buttons above)
+    // this server-produced set (the picker's native radios above)
     // -- never a free-text path the operator could type or edit.
     async loadCandidates() {
       this.loading = true;
