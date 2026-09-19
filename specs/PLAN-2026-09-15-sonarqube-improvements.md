@@ -607,6 +607,17 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-29:** Limit production UI changes to the native `output` and
   `section` substitutions. Retain the existing accessible name and tabindex;
   add no JavaScript keyboard handler, role duplication, or style refactor.
+- **AC-QA-41:** rTorrent recognizes both and only the existing `httprpc://`
+  and `httprpc+https://` prefixes through one tuple-based `startswith` call.
+  Focused connection tests retain rewriting and SSL-upgrade behavior for both
+  schemes and ordinary RPC URLs remain outside that branch.
+- **AC-SEC-19:** The refactor does not broaden accepted URL schemes, weaken
+  certificate verification, change credential transport, or alter the
+  configured `ssl` upgrade from HTTP RPC to HTTPS RPC.
+- **AC-OPS-28:** Preserve the rewritten endpoint, adapter selection, connection
+  attempt, failure logging, and return behavior for every existing scheme.
+- **AC-SIMP-30:** Replace only the duplicated prefix predicate. Add no helper,
+  URL normalization, dependency, or adjacent downloader cleanup.
 
 ## Implementation sequence
 
@@ -744,7 +755,9 @@ within the authority explicitly granted by the owner.
   preserving live status, keyboard scrolling, phone behavior, and isolated E2E
   fixture ownership. Covers AC-A11Y-7, AC-DESIGN-4, AC-QA-40, AC-DATA-2,
   AC-PROD-8, and AC-SIMP-29.
-- [ ] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: queued.
+- [ ] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: building.
+  Use one tuple prefix check while preserving endpoint and TLS behavior.
+  Covers AC-QA-41, AC-SEC-19, AC-OPS-28, and AC-SIMP-30.
 - [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: queued.
 - [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
   — state: queued.
@@ -1532,3 +1545,17 @@ T9 and T14 exceptions stated above.
   critical S3776 `99cc2f87-9499-4e84-9243-2935710f9f49`; its relationship
   checks are now extracted behind the already load-bearing seven-case mutation
   matrix before T32 begins.
+- 2026-09-20: The T31 corrective extraction merged as PR #397 at
+  `463d5f2734277448ba28244fb297c938c909e590` after the complete hosted matrix
+  passed; the one unrelated accessibility contrast flake passed its automatic
+  test retry and a clean failed-job rerun. Exact-master analysis
+  `1929e2cc-02df-4bf0-a0ba-a994d5b5baaf` reported that SHA as both revision and
+  project version after 4,448 Python tests (14 skipped, 5 expected failures)
+  and 214 UI unit tests passed. The introduced S3776 issue closed as `FIXED`;
+  open smells fell from 803 to 802 and critical findings from 194 to 193.
+- 2026-09-20: T32 starts on that exact verified merge. The two rTorrent
+  HTTP-RPC scheme
+  predicates are one tuple prefix check, with an AST guard that pins both and
+  only those schemes. Seventy rTorrent-selected downloader tests are green;
+  independently removing either scheme kills the guard while the restored tree
+  passes Ruff and two clean reviews.

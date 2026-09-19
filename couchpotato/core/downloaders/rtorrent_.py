@@ -326,7 +326,7 @@ class rTorrent(DownloaderBase):
         if self.conf('ssl') and url.startswith('httprpc://'):
             url = url.replace('httprpc://', 'httprpc+https://')
 
-        is_httprpc = url.startswith('httprpc://') or url.startswith('httprpc+https://')
+        is_httprpc = url.startswith(('httprpc://', 'httprpc+https://'))
         url = _rewrite_httprpc_url(url)
 
         parsed = urlparse(url)
