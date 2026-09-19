@@ -777,7 +777,7 @@ within the authority explicitly granted by the owner.
 - [x] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: merged #398.
   Use one tuple prefix check while preserving endpoint and TLS behavior.
   Covers AC-QA-41, AC-SEC-19, AC-OPS-28, and AC-SIMP-30.
-- [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: building.
+- [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: awaiting-ci #399.
   Replace the custom radio-button state machine with native radios while
   retaining security, keyboard, focus, mobile, and exact-submission behavior.
   Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
@@ -1597,9 +1597,13 @@ T9 and T14 exceptions stated above.
   from 802 to 801 and major findings from 312 to 311. The post-CI Harness
   security, QA, operability, product, and fresh-verification lenses all
   measured tree `827c8a56f722ca688079d3bf5188352e03851d53` and returned clean.
-- 2026-09-20: T33 starts on that exact verified merge. Native same-name radios and a fieldset
-  replace the custom ARIA/button state machine and its manual arrow-key method.
-  Backend/template coverage, nine functional browser tests, 27 accessibility
-  tests, and five mobile tests are green. Mutations that restore custom ARIA,
-  disconnect the native model/value, or remove the hostile-name round trip are
-  killed; two security/QA/accessibility reviews are clean.
+- 2026-09-20: T33 starts on that exact verified merge. Native same-name radios
+  and a fieldset replace the custom ARIA/button state machine and its manual
+  arrow-key method. Backend/template coverage, nine functional browser tests,
+  27 accessibility tests, and five mobile tests are green. Three targeted
+  production mutations (native control type, exact bound value, and accessible
+  group name) were killed; the configured mutation runner correctly reports
+  this template outside its scope. The broad local gate passed 4,408 Python
+  unit tests, 42 integration tests, and 214 UI unit tests. Two independent
+  code reviewers and fresh acceptance-criteria verification were clean at
+  `4065b768b04c27fe45f55694323843e715afe9ee`; PR #399 is open for hosted CI.
