@@ -871,7 +871,7 @@ within the authority explicitly granted by the owner.
   Covers AC-A11Y-9, AC-DESIGN-6, AC-QA-43..44, AC-SEC-21, AC-PROD-10, and
   AC-SIMP-32.
 - [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
-  — state: building.
+  — state: awaiting-ci #403.
   Covers AC-A11Y-10, AC-QA-45..47, AC-SEC-22, AC-PROD-11, and AC-SIMP-33.
 - [ ] **T37 — flatten scanner codec conditionals** *(needs: T36)* — state: queued.
 - [ ] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
@@ -1796,3 +1796,8 @@ T9 and T14 exceptions stated above.
   `sort_columns` existence check; a behavior-preserving nested expression
   inserted into unrelated `_clean` failed at its own line, proving the shared
   S3358 mechanism is enforced across `releases_view.py`.
+- 2026-09-20: T36's amended exact commit passed every Harness review lens and
+  the final seven-criterion verification matrix. Two independent local code
+  reviewers then returned clean; one compared base and head behavior across
+  11,664 valid sort, direction, filter, identifier, and web-base combinations
+  without a difference. PR #403 is open for hosted CI and cloud review.
