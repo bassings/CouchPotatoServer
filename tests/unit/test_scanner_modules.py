@@ -3,6 +3,7 @@
 import os
 import pytest
 import tempfile
+from types import SimpleNamespace
 
 from couchpotato.core.plugins.scanner.file_detector import FileDetectorMixin
 from couchpotato.core.plugins.scanner.media_parser import MediaParserMixin
@@ -189,6 +190,50 @@ class TestGetMeta:
         import couchpotato.core.plugins.scanner.media_parser as mp
         monkeypatch.setattr(mp, 'enzyme', None)
         assert parser.getMeta('/fake/file.mkv') == {}
+
+    @pytest.mark.parametrize(
+        ('codec_id', 'expected'),
+        [
+            ('V_MPEG4/ISO/AVC', 'H264'),
+            ('V_MPEGH/ISO/HEVC', 'x265'),
+            ('V_AV1', 'V_AV1'),
+            ('v_mpeg4/iso/avc', 'v_mpeg4/iso/avc'),
+            ('', ''),
+            (None, None),
+            (pytest.param(None, '', id='missing-codec-id')),
+        ],
+    )
+    def test_video_codec_mapping_preserves_the_existing_contract(
+            self, parser, monkeypatch, tmp_path, codec_id, expected, request):
+        import couchpotato.core.plugins.scanner.media_parser as mp
+
+        track_values = {'width': 1920, 'height': 1080, 'name': None}
+        if request.node.callspec.id != 'missing-codec-id':
+            track_values['codec_id'] = codec_id
+        track = SimpleNamespace(**track_values)
+        metadata = SimpleNamespace(
+            info=SimpleNamespace(title=None, duration=123),
+            video_tracks=[track],
+            audio_tracks=[],
+        )
+        fake_enzyme = SimpleNamespace(
+            MKV=lambda _file: metadata,
+            exceptions=SimpleNamespace(ParserError=RuntimeError),
+        )
+        monkeypatch.setattr(mp, 'enzyme', fake_enzyme)
+        media_file = tmp_path / 'movie.mkv'
+        media_file.write_bytes(b'metadata fixture')
+
+        result = parser.getMeta(str(media_file))
+
+        assert result == {
+            'titles': [],
+            'video': expected,
+            'audio': '',
+            'resolution_width': 1920,
+            'resolution_height': 1080,
+            'audio_channels': 0,
+        }
 
 
 class TestGetSubtitleLanguage:
