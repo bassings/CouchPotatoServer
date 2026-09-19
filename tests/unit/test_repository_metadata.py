@@ -12,6 +12,11 @@ REPO = Path(__file__).resolve().parents[2]
 GPL3_SHA256 = "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
 
 
+def _normalized_sha256(text):
+    normalized = text.replace("\r\n", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def _dice(left, right):
     if not left and not right:
         return 1.0
@@ -46,9 +51,8 @@ def _tracked_root_files(repo=REPO):
 def test_license_is_canonical_and_linked_once():
     """GitHub should expose one canonical GPL license, not two root copies."""
     license_path = REPO / "LICENSE"
-    license_bytes = license_path.read_bytes()
-    assert hashlib.sha256(license_bytes).hexdigest() == GPL3_SHA256
-    license_text = license_bytes.decode("utf-8")
+    license_text = license_path.read_text(encoding="utf-8")
+    assert _normalized_sha256(license_text) == GPL3_SHA256
 
     gpl_documents = []
     for path in _tracked_root_files():
@@ -64,6 +68,12 @@ def test_license_is_canonical_and_linked_once():
     assert "[GPL-3.0-or-later](LICENSE)" in readme
     assert "license.txt" not in readme.casefold()
     assert "Copyright (C) 2011 Ruud Burger" in readme
+
+
+def test_canonical_license_hash_ignores_checkout_line_endings():
+    license_text = (REPO / "LICENSE").read_text(encoding="utf-8")
+    crlf_text = license_text.replace("\n", "\r\n")
+    assert _normalized_sha256(crlf_text) == GPL3_SHA256
 
 
 def test_duplicate_guard_recognizes_a_lightly_edited_copy():
