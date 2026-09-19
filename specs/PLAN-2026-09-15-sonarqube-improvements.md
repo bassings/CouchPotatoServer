@@ -379,6 +379,12 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-17:** Replace live `python:S8786` issue
   `893fdc54-72f9-4fdd-a6c8-ff7503ecdb14` with one bounded string parser local
   to the AppleTrailers adapter, adding no dependency or unrelated refactor.
+- **AC-QA-22:** The AppleTrailers provider keeps all eleven FilmId behavior and
+  boundary tests green, and a structural regression test prevents `getMovie`
+  from reintroducing the builtin-shadowing local name.
+- **AC-SIMP-18:** Resolve live `python:S5806` issue
+  `3e8c98da-8ab3-4710-97b8-b41d8f72e349` by renaming only the local FilmId
+  variable, without changing parsing, requests, logging, or provider behavior.
 
 ## Implementation sequence
 
@@ -472,10 +478,13 @@ within the authority explicitly granted by the owner.
   Resolve live issues `42794452-9679-4251-b024-fc4de366ba53` and
   `0cb42ac4-630b-417c-95b7-17455ae2980e` introduced by T20, while retaining its
   bounded behavior and compatibility corpus. Covers AC-QA-20 and AC-SIMP-16.
-- [ ] **T22 — bound AppleTrailers FilmId parsing** — state: in-progress.
+- [x] **T22 — bound AppleTrailers FilmId parsing** — state: merged #381.
   Replace live issue `893fdc54-72f9-4fdd-a6c8-ff7503ecdb14` while preserving
   valid provider behavior and failing closed before the metadata request.
   Covers AC-QA-21, AC-OPS-14, and AC-SIMP-17.
+- [ ] **T23 — remove AppleTrailers builtin shadow** — state: in-progress.
+  Resolve the S5806 finding introduced on T22's touched method with a local-only
+  rename and a structural regression guard. Covers AC-QA-22 and AC-SIMP-18.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -1026,3 +1035,14 @@ T9 and T14 exceptions stated above.
   recoverable, while corruption inside the ID fails closed without a request
   or error log. Removing either replacement decoding or the replacement-
   character rejection kills the focused suite.
+- 2026-09-19: PR #381 merged as
+  `87296567d8df208d10ea461987dd2577ef5d5ab3` after all hosted checks. Exact-
+  master analysis `4564146d-7bc8-425a-86c3-cca52c0b4848` closed T22's S8786
+  issue as `FIXED`, reduced code smells from 825 to 824, and held coverage at
+  61.5%. It also created one S5806 finding on the touched method because the
+  existing local name `id` shadows a builtin. T23's structural test failed red
+  on that name and passed after the local-only rename to `film_id`; all twelve
+  focused provider tests and Ruff are green. The fast gate collected 4,380
+  Python unit-test items (4,361 passed, 14 skipped, 5 xfailed), then passed 42
+  integration tests and 214 UI-unit tests with conformance and the 324-file
+  trap guard clean.
