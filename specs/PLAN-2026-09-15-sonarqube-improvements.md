@@ -514,6 +514,31 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-24:** Do not sweep other `sum(..., [])` occurrences, refactor
   adjacent subtitle download/save logic, alter scanner production code, or
   combine another Sonar finding into this slice.
+- **AC-QA-31:** Two-result BinSearch coverage passes the real `ResultList` into
+  `_search` and proves `append` consumes each `extra_check` before the next row:
+  a passworded first row is rejected and a clean second row is accepted.
+- **AC-QA-32:** Two-result Pirate Bay coverage passes the real `ResultList` into
+  `_search` and proves `append` consumes each `extra_score` before the next row:
+  a Trusted-only first row scores 10 and a Moderator-only second row scores 50.
+- **AC-QA-33:** The characterization is load-bearing through the real handlers:
+  bypassing `extra_check` in `MovieSearcher.correctRelease` or `extra_score` in
+  `Score.calculate` makes its focused assertion fail; restoring production
+  byte-for-byte returns the parser suite to green.
+- **AC-SEC-17:** Preserve the synchronous `trusted_only` rejection boundary.
+  The characterization changes neither ranking nor provider admission and must
+  not add logging or expose titles, paths, credentials, or network details.
+- **AC-OPS-24:** The slice changes characterization and plan evidence only. It
+  does not alter provider HTTP behavior, result schema, parsing failure handling,
+  timeouts, proxy selection, scoring, validation, or callback invocation.
+- **AC-OPS-25:** After merge, an exact-master Sonar analysis must still report
+  all four S1515 issues with the same rule, component, and captured variable
+  before they are accepted individually as false positives with their exact
+  synchronous execution boundary and expiry condition.
+- **AC-SIMP-25:** Do not add default bindings or rewrite any of the four safe
+  closures merely to silence the analyzer. Re-evaluate if event dispatch,
+  either production handler, `ResultList.append`, `list(filter(...))`, or
+  `sorted(..., key=...)` ever defers or stores its callback beyond the current
+  iteration.
 
 ## Implementation sequence
 
@@ -624,11 +649,16 @@ within the authority explicitly granted by the owner.
   Remove the redundant constant from the two exact S5797 predicates without
   touching scanner behavior or adjacent high-risk data flow. Covers AC-QA-26..27,
   AC-DATA-1, AC-SEC-15, AC-OPS-19..20, AC-PROD-4, and AC-SIMP-21.
-- [ ] **T26 — flatten available subtitle languages linearly** — state: awaiting-ci.
+- [x] **T26 — flatten available subtitle languages linearly** — state: merged #390.
   Replace live reliability issue `49dfbcdf-5c02-4e1a-bf65-294730029b44`
   without changing subtitle search decisions or the scanner-produced data
   contract. Covers AC-QA-28..30, AC-SEC-16, AC-OPS-21..23, AC-PROD-5..6, and
   AC-SIMP-22..24.
+- [ ] **T27 — characterize synchronous loop callbacks** — state: awaiting-ci.
+  Prove the production `ResultList.append` boundary consumes provider callbacks
+  before their loops advance, then adjudicate all four non-escaping S1515
+  closures only after exact-master verification. Covers AC-QA-31..33,
+  AC-SEC-17, AC-OPS-24..25, and AC-SIMP-25.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -1245,3 +1275,32 @@ T9 and T14 exceptions stated above.
   multi-entry behavior test. The fast gate passed Ruff, conformance, the
   327-file trap scan, 4,381 unit tests (14 skipped, 5 expected failures), 42
   integration tests, and 214 UI-unit tests.
+- 2026-09-19: T26 merged as PR #390 at
+  `45e51430bd137418097ec8ecf810d2eb14fe459c`. Exact-master analysis closed
+  `49dfbcdf-5c02-4e1a-bf65-294730029b44` as `FIXED`, reduced open code smells
+  from 820 to 819, and reported zero bugs and vulnerabilities with 61.6%
+  coverage and 1.6% duplication. Three renamer S1515 callbacks were then
+  accepted as false positives after independent lifetime review proved they are
+  invoked synchronously before their loop advances; the open count fell to 816.
+- 2026-09-19: T27 planning initially misclassified two provider callbacks as
+  deferred because its reproduction passed a plain list directly to `_search`.
+  A clean reviewer followed the public `Provider.search` boundary and found it
+  always supplies `ResultList`, whose `append` invokes `searcher.correct_release`
+  and `score.calculate` before returning to the provider loop. With the proposed
+  bindings removed, production-shaped runs still observed BinSearch outcomes
+  `[False, True]` and Pirate Bay scores `[10, 50]`; only the impossible plain-list
+  harness failed. The production edits and false-boundary assertions were
+  removed. Real-`ResultList` characterization through
+  `MovieSearcher.correctRelease` and `Score.calculate` now proves both callbacks
+  are consumed per row; bypassing either handler invocation kills its focused
+  test. The other two findings are likewise synchronous:
+  `list(filter(...))` is exhausted before `os.walk` advances and `sorted` calls
+  its key before the surrounding mapping iteration advances. T27 is therefore
+  a test-only false-positive evidence slice for all four issues, with an expiry
+  condition if any callback becomes stored or deferred.
+- 2026-09-19: T27's final fast gate passed Ruff, conformance, the 327-file trap
+  scan, 4,383 unit tests (14 skipped, 5 expected failures), 42 integration
+  tests, and 214 UI-unit tests. Two fresh independent reviewers returned clean
+  after separately bypassing each real handler invocation and observing the
+  intended focused failure. The test-only slice is ready for hosted CI and
+  cloud review; all four Sonar transitions remain post-merge work.

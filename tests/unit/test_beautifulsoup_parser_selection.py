@@ -211,6 +211,145 @@ def test_binsearch_real_search_keeps_candidate_fields(malformed):
     ]
 
 
+def test_binsearch_consumes_each_extra_check_before_parsing_the_next_row():
+    from couchpotato.core.media._base.providers.nzb.binsearch import Base
+    from couchpotato.core.media._base.providers.base import ResultList
+    from couchpotato.core.media.movie.searcher import MovieSearcher
+
+    data = """<html><body><table id="r2">
+    <tr><td><span class="s">Passworded Release</span>
+    <input type="checkbox" name="nzb-1">
+    <span class="d">size: 1 GB available: 10 / 10 requires password
+    <a href="/detail/1">info</a></span></td><td>1d</td></tr>
+    <tr><td><span class="s">Usable Release</span>
+    <input type="checkbox" name="nzb-2">
+    <span class="d">size: 2 GB available: 20 / 20
+    <a href="/detail/2">info</a></span></td><td>2d</td></tr>
+    </table></body></html>"""
+    provider = _bare_provider(
+        Base,
+        getHTMLData=data,
+        buildUrl="query",
+        parseSize=lambda value: value,
+        getName="BinSearch",
+    )
+    media = {"type": "movie", "info": {"year": 2025, "titles": ["Example"]}}
+    quality = {
+        "label": "test",
+        "size_min": 0,
+        "size_max": 10_000,
+        "custom": {},
+    }
+    searcher = object.__new__(MovieSearcher)
+
+    def dispatch_result_events(event, result, *args, **kwargs):
+        if event == "searcher.correct_release":
+            return searcher.correctRelease(
+                result,
+                media,
+                quality,
+                imdb_results=True,
+            )
+        if event == "score.calculate":
+            return 0
+        raise AssertionError("unexpected event: %s" % event)
+
+    def dispatch_searcher_events(event, *args, **kwargs):
+        return {
+            "searcher.get_search_title": "Example",
+            "searcher.correct_words": True,
+            "searcher.contains_other_quality": False,
+            "searcher.correct_3d": True,
+        }[event]
+
+    results = ResultList(provider, media, quality, imdb_results=True)
+
+    with patch(
+        "couchpotato.core.media._base.providers.base.Env.setting",
+        return_value="",
+    ), patch(
+        "couchpotato.core.media._base.providers.base.fireEvent",
+        side_effect=dispatch_result_events,
+    ), patch(
+        "couchpotato.core.media.movie.searcher.Env.setting",
+        return_value=0,
+    ), patch(
+        "couchpotato.core.media.movie.searcher.fireEvent",
+        side_effect=dispatch_searcher_events,
+    ):
+        provider._search(media, quality, results)
+
+    assert [item["id"] for item in results] == ["nzb-2"]
+
+
+def test_piratebay_consumes_each_extra_score_before_parsing_the_next_row():
+    from couchpotato.core.media._base.providers.torrent.thepiratebay import Base
+    from couchpotato.core.media._base.providers.base import ResultList
+    from couchpotato.core.plugins.score.main import Score
+
+    data = """<html><body><table id="searchResult"><tr><th>head</th></tr>
+    <tr><td><a href="/torrent/1/trusted">Trusted Release</a>
+    <a href="magnet:?xt=urn:btih:1">magnet</a>
+    <font class="detDesc">Size 1 GB, Uploaded now</font>
+    <img alt="Trusted"></td><td>x</td><td>0</td><td>0</td></tr>
+    <tr><td><a href="/torrent/2/moderated">Moderated Release</a>
+    <a href="magnet:?xt=urn:btih:2">magnet</a>
+    <font class="detDesc">Size 2 GB, Uploaded now</font>
+    <img alt="Moderator"></td><td>x</td><td>0</td><td>0</td></tr>
+    </table></body></html>"""
+    provider = _bare_provider(
+        Base,
+        getCatId=200,
+        getDomain=lambda path=None: "https://tpb.invalid%s" % (path or ""),
+        buildUrl=("title", 0, 200),
+        getHTMLData=data,
+        conf=False,
+        parseSize=lambda value: value,
+        getName="ThePirateBay",
+    )
+    media = {
+        "type": "movie",
+        "info": {"year": 2025, "titles": ["Example"]},
+        "category": {},
+    }
+    quality = {}
+    scorer = object.__new__(Score)
+
+    def dispatch_result_events(event, result, *args, **kwargs):
+        if event == "searcher.correct_release":
+            return True
+        if event == "score.calculate":
+            return scorer.calculate(result, media)
+        raise AssertionError("unexpected event: %s" % event)
+
+    results = ResultList(provider, media, quality, imdb_results=True)
+
+    with patch(
+        "couchpotato.core.media._base.providers.base.Env.setting",
+        return_value="",
+    ), patch(
+        "couchpotato.core.media._base.providers.base.fireEvent",
+        side_effect=dispatch_result_events,
+    ), patch(
+        "couchpotato.core.plugins.score.main.Env.setting",
+        return_value="",
+    ), patch.multiple(
+        "couchpotato.core.plugins.score.main",
+        nameScore=Mock(return_value=0),
+        nameRatioScore=Mock(return_value=0),
+        namePositionScore=Mock(return_value=0),
+        sizeScore=Mock(return_value=0),
+        providerScore=Mock(return_value=0),
+        duplicateScore=Mock(return_value=0),
+        partialIgnoredScore=Mock(return_value=0),
+        halfMultipartScore=Mock(return_value=0),
+        sceneScore=Mock(return_value=0),
+    ):
+        provider._search(media, quality, results)
+
+    assert [(item["id"], item["score"]) for item in results] == [("1", 10), ("2", 50)]
+
+
 @pytest.mark.parametrize("malformed", [False, True])
 def test_torrent_search_providers_keep_candidate_fields(malformed):
     from couchpotato.core.media._base.providers.torrent.alpharatio import Base as AlphaRatio
