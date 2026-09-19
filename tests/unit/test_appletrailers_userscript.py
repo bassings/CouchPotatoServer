@@ -9,6 +9,9 @@ from couchpotato.core.media.movie.providers.userscript.appletrailers import (
 
 class TestAppleTrailersFilmId:
 
+    def test_get_movie_does_not_shadow_python_builtins(self):
+        assert 'id' not in AppleTrailers.getMovie.__code__.co_varnames
+
     def _provider(self, page):
         provider = object.__new__(AppleTrailers)
         provider.getUrl = MagicMock(return_value=page)

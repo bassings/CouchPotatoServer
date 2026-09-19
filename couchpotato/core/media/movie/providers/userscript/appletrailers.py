@@ -45,11 +45,11 @@ class AppleTrailers(UserscriptBase):
             return
 
         try:
-            id = _film_id(data)
-            if not id:
+            film_id = _film_id(data)
+            if not film_id:
                 return None
 
-            data = self.getJsonData('https://trailers.apple.com/trailers/feeds/data/%s.json' % id)
+            data = self.getJsonData('https://trailers.apple.com/trailers/feeds/data/%s.json' % film_id)
 
             name = data['page']['movie_title']
             year = tryInt(data['page']['release_date'][0:4])
