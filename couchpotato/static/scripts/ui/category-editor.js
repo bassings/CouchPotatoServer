@@ -21,7 +21,7 @@ export function categoryOrder(category) {
  *
  * @param {Object} category  Raw category doc from category.list API
  *                           { _id, _t, order, label, ignored, preferred, required, destination }
- * @returns {{ id: string, label: string, ignored: string, preferred: string,
+ * @returns {{ id: string | number, label: string, ignored: string, preferred: string,
  *             required: string, destination: string, order: number }}
  */
 export function categoryToForm(category) {

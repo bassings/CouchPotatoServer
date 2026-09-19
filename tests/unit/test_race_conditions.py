@@ -295,9 +295,16 @@ class TestConcurrentPluginRunning:
             while not stop.is_set():
                 try:
                     running = plugin.isRunning()
-                    assert isinstance(running, list)
                 except Exception as e:
                     errors.append(e)
+                    stop.set()
+                    continue
+
+                if not isinstance(running, list):
+                    errors.append(AssertionError(
+                        'isRunning() returned %s instead of list' % type(running).__name__
+                    ))
+                    stop.set()
 
         threads = [threading.Thread(target=writer) for _ in range(3)]
         threads += [threading.Thread(target=reader) for _ in range(3)]
@@ -312,6 +319,8 @@ class TestConcurrentPluginRunning:
         for t in threads:
             t.join(timeout=2)
 
+        alive_threads = [t.name for t in threads if t.is_alive()]
+        assert not alive_threads, f"Workers failed to stop: {alive_threads}"
         assert len(errors) == 0, f"Errors: {errors}"
 
 
