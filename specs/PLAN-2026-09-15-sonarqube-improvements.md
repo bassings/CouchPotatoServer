@@ -777,12 +777,12 @@ within the authority explicitly granted by the owner.
 - [x] **T32 — simplify rTorrent URL-prefix checks** *(needs: T31)* — state: merged #398.
   Use one tuple prefix check while preserving endpoint and TLS behavior.
   Covers AC-QA-41, AC-SEC-19, AC-OPS-28, and AC-SIMP-30.
-- [ ] **T33 — use native replacement-choice radios** *(needs: T32)* — state: awaiting-ci #399.
+- [x] **T33 — use native replacement-choice radios** *(needs: T32)* — state: merged #399.
   Replace the custom radio-button state machine with native radios while
   retaining security, keyboard, focus, mobile, and exact-submission behavior.
   Covers AC-A11Y-8, AC-DESIGN-5, AC-QA-42, AC-SEC-20, AC-PROD-9, and AC-SIMP-31.
 - [ ] **T34 — remove obsolete iframe border attributes** *(needs: T33)*
-  — state: queued.
+  — state: building.
 - [ ] **T35 — use native ordered settings lists** *(needs: T34)* — state: queued.
 - [ ] **T36 — flatten release-view sort conditionals** *(needs: T35)*
   — state: queued.
@@ -1607,3 +1607,15 @@ T9 and T14 exceptions stated above.
   unit tests, 42 integration tests, and 214 UI unit tests. Two independent
   code reviewers and fresh acceptance-criteria verification were clean at
   `4065b768b04c27fe45f55694323843e715afe9ee`; PR #399 is open for hosted CI.
+- 2026-09-20: T33 merged as PR #399 at
+  `c21b1e9512fc2e46449675e77f15e316d1d0f684` after every hosted check passed.
+  The post-CI security, QA, accessibility, design, and product lenses were
+  clean on matching tree `f335bf47c2a1dbd8cf64c6d5f649a731f1c95c91`.
+  Exact-master analysis `41aedabe-d60a-462b-8621-69fade0663b6` reported the
+  merge SHA as both revision and project version after 4,450 Python tests
+  (14 skipped, 5 expected failures) and 214 UI tests passed. Web:S6819 issue
+  `c40680a6-882f-494d-853d-b886f05f2140` closed as `FIXED`. The scan also
+  raised Web:S6853 against a wrapping label whose runtime `x-text` filename
+  and exact accessible name are browser-tested; that static-analysis false
+  positive was documented and accepted. Open smells fell from 801 to 800 and
+  major findings from 311 to 310. T34 starts on that exact verified merge.
