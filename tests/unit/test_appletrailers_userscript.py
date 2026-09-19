@@ -30,6 +30,22 @@ class TestAppleTrailersFilmId:
         )
         provider.search.assert_called_once_with('Example Movie', 2026)
 
+    def test_valid_film_id_from_http_response_bytes_fetches_metadata(self):
+        provider = self._provider(b"prefix FilmId = '12345'; suffix")
+
+        assert provider.getMovie('http://trailers.apple.test/example') == 'movie-result'
+        provider.getJsonData.assert_called_once_with(
+            'https://trailers.apple.com/trailers/feeds/data/12345.json',
+        )
+
+    def test_invalid_bytes_outside_film_id_do_not_hide_a_valid_id(self):
+        provider = self._provider(b"\xff prefix FilmId = '12345'; suffix")
+
+        assert provider.getMovie('http://trailers.apple.test/example') == 'movie-result'
+        provider.getJsonData.assert_called_once_with(
+            'https://trailers.apple.com/trailers/feeds/data/12345.json',
+        )
+
     def test_parser_preserves_the_legacy_greedy_id_boundary(self):
         provider = self._provider("FilmId = 'first'; noise = 'second'; tail")
 
@@ -46,6 +62,7 @@ class TestAppleTrailersFilmId:
             "FilmId = 'missing terminator'",
             "FilmId = '';",
             "FilmId =\n'cross-line';",
+            b"FilmId = '\xff';",
             ('FilmId' + ('=' * 20_000) + ("'" * 20_000)),
         ],
     )

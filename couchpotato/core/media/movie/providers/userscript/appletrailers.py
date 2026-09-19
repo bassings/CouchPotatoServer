@@ -9,7 +9,9 @@ autoload = 'AppleTrailers'
 
 
 def _film_id(page):
-    if not isinstance(page, str):
+    if isinstance(page, bytes):
+        page = page.decode('utf-8', errors = 'replace')
+    elif not isinstance(page, str):
         return None
 
     for line in page.split('\n'):
@@ -26,7 +28,7 @@ def _film_id(page):
         if marker == -1 or marker + len('FilmId') > equals:
             continue
         film_id = line[opening_quote + 1:closing_quote]
-        if film_id:
+        if film_id and '\ufffd' not in film_id:
             return film_id
     return None
 

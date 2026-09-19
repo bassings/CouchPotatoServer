@@ -997,14 +997,15 @@ T9 and T14 exceptions stated above.
 - 2026-09-19: T22 red evidence showed the provider's regex accepting an empty
   FilmId, taking approximately 60 seconds on 20,000 repeated delimiters, and
   calling regex search on the valid path. A bounded line parser now passes all
-  eight focused provider tests, including no downstream request for malformed
+  eleven focused provider tests, including no downstream request for malformed
   input. Five hundred thousand seeded inputs match the legacy regex for valid
-  IDs; the deliberate empty-ID rejection is the only policy difference. The
+  IDs; the deliberate empty-ID and replacement-character rejections are the
+  only policy differences. The
   10k/20k/40k/80k malformed adversary measured approximately
   0.000014/0.000024/0.000047/0.000103 seconds. Replacing the greedy final
   delimiter selection with the first delimiter made the competing-marker test
   fail, proving that compatibility assertion is load-bearing. The fast gate
-  collected 4,376 Python unit-test items (4,357 passed, 14 skipped, 5 xfailed),
+  collected 4,379 Python unit-test items (4,360 passed, 14 skipped, 5 xfailed),
   then passed 42 integration tests and 214 UI-unit tests with Ruff,
   conformance, and the 324-file trap guard clean.
 - 2026-09-19: T22 security review found one recurring test-mechanism gap with
@@ -1014,3 +1015,14 @@ T9 and T14 exceptions stated above.
   test now asserts the error logger is untouched, and an explicit split-line
   case pins the legacy regex's newline boundary. Both assertions fail under
   their respective mutations.
+- 2026-09-19: PR #381's hosted review found that the real HTTP/cache boundary
+  returns response content as bytes while the first parser revision accepted
+  only strings. A production-shaped bytes test failed before remediation and
+  now passes after explicit UTF-8 decoding with replacement, keeping malformed
+  byte sequences bounded and out of exception logs.
+- 2026-09-19: Both local remediation reviewers then found the same malformed-
+  byte boundary gap: a replacement character inside FilmId could still reach
+  the metadata URL. Tests now prove corruption outside a valid ASCII ID remains
+  recoverable, while corruption inside the ID fails closed without a request
+  or error log. Removing either replacement decoding or the replacement-
+  character rejection kills the focused suite.
