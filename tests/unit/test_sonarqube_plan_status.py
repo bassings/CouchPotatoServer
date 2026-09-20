@@ -22,6 +22,10 @@ PASSED_COLLECTION_TOTAL = re.compile(
     r'\bpassed(?::)?\s+[\d,]+\s+Python unit(?: tests?)?\b',
     re.IGNORECASE,
 )
+LIFECYCLE_MARKER = re.compile(
+    r'^> \*\*Lifecycle: (active|proposed|queued|completed|superseded|historical)\*\*$',
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _task_status_errors(text):
@@ -70,9 +74,60 @@ def _task_status_errors(text):
     return errors
 
 
+def _plan_lifecycle_errors(text):
+    """A plan with no open tasks must stop presenting itself as active guidance."""
+    marker = LIFECYCLE_MARKER.search('\n'.join(text.splitlines()[:12]))
+    if marker is None:
+        return ['missing canonical lifecycle marker near the plan title']
+
+    implementation = text.split('## Implementation sequence', 1)[1].split(
+        '## Conductor log', 1
+    )[0]
+    task_marks = re.findall(
+        r'^- \[([ x])\] \*\*T\d+\b', implementation, re.MULTILINE
+    )
+    if not task_marks:
+        return ['no canonical task checkboxes found']
+
+    lifecycle = marker.group(1).lower()
+    has_open_tasks = ' ' in task_marks
+    if not has_open_tasks and lifecycle != 'completed':
+        return [f'finished plan has lifecycle {lifecycle!r}, not completed']
+    if has_open_tasks and lifecycle == 'completed':
+        return ['plan with open tasks has completed lifecycle']
+    return []
+
+
 def test_plan_checkboxes_agree_with_explicit_states():
     errors = _task_status_errors(PLAN.read_text(encoding='utf-8'))
     assert not errors, f'inconsistent task status: {errors}'
+
+
+def test_plan_lifecycle_agrees_with_whether_tasks_remain_open():
+    errors = _plan_lifecycle_errors(PLAN.read_text(encoding='utf-8'))
+    assert not errors, f'inconsistent plan lifecycle: {errors}'
+
+
+@pytest.mark.parametrize(
+    ('lifecycle', 'mark', 'has_error'),
+    [
+        ('active', ' ', False),
+        ('completed', 'x', False),
+        ('active', 'x', True),
+        ('completed', ' ', True),
+    ],
+)
+def test_plan_lifecycle_check_covers_active_and_finished_states(
+    lifecycle, mark, has_error
+):
+    text = (
+        '# Plan\n\n'
+        f'> **Lifecycle: {lifecycle}**\n\n'
+        '## Implementation sequence\n\n'
+        f'- [{mark}] **T1** example — state: completed\n\n'
+        '## Conductor log\n'
+    )
+    assert bool(_plan_lifecycle_errors(text)) is has_error
 
 
 def test_plan_does_not_report_collected_python_items_as_all_passed():

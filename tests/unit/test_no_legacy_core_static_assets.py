@@ -98,9 +98,9 @@ def test_active_guidance_records_the_legacy_static_tree_as_retired():
     assert "The legacy runtime is retired; `/old/*` is only a redirect." in cleanup_spec
     assert "Redirect-only; contains no classic page" in qa_plan
     assert "here to load the static files" not in downloader
-    assert (
-        "specs/PLAN-2026-09-15-sonarqube-improvements.md" in _active_guidance()
-    )
+    sonar_plan = "specs/PLAN-2026-09-15-sonarqube-improvements.md"
+    assert sonar_plan not in _active_guidance()
+    assert _lifecycle((REPO_ROOT / sonar_plan).read_text()) == "completed"
 
     active_without_marker = [
         relative
