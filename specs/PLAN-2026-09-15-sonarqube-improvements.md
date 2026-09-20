@@ -2761,3 +2761,12 @@ T9 and T14 exceptions stated above.
   checks prove the affected Settings and wizard states in both themes. The
   separate pre-existing whole-Searchers-page overflow is outside these changed
   elements and is not folded into this semantic-label batch.
+- 2026-09-20: T44 review round three found the same mechanism class again:
+  JavaScript regular-expression literals containing `//` could fool the
+  partial comment lexer and hide later generated markup. Per the recurring-
+  finding rule, the fix removes that lexer rather than teaching it another
+  syntax edge. The guard now inspects every markup-bearing backtick span and
+  therefore fails closed even inside comment prose; the one repository comment
+  that used a markup example was reworded. URL, quoted-marker, escaped-quote,
+  protocol-regex, slash-regex, and comment fixtures exercise the mechanism,
+  and 50 focused source tests remain green.

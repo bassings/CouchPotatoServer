@@ -75,6 +75,7 @@ _JINJA_COMMENT = re.compile(r'{#.*?#}', re.S)
 #: A JS template-literal string, inside a <script> block, that contains form
 #: markup -- see the getDownloaderFields() note above.
 _JS_HTML_MARKUP = re.compile(r'<(?:input|label|select|textarea)\b')
+_JS_TEMPLATE_LITERAL = re.compile(r'`((?:\\.|[^`])*)`', re.S)
 #: Script bodies are extracted with the HTML parser, NOT a regex. CodeQL's
 #: py/bad-tag-filter flagged the regex form on PR 301 and was right about the
 #: code even though the severity does not apply here (this parses the
@@ -88,46 +89,18 @@ def _script_bodies(html_text):
     return [script.string or script.get_text() or '' for script in soup.find_all('script')]
 
 
-def _skip_js_quoted(script, start, quote):
-    """Return the index after one JS string and its unescaped raw content."""
-    content = []
-    index = start + 1
-    while index < len(script):
-        char = script[index]
-        if char == '\\' and index + 1 < len(script):
-            content.extend((char, script[index + 1]))
-            index += 2
-            continue
-        if char == quote:
-            return index + 1, ''.join(content)
-        content.append(char)
-        index += 1
-    return len(script), ''.join(content)
-
-
 def _js_html_strings(script):
-    """Yield markup-bearing JS template literals outside strings/comments."""
-    index = 0
-    while index < len(script):
-        if script.startswith('//', index):
-            newline = script.find('\n', index + 2)
-            index = len(script) if newline == -1 else newline + 1
-            continue
-        if script.startswith('/*', index):
-            closing = script.find('*/', index + 2)
-            index = len(script) if closing == -1 else closing + 2
-            continue
+    """Yield every markup-bearing backtick span, including comment prose.
 
-        char = script[index]
-        if char in ("'", '"'):
-            index, _ = _skip_js_quoted(script, index, char)
-            continue
-        if char == '`':
-            index, content = _skip_js_quoted(script, index, char)
-            if _JS_HTML_MARKUP.search(content):
-                yield content
-            continue
-        index += 1
+    This deliberately fails closed instead of partially lexing JavaScript.
+    URLs and regular-expression literals can contain comment-like tokens, so
+    trying to skip comments without a real parser risks silently missing the
+    later generated markup that this guard exists to inspect.
+    """
+    for match in _JS_TEMPLATE_LITERAL.finditer(script):
+        content = match.group(1)
+        if _JS_HTML_MARKUP.search(content):
+            yield content
 
 
 def _strip_jinja_comments(text):
@@ -401,15 +374,15 @@ def test_the_checker_ignores_jinja_comment_text_that_looks_like_a_tag():
         'unassociated input -- got %r' % violations)
 
 
-def test_script_markup_extraction_ignores_backtick_examples_in_comments():
+def test_script_markup_extraction_fails_closed_on_backtick_examples_in_comments():
+    comment_markup = '<label for="example">Example</label><input id="example">'
+    rendered_markup = '<label for="name">Name</label><input id="name">'
     script = (
-        '// Example only: `<label for="missing">`\n'
-        'const rendered = `<label for="name">Name</label><input id="name">`;'
+        f'// Example only: `{comment_markup}`\n'
+        f'const rendered = `{rendered_markup}`;'
     )
 
-    assert list(_js_html_strings(script)) == [
-        '<label for="name">Name</label><input id="name">'
-    ]
+    assert list(_js_html_strings(script)) == [comment_markup, rendered_markup]
 
 
 def test_script_markup_extraction_respects_comment_markers_inside_strings():
@@ -418,7 +391,8 @@ def test_script_markup_extraction_respects_comment_markers_inside_strings():
         f'const docs = "https://example.test"; const rendered = `{markup}`;',
         f'const token = "/*"; const rendered = `{markup}`; const end = "*/";',
         f'const quote = "escaped \\\" // text"; const rendered = `{markup}`;',
-        f'/* example only: `{markup}` */ const rendered = `{markup}`;',
+        f'const protocol = /^https?:\\/\\//; const rendered = `{markup}`;',
+        f'const slashes = /\\/\\//; const rendered = `{markup}`;',
     )
 
     for script in scripts:
