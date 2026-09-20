@@ -210,6 +210,33 @@ test.describe('Settings', () => {
     const savedIndicator = page.getByText(/saved/i);
     await expect(savedIndicator.first()).toBeVisible({ timeout: 5000 });
   });
+
+  test('a rewritten setting name stays complete in the refusal announcement', async ({ page }) => {
+    await page.route('**/settings.save/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, changed: true, value: false }),
+      });
+    });
+
+    const state = await page.evaluate(async () => {
+      const root = document.querySelector('[x-data="settingsPanel()"]');
+      if (!root) throw new Error('settingsPanel root is absent');
+      const panel = (window as any).Alpine.$data(root);
+      await panel.saveSingle('core', 'auth_required_guard', true);
+      return { saving: panel.saving, lastSaved: panel.lastSaved };
+    });
+
+    const expected = 'auth required guard could not be set to that value; the server stored "false" instead. Check the log for the reason.';
+    expect(state).toEqual({ saving: false, lastSaved: false });
+    await expect(page.getByTestId('settings-announcer-assertive')).toHaveText(expected);
+    await expect(page.getByTestId('settings-announcer-polite')).toBeEmpty();
+    const visibleToast = page.locator('[x-show="message"][x-text="message"]');
+    await expect(visibleToast).toHaveText(expected);
+    await expect(visibleToast).toBeVisible();
+    await expect(page.getByText('Saved', { exact: true })).toBeHidden();
+  });
 });
 
 /**

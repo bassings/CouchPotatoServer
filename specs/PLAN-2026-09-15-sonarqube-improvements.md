@@ -1401,6 +1401,32 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-51:** Do not change valid markup or delete security documentation
   to accommodate a static parser. Add one shared inventory mechanism and the
   smallest rendered assertions; do not suppress either rule globally.
+- **AC-QA-108:** The settings-refusal path converts every underscore in an
+  option name to a space. A real browser drives the production `saveSingle`
+  method with a controlled changed response and a name containing at least two
+  underscores, then proves the exact visible and assertively announced text,
+  `saving === false`, and `lastSaved === false`.
+- **AC-QA-109:** The exact S7781 call uses literal
+  `name.replaceAll('_', ' ')`; the flagged global-regex spelling is absent. A
+  narrow source contract fails before the edit and does not ban regex
+  replacements whose pattern semantics are intentional.
+- **AC-QA-110:** Applied-and-restored mutations to first-occurrence `replace`,
+  the old global-regex spelling, and a missing replacement each kill their
+  owning behavior or source check. Focused settings browser/source tests,
+  UI-unit tests, false-green checks, and the broad gate pass before review.
+  After merge, exact-master Sonar closes key
+  `ca430b75-709b-45eb-8564-5441822a3ad2` as fixed.
+- **AC-SEC-44:** Change only the option-name normalization. Preserve the
+  `hasValue` privacy gate, server-returned value, error severity, 6000 ms
+  dwell, early return, and text-only Alpine sink; a response withholding value
+  still cannot render the submitted password or a stored hash.
+- **AC-SEC-45:** Delivery evidence contains no token, internal address, private
+  path, credential, or setting value. No suppression or quality-profile change
+  is used. `replaceAll` is accepted on the measured current-browser contract;
+  this plan makes no unsupported legacy-browser claim.
+- **AC-SIMP-52:** Make the one-expression correction and focused evidence only.
+  Do not extract a formatter, add a dependency or transpilation layer, or
+  refactor the adjacent security-sensitive save flow.
 
 ## Implementation sequence
 
@@ -1609,11 +1635,16 @@ within the authority explicitly granted by the owner.
   type and deduplication contract, and verify the exact S7516 key. Covers
   AC-QA-98..101, AC-DATA-13..14, AC-SEC-41, AC-ARCH-2, AC-OPS-38, and
   AC-SIMP-50.
-- [ ] **T48 — prove and adjudicate the remaining Web accessibility findings**
-  *(needs: T47)* — state: awaiting-ci. Preserve the valid Alpine link and
+- [x] **T48 — prove and adjudicate the remaining Web accessibility findings**
+  *(needs: T47)* — state: merged #416. Preserved the valid Alpine link and
   server-only security comment, add exact inventory and rendered browser proof,
   then adjudicate only the two mapped keys. Covers AC-QA-102..107, AC-SEC-42..43,
   AC-A11Y-24, AC-DESIGN-14, AC-OPS-39, and AC-SIMP-51.
+- [ ] **T49 — close the final JavaScript reliability finding** *(needs: T48)*
+  — state: awaiting-ci. Replace only the literal global underscore
+  normalization with `replaceAll`, prove the complete refusal announcement in
+  the real settings panel, and verify the exact S7781 key on merged master.
+  Covers AC-QA-108..110, AC-SEC-44..45, and AC-SIMP-52.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -3117,3 +3148,36 @@ T9 and T14 exceptions stated above.
   matrix with 305 passes, and the broad Python gate with 4,597 passed, 14
   skipped, and five expected failures. No production template changed; T48
   now awaits CI and cloud review.
+- 2026-09-20: T48 merged as PR #416 at
+  `7c6465db3da67a2fc2deae8f4301bea4dfb09434`. Its exact-master Sonar task
+  `e39cafa0-bd77-44c2-b900-563adf5ae2e5` retained the two behavior-proven
+  static-parser findings; after evidence comments and exact-key transitions,
+  both are `FALSE_POSITIVE`. Open reliability fell from three LOW to one LOW;
+  coverage remains 63.7%, legacy reliability remains A with zero bugs, and
+  Clean Code reliability remains B solely because S7781 is still open.
+- 2026-09-20: T49 planning reached QA, security/privacy, and
+  product/accessibility/operability agreement: the literal global underscore
+  normalization can become `replaceAll` without changing behavior on the
+  measured current-browser contract. The red source contract failed on master.
+  A real-browser refusal path uses a multi-underscore name and separately
+  proves visible text, assertive announcement, an empty polite channel, and no
+  false Saved state. No formatter extraction, polyfill, or adjacent save-flow
+  refactor is warranted.
+- 2026-09-20: T49 completed its focused red/green and mutation cycle. The
+  source contract failed on master and passed after the one-expression
+  `replaceAll` edit. Applied-and-restored first-occurrence `replace`, old
+  global-regex spelling, and empty replacement mutations each failed their
+  owning source or real-browser assertion; restoration returns the 39 focused
+  Python checks and Chromium refusal flow to green.
+- 2026-09-20: T49's restored diff passes 69 focused Python/source-plan checks,
+  Ruff, the 354-file false-green guard, 221 UI unit tests, all 12 Settings
+  browser tests, the full Python gate with 4,598 passed, 14 skipped, and five
+  expected failures, the complete 306-test Chromium/accessibility/mobile
+  matrix, and a production Docker build. T49 now enters the independent local
+  Harness review gate.
+- 2026-09-20: Three independent current-diff reviews (QA, security/privacy,
+  and product/accessibility/operability) returned clean. Reviewers independently
+  reran the focused source and Chromium evidence, confirmed the mutations are
+  load-bearing, and found no secret, privacy, auth-truthfulness, accessibility,
+  layout, compatibility-contract, or operational regression. T49 now awaits
+  CI and cloud review.

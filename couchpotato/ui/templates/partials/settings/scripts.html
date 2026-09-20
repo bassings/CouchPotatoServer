@@ -512,7 +512,7 @@ function settingsPanel() {
         // the secret the operator just typed.
         if (payload && payload.changed && hasValue) {
           this.toast(
-            name.replace(/_/g, ' ') + ' could not be set to that value; the server stored "'
+            name.replaceAll('_', ' ') + ' could not be set to that value; the server stored "'
               + payload.value + '" instead. Check the log for the reason.',
             'error', 6000,
           );
