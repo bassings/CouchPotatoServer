@@ -37,24 +37,7 @@ function logsPanel() {
     },
 
     parseLogs(lines) {
-      if (!Array.isArray(lines)) return [];
-      return lines.map(line => {
-        if (typeof line === 'object' && line.time) {
-          const msg = line.message || '';
-          const srcMatch = msg.match(/^\[([^\]]*)\]\s*(.*)/);
-          return {
-            time: line.time,
-            type: (line.type || 'INFO').toUpperCase(),
-            source: srcMatch ? srcMatch[1].trim() : '',
-            message: srcMatch ? srcMatch[2] : msg,
-          };
-        }
-        if (typeof line !== 'string') return { time: '', type: 'INFO', source: '', message: String(line) };
-        const m = line.match(/^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(ERROR|WARNING|INFO|DEBUG)\s+\[([^\]]*)\]\s*(.*)$/);
-        if (m) return { time: m[1], type: m[2], source: m[3].trim(), message: m[4] };
-        const levelMatch = line.match(/\b(ERROR|WARNING|INFO|DEBUG)\b/);
-        return { time: '', type: levelMatch ? levelMatch[1] : 'INFO', source: '', message: line };
-      });
+      return CP.ui.parseLogLines(lines);
     },
 
     async clearLogs() {
