@@ -1270,7 +1270,7 @@ within the authority explicitly granted by the owner.
   accessibility, and mobile coverage. Covers AC-QA-65..72, AC-SEC-30..34,
   AC-DESIGN-7, AC-A11Y-11..12, AC-PROD-14..15, AC-OPS-34..36, and AC-SIMP-43.
 - [ ] **T42 — remove repeated side-effectful parser operands as one rule-family
-  correction** *(needs: T41)* — state: building. Resolve both replacement
+  correction** *(needs: T41)* — state: awaiting-ci #409. Resolve both replacement
   JavaScript S1764 findings without changing parser behavior. Covers
   AC-QA-73..76, AC-SEC-35, AC-OPS-37, and AC-SIMP-44.
 
@@ -2484,3 +2484,8 @@ T9 and T14 exceptions stated above.
   checks, the three source guards, trap/Ruff/diff/secret checks, and independent
   zero-drift and 800k scaling probes. The amended exact commit now receives
   the final pre-push gate.
+- 2026-09-20: T42 opened as PR #409 from exact locally reviewed commit
+  `760cbdebe56019e5c3133497f8a51fd922a9ed3d`. Immediately before delivery,
+  `origin/master` remained the verified PR #408 merge
+  `72e7427cb729fdd93e1cdbee0f8265d6aa5010d7`, and no other PR was open.
+  Hosted CI and cloud review are now the next gate.
