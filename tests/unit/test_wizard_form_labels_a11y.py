@@ -97,7 +97,22 @@ def _js_html_strings(script):
     trying to skip comments without a real parser risks silently missing the
     later generated markup that this guard exists to inspect.
     """
-    for match in _JS_TEMPLATE_LITERAL.finditer(script):
+    template_spans = list(_JS_TEMPLATE_LITERAL.finditer(script))
+    uncovered_markup = [
+        match.start()
+        for match in _JS_HTML_MARKUP.finditer(script)
+        if not any(
+            template.start(1) <= match.start() < template.end(1)
+            for template in template_spans
+        )
+    ]
+    assert not uncovered_markup, (
+        'form markup appears outside a paired backtick span at offsets %r; '
+        'refusing to let malformed or mispaired script source bypass the '
+        'label audit' % uncovered_markup
+    )
+
+    for match in template_spans:
         content = match.group(1)
         if _JS_HTML_MARKUP.search(content):
             yield content
@@ -383,6 +398,16 @@ def test_script_markup_extraction_fails_closed_on_backtick_examples_in_comments(
     )
 
     assert list(_js_html_strings(script)) == [comment_markup, rendered_markup]
+
+
+def test_script_markup_extraction_fails_loudly_on_an_unmatched_comment_backtick():
+    script = (
+        '// prose uses one ` delimiter\n'
+        'const rendered = `<label for="name">Name</label><input id="name">`;'
+    )
+
+    with pytest.raises(AssertionError, match='outside a paired backtick span'):
+        list(_js_html_strings(script))
 
 
 def test_script_markup_extraction_respects_comment_markers_inside_strings():

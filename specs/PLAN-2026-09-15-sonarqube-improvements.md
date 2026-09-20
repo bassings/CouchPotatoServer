@@ -2770,3 +2770,13 @@ T9 and T14 exceptions stated above.
   that used a markup example was reworded. URL, quoted-marker, escaped-quote,
   protocol-regex, slash-regex, and comment fixtures exercise the mechanism,
   and 50 focused source tests remain green.
+- 2026-09-20: T44 review round four found that an unmatched backtick in
+  comment prose could still pair with a real template's opening delimiter and
+  make its markup disappear from the audit. The extraction mechanism now
+  asserts that every form-markup occurrence in a script lies inside a paired
+  backtick span; malformed or mispaired source therefore fails loudly instead
+  of succeeding with an empty audit. A regression fixture reproduces that
+  exact case. Existing script-comment prose naming a native select was reworded
+  so the invariant distinguishes generated markup mechanically. This is the
+  escalation guard for the recurring extraction class, not another attempt to
+  parse JavaScript syntax.
