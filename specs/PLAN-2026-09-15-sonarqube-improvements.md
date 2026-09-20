@@ -1357,6 +1357,50 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-50:** This is a one-expression correction plus focused evidence.
   Do not extract a helper, add an ordered collection or dependency, rewrite
   grouping, or touch the nearby suspicious `leftovers -= leftovers - {ff}`.
+- **AC-QA-102:** Inventory every served template after removing server-side
+  Jinja comments. Map the sole dynamic text-only anchor identity and the sole
+  raw-only missing-alt image identity to their exact Sonar keys; added,
+  missing, duplicated, or structurally changed identities must fail.
+- **AC-QA-103:** The real Trakt browser flow proves the verification link is
+  absent before a code exists, then visible with exact text, computed name,
+  HTTPS destination, safe new-tab relationship, and genuine Tab reachability
+  after the controlled device-code response.
+- **AC-QA-104:** A real rendered shell contains no logout image, retains both
+  named CouchPotato logos, and emits none of the server-only security rationale.
+  A production-wide source contract rejects any served image lacking a static
+  or bound alternative while ignoring Jinja comments exactly as rendering does.
+- **AC-QA-105:** Applied-and-restored mutations removing or blanking Trakt
+  `x-text`, hiding or de-tabbing its anchor, duplicating an audited identity,
+  exposing the Jinja-comment image, or removing a real logo `alt` each kill an
+  owning check. Restoration returns every focused check to green.
+- **AC-QA-106:** Focused inventory, Trakt behavior and both-theme accessibility,
+  rendered-shell, hostile-URL, logout/security, Ruff, false-green, and broad
+  gates pass with no production markup change.
+- **AC-QA-107:** After merge, exact-master Sonar reports the merge SHA. Comment
+  on and transition only S6827 key
+  `13080ec9-e723-412b-9fac-b6e3ce0d5324` and ImgWithoutAltCheck key
+  `f46ec5b5-6c8a-4599-b328-2d960c2288cd`; re-fetch both and require zero open
+  issues in this batch without suppression or quality-profile changes.
+- **AC-SEC-42:** Keep the Trakt label and destination sourced from the same
+  backend-approved URL through `x-text`, never `x-html`. Preserve HTTPS/Trakt
+  validation, `_blank`, `noopener`, and `noreferrer`; add no credential, token,
+  path, settings URL, or provider payload to logs or adjudication evidence.
+- **AC-SEC-43:** Keep the logout attack example and rationale inside a
+  server-only Jinja comment. The authenticated logout remains a conditional
+  POST form; GET and cross-origin requests remain unable to revoke sessions.
+- **AC-A11Y-24:** The populated Trakt anchor's visible label and computed name
+  both equal its destination, it is sequentially keyboard reachable, and the
+  populated status region remains axe-clean in both themes. Do not add a
+  duplicate `aria-label` that can drift from its visible text.
+- **AC-DESIGN-14:** Preserve the visible URL, surrounding instruction/code
+  hierarchy, both logo images and their existing alternatives. This
+  adjudication has no visual or production-template change.
+- **AC-OPS-39:** Browser evidence remains hermetic through existing mocked
+  CouchPotato endpoints and the real-Trakt abort guard. Exact-key comments name
+  only merge/analysis identity, evidence, mutations, and expiry conditions.
+- **AC-SIMP-51:** Do not change valid markup or delete security documentation
+  to accommodate a static parser. Add one shared inventory mechanism and the
+  smallest rendered assertions; do not suppress either rule globally.
 
 ## Implementation sequence
 
@@ -1559,12 +1603,17 @@ within the authority explicitly granted by the owner.
   behavior, add exact inventory and real-template browser proof, then adjudicate
   only the four mapped keys. Covers AC-QA-92..97, AC-SEC-40, AC-A11Y-23,
   AC-DESIGN-13, AC-PROD-21, and AC-SIMP-49.
-- [ ] **T47 — remove the discarded scanner sort without changing set semantics**
-  *(needs: T46)* — state: awaiting-ci. Characterize the complete grouping boundary,
+- [x] **T47 — remove the discarded scanner sort without changing set semantics**
+  *(needs: T46)* — state: merged #415. Characterized the complete grouping boundary,
   replace only the redundant `set(sorted(...))` composition, mutation-prove the
   type and deduplication contract, and verify the exact S7516 key. Covers
   AC-QA-98..101, AC-DATA-13..14, AC-SEC-41, AC-ARCH-2, AC-OPS-38, and
   AC-SIMP-50.
+- [ ] **T48 — prove and adjudicate the remaining Web accessibility findings**
+  *(needs: T47)* — state: awaiting-ci. Preserve the valid Alpine link and
+  server-only security comment, add exact inventory and rendered browser proof,
+  then adjudicate only the two mapped keys. Covers AC-QA-102..107, AC-SEC-42..43,
+  AC-A11Y-24, AC-DESIGN-14, AC-OPS-39, and AC-SIMP-51.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -3036,3 +3085,35 @@ T9 and T14 exceptions stated above.
   gate with 4,590 passed, 14 skipped, and five expected failures. The changed-
   file mutation runner has no scanner scope, so the recorded applied/restored
   mutations are the load-bearing mutation evidence. T47 now awaits CI.
+- 2026-09-20: T47 merged as PR #415. Exact-master Sonar at
+  `7c9f4e22ea05b962e19bd118edbfd084332fc563` closed S7516 key
+  `147553ef-dc52-40f7-a0bf-b73b722b9b19` as fixed. Open reliability fell from
+  four LOW to three LOW; coverage rose from 63.1% to 63.7%. Clean Code
+  reliability remains 2.0/B while low impacts remain, and the legacy rating
+  remains 1.0/A with zero bugs.
+- 2026-09-20: T48 planning classified both remaining Web findings as static-
+  parser false positives. Alpine supplies the Trakt anchor's visible text and
+  computed name at runtime; the alleged logout image exists only in a Jinja
+  security comment removed before response rendering. Production markup stays
+  unchanged. Exact inventory, rendered name/keyboard evidence, and the
+  server-comment boundary must be mutation-proved before exact-key adjudication.
+- 2026-09-20: T48's focused evidence is green without a production-template
+  change. The inventory strips Jinja comments before auditing served images,
+  maps both exact raw identities with multiplicity, and mutation-proves both
+  the server-comment boundary and real logo alternatives. The populated Trakt
+  flow now asserts exact visible text, computed accessible name, both safe
+  `rel` tokens, and real Tab reachability. Applied-and-restored blank `x-text`,
+  `tabindex=-1`, and `aria-hidden` mutations each failed their owning browser
+  assertion.
+- 2026-09-20: T48 review round one found two evidence-boundary false greens.
+  The Trakt flow now asserts zero accessible links before authorization, so
+  removing its `x-show` guard fails before the populated state. The Jinja
+  extractor now captures comment bodies rather than slicing fixed offsets;
+  compact `{#...#}` and whitespace-trimmed `{#-...-#}` fixtures both prove a
+  future raw-only image cannot escape the exact inventory.
+- 2026-09-20: T48's corrected diff passed three independent current-diff
+  reviews, 119 focused Python checks, seven targeted accessibility checks,
+  Ruff, the 353-file false-green guard, 221 UI unit tests, the full browser
+  matrix with 305 passes, and the broad Python gate with 4,597 passed, 14
+  skipped, and five expected failures. No production template changed; T48
+  now awaits CI and cloud review.

@@ -6,6 +6,18 @@ import { test, expect } from './fixtures';
  */
 
 test.describe('Navigation', () => {
+  test('the rendered shell strips server comments and names both logo images', async ({ page }) => {
+    await page.goto('/');
+
+    const logos = page.locator('img[src$="/static/images/couch.png"]');
+    await expect(logos).toHaveCount(2);
+    for (const logo of await logos.all()) {
+      await expect(logo).toHaveAttribute('alt', 'CouchPotato');
+    }
+    await expect(page.locator('img[src="/logout/"]')).toHaveCount(0);
+    await expect(page.locator('body')).not.toContainText('a GET would let');
+  });
+
   // AC-QA-27: the login `beforeEach` that used to sit here is GONE, not fixed.
   //
   // It navigated to `/`, and then did nothing at all unless the URL contained

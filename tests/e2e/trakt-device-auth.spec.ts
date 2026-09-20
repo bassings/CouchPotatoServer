@@ -218,6 +218,7 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
     await expect(status).toHaveAttribute('role', 'status');
     await expect(status).toHaveAttribute('aria-live', 'polite');
     await expect(status).not.toContainText('ABCD-1234');
+    await expect(status.getByRole('link')).toHaveCount(0);
 
     let deviceCodeRequests = 0;
     await page.route(DEVICE_CODE_ROUTE, (route) => {
@@ -249,9 +250,13 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
 
     const link = status.locator('[data-testid="trakt-verification-url"]');
     await expect(link).toBeVisible();
+    await expect(link).toHaveText('https://trakt.tv/activate');
+    await expect(link).toHaveAccessibleName('https://trakt.tv/activate');
     await expect(link).toHaveAttribute('href', 'https://trakt.tv/activate');
     await expect(link).toHaveAttribute('target', '_blank');
-    await expect(link).toHaveAttribute('rel', /noopener/);
+    await expect(link).toHaveAttribute('rel', /(?=.*\bnoopener\b)(?=.*\bnoreferrer\b)/);
+    await page.keyboard.press('Tab');
+    await expect(link).toBeFocused();
 
     expect(deviceCodeRequests).toBe(1);
 
