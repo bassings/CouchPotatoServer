@@ -1284,6 +1284,46 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   now-unnecessary presentational form role. Do not add composite-widget
   JavaScript, custom scrolling controls, dependencies, or rule suppression;
   leave the valid releases production markup unchanged.
+- **AC-QA-92:** Inventory all served templates for the exact four
+  `img[onerror]` S6847 source identities and full issue keys. Preserve
+  multiplicity and fail on an added, missing, duplicated, or structurally
+  changed occurrence.
+- **AC-QA-93:** Render the real chart, search, suggestion, and library templates
+  with their distinct data shapes. Each poster is immediately followed by an
+  initially hidden local fallback inside its existing native card control.
+- **AC-QA-94:** Browser tests hold genuine poster requests before observing the
+  initial state. A successful response leaves the poster visible and fallback
+  hidden; a failed response hides the poster and reveals its own fallback for
+  all four production templates, with no page error and a named, focusable
+  enclosing control.
+- **AC-QA-95:** Applied-and-restored mutations prove each handler, duplicate
+  occurrence, sibling adjacency, initial hidden state, and runtime image hiding
+  are owned by a failing check. The browser consumes rendered production
+  templates rather than independent hand-written markup.
+- **AC-QA-96:** Focused tests, false-green checks, and the normal broad gates
+  pass after every mutation is restored.
+- **AC-QA-97:** After merge, exact-master Sonar reports the merge SHA. Comment
+  on and transition only keys `2c2425aa-1986-4871-a339-dc8faa87412f`,
+  `da38d30f-594d-40af-99d4-a9f343dca2ca`,
+  `a48992f0-9b52-4630-b021-7ae7bf56fae8`, and
+  `fe776ece-7d5f-4f9b-a70f-16871444e5bb`; re-fetch all four and require zero
+  open S6847 issues without suppression or quality-profile changes.
+- **AC-SEC-40:** The fixed fallback code remains independent of poster URL,
+  title, credentials, and user/provider data. It may only hide the failed image
+  and reveal its existing local sibling; do not add a request, log, redirect,
+  evaluation, or persistence side effect.
+- **AC-A11Y-23:** Resource failure creates no new focus stop or keyboard model.
+  Preserve the named native buttons for charts/search/suggestions and the named
+  library link, including existing alternative-text semantics.
+- **AC-DESIGN-13:** Preserve the current poster box, theme tokens, fallback
+  artwork/copy, hover treatment, badge placement, and valid-poster rendering;
+  this false-positive batch is not a fallback redesign.
+- **AC-PROD-21:** Poster failure never removes or disables its card. Titles,
+  years, statuses, profile/add controls, modal activation, library destination,
+  and review actions retain their existing behavior and copy.
+- **AC-SIMP-49:** Preserve the four minimal resource-error handlers. Do not add
+  roles, tabindex, keyboard listeners, Alpine disguises, dependencies, or a
+  global S6847 suppression solely to move the dashboard.
 
 ## Implementation sequence
 
@@ -1476,11 +1516,16 @@ within the authority explicitly granted by the owner.
   rendered association evidence, two semantic corrections, and two exact-key
   false-positive adjudications. Covers AC-QA-80..85, AC-SEC-37..38,
   AC-A11Y-17..20, AC-DESIGN-9..11, AC-PROD-17..19, and AC-SIMP-46..47.
-- [ ] **T45 — close the remaining medium reliability semantics together**
-  *(needs: T44)* — state: building. Repair the misleading application-menu
-  semantics behind S6821 and prove/adjudicate the intentional focusable
+- [x] **T45 — close the remaining medium reliability semantics together**
+  *(needs: T44)* — state: merged #413. Repaired the misleading application-menu
+  semantics behind S6821 and proved/adjudicated the intentional focusable
   releases region behind S6845. Covers AC-QA-86..91, AC-SEC-39,
   AC-A11Y-21..22, AC-DESIGN-12, AC-PROD-20, and AC-SIMP-48.
+- [ ] **T46 — adjudicate image-error S6847 as one exact rule-family batch**
+  *(needs: T45)* — state: building. Preserve the valid resource-failure
+  behavior, add exact inventory and real-template browser proof, then adjudicate
+  only the four mapped keys. Covers AC-QA-92..97, AC-SEC-40, AC-A11Y-23,
+  AC-DESIGN-13, AC-PROD-21, and AC-SIMP-49.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -2890,3 +2935,25 @@ T9 and T14 exceptions stated above.
   the navigation source guard at the discovery boundary so duplicate landmarks,
   missing native links, forbidden composite roles, or a weakened logout form
   fail through real temporary-template mutations rather than synthetic lists.
+- 2026-09-20: T45 merged as PR #413 at exact tree
+  `a16ad6895e717181a45d599c6b9000831a5b24b7`. Exact-master Sonar at
+  `8bbe2a0b3968f055046ab9f693611a298ebe8fd2` closed S6821 as fixed and,
+  after recorded both-theme keyboard-scroll evidence, S6845 was transitioned
+  by exact key to false positive. Open reliability is now eight LOW and zero
+  MEDIUM; the Clean Code reliability rating moved from 3.0/C to 2.0/B.
+- 2026-09-20: T46 planning classified all four S6847 findings as one static
+  false-positive family: each is a resource-load `error` handler on an image,
+  while the rule concerns user interaction on non-interactive elements. No
+  production change is indicated. Evidence must render the four real Jinja
+  templates and control actual image responses because the existing chart and
+  search browser stubs omit the fallback markup.
+- 2026-09-20: T46 review closed two browser-evidence false greens before push.
+  The successful-resource branch now waits for a decoded one-pixel image with
+  non-zero intrinsic dimensions; replacing its bytes with invalid content
+  kills the test. The standalone `setContent` spec also imports Playwright
+  directly instead of starting the full CouchPotato worker, so it no longer
+  contends for the shared E2E data directory or port. Its two focused tests and
+  the eight exact-inventory tests pass. The first broad 304-test run had two
+  unrelated transient failures (one refused server connection and one missed
+  save indicator); both passed immediately when rerun together, and a fresh
+  full run is required before push.
