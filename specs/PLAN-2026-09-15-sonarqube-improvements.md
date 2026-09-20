@@ -1,11 +1,12 @@
 # PLAN 2026-09-15: improve the value of SonarQube results
 
-> **Lifecycle: active**
+> **Lifecycle: completed**
 > **Legacy runtime: retired; `/old/*`: redirect-only.**
 
 ## Problem
 
-The self-hosted SonarQube analysis of `couchpotato` is current at
+At the start of this plan, the self-hosted SonarQube analysis of `couchpotato`
+was current at
 `165e64019150e604be6f3dc6f85f03bb81afe9d0`, but its default quality gate is
 red on 56 findings labelled as new code. The measurement is hard to interpret:
 the inherited new-code definition is `PREVIOUS_VERSION`, while every recorded
@@ -1756,14 +1757,14 @@ within the authority explicitly granted by the owner.
   the real editor's selected value, and verify the exact-master Sonar parser
   warning is gone. Covers AC-QA-111..114, AC-SEC-46, AC-A11Y-25,
   AC-DESIGN-15, AC-PROD-22, AC-ARCH-3, AC-OPS-40, and AC-SIMP-53.
-- [ ] **T51 — pin Sonar analysis to fetched master provenance** *(needs: T50)*
-  — state: in-progress. Extend the existing repeated checkout validation so a
+- [x] **T51 — pin Sonar analysis to fetched master provenance** *(needs: T50)*
+  — state: merged #420. Extend the existing repeated checkout validation so a
   scan proceeds only while clean local `master` HEAD exactly equals
   `refs/remotes/origin/master`, with fail-closed recovery and mutation-resistant
   tests. Covers AC-QA-115..117, AC-SEC-47, AC-ARCH-4, AC-OPS-41..42, and
   AC-SIMP-54.
-- [ ] **T52 — replay the completed dead-static deletion before and after**
-  *(needs: T51)* — state: queued. Do not delete or exclude anything: PR #373
+- [x] **T52 — replay the completed dead-static deletion before and after**
+  *(needs: T51)* — state: completed. Do not delete or exclude anything: PR #373
   already removed the exact 19 JavaScript files, 4,487 JavaScript lines, and
   one image. Re-run a deterministic non-empty page-family manifest at the
   parent and merge commits, prove both sides render the same current workflows
@@ -3457,3 +3458,32 @@ T9 and T14 exceptions stated above.
   Git failure proves the mechanism retains the warning without disclosing
   stderr. Applied-and-restored mutations of both status classification and
   warning propagation are killed by their owning tests.
+- 2026-09-21: PR #420 merged as
+  `f6755c0ffa3a6cdbd3663e76d3324b37813d5ba0` after every hosted gate passed,
+  including all three CodeQL languages, cloud review, accessibility, Docker,
+  and Chromium E2E. A fresh clone on named `master` fetched that exact SHA as
+  `origin/master`; the new guard accepted it and analysis
+  `d0dbe63d-61ee-4771-bf56-42003ae8d3bd` completed successfully. Sonar records
+  the exact SHA as both revision and project version, 63.8% coverage, zero
+  bugs, both reliability ratings at 1.0/A, and zero open reliability impacts.
+  T51 is complete.
+- 2026-09-21: T52 replayed the unchanged historical Chromium suites at the
+  exact parent `f25a90d85f0348ec684220beeb9c86d3045b161c` and deletion commit
+  `7a993cb396eb17a64e07a8aa4e59e17ebe2938e4`. The manifest was identical on
+  both sides: `navigation`, `filters`, `search`, `movie-detail`, `settings`,
+  `categories`, `profiles`, `trakt-device-auth`, `wizard`, `suggestions`, and
+  `interactions`. Its 157 scenarios cover Wanted/Available/library, add/search,
+  movie detail, Suggestions/Charts, every Settings tab (including downloader,
+  provider, updater, category, profile/quality, notification, and Trakt
+  surfaces), Logs, and Wizard. Both sides passed 157/157. Playwright retained
+  one trace per scenario: the parent recorded 6,100 browser requests and the
+  deletion commit 6,101; each recorded zero `/core/` requests, zero requests
+  ending in any of the 19 deleted JavaScript basenames, and zero local
+  JavaScript, CSS, image, or font responses with an HTTP 4xx or 5xx status.
+  Playwright also recorded three parent-side and two deletion-side unfinished
+  (`-1`) requests to optional external Google Fonts; these are disclosed rather
+  than counted as local asset failures. The one-request difference is permitted
+  dynamic test traffic, not evidence of a deleted-asset request. Together with
+  the zero-file structural guard, this shows the deletion did not prevent any
+  covered successor page or workflow from rendering and did not degrade local
+  asset-load health. T52 is complete without an exclusion or replacement shim.
