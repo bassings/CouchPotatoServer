@@ -136,6 +136,22 @@ def _non_empty_attr(tag, *names):
     return False
 
 
+def _association_value(tag, name):
+    """Normalize one static or Alpine-bound label association value.
+
+    Alpine expressions containing only a quoted blank render no usable ID,
+    even though their source text is non-empty.
+    """
+    value = tag.get(name)
+    if value is None:
+        return ''
+    value = value.strip()
+    if (len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0]
+            and not value[1:-1].strip()):
+        return ''
+    return value
+
+
 def _wrapped_by_label(tag):
     for parent in tag.parents:
         if isinstance(parent, Tag) and parent.name == 'label':
@@ -164,12 +180,17 @@ def _fragment_violations(fragment_html, source):
     """
     soup = BeautifulSoup(fragment_html, 'html.parser')
 
-    for_targets = set()
+    for_targets = {'id': set(), ':id': set()}
     for label in soup.find_all('label'):
-        for attr in ('for', ':for'):
-            value = label.get(attr)
-            if value:
-                for_targets.add(value.strip())
+        has_static_for = label.has_attr('for')
+        has_bound_for = label.has_attr(':for')
+        if has_static_for == has_bound_for:
+            continue
+        for_attr = 'for' if has_static_for else ':for'
+        id_attr = 'id' if has_static_for else ':id'
+        value = _association_value(label, for_attr)
+        if value:
+            for_targets[id_attr].add(value)
 
     violations = []
     for field in soup.find_all(FIELD_TAGS):
@@ -177,11 +198,11 @@ def _fragment_violations(fragment_html, source):
         if field_type == 'hidden':
             continue
 
-        field_id = (field.get('id') or '').strip()
-        bound_id = (field.get(':id') or '').strip()
+        field_id = _association_value(field, 'id')
+        bound_id = _association_value(field, ':id')
 
-        has_for_id = bool(field_id and field_id in for_targets)
-        has_bound_for = bool(bound_id and bound_id in for_targets)
+        has_for_id = bool(field_id and field_id in for_targets['id'])
+        has_bound_for = bool(bound_id and bound_id in for_targets[':id'])
         has_wrap = _wrapped_by_label(field)
         has_aria = _non_empty_attr(field, 'aria-label', 'aria-labelledby')
 
@@ -218,20 +239,22 @@ def _label_semantics_violations(fragment_html, source):
             for child in [label, *label.find_all(True)]
         )
 
-        static_for = (label.get('for') or '').strip()
-        bound_for = (label.get(':for') or '').strip()
-        has_explicit_for = label.has_attr('for') or label.has_attr(':for')
+        static_for = _association_value(label, 'for')
+        bound_for = _association_value(label, ':for')
+        has_static_for = label.has_attr('for')
+        has_bound_for = label.has_attr(':for')
+        has_explicit_for = has_static_for or has_bound_for
         nested_controls = [
             control for control in label.find_all(LABELABLE_TAGS)
             if not (control.name == 'input' and
                     (control.get('type') or '').strip().lower() == 'hidden')
         ]
         if has_explicit_for:
-            id_attr = 'id' if label.has_attr('for') else ':id'
+            id_attr = 'id' if has_static_for else ':id'
             target = static_for or bound_for
             target_controls = [
                 control for control in soup.find_all(LABELABLE_TAGS)
-                if target and (control.get(id_attr) or '').strip() == target
+                if target and _association_value(control, id_attr) == target
                 and not (control.name == 'input' and
                          (control.get('type') or '').strip().lower() == 'hidden')
             ]
@@ -240,7 +263,8 @@ def _label_semantics_violations(fragment_html, source):
                 if not any(control is target_control for target_control in target_controls)
             ]
             has_one_associated_control = (
-                len(target_controls) == 1 and len(controls) == 1
+                has_static_for != has_bound_for
+                and len(target_controls) == 1 and len(controls) == 1
             )
         else:
             controls = nested_controls
@@ -393,12 +417,40 @@ def test_an_explicit_label_cannot_also_hide_an_orphan_nested_control():
     assert len(_fragment_violations(mixed, 'fixture')) == 1
 
 
-@pytest.mark.parametrize('for_attribute', ['for=""', ':for=""'])
-def test_an_empty_explicit_for_never_becomes_an_implicit_label(for_attribute):
-    empty_explicit = f'<label {for_attribute}>Name<input></label>'
+@pytest.mark.parametrize(
+    'empty_explicit',
+    [
+        '<label for="">Name<input></label>',
+        '<label :for="">Name<input></label>',
+        '<label :for="\'\'">Name</label><input :id="\'\'">',
+        '<label :for="\'   \'">Name</label><input :id="\'   \'">',
+    ],
+)
+def test_an_empty_explicit_for_never_becomes_an_implicit_label(empty_explicit):
 
     assert len(_label_semantics_violations(empty_explicit, 'fixture')) == 1
     assert len(_fragment_violations(empty_explicit, 'fixture')) == 1
+
+
+def test_static_and_bound_associations_cannot_be_combined_on_one_label():
+    ambiguous = (
+        '<label for="x" :for="missing">Name</label><input id="x">'
+    )
+
+    assert len(_label_semantics_violations(ambiguous, 'fixture')) == 1
+    assert len(_fragment_violations(ambiguous, 'fixture')) == 1
+
+
+@pytest.mark.parametrize(
+    'mixed_modes',
+    [
+        '<label for="x">Name</label><input :id="x">',
+        '<label :for="x">Name</label><input id="x">',
+    ],
+)
+def test_static_and_bound_association_modes_do_not_cross_match(mixed_modes):
+    assert len(_label_semantics_violations(mixed_modes, 'fixture')) == 1
+    assert len(_fragment_violations(mixed_modes, 'fixture')) == 1
 
 
 def test_the_checker_ignores_jinja_comment_text_that_looks_like_a_tag():

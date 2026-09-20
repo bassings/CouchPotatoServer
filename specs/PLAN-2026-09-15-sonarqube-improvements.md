@@ -2792,3 +2792,10 @@ T9 and T14 exceptions stated above.
   `for` or `:for`. Both guards now classify by attribute presence, so an empty
   explicit association fails instead of falling through as an implicit label.
   Parameterized static and Alpine-bound fixtures enforce the shared boundary.
+- 2026-09-20: The final mechanism review found two remaining forms of that
+  association-class ambiguity: quoted-empty Alpine expressions, and labels
+  carrying both static and bound `for` attributes. One shared normalizer now
+  treats blank literal expressions as empty, while typed target sets keep
+  static `for`/`id` and bound `:for`/`:id` associations separate. Dual-mode
+  labels fail explicitly. Empty-literal, dual-mode, and cross-mode fixtures
+  exercise both the field-name and label-semantic guards.
