@@ -294,6 +294,26 @@ test.describe('Accessibility', () => {
     await checkA11y(page, 'Settings');
   });
 
+  test('dynamic Settings headings expose their hydrated hierarchy', async ({ page }) => {
+    await page.goto('/settings/');
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Searchers' }).click();
+
+    await expect.soft(page.getByRole('heading', { name: 'Search Settings', level: 3 })).toBeVisible();
+
+    const combinedSubheadings = page.locator('h4[x-text]');
+    expect.soft(await combinedSubheadings.count(), 'no combined Settings subgroup heading rendered').toBeGreaterThan(0);
+    for (const heading of await combinedSubheadings.all()) {
+      await expect.soft(heading).toBeVisible();
+      await expect.soft(heading).toHaveText(/\S/);
+      await expect.soft(heading).toHaveAccessibleName(/\S/);
+      await expect.soft(heading).toHaveRole('heading');
+    }
+
+    await expect.soft(page.getByRole('heading', { name: 'Usenet — Account Required', level: 2 })).toBeVisible();
+    await expect.soft(page.getByRole('heading', { name: 'Newznab', level: 3 })).toBeVisible();
+  });
+
   /*
    * WCAG-253: three controls in the settings panels fail (or defeat the
    * point of) 2.5.3 Label in Name, which requires a control's accessible

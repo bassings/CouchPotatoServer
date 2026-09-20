@@ -404,6 +404,9 @@ test.describe('Suggestions Page', () => {
     // in the DOM too as global chrome.
     const modal = page.locator('[role="dialog"]:has(#movie-modal-close)');
     await expect(modal).toBeVisible();
+    const movieHeading = modal.getByRole('heading', { name: 'Example Movie', level: 2 });
+    await expect(movieHeading).toBeVisible();
+    await expect(modal).toHaveAccessibleName('Example Movie');
 
     const skipBtn = modal.getByRole('button', { name: 'Skip' });
     await expect(skipBtn).toBeVisible({ timeout: 5000 });
@@ -417,6 +420,29 @@ test.describe('Suggestions Page', () => {
     await expect(card).toHaveCount(0);
 
     checkNoErrors(page, errors);
+  });
+
+  test('movie modal exposes Unknown as its reachable missing-title heading', async ({ page }) => {
+    await page.route('**/search?q=tt0137523', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        movie: [{ imdb: 'tt0137523' }],
+      }),
+    }));
+    await mockSuggestionsCharts(page);
+    await page.goto('/suggestions/');
+    await waitForPageReady(page);
+
+    const card = page.locator('.poster-card[data-imdb="tt0137523"]');
+    await expect(card).toBeVisible();
+    await card.click();
+
+    const modal = page.locator('[role="dialog"]:has(#movie-modal-close)');
+    await expect(modal).toBeVisible();
+    await expect(modal.getByRole('heading', { name: 'Unknown', level: 2 })).toBeVisible();
+    await expect(modal).toHaveAccessibleName('Unknown');
   });
 });
 
