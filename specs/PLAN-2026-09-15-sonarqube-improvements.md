@@ -2787,3 +2787,8 @@ T9 and T14 exceptions stated above.
   implicitly named nor omitted from the label's control count. A mixed
   explicit/nested regression fixture proves both the label-semantic and field-
   name checks reject that shape.
+- 2026-09-20: The follow-up accessibility review found the same explicit-
+  versus-implicit classification still used value truthiness for an empty
+  `for` or `:for`. Both guards now classify by attribute presence, so an empty
+  explicit association fails instead of falling through as an implicit label.
+  Parameterized static and Alpine-bound fixtures enforce the shared boundary.

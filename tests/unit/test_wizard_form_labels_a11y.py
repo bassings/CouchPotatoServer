@@ -139,7 +139,7 @@ def _non_empty_attr(tag, *names):
 def _wrapped_by_label(tag):
     for parent in tag.parents:
         if isinstance(parent, Tag) and parent.name == 'label':
-            if not parent.get('for') and not parent.get(':for'):
+            if not parent.has_attr('for') and not parent.has_attr(':for'):
                 return True
     return False
 
@@ -220,17 +220,18 @@ def _label_semantics_violations(fragment_html, source):
 
         static_for = (label.get('for') or '').strip()
         bound_for = (label.get(':for') or '').strip()
+        has_explicit_for = label.has_attr('for') or label.has_attr(':for')
         nested_controls = [
             control for control in label.find_all(LABELABLE_TAGS)
             if not (control.name == 'input' and
                     (control.get('type') or '').strip().lower() == 'hidden')
         ]
-        if static_for or bound_for:
-            id_attr = 'id' if static_for else ':id'
+        if has_explicit_for:
+            id_attr = 'id' if label.has_attr('for') else ':id'
             target = static_for or bound_for
             target_controls = [
                 control for control in soup.find_all(LABELABLE_TAGS)
-                if (control.get(id_attr) or '').strip() == target
+                if target and (control.get(id_attr) or '').strip() == target
                 and not (control.name == 'input' and
                          (control.get('type') or '').strip().lower() == 'hidden')
             ]
@@ -390,6 +391,14 @@ def test_an_explicit_label_cannot_also_hide_an_orphan_nested_control():
 
     assert len(_label_semantics_violations(mixed, 'fixture')) == 1
     assert len(_fragment_violations(mixed, 'fixture')) == 1
+
+
+@pytest.mark.parametrize('for_attribute', ['for=""', ':for=""'])
+def test_an_empty_explicit_for_never_becomes_an_implicit_label(for_attribute):
+    empty_explicit = f'<label {for_attribute}>Name<input></label>'
+
+    assert len(_label_semantics_violations(empty_explicit, 'fixture')) == 1
+    assert len(_fragment_violations(empty_explicit, 'fixture')) == 1
 
 
 def test_the_checker_ignores_jinja_comment_text_that_looks_like_a_tag():
