@@ -16,9 +16,9 @@ autoload = 'Bluray'
 class Bluray(Automation, RSS):
 
     interval = 1800
-    rss_url = 'http://www.blu-ray.com/rss/newreleasesfeed.xml'
-    backlog_url = 'http://www.blu-ray.com/movies/movies.php?show=newreleases&page=%s'
-    display_url = 'http://www.blu-ray.com/movies/movies.php?show=newreleases'
+    rss_url = 'https://www.blu-ray.com/rss/newreleasesfeed.xml'
+    backlog_url = 'https://www.blu-ray.com/movies/movies.php?show=newreleases&page=%s'
+    display_url = 'https://www.blu-ray.com/movies/movies.php?show=newreleases'
     chart_order = 1
 
     def getIMDBids(self):

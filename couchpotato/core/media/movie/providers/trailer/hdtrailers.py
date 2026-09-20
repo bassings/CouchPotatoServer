@@ -17,8 +17,8 @@ autoload = 'HDTrailers'
 class HDTrailers(TrailerProvider):
 
     urls = {
-        'api': 'http://www.hd-trailers.net/movie/%s/',
-        'backup': 'http://www.hd-trailers.net/blog/',
+        'api': 'https://www.hd-trailers.net/movie/%s/',
+        'backup': 'https://www.hd-trailers.net/blog/',
     }
     providers = ['apple.ico', 'yahoo.ico', 'moviefone.ico', 'myspace.ico', 'favicon.ico']
     only_tables_tags = SoupStrainer('table')

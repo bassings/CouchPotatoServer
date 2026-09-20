@@ -15,7 +15,7 @@ class Flickchart(UserscriptBase):
 
     version = 2
 
-    includes = ['http://www.flickchart.com/movie/*']
+    includes = ['*://www.flickchart.com/movie/*']
 
     def getMovie(self, url):
 

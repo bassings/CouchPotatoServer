@@ -11,7 +11,7 @@ autoload = 'AlloCine'
 
 class AlloCine(UserscriptBase):
 
-    includes = ['http://www.allocine.fr/film/*']
+    includes = ['*://www.allocine.fr/film/*']
 
     def getMovie(self, url):
 

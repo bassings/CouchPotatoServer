@@ -13,7 +13,7 @@ autoload = 'Letterboxd'
 
 class Letterboxd(Automation):
 
-    url = 'http://letterboxd.com/%s/watchlist/page/%d/'
+    url = 'https://letterboxd.com/%s/watchlist/page/%d/'
     pattern = re.compile(r'(.*)\((\d*)\)')
 
     interval = 1800

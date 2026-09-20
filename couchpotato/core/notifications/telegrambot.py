@@ -28,7 +28,7 @@ class TelegramBot(Notification):
         if data:
             imdb_id = getIdentifier(data)
             if imdb_id:
-                url = 'http://www.imdb.com/title/{0}/'.format(imdb_id)
+                url = 'https://www.imdb.com/title/{0}/'.format(imdb_id)
                 message = '{0}\n{1}'.format(message, url)
 
         # Cosntruct message
@@ -73,12 +73,12 @@ config = [{
                     'name': 'bot_token',
                     'type': 'password',
                     'label': 'Bot Token',
-                    'description': 'Get one from <a href="http://telegram.me/BotFather" target="_blank">@BotFather</a> on Telegram.',
+                    'description': 'Get one from <a href="https://telegram.me/BotFather" target="_blank">@BotFather</a> on Telegram.',
                 },
                 {
                     'name': 'receiver_user_id',
                     'label': 'Chat ID',
-                    'description': 'User or group ID to send notifications to. Use <a href="http://telegram.me/myidbot" target="_blank">@myidbot</a> to find yours.',
+                    'description': 'User or group ID to send notifications to. Use <a href="https://telegram.me/myidbot" target="_blank">@myidbot</a> to find yours.',
                 },
                 {
                     'name': 'on_snatch',
