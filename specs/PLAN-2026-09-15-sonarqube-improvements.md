@@ -1067,6 +1067,32 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   export for one small parser. Add no parser framework or dependency, and leave
   backend log parsing, pagination parameter naming, refresh policy, and unrelated
   regular expressions unchanged.
+- **AC-QA-73:** Resolve both exact-master `javascript:S1764` keys
+  (`099653b3-a336-4cca-b088-67aff98632f4` and
+  `30577f5e-0123-4761-85a1-708393f58aae`) as one rule-family correction; do
+  not dismiss them merely because the repeated calls intentionally advance a
+  cursor.
+- **AC-QA-74:** A red source contract first proves the exact merged parser owns
+  multiple direct `takeDigit()` calls. The green implementation centralizes
+  fixed-width digit consumption so the primitive call appears once and Sonar
+  cannot mistake sequential state changes for identical boolean operands.
+- **AC-QA-75:** Existing parser unit, differential, hostile-scaling, mutation,
+  ownership, Chromium, accessibility, and mobile evidence stays green. No
+  timestamp shape, cursor advancement, fallback, rendering, or refresh
+  behavior changes.
+- **AC-QA-76:** Exact-master Sonar closes both S1764 keys as `FIXED`, leaves the
+  two S8786 keys fixed, reports zero open JavaScript medium-reliability issues,
+  and reduces reliability from 23 to 21 and medium from 15 to 13 unless a
+  concurrent delta is identified and explained.
+- **AC-SEC-35:** The correction preserves one forward-only bounded scan and the
+  inert `x-text` rendering boundary; it adds no dynamic evaluation, logging,
+  request, persistence, or dependency.
+- **AC-OPS-37:** Re-measure hostile N/2N behavior after the correction and run
+  the exact-master coverage-backed analysis. The scan revision must equal the
+  merge commit before any dashboard delta is accepted.
+- **AC-SIMP-44:** Add one small fixed-width digit helper and sequential guards,
+  not another regex or parsing abstraction. Keep all unrelated parser and UI
+  code unchanged.
 
 ## Implementation sequence
 
@@ -1239,10 +1265,14 @@ within the authority explicitly granted by the owner.
   XBMC, WDTV, and log parsing. Use contract, adversarial scaling, XML round-trip,
   mutation, and static recurrence coverage. Covers AC-QA-57..64, AC-SEC-27..29,
   AC-DATA-10..12, AC-OPS-30..33, and AC-SIMP-40..42.
-- [ ] **T41 — bound browser-side regular expressions by workflow** *(needs: T40)*
-  — state: awaiting-ci #408. Address the two JavaScript S8786 findings with UI behavior,
+- [x] **T41 — bound browser-side regular expressions by workflow** *(needs: T40)*
+  — state: merged #408. Address the two JavaScript S8786 findings with UI behavior,
   accessibility, and mobile coverage. Covers AC-QA-65..72, AC-SEC-30..34,
   AC-DESIGN-7, AC-A11Y-11..12, AC-PROD-14..15, AC-OPS-34..36, and AC-SIMP-43.
+- [ ] **T42 — remove repeated side-effectful parser operands as one rule-family
+  correction** *(needs: T41)* — state: awaiting-ci #409. Resolve both replacement
+  JavaScript S1764 findings without changing parser behavior. Covers
+  AC-QA-73..76, AC-SEC-35, AC-OPS-37, and AC-SIMP-44.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -2417,3 +2447,45 @@ T9 and T14 exceptions stated above.
   and no other PR was open. The implementation tree passed two further
   independent reviews after the plan-only amend; hosted CI and cloud review
   are now the next gate.
+- 2026-09-20: PR #408 merged at exact master
+  `72e7427cb729fdd93e1cdbee0f8265d6aa5010d7`; its tree exactly matched the
+  reviewed head. All hosted Python, UI, accessibility, Docker, dependency,
+  secret, lint, CodeQL, and cloud-review gates passed. Exact-master Sonar
+  analysis `32b750b3-89fb-43a3-977d-4744d369a47b` reported that revision and
+  closed both S8786 keys as `FIXED`, but raised two medium `javascript:S1764`
+  findings on repeated cursor-advancing `takeDigit()` operands. Reliability
+  therefore remained 23 (15 medium, eight low) instead of falling to 21. T42
+  treats both replacement findings as one corrective rule-family batch rather
+  than accepting a numerically flat result or dismissing the analyzer warning.
+- 2026-09-20: T42 red/green completed. The new CWD-independent recurrence test
+  failed on exact master because the parser contained ten direct `takeDigit()`
+  calls; after one fixed-width helper and sequential guards it passed with one
+  primitive owner. The three source/ownership tests, seven parser tests, all
+  221 UI unit tests, six Chromium/accessibility/mobile checks, Ruff, the
+  345-file trap scan, and diff hygiene passed. Differential comparison found
+  zero mismatches across 250,000 deterministic raw inputs. Hostile medians at
+  100k/200k/400k/800k were 0.973/1.930/3.810/7.525ms. Mutation killed 168 of
+  178 mutants, timed out five hostile-input mutants, left zero uncovered, and
+  retained only the same five already-evidenced equivalent boundary survivors.
+- 2026-09-20: T42 passed security, QA, design, accessibility, product,
+  architecture, operability, and fresh-verification Harness lenses with no
+  findings or spec gaps. One architecture result was rejected and rerun after
+  it initially reported the committed rather than staged tree; the corrected
+  result measured the pinned tree. Fresh verification found zero differences
+  across 258,111 independently generated cases, passed all 221 UI units and
+  three source guards, and measured linear hostile medians through 800k.
+  AC-QA-76 and the post-merge part of AC-OPS-37 remain unverifiable until the
+  hosted/merge/exact-master lifecycle completes.
+- 2026-09-20: Two independent clean-agent reviews found T42 safe to ship with
+  no findings. They separately restored repeated direct digit calls and
+  mutated the helper loop bounds; the recurrence guard alone caught the
+  analyzer regression while three parser tests caught both off-by-one
+  behaviors. Reviewers also passed 221 UI units, all six focused browser
+  checks, the three source guards, trap/Ruff/diff/secret checks, and independent
+  zero-drift and 800k scaling probes. The amended exact commit now receives
+  the final pre-push gate.
+- 2026-09-20: T42 opened as PR #409 from exact locally reviewed commit
+  `760cbdebe56019e5c3133497f8a51fd922a9ed3d`. Immediately before delivery,
+  `origin/master` remained the verified PR #408 merge
+  `72e7427cb729fdd93e1cdbee0f8265d6aa5010d7`, and no other PR was open.
+  Hosted CI and cloud review are now the next gate.

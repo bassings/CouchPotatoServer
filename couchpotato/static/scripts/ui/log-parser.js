@@ -28,18 +28,29 @@ function parseRawHeader(line) {
     cursor += 1;
     return true;
   };
+  const takeDigits = count => {
+    for (let remaining = count; remaining > 0; remaining -= 1) {
+      if (!takeDigit()) return false;
+    }
+    return true;
+  };
   const take = character => {
     if (line[cursor] !== character) return false;
     cursor += 1;
     return true;
   };
 
-  if (!(takeDigit() && takeDigit() && take('-') && takeDigit() && takeDigit())) return null;
+  if (!takeDigits(2)) return null;
+  if (!take('-')) return null;
+  if (!takeDigits(2)) return null;
   const dateEnd = cursor;
   cursor = skipWhitespace(line, cursor);
   if (cursor === dateEnd) return null;
-  if (!(takeDigit() && takeDigit() && take(':') && takeDigit() && takeDigit()
-    && take(':') && takeDigit() && takeDigit())) return null;
+  if (!takeDigits(2)) return null;
+  if (!take(':')) return null;
+  if (!takeDigits(2)) return null;
+  if (!take(':')) return null;
+  if (!takeDigits(2)) return null;
   const timestampEnd = cursor;
   const levelWhitespace = cursor;
   cursor = skipWhitespace(line, cursor);
