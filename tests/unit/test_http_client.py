@@ -119,7 +119,11 @@ class TestHttpClient:
         assert 'http' in proxies
         assert 'user:pass@proxy.local:8080' in proxies['http']
 
-    def test_https_target_selects_an_http_proxy_url(self, mock_env):
+    @pytest.mark.parametrize('proxy_username,expected_loc', [
+        (None, 'proxy.local:8080'),
+        ('user', 'user:pass@proxy.local:8080'),
+    ], ids=['no-credentials', 'with-credentials'])
+    def test_https_target_selects_an_http_proxy_url(self, mock_env, proxy_username, expected_loc):
         """Both the `http` and `https` proxy dict keys must be http:// proxy URLs.
 
         requests/urllib3 picks a key by the TARGET's scheme, then uses the
@@ -133,6 +137,19 @@ class TestHttpClient:
         anyone with use_proxy enabled, including every URL this repo's S5332
         clean-up promoted from http:// to https://.
 
+        Parametrized over both the credential-free and the credentialled
+        branch: `loc` is built differently in each (`proxy_server` alone vs
+        `user:pass@proxy_server`), and a version of this test that only drove
+        one branch missed a reintroduction of the exact round-1 bug scoped to
+        the other -- `{"https": (f"https://{loc}" if proxy_username else
+        f"http://{loc}")}` passed the credential-free case and broke every
+        https:// request for anyone with a proxy username configured.
+
+        Asserts full URL EQUALITY, not `.startswith('http://')`: a
+        `startswith` check also passes for a proxy URL with an empty or
+        missing host, which would still raise later on but not for the
+        reason this test claims to guard.
+
         Drives `requests.utils.select_proxy` -- the actual per-request
         selection logic requests uses -- rather than asserting on the dict
         shape by inspection, so this fails for the real reason a live request
@@ -141,7 +158,7 @@ class TestHttpClient:
         env, session, response = mock_env
         env.setting.side_effect = lambda key: {
             'use_proxy': True, 'proxy_server': 'proxy.local:8080',
-            'proxy_username': None, 'proxy_password': None,
+            'proxy_username': proxy_username, 'proxy_password': 'pass',
         }.get(key)
         client = HttpClient()
         proxies = client._get_proxy_config()
@@ -150,11 +167,12 @@ class TestHttpClient:
             'https://www.blu-ray.com/rss/newreleasesfeed.xml', proxies
         )
 
-        assert selected is not None and selected.startswith('http://'), (
-            f"an https:// target selected proxy URL {selected!r} -- the hop "
-            f"to the proxy itself must stay http://, or requests opens a TLS "
-            f"connection straight to the proxy and raises ProxyError against "
-            f"a plain CONNECT-only proxy"
+        assert selected == f'http://{expected_loc}', (
+            f"an https:// target selected proxy URL {selected!r}, expected "
+            f"'http://{expected_loc}' -- the hop to the proxy itself must "
+            f"stay http://, or requests opens a TLS connection straight to "
+            f"the proxy and raises ProxyError against a plain CONNECT-only "
+            f"proxy"
         )
 
     def test_default_headers_set(self, mock_env):

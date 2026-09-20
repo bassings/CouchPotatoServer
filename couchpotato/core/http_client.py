@@ -96,6 +96,11 @@ class HttpClient:
         proxy_password = Env.setting('proxy_password')
 
         if proxy_server:
+            # Pre-existing, not fixed here (this branch only touches the
+            # return statement below): proxy_username/proxy_password are not
+            # percent-encoded before being interpolated into this URL. A
+            # password containing '@' or ':' produces an ambiguous
+            # userinfo@host split that urllib3 may parse incorrectly.
             loc = f"{proxy_username}:{proxy_password}@{proxy_server}" if proxy_username else proxy_server
             # Both keys point at an http:// proxy URL deliberately -- this is
             # the scheme of the hop to the PROXY, not to the eventual target.

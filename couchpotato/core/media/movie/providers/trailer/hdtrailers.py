@@ -24,6 +24,24 @@ class HDTrailers(TrailerProvider):
         # following. blog.hd-trailers.net answers https:// directly with a
         # valid certificate (measured, 200) -- point at it straight, which
         # also saves the redirect round trip.
+        #
+        # This host change cannot break findViaAlternative() below, because
+        # that method does not work against either host: it parses with
+        # `parse_only = self.only_tables_tags` (SoupStrainer('table')), and
+        # the blog page -- old host or new -- has no <table> elements at
+        # all, so everything is discarded before html.find_all('h2', ...)
+        # ever runs. Driven against the live page (both hosts): it returns
+        # {'480p': [], '720p': [], '1080p': []} every time. Pre-existing,
+        # out of scope for this S5332 fix, not touched here.
+        #
+        # Also found in passing, also pre-existing, also not fixed here: if
+        # that method ever DID match an <h2>, `h2.lower()` at line ~81 calls
+        # `.lower()` on a BeautifulSoup Tag, not a string. Tag has no
+        # `.lower` attribute, so bs4's `__getattr__` tag-lookup shortcut
+        # returns None instead of raising AttributeError, and `None()`
+        # raises TypeError -- which the surrounding `except AttributeError`
+        # does not catch, so the whole search() call would blow up instead
+        # of degrading to an empty result.
         'backup': 'https://blog.hd-trailers.net/',
     }
     providers = ['apple.ico', 'yahoo.ico', 'moviefone.ico', 'myspace.ico', 'favicon.ico']

@@ -56,6 +56,23 @@ request-session scheme handler and to build the deliberately-http proxy
 URL), one entry's reason covers all of them; that is stated inline wherever
 it applies.
 
+**Every ALLOWLIST entry pins an exact occurrence COUNT alongside its
+reason, not just membership.** A membership-only allow-list has a hole a
+reviewer demonstrated directly: `(file, value)` identity means a file that
+already has ONE blessed bare `'http://'` entry (`utorrent.py`,
+`putio/main.py`, `http_client.py`, `helpers/variable.py` all do) is
+effectively exempt from the sweep for that value -- appending a brand new
+`'http://' + THIRD_PARTY_HOST + '/announce?key=' + api_key` function to
+`utorrent.py` still produces the literal `'http://'` as one of its folded
+sub-parts, which collapses onto the already-allowed entry and the sweep
+stays green. `test_allowlist_entry_counts_match_the_code` closes this: the
+literal may appear in that file EXACTLY as many times as ALLOWLIST says, and
+an (N+1)th occurrence fails even though the VALUE was already allowed. An
+earlier version of this docstring claimed "an unlisted clear-text URL fails
+the moment it is written, anywhere in the tree" -- true for a NEW value, not
+true for an ADDITIONAL occurrence of an already-listed one, and that gap is
+now closed rather than left unstated.
+
 Two known limits of the sweep, both stated rather than hidden:
 
   * It only walks `couchpotato/`, not `tests/`, `libs/`, or `scripts/` --
@@ -231,8 +248,12 @@ def _fold_string(node):
 
 
 def _clear_text_http_literals(tree, doc_ids):
-    """Every folded string value in `tree` containing 'http://', minus docstrings."""
-    found = set()
+    """Every folded string value in `tree` containing 'http://', minus docstrings.
+
+    Returns a LIST, not a set: callers that care about occurrence counts
+    (the sweep does) need every hit, including repeats of the same value.
+    """
+    found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) in doc_ids:
             continue
@@ -242,13 +263,22 @@ def _clear_text_http_literals(tree, doc_ids):
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             value = _fold_string(node)
         if value and "http://" in value:
-            found.add(value)
+            found.append(value)
     return found
 
 
+# A near-empty scan almost certainly means SWEEP_ROOT is wrong, not that the
+# codebase is small -- fail loudly rather than pass vacuously. Pinned near
+# the real count (243 at time of writing) rather than a round "200+": that
+# looser floor would not fire if an entire package (dozens of files) went
+# missing, which is exactly the silent-shrink failure mode this guards
+# against elsewhere in this file (EXPECTED_USERSCRIPT_PROVIDER_COUNT).
+EXPECTED_MIN_PY_FILE_COUNT = 235
+
+
 def _sweep():
-    """Walk every .py file under couchpotato/, returning {(relpath, value)}."""
-    found = set()
+    """Walk every .py file under couchpotato/, returning {(relpath, value): count}."""
+    counts = {}
     files_scanned = 0
     for path in sorted(SWEEP_ROOT.rglob("*.py")):
         files_scanned += 1
@@ -256,19 +286,27 @@ def _sweep():
         doc_ids = _docstring_constant_ids(tree)
         relpath = str(path.relative_to(REPO_ROOT))
         for value in _clear_text_http_literals(tree, doc_ids):
-            found.add((relpath, value))
-    # A near-empty scan almost certainly means SWEEP_ROOT is wrong, not that
-    # the codebase is small -- fail loudly rather than pass vacuously.
-    assert files_scanned >= 200, (
+            key = (relpath, value)
+            counts[key] = counts.get(key, 0) + 1
+    assert files_scanned >= EXPECTED_MIN_PY_FILE_COUNT, (
         f"only scanned {files_scanned} .py files under {SWEEP_ROOT} -- "
-        f"expected 200+; check SWEEP_ROOT is pointed at the right directory"
+        f"expected {EXPECTED_MIN_PY_FILE_COUNT}+; check SWEEP_ROOT is "
+        f"pointed at the right directory, or update "
+        f"EXPECTED_MIN_PY_FILE_COUNT if files were deliberately removed"
     )
-    return found
+    return counts
 
 
 # Every literal here is deliberate. Reasons cover ALL call sites in that file
 # sharing the exact literal value (see module docstring on why identity is
 # (file, value) rather than (file, line, value)).
+#
+# Each value is (expected_count, reason): expected_count is how many times
+# the literal must appear in that file, checked by
+# test_allowlist_entry_counts_match_the_code. Almost every entry here is 1;
+# http_client.py (3) and helpers/variable.py (2) are the two files where the
+# same literal genuinely recurs at more than one call site, and the reason
+# names each site.
 ALLOWLIST = {
     # --- BitTorrent tracker announce URLs: not HTTP requests CouchPotato
     # --- makes to a service, but literal values baked into .torrent-style
@@ -276,31 +314,31 @@ ALLOWLIST = {
     (
         "couchpotato/core/_base/downloader/main.py",
         "http://tracker.istole.it/announce",
-    ): "BitTorrent tracker announce URL; measured, does not answer on 443",
+    ): (1, "BitTorrent tracker announce URL; measured, does not answer on 443"),
     (
         "couchpotato/core/_base/downloader/main.py",
         "http://tracker.publicbt.com/announce",
-    ): "BitTorrent tracker announce URL; measured, does not answer on 443",
+    ): (1, "BitTorrent tracker announce URL; measured, does not answer on 443"),
     (
         "couchpotato/core/_base/downloader/main.py",
         "http://tracker.ccc.de/announce",
-    ): "BitTorrent tracker announce URL; measured, does not answer on 443",
+    ): (1, "BitTorrent tracker announce URL; measured, does not answer on 443"),
     (
         "couchpotato/core/_base/downloader/main.py",
         "http://exodus.desync.com/announce",
-    ): "BitTorrent tracker announce URL; measured, does not answer on 443",
+    ): (1, "BitTorrent tracker announce URL; measured, does not answer on 443"),
     (
         "couchpotato/core/_base/downloader/main.py",
         "http://exodus.desync.com:6969/announce",
-    ): "BitTorrent tracker announce URL; measured, does not answer on 443",
+    ): (1, "BitTorrent tracker announce URL; measured, does not answer on 443"),
     (
         "couchpotato/core/_base/downloader/main.py",
         "http://tracker.publichd.eu/announce",
-    ): "BitTorrent tracker announce URL; no longer resolves at all",
+    ): (1, "BitTorrent tracker announce URL; no longer resolves at all"),
     (
         "couchpotato/core/_base/downloader/main.py",
         "http://tracker.openbittorrent.com/announce",
-    ): "BitTorrent tracker announce URL; no longer resolves at all",
+    ): (1, "BitTorrent tracker announce URL; no longer resolves at all"),
 
     # --- LAN endpoints for the user's OWN devices/services: not a third
     # --- party, so there is nothing here for TLS to protect against an
@@ -308,56 +346,59 @@ ALLOWLIST = {
     (
         "couchpotato/core/notifications/plex/client.py",
         "http://%s:%s/xbmcCmds/xbmcHttp/?%s",
-    ): "LAN endpoint for the user's own Plex/XBMC host, not a third party",
+    ): (1, "LAN endpoint for the user's own Plex/XBMC host, not a third party"),
     (
         "couchpotato/core/notifications/plex/client.py",
         "http://%s:%s/jsonrpc",
-    ): "LAN endpoint for the user's own Plex/XBMC host, not a third party",
+    ): (1, "LAN endpoint for the user's own Plex/XBMC host, not a third party"),
     (
         "couchpotato/core/notifications/xbmc.py",
         "http://%s/xbmcCmds/",
-    ): "LAN endpoint for the user's own XBMC host, not a third party",
+    ): (1, "LAN endpoint for the user's own XBMC host, not a third party"),
     (
         "couchpotato/core/notifications/xbmc.py",
         "http://%s/jsonrpc",
-    ): "LAN endpoint for the user's own XBMC host, not a third party",
+    ): (1, "LAN endpoint for the user's own XBMC host, not a third party"),
     (
         "couchpotato/core/downloaders/utorrent.py",
         "http://",
-    ): "self.url = 'http://' + str(host) + ... : LAN endpoint for the "
-       "user's own uTorrent host, not a third party",
+    ): (1, "self.url = 'http://' + str(host) + ... : LAN endpoint for the "
+          "user's own uTorrent host, not a third party. Count pinned at "
+          "exactly 1: this file's only OTHER url-shaped code is the "
+          "settings-description <a href> already fixed to https://, so a "
+          "second bare 'http://' occurrence here is a new, unreviewed one"),
     (
         "couchpotato/core/downloaders/qbittorrent_.py",
         "http://localhost:8080/",
-    ): "default value for the user's own qBittorrent host; loopback, not a "
-       "third party",
+    ): (1, "default value for the user's own qBittorrent host; loopback, "
+          "not a third party"),
     (
         "couchpotato/core/downloaders/qbittorrent_.py",
         "RPC Communication URI. Usually <strong>http://localhost:8080/</strong>",
-    ): "settings description text quoting the same loopback default above",
+    ): (1, "settings description text quoting the same loopback default above"),
     (
         "couchpotato/core/downloaders/transmission.py",
         "http://localhost",
-    ): "TransmissionRPC.__init__ default host; loopback, not a third party",
+    ): (1, "TransmissionRPC.__init__ default host; loopback, not a third party"),
     (
         "couchpotato/core/downloaders/transmission.py",
         "http://localhost:9091",
-    ): "default value for the user's own Transmission host; loopback, not a "
-       "third party",
+    ): (1, "default value for the user's own Transmission host; loopback, "
+          "not a third party"),
     (
         "couchpotato/core/downloaders/transmission.py",
         "Hostname with port. Usually <strong>http://localhost:9091</strong>",
-    ): "settings description text quoting the same loopback default above",
+    ): (1, "settings description text quoting the same loopback default above"),
     (
         "couchpotato/core/media/_base/providers/torrent/torrentpotato.py",
         "Base URL of your Jackett instance (e.g., http://localhost:9117)",
-    ): "example text for the user's own, self-hosted Jackett instance; "
-       "loopback, not a third party",
+    ): (1, "example text for the user's own, self-hosted Jackett instance; "
+          "loopback, not a third party"),
     (
         "couchpotato/simple_healthcheck.py",
         "http://localhost:5050",
-    ): "default base URL for probing this application's OWN local instance, "
-       "not a third party",
+    ): (1, "default base URL for probing this application's OWN local "
+          "instance, not a third party"),
 
     # --- put.io callback URL: genuinely internet-facing (H2/2026-09-21 fix
     # --- round -- an EARLIER version of this entry called this "LAN callback
@@ -380,49 +421,58 @@ ALLOWLIST = {
     (
         "couchpotato/core/downloaders/putio/main.py",
         "http://",
-    ): "pre = 'http://': callback URL handed to put.io's servers over the "
-       "public internet, carrying this instance's own API key in clear "
-       "text unless the user enables the https option. Pre-existing "
-       "exposure, not fixed in this change -- see comment above this entry",
+    ): (1, "pre = 'http://': callback URL handed to put.io's servers over "
+          "the public internet, carrying this instance's own API key in "
+          "clear text unless the user enables the https option. "
+          "Pre-existing exposure, not fixed in this change -- see comment "
+          "above this entry. Count pinned at 1 (2026-09-28 fix round): a "
+          "reviewer proved a second, brand-new clear-text call appended to "
+          "this same file previously collapsed onto this entry unnoticed"),
 
     # --- requests scheme registration and the deliberate proxy-hop scheme:
     # --- both explained in http_client.py itself at the literal's call site.
     (
         "couchpotato/core/http_client.py",
         "http://",
-    ): "two call sites share this literal: session.mount('http://', adapter) "
-       "is a scheme-registration call, not a URL (both schemes must be "
-       "mounted for outgoing requests of either kind to work); and "
-       "_get_proxy_config's proxy dict, which deliberately uses http:// for "
-       "BOTH the 'http' and 'https' proxy keys because that is the scheme of "
-       "the hop to the PROXY itself, not to the eventual target -- see the "
-       "comment directly above that return statement",
+    ): (3, "three occurrences share this literal, all explained at their "
+          "call site in http_client.py: (1) session.mount('http://', "
+          "adapter) is a scheme-registration call, not a URL (both schemes "
+          "must be mounted for outgoing requests of either kind to work); "
+          "(2) and (3) are the 'http' and 'https' keys of "
+          "_get_proxy_config's proxy dict, which deliberately BOTH use "
+          "http:// because that is the scheme of the hop to the PROXY "
+          "itself, not to the eventual target. Count pinned at 3 "
+          "(2026-09-28 fix round): a reviewer proved a bare-prefix entry "
+          "with no count is silently exempt from the sweep for that value"),
 
     # --- generic host-string handling: not a URL to any specific service.
     (
         "couchpotato/core/helpers/variable.py",
         "http://",
-    ): "two call sites share this literal: the loop that strips either "
-       "scheme prefix off an arbitrary caller-supplied host, and "
-       "cleanHost()'s ternary that prefixes a scheme onto an arbitrary host "
-       "when building one (https when ssl=True, http otherwise) -- neither "
-       "is a URL CouchPotato requests",
+    ): (2, "two occurrences share this literal: the loop that strips "
+          "either scheme prefix off an arbitrary caller-supplied host, and "
+          "cleanHost()'s ternary that prefixes a scheme onto an arbitrary "
+          "host when building one (https when ssl=True, http otherwise) -- "
+          "neither is a URL CouchPotato requests. Count pinned at 2 "
+          "(2026-09-28 fix round), same reason as http_client.py above"),
 
     # --- XML namespace identifiers: opaque strings that must match the feed
     # --- exactly. Changing either breaks feed parsing outright.
     (
         "couchpotato/core/media/movie/providers/automation/itunes.py",
         "http://www.w3.org/2005/Atom",
-    ): "XML namespace URI (the Atom namespace), not a URL -- must match the "
-       "feed's own namespace declaration exactly or parsing breaks",
+    ): (1, "XML namespace URI (the Atom namespace), not a URL -- must "
+          "match the feed's own namespace declaration exactly or parsing "
+          "breaks"),
     (
         "couchpotato/core/media/movie/providers/automation/itunes.py",
         "http://itunes.apple.com/rss",
-    ): "XML namespace URI, not a URL -- must match the feed's own namespace "
-       "declaration exactly or parsing breaks. Scoped to this literal only: "
-       "line 71 of this same file was a genuine S5332 instance (an <a href> "
-       "settings-description link to the same host) and has been fixed to "
-       "https://, so this entry does not cover the whole file",
+    ): (1, "XML namespace URI, not a URL -- must match the feed's own "
+          "namespace declaration exactly or parsing breaks. Scoped to this "
+          "literal only: line 71 of this same file was a genuine S5332 "
+          "instance (an <a href> settings-description link to the same "
+          "host) and has been fixed to https://, so this entry does not "
+          "cover the whole file"),
 
     # --- measured this round (2026-09-21): does not answer on 443, unlike
     # --- its sibling torrent-provider settings-description links, which
@@ -430,8 +480,8 @@ ALLOWLIST = {
     (
         "couchpotato/core/media/_base/providers/torrent/torrentbytes.py",
         '<a href="http://torrentbytes.net" target="_blank">TorrentBytes</a>',
-    ): "settings description link; measured 2026-09-21, does not answer on "
-       "443",
+    ): (1, "settings description link; measured 2026-09-21, does not "
+          "answer on 443"),
 }
 
 
@@ -440,10 +490,12 @@ def test_no_unexpected_clear_text_http_urls():
 
     This is the regression direction: a clear-text http:// URL reintroduced
     anywhere under couchpotato/, or a brand new one, fails here by name --
-    it does not need to be remembered and added to a hand list first.
+    it does not need to be remembered and added to a hand list first. This
+    check alone does NOT catch an ADDITIONAL occurrence of an already-listed
+    value (see test_allowlist_entry_counts_match_the_code for that).
     """
     found = _sweep()
-    unexpected = found - set(ALLOWLIST)
+    unexpected = set(found) - set(ALLOWLIST)
     assert not unexpected, (
         f"{len(unexpected)} clear-text http:// literal(s) found under "
         f"couchpotato/ with no ALLOWLIST entry (python:S5332): "
@@ -453,13 +505,13 @@ def test_no_unexpected_clear_text_http_urls():
 
 
 def test_allowlist_entries_are_not_stale():
-    """Every ALLOWLIST entry must still be found by the sweep.
+    """Every ALLOWLIST entry must still be found (at least once) by the sweep.
 
     This is the staleness direction: if the code changed shape (the literal
     was fixed anyway, refactored, or deleted) the entry is protecting
     nothing and must be removed or re-pinned, not left to silently bless an
     absence. Checked against the AST-derived sweep result, not raw source
-    text -- a `pinned_line in text` substring check (the previous version of
+    text -- a `pinned_line in text` substring check (an earlier version of
     this file) is satisfied by a COMMENTED-OUT line, which is not "still
     present" in any sense that matters.
     """
@@ -470,8 +522,43 @@ def test_allowlist_entries_are_not_stale():
         f"no longer found by the sweep, so either the clear-text URL was "
         f"already fixed (remove the entry) or the code changed shape "
         f"(re-pin it): "
-        + "\n".join(f"  {relpath!r}, {value!r}: {ALLOWLIST[(relpath, value)]}"
+        + "\n".join(f"  {relpath!r}, {value!r}: {ALLOWLIST[(relpath, value)][1]}"
                      for relpath, value in stale)
+    )
+
+
+def test_allowlist_entry_counts_match_the_code():
+    """Every ALLOWLIST entry's literal must appear EXACTLY the pinned count.
+
+    Closes the hole a reviewer demonstrated: ALLOWLIST is keyed on
+    (file, value), so a file with an already-blessed bare 'http://' entry
+    (utorrent.py, putio/main.py, http_client.py, helpers/variable.py) was
+    otherwise exempt from the sweep for that value -- a brand new
+    `'http://' + THIRD_PARTY_HOST + '/v1/announce?key=' + api_key` appended
+    to any of those files collapsed onto the existing entry and the sweep
+    stayed green. Pinning and checking the exact count means an (N+1)th
+    occurrence of an already-listed literal fails here, even though the
+    VALUE itself was already allowed. Entries missing from `found` entirely
+    are test_allowlist_entries_are_not_stale's job, not this one's --
+    skipped here to keep each test's failure message about the one thing it
+    checks.
+    """
+    found = _sweep()
+    mismatched = []
+    for key, (expected_count, reason) in ALLOWLIST.items():
+        if key not in found:
+            continue
+        actual_count = found[key]
+        if actual_count != expected_count:
+            mismatched.append((key, expected_count, actual_count, reason))
+    assert not mismatched, (
+        f"{len(mismatched)} ALLOWLIST entries have a different occurrence "
+        f"count than the code (python:S5332): "
+        + "\n".join(
+            f"  {relpath!r}, {value!r}: expected {expected}, found {actual} "
+            f"-- {reason}"
+            for (relpath, value), expected, actual, reason in mismatched
+        )
     )
 
 
@@ -505,6 +592,20 @@ def test_sweep_folds_simple_split_literal_concatenation():
     doc_ids = _docstring_constant_ids(tree)
     found = _clear_text_http_literals(tree, doc_ids)
 
+    # The Name is not resolved, so this does NOT recover the full host --
+    # but the bare 'http://' Constant is still its own node in the AST
+    # regardless of what it is concatenated with, so it still shows up here.
+    # Measured directly against the real fanarttv.py in this shape (see this
+    # change's commit message): the whole-tree sweep still fails on this
+    # mutation, just with a less useful message naming 'http://' rather than
+    # the host -- which is exactly why FIXED_URL_ATTRIBUTES exists for the
+    # URLs where that precision matters.
+    assert "http://" in found, (
+        f"expected the bare 'http://' Constant to still be caught even "
+        f"though the Name it is concatenated with is not resolved -- found "
+        f"{found!r}"
+    )
+
     # The Name (API_HOST) is not resolved, so the fold only recovers the
     # literal prefix 'http://' concatenated with itself where BinOp sides are
     # both literals -- but the two-sided direct-literal case must still be
@@ -536,6 +637,16 @@ def test_sweep_folds_simple_split_literal_concatenation():
 # see module docstring for which URLs this deliberately does not cover and
 # why (inline literals inside method bodies, gated behind conditions, are
 # not simple attributes to introspect without executing the method).
+#
+# Each entry pins expected_host, checked as a required substring alongside
+# the https:// scheme. A scheme-only check (`startswith("https://")`) proved
+# too weak for hdtrailers.urls['backup']: that URL was fixed for a REASON
+# (the old host 301-redirects to clear-text, see the comment in
+# hdtrailers.py), and a scheme-only check cannot fail when someone reverts
+# it back to the old, still-https://, still-redirecting URL
+# (https://www.hd-trailers.net/blog/) -- it starts with https:// too.
+# Pinning "blog.hd-trailers.net" (not "www.hd-trailers.net") is what makes
+# that revert fail.
 # ---------------------------------------------------------------------------
 
 FIXED_URL_ATTRIBUTES = [
@@ -544,52 +655,61 @@ FIXED_URL_ATTRIBUTES = [
         "couchpotato.core.media.movie.providers.automation.bluray",
         "Bluray",
         lambda cls: cls.rss_url,
+        "www.blu-ray.com",
     ),
     (
         "bluray.backlog_url",
         "couchpotato.core.media.movie.providers.automation.bluray",
         "Bluray",
         lambda cls: cls.backlog_url,
+        "www.blu-ray.com",
     ),
     (
         "bluray.display_url",
         "couchpotato.core.media.movie.providers.automation.bluray",
         "Bluray",
         lambda cls: cls.display_url,
+        "www.blu-ray.com",
     ),
     (
         "letterboxd.url",
         "couchpotato.core.media.movie.providers.automation.letterboxd",
         "Letterboxd",
         lambda cls: cls.url,
+        "letterboxd.com",
     ),
     (
         "hdtrailers.urls[api]",
         "couchpotato.core.media.movie.providers.trailer.hdtrailers",
         "HDTrailers",
         lambda cls: cls.urls["api"],
+        "www.hd-trailers.net",
     ),
     (
         "hdtrailers.urls[backup]",
         "couchpotato.core.media.movie.providers.trailer.hdtrailers",
         "HDTrailers",
         lambda cls: cls.urls["backup"],
+        # Deliberately NOT "www.hd-trailers.net" -- see the block comment
+        # above and the comment in hdtrailers.py itself.
+        "blog.hd-trailers.net",
     ),
     (
         "fanarttv.urls[api]",
         "couchpotato.core.media.movie.providers.info.fanarttv",
         "FanartTV",
         lambda cls: cls.urls["api"],
+        "webservice.fanart.tv",
     ),
 ]
 
 
 @pytest.mark.parametrize(
-    "case_id,module_path,class_name,accessor",
+    "case_id,module_path,class_name,accessor,expected_host",
     FIXED_URL_ATTRIBUTES,
     ids=[case_id for case_id, *_ in FIXED_URL_ATTRIBUTES],
 )
-def test_promoted_url_attributes_are_https(case_id, module_path, class_name, accessor):
+def test_promoted_url_attributes_are_https(case_id, module_path, class_name, accessor, expected_host):
     module = importlib.import_module(module_path)
     cls = getattr(module, class_name)
     value = accessor(cls)
@@ -598,4 +718,11 @@ def test_promoted_url_attributes_are_https(case_id, module_path, class_name, acc
         f"https:// (python:S5332) -- this is checked by importing the "
         f"module and reading the resolved value, so no source-level split "
         f"or indirection can hide a reintroduced http:// here"
+    )
+    assert expected_host in value, (
+        f"{case_id}: live attribute value {value!r} does not contain the "
+        f"expected host {expected_host!r} -- a scheme-only check would miss "
+        f"a revert to a DIFFERENT https:// URL for the same host/purpose "
+        f"that this attribute was deliberately changed away from (see "
+        f"FIXED_URL_ATTRIBUTES' comment)"
     )
