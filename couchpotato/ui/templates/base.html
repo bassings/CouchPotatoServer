@@ -473,19 +473,16 @@ tailwind.config = {
 
 <!-- MOBILE MENU OVERLAY -->
 <div x-show="mobileMenu" x-transition.opacity @click="mobileMenu = false" class="lg:hidden fixed inset-0 z-40 bg-black/60" aria-hidden="true"></div>
-<div x-show="mobileMenu" x-transition id="mobile-menu" role="menu" class="lg:hidden fixed top-12 right-0 z-50 w-56 bg-cp-card border-l border-b border-white/[0.06] rounded-bl-md p-3 space-y-1 max-h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain">
+<nav x-show="mobileMenu" x-transition id="mobile-menu" aria-label="Mobile menu" class="lg:hidden fixed top-12 right-0 z-50 w-56 bg-cp-card border-l border-b border-white/[0.06] rounded-bl-md p-3 space-y-1 max-h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain">
   {% for id, label, icon in nav_items %}
-  <a href="{{ new_base }}{{ id }}/" @click="mobileMenu = false" role="menuitem" class="flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}">
+  <a href="{{ new_base }}{{ id }}/" @click="mobileMenu = false" class="flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}">
     <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path></svg>
     <span class="text-[13px] font-medium">{{ label }}</span>
   </a>
   {% endfor %}
-  {#- D8, phone width. `role="none"` on the wrapper so the enclosing
-      `role="menu"` still owns only menuitems -- a bare <form> child would be
-      an unallowed child of the menu role. -#}
   {% if auth_required %}
-  <form method="post" action="{{ web_base }}logout/" role="none" class="pt-1 mt-1 border-t border-cp-border">
-    <button type="submit" role="menuitem"
+  <form method="post" action="{{ web_base }}logout/" class="pt-1 mt-1 border-t border-cp-border">
+    <button type="submit"
             aria-label="Sign out everywhere"
             class="w-full flex items-center gap-3 px-3 py-2 rounded transition-colors text-cp-muted hover:text-cp-text hover:bg-white/[0.03]">
       <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -495,13 +492,13 @@ tailwind.config = {
     </button>
   </form>
   {% endif %}
-</div>
+</nav>
 
 <!-- MOBILE BOTTOM NAV -->
 <nav class="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-black/80 backdrop-blur-xl border-t border-white/[0.04]" aria-label="Mobile navigation">
-  <div class="flex justify-around" role="menubar">
+  <div class="flex justify-around">
     {% for id, label, icon in nav_items %}
-    <a href="{{ new_base }}{{ id }}/" role="menuitem" class="flex flex-col items-center py-2 px-3 min-w-0 flex-1 transition-colors {% if current_page is defined and current_page == id %}text-cp-accent{% else %}text-cp-muted{% endif %}" {% if current_page is defined and current_page == id %}aria-current="page"{% endif %}>
+    <a href="{{ new_base }}{{ id }}/" class="flex flex-col items-center py-2 px-3 min-w-0 flex-1 transition-colors {% if current_page is defined and current_page == id %}text-cp-accent{% else %}text-cp-muted{% endif %}" {% if current_page is defined and current_page == id %}aria-current="page"{% endif %}>
       <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path></svg>
       <span class="text-[10px] mt-0.5 truncate">{{ label }}</span>
     </a>

@@ -1240,6 +1240,50 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-47:** Reuse the existing source guard and browser suites for one
   exact family inventory and focused rendered proof; do not create a parallel
   accessibility framework.
+- **AC-QA-86:** Inventory the exact S6821 and S6845 source identities and issue
+  keys at master `6b37d4537bd1545f1722a2ab82231557f2730cd4`. Missing, changed,
+  or duplicate occurrences fail rather than inheriting an adjudication.
+- **AC-QA-87:** A red-first source contract requires the drawer and bottom bar
+  to use native navigation, link, form, and button semantics with distinct
+  landmark names. No `menu`, `menubar`, `menuitem`, or compensating
+  `form[role=none]` remains in either navigation region.
+- **AC-QA-88:** At 393px in both light and dark themes, open the authenticated
+  drawer unconditionally, assert the requested theme took effect, verify its
+  native navigation/link/button roles and POST logout contract, and run a
+  scoped WCAG 2.2 AA axe scan without conditional test bodies.
+- **AC-QA-89:** At phone width in both themes, the named releases region
+  genuinely overflows, receives sequential focus from the final filter,
+  displays a visible focus indicator, scrolls itself with ArrowRight without
+  moving the document, and then yields focus to the first sort link. Existing
+  desktop structure, sorting, and native table semantics remain green.
+- **AC-QA-90:** Applied-and-restored mutations prove the source inventory,
+  native navigation contract, logout method/action/name, release `tabindex`,
+  accessible name, overflow, focus indicator, and exact source multiplicity
+  are each owned by a failing check.
+- **AC-QA-91:** After merge, exact-master Sonar reports the merge SHA, closes
+  S6821 key `31ce04e7-1f09-44c0-9f93-ce465b1c34b7` as fixed, and only then
+  comments on and transitions S6845 key
+  `d4e2bb26-a9ba-4fb5-94c4-5b5cc2205107` to false positive. Re-fetch both;
+  the Clean Code reliability impact count becomes eight LOW and zero MEDIUM
+  unless a concurrent delta is identified and explained.
+- **AC-SEC-39:** The authenticated sign-out control remains a conditional POST
+  form to the rendered logout route with one submit button named “Sign out
+  everywhere”; do not replace it with a GET link or client-side substitute.
+- **AC-A11Y-21:** Represent website navigation as native named `nav` landmarks,
+  not application-menu composites whose arrow-key and roving-focus contract is
+  absent. Preserve sequential keyboard access and the short-viewport drawer.
+- **AC-A11Y-22:** Preserve the releases wrapper as a named native section with
+  `overflow-x-auto` and `tabindex="0"`; this is an intentional focusable scroll
+  region, not a widget. Removing its focusability is a regression.
+- **AC-DESIGN-12:** The semantic navigation correction and S6845 adjudication
+  are visually neutral in both themes and at phone and desktop widths.
+- **AC-PROD-20:** Navigation destinations, drawer activation/dismissal, sign-out,
+  filtering, sorting, downloading, and access to every release column retain
+  their current behavior and copy.
+- **AC-SIMP-48:** Remove only the misleading application-menu roles and their
+  now-unnecessary presentational form role. Do not add composite-widget
+  JavaScript, custom scrolling controls, dependencies, or rule suppression;
+  leave the valid releases production markup unchanged.
 
 ## Implementation sequence
 
@@ -1426,12 +1470,17 @@ within the authority explicitly granted by the owner.
   accessibility evidence, exact-master verification, and exact-key
   adjudication. Covers AC-QA-77..79, AC-SEC-36, AC-A11Y-13..16, AC-DESIGN-8,
   AC-PROD-16, AC-SIMP-45, and AC-ARCH-1.
-- [ ] **T44 — repair and adjudicate form-label semantics as one rule-family
-  batch** *(needs: T43)* — state: building. Cover all four live `Web:S6853`
+- [x] **T44 — repair and adjudicate form-label semantics as one rule-family
+  batch** *(needs: T43)* — state: merged #412. Covered all four live `Web:S6853`
   findings with a multiplicity-preserving inventory, one recurrence guard,
   rendered association evidence, two semantic corrections, and two exact-key
   false-positive adjudications. Covers AC-QA-80..85, AC-SEC-37..38,
   AC-A11Y-17..20, AC-DESIGN-9..11, AC-PROD-17..19, and AC-SIMP-46..47.
+- [ ] **T45 — close the remaining medium reliability semantics together**
+  *(needs: T44)* — state: building. Repair the misleading application-menu
+  semantics behind S6821 and prove/adjudicate the intentional focusable
+  releases region behind S6845. Covers AC-QA-86..91, AC-SEC-39,
+  AC-A11Y-21..22, AC-DESIGN-12, AC-PROD-20, and AC-SIMP-48.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -2821,3 +2870,23 @@ T9 and T14 exceptions stated above.
   and `x-text`/`x-html` while preserving literal static values. Red-first,
   parameterized fixtures cover both accessible-name routes and both label-
   association audits.
+- 2026-09-20: T44 merged as PR #412 at exact tree
+  `e98bd4f8332d28575d1fc91edcb82e2616721022`. Exact-master Sonar at
+  `6b37d4537bd1545f1722a2ab82231557f2730cd4` closed both real S6853
+  findings as fixed; the two rendered-behavior false positives were commented
+  and transitioned by exact key. Open reliability fell from 14 to 10 and its
+  Clean Code impacts from six MEDIUM/eight LOW to two MEDIUM/eight LOW.
+- 2026-09-20: T45 planning classified S6845 as a behavior-proven false
+  positive: the named focusable overflow section is the keyboard mechanism,
+  and removing `tabindex` would regress access to clipped release columns.
+  S6821's literal complaint is also false (`none` is a valid role), but review
+  exposed the repeated underlying mechanism: both mobile navigation regions
+  claim application-menu roles without implementing that composite widget's
+  keyboard model. T45 therefore repairs the native navigation semantics as one
+  mechanism and preserves the valid releases markup for exact-key adjudication.
+- 2026-09-20: T45 also retired the queued flaky mobile-menu delay: the test now
+  waits for the menu's observable visibility and its stale `waitForTimeout`
+  allowance was removed from the false-green inventory. Review strengthened
+  the navigation source guard at the discovery boundary so duplicate landmarks,
+  missing native links, forbidden composite roles, or a weakened logout form
+  fail through real temporary-template mutations rather than synthetic lists.
