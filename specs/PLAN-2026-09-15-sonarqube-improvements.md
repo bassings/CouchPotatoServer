@@ -981,6 +981,92 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-42:** Leave adjacent BinSearch exception policy, metadata builder
   duplication, log retrieval/pagination behavior, and unrelated regular
   expressions unchanged.
+- **AC-QA-65:** Resolve both live `javascript:S8786` findings as one
+  rule-family batch. One pure module under `couchpotato/static/scripts/ui/`
+  owns log parsing and both templates delegate to it through `CP.ui`; do not
+  repair two independent copies.
+- **AC-QA-66:** Characterize exact-master behavior before production edits.
+  The shared-module unit test and a repository-anchored ownership/recurrence
+  test first fail because the module, export, and delegations do not exist.
+- **AC-QA-67:** Focused unit contracts preserve non-array fallback; structured
+  records and type normalization; bracketed and plain messages; valid raw
+  records with empty or populated source/message; spaces, tabs, repeated
+  whitespace, and ASCII timestamp digits; malformed/unknown/lowercase headers;
+  non-string values; whole-word fallback levels; and unchanged fallback text.
+  Keep raw `CRITICAL` fallback and the adjacent `null` behavior explicitly out
+  of this regex-only slice.
+- **AC-QA-68:** A hostile non-match with at least 100,000 post-source whitespace
+  characters and an internal line break, a long matching message, and a long
+  unterminated source complete under a two-second focused deadline. Record N/2N
+  measurements rather than asserting a flaky ratio.
+- **AC-QA-69:** A CWD-independent source guard rejects either reported
+  vulnerable expression, requires `index.js` to export the shared parser,
+  requires both controllers to delegate, and rejects a third raw-header parser
+  copy. Diagnostics name only paths/boundaries and make no claim to general
+  regex-complexity analysis.
+- **AC-QA-70:** Non-vacuous Playwright coverage mocks distinguishable structured
+  and raw entries and proves both `/logs/` and Settings > Logs render identical
+  timestamp, normalized level, trimmed source, and message without a page error.
+- **AC-QA-71:** Mutations restoring the vulnerable regex, changing timestamp,
+  level, source, message, or fallback decisions, or removing either template
+  delegation are killed by the owning deadline, unit, wiring, or browser test.
+  `make mutation-changed` includes the shared module; equivalent survivors are
+  evidenced rather than hidden.
+- **AC-QA-72:** Focused Vitest, relevant Chromium/mobile/accessibility tests,
+  trap checks, mutation-changed, and broad repository gates pass. Exact-master
+  Sonar closes keys `d42b1483-1bd0-4f92-947e-c22ca6f13e95` and
+  `8d8b38b9-4a2b-4df6-a7ab-dd3a1237c773`, reports zero open
+  `javascript:S8786`, and introduces no replacement reliability finding.
+- **AC-SEC-30:** Treat raw log entries as untrusted. The shared parser is
+  bounded and side-effect free, and the measured super-linear shape (valid
+  header/source, long whitespace, then a multiline non-match) becomes the
+  focused adversarial regression.
+- **AC-SEC-31:** Preserve ASCII-only timestamp digits, the four uppercase raw
+  levels, shape rather than calendar validation, complete-string malformed
+  fallback, trimmed source, discarded post-source whitespace, and valid empty
+  messages.
+- **AC-SEC-32:** Synthetic HTML-shaped source and message values remain literal
+  text through `x-text` on both surfaces and execute no handler or script. Add
+  no `x-html`, `innerHTML`, or equivalent interpretation.
+- **AC-SEC-33:** Parsing transmits, persists, and logs no raw entry. Existing
+  same-origin fetch/authentication boundaries remain unchanged, and committed
+  fixtures contain only synthetic paths, titles, and secret-shaped values.
+- **AC-SEC-34:** Both consumers and the shared implementation are protected by
+  the ownership guard and Stryker scope so the recurring duplicate security
+  repair cannot silently drift.
+- **AC-DESIGN-7:** The repair is visually neutral on `/logs/` and Settings >
+  Logs: hierarchy, controls, filter options, empty/loading states, field order,
+  severity text/colour, copy, automatic scrolling, and both themes do not
+  change.
+- **AC-A11Y-11:** Severity stays visible as text as well as colour; controls
+  retain names and keyboard behavior; parsing/refresh does not move focus or
+  add a live region that re-announces up to 500 entries. Axe runs after the
+  Settings Logs tab is visible and on the standalone rendered page.
+- **AC-A11Y-12:** At a real 393px viewport, both workflows expose their controls
+  and a distinguishable parsed entry without new document overflow or clipped
+  fields. Characterize exact master first and record any pre-existing standalone
+  header overflow rather than expanding this parser-only slice silently.
+- **AC-PROD-14:** Both controllers map identical payloads identically through
+  the shared helper. Preserve structured and legacy raw shapes, malformed
+  visibility, non-string stringification, and non-array empty fallback without
+  opportunistically adding raw `CRITICAL` support.
+- **AC-PROD-15:** Browser route stubs cover both payload shapes and both user
+  workflows. Level filtering retains its query and visible result; malformed
+  input cannot blank or crash the panel.
+- **AC-OPS-34:** Preserve `limit=500`, filter-query construction, one request per
+  refresh, ten-second auto-refresh, timer lifecycle, clear behavior, existing
+  error logging/loading flags, and scroll-to-bottom. Add no dependency, retry,
+  storage, request, or diagnostic content.
+- **AC-OPS-35:** Record hostile N/2N evidence for the shared helper and keep the
+  hard deadline generous. The static ownership mechanism, not repeated review
+  findings, prevents the two copies from returning.
+- **AC-OPS-36:** Exact-master Sonar reduces open reliability from the T40
+  baseline 23 to 21 and medium from 15 to 13 unless a concurrent delta is
+  identified and explained.
+- **AC-SIMP-43:** Use the existing `static/scripts/ui` module boundary and barrel
+  export for one small parser. Add no parser framework or dependency, and leave
+  backend log parsing, pagination parameter naming, refresh policy, and unrelated
+  regular expressions unchanged.
 
 ## Implementation sequence
 
@@ -1147,15 +1233,16 @@ within the authority explicitly granted by the owner.
   profile, renamer, and searcher code, with site-specific behavior coverage and
   one recurrence guard. Covers AC-QA-54..56, AC-SEC-25..26, AC-DATA-5..9,
   AC-OPS-29, and AC-SIMP-36..39.
-- [ ] **T40 — bound all Python regular expressions as one rule-family batch**
-  *(needs: T39)* — state: awaiting-ci #407. Resolve all nine live medium-reliability
+- [x] **T40 — bound all Python regular expressions as one rule-family batch**
+  *(needs: T39)* — state: merged #407. Resolve all nine live medium-reliability
   `python:S8786` findings: five in `scripts/check_test_traps.py` plus BinSearch,
   XBMC, WDTV, and log parsing. Use contract, adversarial scaling, XML round-trip,
   mutation, and static recurrence coverage. Covers AC-QA-57..64, AC-SEC-27..29,
   AC-DATA-10..12, AC-OPS-30..33, and AC-SIMP-40..42.
 - [ ] **T41 — bound browser-side regular expressions by workflow** *(needs: T40)*
-  — state: queued. Address the two JavaScript S8786 findings with UI behavior,
-  accessibility, and mobile coverage.
+  — state: building. Address the two JavaScript S8786 findings with UI behavior,
+  accessibility, and mobile coverage. Covers AC-QA-65..72, AC-SEC-30..34,
+  AC-DESIGN-7, AC-A11Y-11..12, AC-PROD-14..15, AC-OPS-34..36, and AC-SIMP-43.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -2264,3 +2351,63 @@ T9 and T14 exceptions stated above.
   with 14 skipped and five expected failures; two independent clean-agent
   reviewers returned CLEAN after killing the quadratic-parser and XML no-op
   mutations. Hosted CI and cloud review are now pending.
+- 2026-09-20: T40 merged as PR #407 at exact master
+  `76c0ee1e1cfdeccb97136250f29b499841e155e5`; the merge tree exactly matched
+  the reviewed PR tree. Clean-master Sonar analysis
+  `32a8e828-7faf-4d77-8a3a-fb02dde2d653` reported that exact revision, closed
+  all nine recorded `python:S8786` keys as `FIXED`, and reported zero open
+  Python S8786 findings. Open reliability impacts fell from 32 to 23: medium
+  24 to 15 and low unchanged at 8. T41 now batches the two remaining
+  `javascript:S8786` findings before the accessibility-rule families.
+- 2026-09-20: T41 plan-cycle security, QA, design, accessibility, product, and
+  operability lenses traced both findings to byte-equivalent legacy raw-string
+  parsers duplicated across `/logs/` and Settings > Logs. The normal backend
+  path returns structured entries, but malformed/legacy `data.log` or
+  `data.lines` still reaches this compatibility boundary. The exact hostile
+  regex shape grew about fourfold when doubled (16k/32k whitespace measured
+  135.9/553.3ms in QA; 687/2377ms at the same sizes in a separate security
+  probe). Existing E2E checks controls only, never parsed fields; the Settings
+  axe scan does not activate the hidden Logs tab, and `/logs/` has no browser
+  coverage. T41 therefore uses one extracted `CP.ui` parser, characterization,
+  adversarial/unit/mutation/ownership contracts, and rendered desktop,
+  accessibility, and 393px checks across both workflows.
+- 2026-09-20: T41 completed its red-green-refactor cycle. The red phase proved
+  the shared parser was absent and both templates still owned the vulnerable
+  expression. The green phase extracted one bounded cursor parser and reduced
+  both templates to delegation. Seven focused unit groups, two ownership
+  guards, six browser checks across desktop/accessibility/393px projects, 221
+  full UI unit tests, and the full Python suite (4,529 passed, 14 skipped, five
+  expected failures) passed. Differential testing found no behaviour drift
+  across 200,000 deterministic raw inputs. Mutation killed 162 of 173 mutants,
+  timed out six hostile-input mutants, left zero uncovered, and the five
+  survivors were verified equivalent boundary mutations. The exact working
+  diff now enters the multi-lens review gate.
+- 2026-09-20: T41's first review round found three test-evidence gaps, not a
+  parser defect: filtering proved only the request URL, Settings did not check
+  asynchronous page errors, and the 393px checks covered only Refresh and the
+  container edge. The shared route stub now returns a distinct `data.lines`
+  payload for `type=warning`; both workflows prove replacement rendering,
+  stale-entry removal, and no page errors. Both mobile workflows now prove all
+  four controls, an exact 393px viewport, document overflow, and individual
+  severity/source/message bounds. An exact-master Pixel 5 characterization
+  measured `clientWidth == scrollWidth == 393` for both surfaces; their log
+  containers were x=17,width=359 and all three rendered-field bounds stayed
+  inside them. The amended six-test Chromium/accessibility/mobile set passed.
+- 2026-09-20: T41's amended tree passed security, QA, design, accessibility,
+  product, architecture, operability, and fresh-verification Harness lenses
+  with no surviving findings. Independent fresh verification expanded the
+  differential proof to 206,561 deterministic plus 2,863 systematic boundary
+  cases with zero mismatches, and measured hostile scaling from 100k through
+  800k at 1.005/1.918/3.809/7.533ms. AC-QA-72 and AC-OPS-36 remain truthfully
+  unverifiable until hosted CI and the exact-master post-merge Sonar analysis.
+  Architecture noted one documentation-only plan gap because the new module
+  has no `AC-ARCH-*` criterion; its load order, dependency direction, single
+  export, and lack of cycles were nevertheless inspected and clean.
+- 2026-09-20: T41's two mandatory independent clean-agent reviewers found no
+  defects and judged the change safe to ship. Across isolated worktrees they
+  proved the parser, both controller delegations, and barrel export are
+  load-bearing by mutation; reran the seven unit, two ownership, and six
+  browser tests; passed Ruff, trap, diff, and secret checks; and independently
+  observed zero differences over 100,000 and 250,000 deterministic inputs.
+  Both hostile-scaling probes remained linear through 800k characters. The
+  exact amended commit now receives the final pre-push review gate.
