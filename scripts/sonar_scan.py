@@ -110,6 +110,7 @@ def _command(
     capture_output: bool = True,
     timeout: float = GIT_COMMAND_TIMEOUT,
     description: str | None = None,
+    allowed_returncodes: tuple[int, ...] = (0,),
 ) -> str:
     command_name = description or argv[0]
     try:
@@ -120,17 +121,25 @@ def _command(
                 env=env,
                 capture_output=capture_output,
                 timeout=timeout,
+                allowed_returncodes=allowed_returncodes,
             )
         else:
             result = run(
                 argv,
                 cwd=repo,
                 env=env,
-                check=True,
+                check=allowed_returncodes == (0,),
                 capture_output=capture_output,
                 text=True,
                 timeout=timeout,
             )
+            if result.returncode not in allowed_returncodes:
+                raise subprocess.CalledProcessError(
+                    result.returncode,
+                    argv,
+                    output=result.stdout,
+                    stderr=result.stderr,
+                )
     except subprocess.TimeoutExpired as exc:
         raise ScanError(
             f"Command timed out: {command_name}; its process group was stopped, inspect local state and retry"
@@ -149,6 +158,7 @@ def _run_isolated_process(
     env: dict[str, str],
     capture_output: bool,
     timeout: float,
+    allowed_returncodes: tuple[int, ...] = (0,),
 ) -> subprocess.CompletedProcess:
     """Run one command in a process group that can be stopped as a unit."""
 
@@ -176,7 +186,7 @@ def _run_isolated_process(
         _stop_process_group(process)
         raise
     result = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
-    if process.returncode:
+    if process.returncode not in allowed_returncodes:
         raise subprocess.CalledProcessError(
             process.returncode,
             argv,
@@ -220,17 +230,37 @@ def checkout_sha(
 ) -> str:
     env = _safe_env()
     recovery = "; the uploaded result must be disregarded and re-run" if after_upload else ""
-    branch = _command(run, ["git", "symbolic-ref", "--short", "HEAD"], config.repo, env=env).strip()
+
+    def git_state_command(
+        argv: list[str],
+        *,
+        description: str | None = None,
+        allowed_returncodes: tuple[int, ...] = (0,),
+    ) -> str:
+        try:
+            return _command(
+                run,
+                argv,
+                config.repo,
+                env=env,
+                description=description,
+                allowed_returncodes=allowed_returncodes,
+            )
+        except ScanError as exc:
+            raise ScanError(f"{exc}{recovery}") from exc
+
+    branch = git_state_command(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        description="master branch lookup",
+        allowed_returncodes=(0, 1),
+    ).strip()
     if branch != "master":
         raise ScanError(
             f"Sonar scan requires branch master; current branch is {branch or 'detached'}{recovery}"
         )
 
-    dirty = _command(
-        run,
+    dirty = git_state_command(
         ["git", "status", "--porcelain", "--untracked-files=all"],
-        config.repo,
-        env=env,
     )
     if dirty:
         raise ScanError(
@@ -238,13 +268,57 @@ def checkout_sha(
             f"{recovery}"
         )
 
-    sha = _command(run, ["git", "rev-parse", "HEAD"], config.repo, env=env).strip()
+    sha = git_state_command(["git", "rev-parse", "HEAD"]).strip()
     if not FULL_SHA.fullmatch(sha):
         raise ScanError(f"Git did not return an exact 40-character commit SHA{recovery}")
     if expected_sha is not None and sha != expected_sha:
         if after_upload:
             raise ScanError("HEAD changed during scanner upload; the uploaded result must be disregarded and re-run")
         raise ScanError("HEAD changed while coverage was running; no analysis was uploaded")
+    origin_symref = git_state_command(
+        [
+            "git",
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/master",
+        ],
+        description="origin/master kind lookup",
+        allowed_returncodes=(0, 1),
+    ).strip()
+    if origin_symref:
+        raise ScanError(
+            "Sonar scan requires the locally fetched origin/master to be a "
+            "direct remote-tracking ref; run 'git symbolic-ref --delete "
+            "refs/remotes/origin/master', then 'git fetch origin master', "
+            f"and retry{recovery}"
+        )
+    try:
+        origin_sha = git_state_command(
+            [
+                "git",
+                "rev-parse",
+                "--verify",
+                "refs/remotes/origin/master^{commit}",
+            ],
+            description="origin/master lookup",
+        ).strip()
+    except ScanError as exc:
+        raise ScanError(
+            "Sonar scan requires a locally fetched origin/master; run "
+            "'git fetch origin master', reconcile local master in a clean "
+            f"worktree, and retry{recovery}"
+        ) from exc
+    if not FULL_SHA.fullmatch(origin_sha):
+        raise ScanError(
+            "Git did not return an exact 40-character SHA for the locally "
+            f"fetched origin/master{recovery}"
+        )
+    if sha != origin_sha:
+        raise ScanError(
+            "Sonar scan requires HEAD to match the locally fetched "
+            "origin/master; run 'git fetch origin master', reconcile local "
+            f"master in a clean worktree, and retry{recovery}"
+        )
     return sha
 
 
