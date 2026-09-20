@@ -87,7 +87,9 @@
         {% if runtime %}<span class="text-white/10">|</span><span>{{ runtime }} min</span>{% endif %}
         {% if genres %}<span class="text-white/10">|</span><span>{{ genres|join(', ') }}</span>{% endif %}
       </div>
-      <div class="flex flex-wrap items-center gap-1.5 mt-3" x-data="profileEditor()" x-init="init()">
+      <div class="flex flex-wrap items-center gap-1.5 mt-3"
+           x-data="profileEditor()"
+           data-current-profile-id="{{ movie.get('profile_id', '') | to_str }}">
         <!-- Quality profile (editable) -->
         <template x-if="!editingProfile">
           <button @click="startEditing()" 
@@ -555,11 +557,12 @@
 function profileEditor() {
   return {
     editingProfile: false,
-    newProfile: '{{ movie.get('profile_id', '') }}',
+    newProfile: '',
     saving: false,
     profiles: [],
     
     init() {
+      this.newProfile = this.$el.dataset.currentProfileId || '';
       // Preload profiles for faster editing
       this.loadProfiles();
     },

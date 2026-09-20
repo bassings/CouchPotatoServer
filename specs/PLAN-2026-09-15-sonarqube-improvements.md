@@ -1427,6 +1427,51 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-52:** Make the one-expression correction and focused evidence only.
   Do not extract a formatter, add a dependency or transpilation layer, or
   refactor the adjacent security-sensitive save flow.
+- **AC-QA-111:** The classic `movie_detail.html` script contains no Jinja
+  interpolation in the `profileEditor` initial state and parses as raw
+  JavaScript without masking. A source contract fails on the current
+  `newProfile: '{{ movie.get(...) }}'` spelling and passes only when the
+  initial profile travels through inert rendered markup.
+- **AC-QA-112:** Rendering a movie whose profile identifier contains quotes,
+  angle brackets, and an ampersand keeps that value escaped in one
+  `data-current-profile-id` attribute. The real Alpine component initializes
+  `newProfile` from that attribute and the seeded browser flow selects the
+  movie's current profile when the editor opens.
+- **AC-QA-113:** Applied-and-restored mutations that reintroduce executable
+  Jinja interpolation or omit the data-attribute-to-state assignment kill
+  their owning source/render or browser checks. Focused template tests, the
+  movie-detail browser spec, the false-green guard, and proportionate broad
+  gates pass before review.
+- **AC-QA-114:** The profile editor issues exactly one `profile.list` request
+  during Alpine initialization. A repository inventory rejects any new
+  component that both exposes Alpine's automatic `init()` lifecycle method and
+  explicitly calls `x-init="init()"`; the four pre-existing instances remain a
+  named bounded debt set rather than silently legitimizing new duplicates.
+- **AC-SEC-46:** The bootstrap value remains inert and HTML-autoescaped until
+  Alpine reads the DOM dataset; this repair adds no executable, request, log,
+  or error-message sink and does not alter the existing `saveProfile()` request
+  construction. No credential, library path, media title, private address, or
+  token enters delivery evidence.
+- **AC-A11Y-25:** The existing labelled profile select, keyboard operation,
+  focus behavior, and selected value are preserved. The repair adds no visible
+  control, copy, announcement, or ARIA override.
+- **AC-DESIGN-15:** The profile badge and editor retain their existing visual
+  hierarchy, responsive layout, classes, and states in both themes and at
+  phone width; the new data attribute is non-visual.
+- **AC-PROD-22:** Opening the quality-profile editor still preselects the
+  movie's current profile, so an unchanged save cannot silently switch to a
+  different profile.
+- **AC-ARCH-3:** Keep transport local to the existing profile-editor component:
+  one server-rendered data attribute feeds the existing Alpine state during
+  `init()`. Add no global state, endpoint, dependency, or duplicate profile
+  lookup.
+- **AC-OPS-40:** After merge, a clean exact-master `make sonar` analysis records
+  the merge SHA, completes successfully, and emits no JavaScript parse warning
+  for `partials/movie_detail.html`. Coverage remains present and the complete
+  open reliability inventory remains empty.
+- **AC-SIMP-53:** Make the smallest template/data-flow repair. Do not exclude
+  the template, suppress the parser warning, change Sonar configuration,
+  replace the Jinja environment, or refactor unrelated movie-detail behavior.
 
 ## Implementation sequence
 
@@ -1640,11 +1685,17 @@ within the authority explicitly granted by the owner.
   server-only security comment, add exact inventory and rendered browser proof,
   then adjudicate only the two mapped keys. Covers AC-QA-102..107, AC-SEC-42..43,
   AC-A11Y-24, AC-DESIGN-14, AC-OPS-39, and AC-SIMP-51.
-- [ ] **T49 — close the final JavaScript reliability finding** *(needs: T48)*
-  — state: awaiting-ci. Replace only the literal global underscore
+- [x] **T49 — close the final JavaScript reliability finding** *(needs: T48)*
+  — state: merged #417. Replace only the literal global underscore
   normalization with `replaceAll`, prove the complete refusal announcement in
   the real settings panel, and verify the exact S7781 key on merged master.
   Covers AC-QA-108..110, AC-SEC-44..45, and AC-SIMP-52.
+- [ ] **T50 — make the movie-detail profile bootstrap parseable and inert**
+  *(needs: T49)* — state: awaiting-ci. Move the current profile identifier from
+  executable template interpolation to an autoescaped data attribute, preserve
+  the real editor's selected value, and verify the exact-master Sonar parser
+  warning is gone. Covers AC-QA-111..114, AC-SEC-46, AC-A11Y-25,
+  AC-DESIGN-15, AC-PROD-22, AC-ARCH-3, AC-OPS-40, and AC-SIMP-53.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -3181,3 +3232,68 @@ T9 and T14 exceptions stated above.
   load-bearing, and found no secret, privacy, auth-truthfulness, accessibility,
   layout, compatibility-contract, or operational regression. T49 now awaits
   CI and cloud review.
+- 2026-09-21: T49 merged as PR #417 at
+  `61fd62e97778a3f564c2b1c0bb6a31faa5dfee5e`. Exact-master Sonar task
+  `4aa45558-6b06-48d5-a88d-748776e0c6cc` closed S7781 key
+  `ca430b75-709b-45eb-8564-5441822a3ad2` as fixed. Both reliability ratings
+  are 1.0/A, bugs are zero, coverage is 63.7%, and the open reliability
+  inventory is empty. The scan also confirmed the pre-existing raw-template
+  JavaScript parse warning in `partials/movie_detail.html`; T50 begins with a
+  red contract for that boundary.
+- 2026-09-21: T50 completed its red/green and focused mutation cycle. Before
+  production changed, the raw classic-script check failed at the nested
+  `profile_id` quotes and the rendered-markup check found no inert profile
+  attribute, while the existing browser behavior was characterized green.
+  The profile identifier now crosses one autoescaped data attribute and Alpine
+  reads it during component initialization. Reintroducing executable Jinja
+  killed the parser check; omitting the dataset assignment made the real
+  browser select an empty value instead of the seeded current profile. After
+  restoration, 364 focused Python/template tests, 221 UI unit tests, and all
+  19 movie-detail Chromium tests pass. The configured changed-file mutation
+  runner has no template scope, so these applied/restored mutations are the
+  load-bearing evidence.
+- 2026-09-21: T50's broad pre-review gate is green: Ruff, the 355-file
+  false-green trap check, 221 UI unit tests, 4,600 Python tests with 14 skips
+  and five expected failures, 307 Chromium/accessibility/mobile tests, the
+  dedicated two-test/two-worker isolation proof, and a production Docker build
+  all pass. Running the isolation project inside the single-worker aggregate
+  command produced its intentional explanatory failure; rerunning the
+  repository's dedicated `test:isolation` command with the project virtualenv
+  proved both workers clean. T50 now enters the independent local Harness
+  review gate.
+- 2026-09-21: T50 security review rejected an over-broad acceptance-criterion
+  sentence, not the bootstrap implementation: `saveProfile()` already placed
+  the selected profile in its request URL before this task, while AC-SEC-46
+  incorrectly claimed this parser repair removed every such URL sink. The
+  criterion now binds the changed server-to-DOM bootstrap boundary and states
+  explicitly that request construction is unchanged. The review also found
+  repeated raw query-string construction elsewhere; per the recurring-class
+  rule that is separate shared-mechanism work, not another instance folded
+  into this narrowly tested Sonar parser repair.
+- 2026-09-21: T50 architecture review found that the touched component still
+  combined Alpine's automatic `init()` lifecycle with explicit
+  `x-init="init()"`, issuing two `profile.list` requests. Red-first browser
+  evidence measured exactly two requests, and a repository inventory rejected
+  `profileEditor` as a fifth duplicate beyond four named pre-existing debt
+  instances. Removing the redundant attribute makes the real flow issue one
+  request while preserving current-profile selection; the inventory now
+  prevents this recurring class from gaining another instance.
+- 2026-09-21: After the lifecycle correction, all three parser/render/
+  recurrence tests, 395 focused Python/template/plan tests, the 355-file trap
+  check, 221 UI units, and all 19 movie-detail Chromium tests pass. The browser
+  test measures one and only one `profile.list` request while retaining the
+  exact current profile selection. T50 returns to current-tip Harness review.
+- 2026-09-21: T50 QA review found the new recurrence inventory collapsed
+  duplicate `(template, factory)` pairs through a set, so a second identical
+  known-debt component in one file could pass. The inventory now compares
+  `Counter` multiplicities, and a synthetic two-instance fixture fails under
+  the former set implementation and passes only when both occurrences remain
+  visible. Four parser/render/inventory tests, 331 adjacent Python/plan/trap
+  tests, Ruff, and the exact-one-request browser flow are green after restore.
+- 2026-09-21: T50's final pinned diff passed security, QA, architecture,
+  product, accessibility, and design review with no surviving findings. The
+  fresh verifier independently reproduced raw-script parsing and hostile-value
+  escaping, confirmed the single component-local Alpine lifecycle path, and
+  found no defect. Exact warning disappearance and the reliability inventory
+  remain correctly pending on the required post-merge exact-master Sonar run;
+  T50 now awaits hosted CI and cloud review.
