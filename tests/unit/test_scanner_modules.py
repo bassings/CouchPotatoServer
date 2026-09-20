@@ -3,6 +3,7 @@
 import os
 import pytest
 import tempfile
+from collections import Counter
 from types import SimpleNamespace
 
 from couchpotato.core.plugins.scanner.file_detector import FileDetectorMixin
@@ -435,6 +436,75 @@ class FakeScannerWithShutdown(FolderScannerMixin):
 
     def shuttingDown(self):
         return False
+
+
+class CharacterizationScanner(FileDetectorMixin, FolderScannerMixin):
+    """Exercise the real folder-grouping algorithm without provider wiring."""
+
+    def shuttingDown(self):
+        return False
+
+    def filesizeBetween(self, file_path, file_size=None):
+        if file_size is self.file_sizes['movie']:
+            return file_path.endswith('Feature.2024.mkv')
+        if file_size is self.file_sizes['trailer']:
+            return 'trailer' in file_path.lower()
+        return False
+
+    def getMetaData(self, group, folder='', release_download=None):
+        return {}
+
+    def determineMedia(self, group, release_download=None):
+        return {'_id': 'movie-1', 'info': {'imdb': 'tt1234567'}}
+
+
+def _normalized_scan_groups(groups):
+    return {
+        identifier: {
+            file_type: Counter(paths)
+            for file_type, paths in group['files'].items()
+        }
+        for identifier, group in groups.items()
+    }
+
+
+class TestFolderScannerLeftoverSetContract:
+    def test_group_membership_is_independent_of_input_order_and_duplicate_sidecars(
+            self, tmp_path, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        paths = [
+            tmp_path / 'Feature.2024.mkv',
+            tmp_path / 'Feature.2024.srt',
+            tmp_path / 'Feature.2024.nfo',
+            tmp_path / 'Feature.2024.sample.mkv',
+            tmp_path / 'Feature.2024-trailer.mp4',
+            tmp_path / 'unrelated.txt',
+        ]
+        for path in paths:
+            path.write_bytes(b'x')
+
+        monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
+        scanner = CharacterizationScanner()
+        forward = [str(path) for path in paths]
+        variants = [forward, list(reversed(forward)), forward + [forward[1], forward[2]]]
+
+        normalized = [
+            _normalized_scan_groups(scanner.scan(
+                folder=str(tmp_path), files=variant, simple=True,
+                check_file_date=False,
+            ))
+            for variant in variants
+        ]
+
+        assert normalized[1:] == normalized[:1] * 2
+        assert len(normalized[0]) == 1
+        buckets = next(iter(normalized[0].values()))
+        assert buckets['movie'] == Counter({str(paths[0]): 1})
+        assert buckets['subtitle'] == Counter({str(paths[1]): 1})
+        assert buckets['nfo'] == Counter({str(paths[2]): 1})
+        assert buckets['trailer'] == Counter({str(paths[4]): 1})
+        assert buckets['leftover'] == Counter({str(paths[3]): 1})
 
 
 class TestGatherFilesSymlinkContainment:

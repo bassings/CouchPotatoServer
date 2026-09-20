@@ -1324,6 +1324,39 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-49:** Preserve the four minimal resource-error handlers. Do not add
   roles, tabindex, keyboard listeners, Alpine disguises, dependencies, or a
   global S6847 suppression solely to move the dashboard.
+- **AC-QA-98:** Before changing production, drive the complete scanner with real
+  temporary movie, subtitle, NFO, sample, trailer, and unrelated files.
+  Forward, reverse, and duplicate inputs must produce identical normalized
+  group and bucket membership, with each unique path classified at most once.
+- **AC-QA-99:** A repository-anchored AST guard must fail on the exact-base
+  `set(sorted(...))` composition in `folder_scanner.py`, prove its discovery is
+  non-vacuous, and pass only when no production occurrence remains.
+- **AC-QA-100:** Applied-and-restored mutations reintroducing the redundant
+  sort, removing `set`, changing the expression to a sorted list, or defeating
+  duplicate elimination must each fail their owning structural or full-scan
+  check. Restoration must return the focused suite to green.
+- **AC-QA-101:** Focused scanner and source-guard tests, existing scanner,
+  containment, trap, Ruff, mutation-changed, and broad gates pass. After merge,
+  exact-master Sonar reports the merge SHA and closes only S7516 key
+  `147553ef-dc52-40f7-a0bf-b73b722b9b19` without suppression or profile change.
+- **AC-DATA-13:** Replace only `set(sorted(leftovers, reverse=True))` with
+  `set(leftovers)`. Preserve set type, membership, duplicate elimination, and
+  every existing set-difference boundary; introduce no ordering contract.
+- **AC-DATA-14:** Exact normalized file-bucket membership remains unchanged for
+  input permutations and duplicate sidecar paths. No path is lost, attached to
+  another movie, newly ignored, or allowed outside the contained scan input.
+- **AC-SEC-41:** Add no logging, filesystem mutation, persistence, request, or
+  disclosure. Existing symlink containment remains authoritative before
+  grouping, and private paths gain no new output channel.
+- **AC-ARCH-2:** Preserve the scanner's public return shape, callback signature,
+  group keys, and category value types. `leftovers` remains a set at every
+  subtraction site; tests compare membership rather than hash-dependent order.
+- **AC-OPS-38:** Exercise the real scanner boundary rather than a reimplemented
+  helper, including a multi-file release whose output ultimately feeds renaming
+  and library reconciliation.
+- **AC-SIMP-50:** This is a one-expression correction plus focused evidence.
+  Do not extract a helper, add an ordered collection or dependency, rewrite
+  grouping, or touch the nearby suspicious `leftovers -= leftovers - {ff}`.
 
 ## Implementation sequence
 
@@ -1521,11 +1554,17 @@ within the authority explicitly granted by the owner.
   semantics behind S6821 and proved/adjudicated the intentional focusable
   releases region behind S6845. Covers AC-QA-86..91, AC-SEC-39,
   AC-A11Y-21..22, AC-DESIGN-12, AC-PROD-20, and AC-SIMP-48.
-- [ ] **T46 — adjudicate image-error S6847 as one exact rule-family batch**
-  *(needs: T45)* — state: building. Preserve the valid resource-failure
+- [x] **T46 — adjudicate image-error S6847 as one exact rule-family batch**
+  *(needs: T45)* — state: merged #414. Preserved the valid resource-failure
   behavior, add exact inventory and real-template browser proof, then adjudicate
   only the four mapped keys. Covers AC-QA-92..97, AC-SEC-40, AC-A11Y-23,
   AC-DESIGN-13, AC-PROD-21, and AC-SIMP-49.
+- [ ] **T47 — remove the discarded scanner sort without changing set semantics**
+  *(needs: T46)* — state: awaiting-ci. Characterize the complete grouping boundary,
+  replace only the redundant `set(sorted(...))` composition, mutation-prove the
+  type and deduplication contract, and verify the exact S7516 key. Covers
+  AC-QA-98..101, AC-DATA-13..14, AC-SEC-41, AC-ARCH-2, AC-OPS-38, and
+  AC-SIMP-50.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -2966,3 +3005,34 @@ T9 and T14 exceptions stated above.
   `tabindex="-1"` mutations each kill the corresponding assertion. This closes
   the entire user-observable false-green class instead of adding another raw
   attribute check.
+- 2026-09-20: T46 merged as PR #414 at exact tree
+  `035d8531e23b02a7b7f1242c017ed600c3b13d59`. Exact-master Sonar at
+  `c414453b3d9b4fb69f2237ab36aa9bc8f05cd796` retained the behavior-proven
+  handlers; all four mapped S6847 keys were commented and transitioned to
+  false positive. Open Clean Code reliability fell from eight LOW to four LOW.
+  Its rating remains 2.0/B because unresolved low impacts remain; the legacy
+  reliability rating remains 1.0/A with zero bugs.
+- 2026-09-20: T47 planning reached independent QA, data/security, and
+  architecture/operability agreement. S7516 is valid: the reverse sort is
+  immediately discarded, while the set is required by three downstream
+  difference operations and duplicate elimination. The deliberately narrow
+  fix is `set(leftovers)` with full-scan characterization. Ordered-list work,
+  grouping rewrites, and the adjacent suspicious subtraction are excluded.
+- 2026-09-20: T47 completed its red/green and focused mutation cycle. The AST
+  guard failed on the exact-base redundant composition while a complete real-
+  file scan characterized stable normalized membership across forward,
+  reversed, and duplicated-sidecar inputs. Reintroducing `set(sorted(...))`
+  killed the guard; replacing the set with either a sorted list or the original
+  list failed at the production set-difference boundary. After restoration,
+  the one-line `set(leftovers)` correction and all focused checks are green.
+- 2026-09-20: T47 review round one found that the output normalizer used sets,
+  which erased duplicate-path regressions despite AC-QA-98's exact uniqueness
+  requirement. It now compares `Counter` values, retaining order independence
+  while preserving multiplicity. A deliberate final-bucket duplication must
+  fail before the corrected diff can re-enter the clean-agent review gate.
+- 2026-09-20: T47's corrected diff passed three independent current-diff
+  reviews, 144 focused scanner checks with one expected failure, Ruff, the
+  352-file false-green guard, 221 UI unit tests, and the final broad Python
+  gate with 4,590 passed, 14 skipped, and five expected failures. The changed-
+  file mutation runner has no scanner scope, so the recorded applied/restored
+  mutations are the load-bearing mutation evidence. T47 now awaits CI.
