@@ -646,8 +646,7 @@ function cpSwap(url, target, swap) {
   });
 }
 
-{% if operator_replace_enabled %}
-// operatorReplaceModal() backs the "Replace with this file" trigger and its
+// operatorReplaceModal() backs the operator-replacement trigger and its
 // design-system dialog (FEAT-011). isOpen/open()/close() follows the same
 // convention as movieInfoModal() (partials/movie_info_modal.html), and
 // trapFocus() is copied from the same source rather than re-derived, since
@@ -799,7 +798,6 @@ function operatorReplaceModal() {
     }
   };
 }
-{% endif %}
 
 function restoreToWanted() {
   return {

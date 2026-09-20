@@ -3,7 +3,6 @@
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
-import re
 import shutil
 import subprocess
 
@@ -47,11 +46,7 @@ class _ExplicitAlpineInitParser(HTMLParser):
 
 def _classic_script_source():
     source = TEMPLATE.read_text(encoding="utf-8")
-    body = source.split("<script>", 1)[1].split("</script>", 1)[0]
-    # Sonar understands template control tags, but the JavaScript bridge still
-    # parses output expressions in quoted script content. Removing control tags
-    # reproduces that boundary without hiding the output-expression defect.
-    return re.sub(r"{%.*?%}|{#.*?#}", "", body, flags=re.DOTALL)
+    return source.split("<script>", 1)[1].split("</script>", 1)[0]
 
 
 def _explicit_alpine_init_inventory(templates):
