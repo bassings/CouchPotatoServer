@@ -52,6 +52,10 @@ for (const theme of ['light', 'dark'] as const) {
     }, theme);
     await page.goto('/wizard/');
     await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
+    await expect.poll(
+      () => page.evaluate(() => document.documentElement.classList.contains('light')),
+      { message: `${theme} theme was not applied before mobile layout checks` },
+    ).toBe(theme === 'light');
 
     await page.getByRole('button', { name: 'Continue' }).click();
     await expect(page.getByRole('heading', { name: 'Server Security' })).toBeVisible();

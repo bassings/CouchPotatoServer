@@ -139,7 +139,8 @@ def _non_empty_attr(tag, *names):
 def _wrapped_by_label(tag):
     for parent in tag.parents:
         if isinstance(parent, Tag) and parent.name == 'label':
-            return True
+            if not parent.get('for') and not parent.get(':for'):
+                return True
     return False
 
 
@@ -219,26 +220,35 @@ def _label_semantics_violations(fragment_html, source):
 
         static_for = (label.get('for') or '').strip()
         bound_for = (label.get(':for') or '').strip()
+        nested_controls = [
+            control for control in label.find_all(LABELABLE_TAGS)
+            if not (control.name == 'input' and
+                    (control.get('type') or '').strip().lower() == 'hidden')
+        ]
         if static_for or bound_for:
             id_attr = 'id' if static_for else ':id'
             target = static_for or bound_for
-            controls = [
+            target_controls = [
                 control for control in soup.find_all(LABELABLE_TAGS)
                 if (control.get(id_attr) or '').strip() == target
                 and not (control.name == 'input' and
                          (control.get('type') or '').strip().lower() == 'hidden')
             ]
-        else:
-            controls = [
-                control for control in label.find_all(LABELABLE_TAGS)
-                if not (control.name == 'input' and
-                        (control.get('type') or '').strip().lower() == 'hidden')
+            controls = target_controls + [
+                control for control in nested_controls
+                if not any(control is target_control for target_control in target_controls)
             ]
+            has_one_associated_control = (
+                len(target_controls) == 1 and len(controls) == 1
+            )
+        else:
+            controls = nested_controls
+            has_one_associated_control = len(controls) == 1
 
         if not has_text and len(controls) == 1:
             has_text = _non_empty_attr(controls[0], 'aria-label', 'aria-labelledby')
 
-        if not has_text or len(controls) != 1:
+        if not has_text or not has_one_associated_control:
             violations.append(
                 '%s: label text=%r target=%r resolves to %d labelable controls'
                 % (source, label.get_text(' ', strip=True) or label.get('x-text'),
@@ -373,6 +383,13 @@ def test_the_label_checker_accepts_explicit_and_implicit_associations():
 )
 def test_the_label_checker_rejects_orphan_empty_and_ambiguous_labels(bad):
     assert len(_label_semantics_violations(bad, 'fixture')) == 1
+
+
+def test_an_explicit_label_cannot_also_hide_an_orphan_nested_control():
+    mixed = '<label for="x">Name<input id="y"></label><input id="x">'
+
+    assert len(_label_semantics_violations(mixed, 'fixture')) == 1
+    assert len(_fragment_violations(mixed, 'fixture')) == 1
 
 
 def test_the_checker_ignores_jinja_comment_text_that_looks_like_a_tag():

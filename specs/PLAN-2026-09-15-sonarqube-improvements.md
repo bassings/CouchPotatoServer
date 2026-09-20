@@ -2780,3 +2780,10 @@ T9 and T14 exceptions stated above.
   so the invariant distinguishes generated markup mechanically. This is the
   escalation guard for the recurring extraction class, not another attempt to
   parse JavaScript syntax.
+- 2026-09-20: T44 accessibility review found two independent evidence gaps.
+  The wizard's light/dark mobile loop now asserts the requested root theme
+  actually took effect before measuring layout. The source guard now treats an
+  explicit label as explicit only: an unrelated nested control is neither
+  implicitly named nor omitted from the label's control count. A mixed
+  explicit/nested regression fixture proves both the label-semantic and field-
+  name checks reject that shape.
