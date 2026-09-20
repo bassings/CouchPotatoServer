@@ -59,6 +59,34 @@ test.describe('Settings', () => {
     await expect(refreshButton).toBeVisible({ timeout: 5000 });
   });
 
+  test('visual option captions match their control accessible names', async ({ page }) => {
+    const searcherTab = page.getByRole('tab', { name: /searcher/i });
+    await expect(searcherTab).toBeVisible();
+    await searcherTab.click();
+
+    const captionExpression = "opt.label || opt.name.replace(/_/g, ' ')";
+    const cases = [
+      {
+        source: 'combined settings',
+        caption: page.locator(`span[aria-hidden="true"][x-text="${captionExpression}"]:not([x-show]):visible`).first(),
+      },
+      {
+        source: 'provider settings',
+        caption: page.locator(`span[aria-hidden="true"][x-text="${captionExpression}"][x-show]:visible`).first(),
+      },
+    ];
+
+    for (const { source, caption } of cases) {
+      await expect(caption, `${source} did not render a visual option caption`).toBeVisible();
+      const visibleText = (await caption.textContent())?.trim() || '';
+      expect(visibleText, `${source} rendered an empty visual caption`).not.toBe('');
+
+      const control = caption.locator('..').locator('input:visible, select:visible, textarea:visible, button:visible').first();
+      await expect(control, `${source} caption had no rendered control`).toBeVisible();
+      await expect(control, `${source} control name drifted from its visible caption`).toHaveAccessibleName(visibleText);
+    }
+  });
+
   test('Jackett sync button should have description (DEF-003)', async ({ page }) => {
     // Wait for settings to load
     await page.waitForTimeout(1000);

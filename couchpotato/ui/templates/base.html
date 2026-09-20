@@ -29,7 +29,7 @@
      Back that hits the cache, htmx restores the snapshot and Alpine teleports
      a SECOND copy, leaving a scope-less duplicate whose every binding throws
      (`movie is not defined`, `isOpen is not defined`, ...) and duplicating ids
-     so `<label for="modal-profile-select">` matches two elements. Measured:
+     so the modal profile label matches two elements. Measured:
      3 duplicated ids and 42 uncaught page errors, deterministically.
 
      With the cache off, every Back takes htmx's AJAX restore path instead,

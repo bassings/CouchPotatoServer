@@ -1161,6 +1161,85 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   keys, while the existing workflow browser suites own hydration, dialog, and
   viewport behavior. Add no production registry or coupling from application
   code to Sonar identifiers.
+- **AC-QA-80:** Treat the four exact `Web:S6853` keys at exact master
+  `2d898286d39aaa96f12c74efd2a8bf08e5c6ec51` as one multiplicity-preserving
+  rule-family inventory. A new or duplicate source identity must fail as
+  unaudited rather than inherit an existing disposition.
+- **AC-QA-81:** Extend the CWD-independent form-label source guard across the
+  served template scope. It must reject a label with neither text nor a named
+  sole control, an unmatched static or Alpine-bound `for`, an orphan label,
+  and a label containing zero or multiple labelable controls; synthetic
+  mutations prove each boundary. An icon-only wrapper around one explicitly
+  ARIA-named control remains valid. Its initial red result on exact master is
+  exactly the combined-card and provider-card sites.
+- **AC-QA-82:** Preserve rendered characterization of both false positives.
+  Two private trackers with same-named fields retain unique IDs, exact names,
+  and label-click focus. Clicking the visible Advanced text toggles its one
+  named switch exactly once in each direction, while Enter and Space remain
+  operable. Mismatching the wizard binding or severing Advanced text activation
+  fails an owning test.
+- **AC-QA-83:** Render representative combined and provider options after the
+  correction and prove each visible caption exactly matches the control's
+  non-empty accessible name without duplicate IDs, unexpected value changes,
+  or saves. Multi-control and action options retain distinct existing control
+  names rather than acquiring one misleading generated association.
+- **AC-QA-84:** Focused source, Settings, wizard, Chromium, accessibility, and
+  393px checks plus `make check-traps` pass before the broad repository gate.
+  Tests use observable state, contain no conditional bodies, and independently
+  mutation-prove each of the four reported source families.
+- **AC-QA-85:** Exact-master Sonar reports the merge revision, closes the
+  combined-card and provider-card keys as fixed, and only then adjudicates the
+  still-matching wizard and Advanced keys as false positives with evidence and
+  expiry conditions. Re-fetch all four and require zero open `Web:S6853`;
+  reliability and medium counts each fall from 14 and 6 to 10 and 2 unless a
+  concurrent delta is identified and explained.
+- **AC-SEC-37:** Keep the correction structural: dynamic captions remain
+  literal or use inert `x-text`, never `x-html` or raw markup. Add no
+  user-derived identifier, request, logging, persistence, dependency, or
+  credential, private-path, media-title, or watch-history exposure.
+- **AC-SEC-38:** Exact-key adjudication uses the owner-only admin credential
+  without placing it in argv, output, comments, or Git. Do not disable the
+  rule, bulk-transition the family, or accept either real orphan-label defect.
+- **AC-A11Y-17:** Preserve the wizard's matching Alpine-bound `:for`/`:id`
+  association and the Advanced label's one implicit labelable switch. Their
+  rendered accessible names, label/text activation, focus, unique IDs, and
+  keyboard behavior remain intact.
+- **AC-A11Y-18:** Replace only the two genuinely orphaned Settings `<label>`
+  elements with neutral caption semantics. Each rendered control continues to
+  expose an accessible name containing the unchanged visible caption, while
+  repeated and multi-control options keep their existing distinct names; do
+  not manufacture a single misleading target for a polymorphic renderer.
+- **AC-A11Y-19:** At 393px in both themes, the Settings header, representative
+  provider and combined fields, and enabled private-tracker fields remain
+  visible, unclipped, and within the document width.
+- **AC-A11Y-20:** False-positive comments cite the rendered association proof
+  and expire if the binding, implicit-control structure, activation behavior,
+  or owning source/browser guard changes.
+- **AC-DESIGN-9:** The two neutral captions retain their exact text, classes,
+  typography, muted colour, spacing, ordering, grid alignment, and both-theme
+  appearance; no duplicate caption or new design token is introduced.
+- **AC-DESIGN-10:** The Advanced row remains one coherent full-row click target
+  with its existing 32x16 track, 12x12 knob, state colour, text, spacing, and
+  on/off interaction. The correction creates no dead area or nested control.
+- **AC-DESIGN-11:** Desktop column structure and phone-width layout remain
+  unchanged for all four finding sites.
+- **AC-PROD-17:** The private-tracker label still focuses the exact field for
+  its tracker, including two trackers with identically named fields, and the
+  Advanced text still toggles the switch exactly once.
+- **AC-PROD-18:** Settings captions and their controls retain the same copy,
+  accessible names, values, option visibility, and save behavior. Removing
+  misleading label semantics does not turn a multi-control or action option's
+  caption into an accidental activation target.
+- **AC-PROD-19:** T44 changes no navigation, descriptions, stored settings,
+  API behavior, theme, or workflow. Success is two keys closed as fixed and
+  two behavior-proven keys accepted, not merely four fewer dashboard entries.
+- **AC-SIMP-46:** Make only the two necessary semantic tag corrections; keep
+  the two valid associations unchanged. Add no ID-generation scheme, shared
+  field abstraction, ARIA indirection, dependency, rule suppression, or
+  unrelated template cleanup.
+- **AC-SIMP-47:** Reuse the existing source guard and browser suites for one
+  exact family inventory and focused rendered proof; do not create a parallel
+  accessibility framework.
 
 ## Implementation sequence
 
@@ -1341,12 +1420,18 @@ within the authority explicitly granted by the owner.
   correction** *(needs: T41)* — state: merged #409. Resolve both replacement
   JavaScript S1764 findings without changing parser behavior. Covers
   AC-QA-73..76, AC-SEC-35, AC-OPS-37, and AC-SIMP-44.
-- [ ] **T43 — prove and adjudicate dynamic-heading false positives as one
-  rule-family batch** *(needs: T42)* — state: building. Cover all seven live
+- [x] **T43 — prove and adjudicate dynamic-heading false positives as one
+  rule-family batch** *(needs: T42)* — state: merged #410. Cover all seven live
   `Web:S6850` findings with one source inventory, load-bearing rendered
   accessibility evidence, exact-master verification, and exact-key
   adjudication. Covers AC-QA-77..79, AC-SEC-36, AC-A11Y-13..16, AC-DESIGN-8,
   AC-PROD-16, AC-SIMP-45, and AC-ARCH-1.
+- [ ] **T44 — repair and adjudicate form-label semantics as one rule-family
+  batch** *(needs: T43)* — state: building. Cover all four live `Web:S6853`
+  findings with a multiplicity-preserving inventory, one recurrence guard,
+  rendered association evidence, two semantic corrections, and two exact-key
+  false-positive adjudications. Covers AC-QA-80..85, AC-SEC-37..38,
+  AC-A11Y-17..20, AC-DESIGN-9..11, AC-PROD-17..19, and AC-SIMP-46..47.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -2631,3 +2716,108 @@ T9 and T14 exceptions stated above.
   the restored five-test Chromium slice passes. The unrelated mobile Wanted
   contrast timing flake observed by hosted CI is tracked separately as #411;
   its clean failed-job rerun does not weaken `--fail-on-flaky-tests`.
+- 2026-09-20: T43 merged as PR #410 at exact master
+  `2d898286d39aaa96f12c74efd2a8bf08e5c6ec51`; the merge tree exactly matched
+  the reviewed branch tree. Exact-master Sonar task
+  `f4544f44-e71d-4391-813f-5d3ba4ca8dee` reported that revision. All seven
+  recorded `Web:S6850` keys were re-fetched, evidence-commented, transitioned
+  individually to false positive, and re-fetched as `FALSE_POSITIVE`. Open
+  reliability fell from 21 to 14 and medium from 13 to 6, with eight low
+  unchanged and zero open `Web:S6850`.
+- 2026-09-20: T44 planning lenses (security, QA, simplicity, product, design,
+  and accessibility) reconciled the four live `Web:S6853` findings. The wizard
+  bound label and Advanced implicit switch label are behavior-backed false
+  positives; the combined-card and provider-card labels are genuine orphan
+  semantics above polymorphic renderers whose controls already have explicit
+  names. T44 will red-first extend the existing source guard, replace only the
+  two orphan labels with neutral captions, mutation-prove all four families,
+  and defer exact-key adjudication until an exact-master post-merge scan.
+- 2026-09-20: T44 completed its red/green cycle. The new label-semantics guard
+  first failed at exactly the combined-card and provider-card orphan labels;
+  replacing only those elements with inert visual captions made it green while
+  their controls retained matching explicit accessible names. The exact-family
+  inventory discovers all four source shapes with occurrence multiplicity.
+  Mutations restoring either orphan label, mismatching the wizard's bound
+  `for`, and replacing Advanced's implicit label each failed their owning
+  source or browser evidence. The broad gate passed 4,548 Python tests with 14
+  skipped and five expected failures, 221 UI unit tests, 181 Chromium tests,
+  100 accessibility tests, 17 mobile tests, two isolation tests, the trap and
+  Ruff checks, and a production Docker build. T44 now enters Harness review.
+- 2026-09-20: T44 review round one found one evidence gap: existing mobile
+  coverage did not bound the Settings header, provider/combined captions and
+  controls, and enabled tracker groups at 393px in both themes. The same
+  mobile suites now exercise those states before navigation and run the wizard
+  grouping path in light and dark. The review also exposed ambiguous plan and
+  helper wording around valid icon-only labels; AC-QA-81 and the source guard
+  now explicitly accept one ARIA-named wrapped control while continuing to
+  reject an empty unnamed wrapper.
+- 2026-09-20: T44 review round two found one shared-mechanism false green: a
+  raw JavaScript comment regex treated `//` in a quoted URL as a comment and
+  could hide a later markup template literal. A quote-aware scanner now skips
+  real line/block comments while preserving template discovery after URL,
+  block-marker, and escaped-quote strings; adversarial fixtures cover each
+  boundary. The label guard now discovers all label-bearing served templates,
+  51 focused source tests and the trap/Ruff checks pass, and four 393px mobile
+  checks prove the affected Settings and wizard states in both themes. The
+  separate pre-existing whole-Searchers-page overflow is outside these changed
+  elements and is not folded into this semantic-label batch.
+- 2026-09-20: T44 review round three found the same mechanism class again:
+  JavaScript regular-expression literals containing `//` could fool the
+  partial comment lexer and hide later generated markup. Per the recurring-
+  finding rule, the fix removes that lexer rather than teaching it another
+  syntax edge. The guard now inspects every markup-bearing backtick span and
+  therefore fails closed even inside comment prose; the one repository comment
+  that used a markup example was reworded. URL, quoted-marker, escaped-quote,
+  protocol-regex, slash-regex, and comment fixtures exercise the mechanism,
+  and 50 focused source tests remain green.
+- 2026-09-20: T44 review round four found that an unmatched backtick in
+  comment prose could still pair with a real template's opening delimiter and
+  make its markup disappear from the audit. The extraction mechanism now
+  asserts that every form-markup occurrence in a script lies inside a paired
+  backtick span; malformed or mispaired source therefore fails loudly instead
+  of succeeding with an empty audit. A regression fixture reproduces that
+  exact case. Existing script-comment prose naming a native select was reworded
+  so the invariant distinguishes generated markup mechanically. This is the
+  escalation guard for the recurring extraction class, not another attempt to
+  parse JavaScript syntax.
+- 2026-09-20: T44 accessibility review found two independent evidence gaps.
+  The wizard's light/dark mobile loop now asserts the requested root theme
+  actually took effect before measuring layout. The source guard now treats an
+  explicit label as explicit only: an unrelated nested control is neither
+  implicitly named nor omitted from the label's control count. A mixed
+  explicit/nested regression fixture proves both the label-semantic and field-
+  name checks reject that shape.
+- 2026-09-20: The follow-up accessibility review found the same explicit-
+  versus-implicit classification still used value truthiness for an empty
+  `for` or `:for`. Both guards now classify by attribute presence, so an empty
+  explicit association fails instead of falling through as an implicit label.
+  Parameterized static and Alpine-bound fixtures enforce the shared boundary.
+- 2026-09-20: The final mechanism review found two remaining forms of that
+  association-class ambiguity: quoted-empty Alpine expressions, and labels
+  carrying both static and bound `for` attributes. One shared normalizer now
+  treats blank literal expressions as empty, while typed target sets keep
+  static `for`/`id` and bound `:for`/`:id` associations separate. Dual-mode
+  labels fail explicitly. Empty-literal, dual-mode, and cross-mode fixtures
+  exercise both the field-name and label-semantic guards.
+- 2026-09-20: The independent local review gate mutation-proved one final
+  dynamic-text false green: `x-text="''"` was non-empty source code but rendered
+  no label text. Dynamic `x-text` and `x-html` content now uses the existing
+  normalized non-empty-expression check. Parameterized fixtures cover blank
+  literals on both the label and descendants, and the real wizard-label
+  mutation is required to fail the focused guard.
+- 2026-09-20: PR #412's first CodeQL run exposed a CI-specific failure. The
+  template-literal regex used overlapping alternatives and triggered a
+  high-severity exponential-backtracking alert; its non-escape branch now
+  excludes backslashes as well as backticks, and an escaped-backtick fixture
+  preserves extraction behavior. A follow-up attempt to rename the JavaScript
+  SARIF category produced a neutral aggregate warning because `master` already
+  uses CodeQL's canonical `/language:javascript-typescript` identity. The
+  workflow therefore retains `matrix.language` for initialization and analysis
+  categories, while `matrix.check_name` remains display-only.
+- 2026-09-20: The final cloud review exposed another instance of the dynamic-
+  value false-green class: bare Alpine `null` and `undefined` expressions
+  were treated as rendered names and association targets. A shared attribute-
+  value normalizer now rejects those nullish expressions for bound attributes
+  and `x-text`/`x-html` while preserving literal static values. Red-first,
+  parameterized fixtures cover both accessible-name routes and both label-
+  association audits.

@@ -533,14 +533,28 @@ test.describe('Settings Page', () => {
     // `if (await advancedToggle.isVisible())` guard could never be false,
     // and nothing was asserted even when it passed.
     const advancedToggle = page.getByRole('switch', { name: /show advanced settings/i });
+    const advancedText = advancedToggle.locator('..').getByText('Advanced', { exact: true });
     await expect(advancedToggle).toBeVisible();
+    await expect(advancedText).toBeVisible();
     await expect(advancedToggle).toHaveAttribute('aria-checked', 'false');
 
-    await advancedToggle.click();
+    // The visible text is part of the implicit label and therefore part of
+    // the switch's intentional full-row pointer target. This distinguishes
+    // the valid association from a neutral wrapper around a smaller button.
+    await advancedText.click();
     await expect(advancedToggle).toHaveAttribute('aria-checked', 'true');
 
-    await advancedToggle.click();
+    await advancedText.click();
     await expect(advancedToggle).toHaveAttribute('aria-checked', 'false');
+
+    await advancedToggle.focus();
+    await advancedToggle.press('Enter');
+    await expect(advancedToggle).toHaveAttribute('aria-checked', 'true');
+    await expect(advancedToggle).toBeFocused();
+
+    await advancedToggle.press('Space');
+    await expect(advancedToggle).toHaveAttribute('aria-checked', 'false');
+    await expect(advancedToggle).toBeFocused();
   });
 
 });

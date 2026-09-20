@@ -45,36 +45,45 @@ async function expectGroupFitsPhone(group: Locator, page: Page, name: string) {
 }
 
 
-test('wizard provider and downloader groups fit a phone viewport', async ({ page }) => {
-  await page.goto('/wizard/');
-  await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
+for (const theme of ['light', 'dark'] as const) {
+  test(`wizard provider and downloader groups fit a phone viewport in ${theme} theme`, async ({ page }) => {
+    await page.addInitScript((selectedTheme) => {
+      localStorage.setItem('cp-theme', selectedTheme);
+    }, theme);
+    await page.goto('/wizard/');
+    await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
+    await expect.poll(
+      () => page.evaluate(() => document.documentElement.classList.contains('light')),
+      { message: `${theme} theme was not applied before mobile layout checks` },
+    ).toBe(theme === 'light');
 
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByRole('heading', { name: 'Server Security' })).toBeVisible();
-  await page.getByRole('button', { name: 'Skip' }).click();
-  await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('heading', { name: 'Server Security' })).toBeVisible();
+    await page.getByRole('button', { name: 'Skip' }).click();
+    await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
 
-  await page.getByRole('button', { name: /^Both/ }).click();
-  await page.getByRole('button', { name: /Private Trackers/ }).click();
-  await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
-  await page.getByRole('switch', { name: 'Enable HDBits' }).click();
+    await page.getByRole('button', { name: /^Both/ }).click();
+    await page.getByRole('button', { name: /Private Trackers/ }).click();
+    await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
+    await page.getByRole('switch', { name: 'Enable HDBits' }).click();
 
-  const passThePopcorn = page.getByRole('group', { name: 'PassThePopcorn' });
-  const hdBits = page.getByRole('group', { name: 'HDBits' });
-  await expect(passThePopcorn.getByLabel('Username')).toBeVisible();
-  await expect(hdBits.getByLabel('Username')).toBeVisible();
-  await expectGroupFitsPhone(passThePopcorn, page, 'PassThePopcorn tracker group');
-  await expectGroupFitsPhone(hdBits, page, 'HDBits tracker group');
+    const passThePopcorn = page.getByRole('group', { name: 'PassThePopcorn' });
+    const hdBits = page.getByRole('group', { name: 'HDBits' });
+    await expect(passThePopcorn.getByLabel('Username')).toBeVisible();
+    await expect(hdBits.getByLabel('Username')).toBeVisible();
+    await expectGroupFitsPhone(passThePopcorn, page, 'PassThePopcorn tracker group');
+    await expectGroupFitsPhone(hdBits, page, 'HDBits tracker group');
 
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByRole('heading', { name: 'Download Clients' })).toBeVisible();
-  await page.getByRole('button', { name: 'SABnzbd' }).click();
-  await page.getByRole('button', { name: 'qBittorrent' }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('heading', { name: 'Download Clients' })).toBeVisible();
+    await page.getByRole('button', { name: 'SABnzbd' }).click();
+    await page.getByRole('button', { name: 'qBittorrent' }).click();
 
-  const usenet = page.getByRole('group', { name: 'Usenet Client' });
-  const torrent = page.getByRole('group', { name: 'Torrent Client' });
-  await expect(usenet.getByLabel('Host')).toBeVisible();
-  await expect(torrent.getByLabel('Host')).toBeVisible();
-  await expectGroupFitsPhone(usenet, page, 'Usenet client group');
-  await expectGroupFitsPhone(torrent, page, 'Torrent client group');
-});
+    const usenet = page.getByRole('group', { name: 'Usenet Client' });
+    const torrent = page.getByRole('group', { name: 'Torrent Client' });
+    await expect(usenet.getByLabel('Host')).toBeVisible();
+    await expect(torrent.getByLabel('Host')).toBeVisible();
+    await expectGroupFitsPhone(usenet, page, 'Usenet client group');
+    await expectGroupFitsPhone(torrent, page, 'Torrent client group');
+  });
+}

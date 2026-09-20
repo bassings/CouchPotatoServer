@@ -611,7 +611,7 @@ function profileEditor() {
  * The first fix wrapped htmx.ajax and inferred the outcome from htmx's error
  * EVENTS on document.body. Measured against the real vendored htmx 2.0.4,
  * that was wrong three ways, all of them page-global:
- *   - a failing request from ANY other element (the release filter <select>,
+ *   - a failing request from ANY other element (the native release filter,
  *     a column-sort link, #movie-collections' own hx-trigger="load") bubbles
  *     to body and made this reject after its own swap had succeeded --
  *     a false "could not refresh" on a page that had just refreshed;

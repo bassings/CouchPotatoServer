@@ -94,6 +94,27 @@ for (const theme of ['light', 'dark'] as const) {
       await expectHeadingFitsViewport(heading);
     }
 
+    const advancedSwitch = page.getByRole('switch', { name: 'Show advanced settings' });
+    await expectHeadingFitsViewport(advancedSwitch.locator('..'));
+    await expectHeadingFitsViewport(advancedSwitch);
+
+    const captionExpression = "opt.label || opt.name.replace(/_/g, ' ')";
+    const combinedCaption = page.locator(
+      `span[aria-hidden="true"][x-text="${captionExpression}"]:not([x-show]):visible`,
+    ).first();
+    await expectHeadingFitsViewport(combinedCaption);
+    await expectHeadingFitsViewport(
+      combinedCaption.locator('..').locator('input:visible, select:visible, textarea:visible, button:visible').first(),
+    );
+
+    await page.getByRole('tab', { name: 'General' }).click();
+    const providerCaption = page.locator(
+      `span[aria-hidden="true"][x-text="${captionExpression}"][x-show]:visible`,
+    ).first();
+    await expectHeadingFitsViewport(providerCaption);
+    await expectHeadingFitsViewport(
+      providerCaption.locator('..').locator('input:visible, select:visible, textarea:visible, button:visible').first(),
+    );
     const categories = await openSettingsTab(page, 'Categories');
     const categoryName = `E2E Native List ${theme}`;
     await categories.getByRole('button', { name: /new category/i }).click();
