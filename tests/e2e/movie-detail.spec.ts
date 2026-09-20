@@ -167,6 +167,25 @@ test.describe('Movie Detail', () => {
     await expect(page).not.toHaveURL(/.*movie\/.+/);
   });
 
+  test('profile editor opens with the movie current profile selected', async ({ page }) => {
+    let profileListRequests = 0;
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.endsWith('/profile.list/')) {
+        profileListRequests += 1;
+      }
+    });
+
+    await gotoSeededMovie(page);
+    const currentProfile = await seededMovieProfileId(page);
+
+    await page.locator('[title="Click to change quality profile"]').click();
+
+    const profileSelect = page.locator(`#profile-edit-${SEEDED_MOVIE_ID}`);
+    await expect(profileSelect).toBeVisible();
+    await expect(profileSelect).toHaveValue(currentProfile);
+    await expect.poll(() => profileListRequests).toBe(1);
+  });
+
   test('year should show TBA for movies without release date (DEF-005)', async ({ page }) => {
     // This test verifies the fix for DEF-005
     // We can't easily find a movie without a year, so we just verify
