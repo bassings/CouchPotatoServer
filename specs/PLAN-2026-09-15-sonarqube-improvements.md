@@ -1166,10 +1166,12 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
   rule-family inventory. A new or duplicate source identity must fail as
   unaudited rather than inherit an existing disposition.
 - **AC-QA-81:** Extend the CWD-independent form-label source guard across the
-  served template scope. It must reject an empty label, an unmatched static or
-  Alpine-bound `for`, an orphan label, and a label containing zero or multiple
-  labelable controls; synthetic mutations prove each boundary. Its initial red
-  result on exact master is exactly the combined-card and provider-card sites.
+  served template scope. It must reject a label with neither text nor a named
+  sole control, an unmatched static or Alpine-bound `for`, an orphan label,
+  and a label containing zero or multiple labelable controls; synthetic
+  mutations prove each boundary. An icon-only wrapper around one explicitly
+  ARIA-named control remains valid. Its initial red result on exact master is
+  exactly the combined-card and provider-card sites.
 - **AC-QA-82:** Preserve rendered characterization of both false positives.
   Two private trackers with same-named fields retain unique IDs, exact names,
   and label-click focus. Clicking the visible Advanced text toggles its one
@@ -2741,3 +2743,11 @@ T9 and T14 exceptions stated above.
   skipped and five expected failures, 221 UI unit tests, 181 Chromium tests,
   100 accessibility tests, 17 mobile tests, two isolation tests, the trap and
   Ruff checks, and a production Docker build. T44 now enters Harness review.
+- 2026-09-20: T44 review round one found one evidence gap: existing mobile
+  coverage did not bound the Settings header, provider/combined captions and
+  controls, and enabled tracker groups at 393px in both themes. The same
+  mobile suites now exercise those states before navigation and run the wizard
+  grouping path in light and dark. The review also exposed ambiguous plan and
+  helper wording around valid icon-only labels; AC-QA-81 and the source guard
+  now explicitly accept one ARIA-named wrapped control while continuing to
+  reject an empty unnamed wrapper.

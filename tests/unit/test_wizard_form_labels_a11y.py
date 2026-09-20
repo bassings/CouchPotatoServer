@@ -56,6 +56,10 @@ SCOPE_FILES = [
     TEMPLATES_DIR / 'partials' / 'settings' / 'logs_tab.html',
     TEMPLATES_DIR / 'logs.html',
 ]
+LABEL_TEMPLATE_FILES = sorted(
+    path for path in TEMPLATES_DIR.rglob('*.html')
+    if '<label' in path.read_text()
+)
 
 FIELD_TAGS = ('input', 'select', 'textarea')
 LABELABLE_TAGS = ('button', 'input', 'meter', 'output', 'progress', 'select', 'textarea')
@@ -71,6 +75,7 @@ _JINJA_COMMENT = re.compile(r'{#.*?#}', re.S)
 #: A JS template-literal string, inside a <script> block, that contains form
 #: markup -- see the getDownloaderFields() note above.
 _JS_HTML_STRING = re.compile(r'`([^`]*<(?:input|label|select|textarea)[^`]*)`', re.S)
+_JS_COMMENT = re.compile(r'//[^\n]*|/\*.*?\*/', re.S)
 #: Script bodies are extracted with the HTML parser, NOT a regex. CodeQL's
 #: py/bad-tag-filter flagged the regex form on PR 301 and was right about the
 #: code even though the severity does not apply here (this parses the
@@ -82,6 +87,15 @@ def _script_bodies(html_text):
     """Every <script> element's text, via the parser rather than a pattern."""
     soup = BeautifulSoup(html_text, 'html.parser')
     return [script.string or script.get_text() or '' for script in soup.find_all('script')]
+
+
+def _js_html_strings(script):
+    """Yield markup-bearing template literals, excluding prose in comments."""
+    comment_ranges = [(match.start(), match.end()) for match in _JS_COMMENT.finditer(script)]
+    for match in _JS_HTML_STRING.finditer(script):
+        if any(start <= match.start() < end for start, end in comment_ranges):
+            continue
+        yield match
 
 
 def _strip_jinja_comments(text):
@@ -158,14 +172,19 @@ def _fragment_violations(fragment_html, source):
 def _script_fragment_violations(html_text, filename):
     violations = []
     for script_idx, script in enumerate(_script_bodies(html_text)):
-        for string_idx, match in enumerate(_JS_HTML_STRING.finditer(script)):
+        for string_idx, match in enumerate(_js_html_strings(script)):
             source = '%s (script %d, template string %d)' % (filename, script_idx, string_idx)
             violations.extend(_fragment_violations(match.group(1), source))
     return violations
 
 
 def _label_semantics_violations(fragment_html, source):
-    """Return labels that lack text or exactly one associated control."""
+    """Return labels without exactly one named, associated control.
+
+    An icon-only wrapper may take its text alternative from the sole control's
+    explicit ARIA name. This is the existing movie-card/boolean-toggle pattern,
+    and is distinct from an empty label around an unnamed control.
+    """
     soup = BeautifulSoup(fragment_html, 'html.parser')
     violations = []
 
@@ -214,7 +233,7 @@ def find_label_semantics_violations(path):
     text = _strip_jinja_comments(path.read_text())
     violations = _label_semantics_violations(text, path.name)
     for script_idx, script in enumerate(_script_bodies(text)):
-        for string_idx, match in enumerate(_JS_HTML_STRING.finditer(script)):
+        for string_idx, match in enumerate(_js_html_strings(script)):
             source = '%s (script %d, template string %d)' % (
                 path.name, script_idx, string_idx)
             violations.extend(_label_semantics_violations(match.group(1), source))
@@ -316,6 +335,7 @@ def test_the_label_checker_accepts_explicit_and_implicit_associations():
         '<label :for="\'field-\' + item.id" x-text="item.label"></label>'
         '<input :id="\'field-\' + item.id">',
         '<label><button role="switch">Advanced</button></label>',
+        '<label><input aria-label="Select movie"></label>',
     )
 
     for good in fixtures:
@@ -347,6 +367,17 @@ def test_the_checker_ignores_jinja_comment_text_that_looks_like_a_tag():
     assert len(violations) == 1, (
         'stripping the Jinja comment should leave exactly one real, '
         'unassociated input -- got %r' % violations)
+
+
+def test_script_markup_extraction_ignores_backtick_examples_in_comments():
+    script = (
+        '// Example only: `<label for="missing">`\n'
+        'const rendered = `<label for="name">Name</label><input id="name">`;'
+    )
+
+    assert [match.group(1) for match in _js_html_strings(script)] == [
+        '<label for="name">Name</label><input id="name">'
+    ]
 
 
 def test_the_loop_checker_flags_a_static_id_inside_x_for():
@@ -466,7 +497,10 @@ def test_no_static_id_inside_an_alpine_loop(path):
     )
 
 
-@pytest.mark.parametrize('path', SCOPE_FILES, ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    'path', LABEL_TEMPLATE_FILES,
+    ids=lambda p: str(p.relative_to(TEMPLATES_DIR)),
+)
 def test_every_label_has_text_and_exactly_one_associated_control(path):
     """A label is semantic, not merely visual: its one control must resolve."""
     violations = find_label_semantics_violations(path)
