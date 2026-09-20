@@ -1093,6 +1093,74 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-44:** Add one small fixed-width digit helper and sequential guards,
   not another regex or parsing abstraction. Keep all unrelated parser and UI
   code unchanged.
+- **AC-QA-77:** Treat the seven exact `Web:S6850` keys reported at exact master
+  `6da6e572deecced649f1333098a30771f48a3d2c` as one rule-family batch. A
+  CWD-independent source inventory must first fail unless it identifies exactly
+  those seven `h1`-`h6` elements whose content is supplied solely by `x-text`,
+  recording their file, heading level, expression, and Sonar key. A new such
+  heading is an unaudited case and must fail the inventory rather than inherit
+  this adjudication, including a duplicate occurrence with the same file,
+  level, and expression as an existing entry.
+- **AC-QA-78:** Non-vacuous rendered-browser evidence reaches every reported
+  expression after Alpine readiness and proves a non-empty accessible heading:
+  New/Edit Category, New/Edit Profile, a distinguishable movie title plus the
+  existing `Unknown` path, Settings category, combined group and subgroup, and
+  provider label/name. The tests assert heading level and accessible name, do
+  not conditionally skip an unavailable state, and fail if the relevant
+  `x-text` binding is removed or its reachable value becomes empty.
+- **AC-QA-79:** Relevant focused source, Chromium, accessibility, and 393px
+  checks, `make check-traps`, and the broad repository gate pass. A successful
+  exact-master analysis must report the merge commit, after which only the
+  seven recorded keys may be adjudicated and re-fetched as accepted false
+  positives. Reliability falls from 21 to 14 and medium from 13 to 6 unless a
+  concurrent delta is identified and explained; zero open `Web:S6850` remains.
+- **AC-SEC-36:** Preserve `x-text` as the inert text sink for movie metadata and
+  settings labels. Add no `x-html`, `innerHTML`, string interpolation into
+  markup, dynamic evaluation, request, persistence, logging, telemetry,
+  dependency, authentication, or authorization behavior. New fixtures use
+  only test-owned or established public fixture values and contain no
+  user-derived/private media, path, host, or credential data.
+- **AC-A11Y-13:** Preserve the rendered hierarchy: Settings `h1`, category
+  `h2`, provider/combined group `h3`, combined subgroup `h4`; profile and
+  category dialog titles `h3`; movie title `h2`. No duplicate or visually
+  hidden heading, heading role, `aria-label`, or literal bootstrap text is added
+  solely to satisfy a static analyzer.
+- **AC-A11Y-14:** The profile and category dialogs' existing
+  `aria-labelledby` references resolve to unique headings named exactly New or
+  Edit Profile/Category as appropriate. The movie dialog remains named
+  `Movie details` while loading and by the loaded movie afterward, with its
+  visible heading matching that loaded title. Existing Escape, Tab containment,
+  initial-focus, and return-focus behavior remains unchanged.
+- **AC-A11Y-15:** At a real 393px viewport, representative Settings and dialog
+  headings remain visible, unclipped, and within the document width. Existing
+  `x-cloak`, `x-if`, `x-show`, loading, and modal visibility behavior continues
+  to prevent unhydrated content from becoming an accessibility or visual state.
+- **AC-A11Y-16:** Each exact Sonar adjudication cites its Alpine expression and
+  the rendered regression evidence, and states an expiry condition: reopen if
+  the expression, its data construction, visibility guard, dialog naming, or
+  owning rendered test changes. The issue transition is verified after the
+  admin credential is used without exposing it in argv, output, or committed
+  state.
+- **AC-DESIGN-8:** T43 is visually neutral in both themes and at desktop and
+  phone widths: no template text, heading level, class, wrapper, spacing,
+  transition, responsive rule, layout, or modal/card dimension changes.
+- **AC-PROD-16:** Users continue to see exactly the existing contextual heading
+  values after hydration. T43 changes no workflow, control, copy, layout, API
+  request, setting value, or save behavior; success is truthful executable
+  evidence and narrowly scoped issue adjudication rather than analyzer-driven
+  UI duplication.
+- **AC-SIMP-45:** Because all seven reachable headings already have accessible
+  rendered content and are cloaked before hydration, do not add literal
+  fallbacks that Alpine immediately discards. Limit implementation to one
+  source inventory mechanism, focused additions to existing browser coverage,
+  and exact-key adjudication; add no helper framework, dependency, or production
+  refactor.
+- **AC-ARCH-1:** Keep source identity and rendered behavior at their existing
+  owners: one test-only inventory counts each dynamic-only heading occurrence
+  across served templates and maps the seven current identities to exact Sonar
+  keys, while the existing workflow browser suites own hydration, dialog, and
+  viewport behavior. Add no production registry or coupling from application
+  code to Sonar identifiers.
 
 ## Implementation sequence
 
@@ -1269,10 +1337,16 @@ within the authority explicitly granted by the owner.
   — state: merged #408. Address the two JavaScript S8786 findings with UI behavior,
   accessibility, and mobile coverage. Covers AC-QA-65..72, AC-SEC-30..34,
   AC-DESIGN-7, AC-A11Y-11..12, AC-PROD-14..15, AC-OPS-34..36, and AC-SIMP-43.
-- [ ] **T42 — remove repeated side-effectful parser operands as one rule-family
-  correction** *(needs: T41)* — state: awaiting-ci #409. Resolve both replacement
+- [x] **T42 — remove repeated side-effectful parser operands as one rule-family
+  correction** *(needs: T41)* — state: merged #409. Resolve both replacement
   JavaScript S1764 findings without changing parser behavior. Covers
   AC-QA-73..76, AC-SEC-35, AC-OPS-37, and AC-SIMP-44.
+- [ ] **T43 — prove and adjudicate dynamic-heading false positives as one
+  rule-family batch** *(needs: T42)* — state: building. Cover all seven live
+  `Web:S6850` findings with one source inventory, load-bearing rendered
+  accessibility evidence, exact-master verification, and exact-key
+  adjudication. Covers AC-QA-77..79, AC-SEC-36, AC-A11Y-13..16, AC-DESIGN-8,
+  AC-PROD-16, AC-SIMP-45, and AC-ARCH-1.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -2489,3 +2563,71 @@ T9 and T14 exceptions stated above.
   `origin/master` remained the verified PR #408 merge
   `72e7427cb729fdd93e1cdbee0f8265d6aa5010d7`, and no other PR was open.
   Hosted CI and cloud review are now the next gate.
+- 2026-09-20: T42 merged as PR #409 at exact master
+  `6da6e572deecced649f1333098a30771f48a3d2c`; its merge tree exactly matched
+  the reviewed PR tree. Exact-master Sonar analysis
+  `6bbaeb2c-a35e-43e7-a784-747777e3e94d` reported that revision, closed both
+  S1764 keys as `FIXED`, retained both S8786 closures, and reduced open
+  reliability from 23 to 21 and medium from 15 to 13, with eight low unchanged.
+- 2026-09-20: T43's security, QA, simplicity, product, design, and accessibility
+  planning lenses examined all seven live `Web:S6850` findings. A complete
+  template inventory matched the seven Sonar keys exactly. The owning
+  accessibility lens established that all seven receive non-empty rendered
+  text on reachable Alpine paths and remain cloaked before hydration; literal
+  fallback text would be discarded and would add analyzer-driven duplication
+  without user benefit. T43 therefore records one recurrence inventory, adds
+  load-bearing rendered proof across every expression/state family, and only
+  then adjudicates those exact keys with expiry conditions.
+- 2026-09-20: T43 completed its test-only red/green cycle without changing
+  production markup. The red source inventory reported exactly seven
+  unaudited dynamic-only headings; mapping each source identity to its exact
+  Sonar key made it green. Chromium now proves New/Edit Category, New/Edit
+  Profile, a distinguishable movie title, the reachable `Unknown` path, and
+  matching dialog names. Accessibility coverage proves all four Settings
+  heading expressions and their `h2`/`h3`/`h4` hierarchy; both mobile themes
+  prove representative headings and dialogs stay within a real 393px viewport.
+  Mutating all seven bindings to empty made the inventory and each owning
+  browser family fail. The full local gate passed 4,489 unit tests with 14
+  skipped and five expected failures, 42 integration tests, 221 UI unit tests,
+  180 Chromium tests, two isolation tests, 17 mobile tests, and 100
+  accessibility tests. The exact diff now enters the Harness review gate.
+- 2026-09-20: T43 review round one found two evidence-mechanism gaps and two
+  plan gaps. The source inventory used a set, so a same-file duplicate with an
+  identical level and expression could inherit an existing adjudication; a red
+  synthetic duplicate test reproduced the false green, then a multiplicity-
+  preserving inventory made both tests pass. A shared mobile heading-bounds
+  helper now checks full viewport intersection and both horizontal edges for
+  Settings plus category/profile dialog titles in both themes; translating the
+  category title 500px made the focused test fail before restoration. The
+  security criterion now describes the actual privacy boundary (no
+  user-derived/private fixture data), and AC-ARCH-1 records test-only ownership.
+- 2026-09-20: T43 review round two confirmed the architecture and mobile
+  findings were fixed, then fresh verification found the synthetic duplicate
+  test exercised only collection, not the guard's comparison boundary. The
+  comparison now has one shared validator used by both the real inventory and
+  the duplicate fixture. Mutating that validator back to set equality made the
+  duplicate regression fail (`DID NOT RAISE`), proving the multiplicity check
+  is load-bearing rather than merely observed. Focused inventory, Ruff, trap,
+  and both-theme mobile checks remain green; a clean round-three review is
+  required before the final broad gate.
+- 2026-09-20: T43 review round three is clean across security, QA,
+  accessibility, design, product, architecture, and fresh verification. The
+  verifier's one final evidence gap was real: visible subgroup text did not by
+  itself prove an accessible name. The owning browser test now asserts both,
+  and the focused accessibility run passed. The final exact-tip broad gate
+  recorded 4,490 passing Python unit tests with 14 skipped and five expected
+  failures, 42 integration tests, 221 UI unit tests, 180 Chromium tests, two
+  isolation tests, 17 mobile tests, and 100 accessibility tests. T43 is ready for the
+  independent clean-agent pre-push gate; exact-master Sonar adjudication
+  remains deliberately post-merge.
+- 2026-09-20: PR #410's cloud review found two further test-evidence gaps before
+  merge. Category/profile checks compared only raw `aria-labelledby` strings,
+  so one shared helper now also proves the computed dialog name and uniqueness
+  of each referenced heading ID across all four New/Edit states. The movie
+  route is now deliberately held pending while the test proves the loading
+  dialog is named `Movie details`, then released before it proves the loaded
+  title. Both mechanisms are mutation-proven: requiring two matching IDs and
+  removing the loading fallback each made its owning focused browser test fail;
+  the restored five-test Chromium slice passes. The unrelated mobile Wanted
+  contrast timing flake observed by hosted CI is tracked separately as #411;
+  its clean failed-job rerun does not weaken `--fail-on-flaky-tests`.

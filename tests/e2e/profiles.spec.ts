@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import { Page } from '@playwright/test';
+import { expectDialogNamedByUniqueHeading } from './helpers';
 
 /**
  * E2E tests for Quality Profile management (Settings → Profiles tab).
@@ -126,6 +127,7 @@ test.describe('Quality Profiles', () => {
 
     const modal = page.getByTestId('edit-modal');
     await expect(modal).toBeVisible();
+    await expectDialogNamedByUniqueHeading(page, modal, 'New Profile', 3);
 
     await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
 
@@ -174,6 +176,7 @@ test.describe('Quality Profiles', () => {
     // Open editor, rename, save — exercises the isEdit=true save path + refresh.
     await panel.getByRole('button', { name: new RegExp('Edit profile: ' + TEST_PROFILE_NAME, 'i') }).click();
     await expect(modal).toBeVisible();
+    await expectDialogNamedByUniqueHeading(page, modal, 'Edit Profile', 3);
     await modal.locator('input[type="text"]').first().fill(renamed);
     await modal.getByRole('button', { name: /save changes/i }).click();
     await expect(modal).not.toBeVisible();

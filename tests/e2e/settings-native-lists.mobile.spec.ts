@@ -2,6 +2,23 @@ import { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 
+async function expectHeadingFitsViewport(heading: Locator) {
+  await expect(heading).toBeVisible();
+  await heading.scrollIntoViewIfNeeded();
+  await expect(heading).toBeInViewport({ ratio: 1 });
+  const bounds = await heading.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return {
+      left: box.left,
+      right: box.right,
+      viewportWidth: document.documentElement.clientWidth,
+    };
+  });
+  expect(bounds.left).toBeGreaterThanOrEqual(0);
+  expect(bounds.right).toBeLessThanOrEqual(bounds.viewportWidth);
+}
+
+
 async function expectNativeListFitsViewport(
   list: Locator,
   expectedItems?: number,
@@ -65,11 +82,26 @@ for (const theme of ['light', 'dark'] as const) {
       localStorage.setItem('cp-theme', selectedTheme);
     }, theme);
 
+    await page.goto('/settings/');
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Searchers' }).click();
+    const settingsHeadings = [
+      page.getByRole('heading', { name: 'Search Settings', level: 3 }),
+      page.getByRole('heading', { name: 'Usenet — Account Required', level: 2 }),
+      page.getByRole('heading', { name: 'Newznab', level: 3 }),
+    ];
+    for (const heading of settingsHeadings) {
+      await expectHeadingFitsViewport(heading);
+    }
+
     const categories = await openSettingsTab(page, 'Categories');
     const categoryName = `E2E Native List ${theme}`;
     await categories.getByRole('button', { name: /new category/i }).click();
     const categoryModal = page.getByTestId('category-edit-modal');
     await expect(categoryModal).toBeVisible();
+    await expectHeadingFitsViewport(
+      categoryModal.getByRole('heading', { name: 'New Category', level: 3 }),
+    );
     await categoryModal
       .getByPlaceholder('e.g. Horror, Kids, Documentary')
       .fill(categoryName);
@@ -90,6 +122,9 @@ for (const theme of ['light', 'dark'] as const) {
     await profiles.getByRole('button', { name: /new profile/i }).click();
     const modal = page.getByTestId('edit-modal');
     await expect(modal).toBeVisible();
+    await expectHeadingFitsViewport(
+      modal.getByRole('heading', { name: 'New Profile', level: 3 }),
+    );
     const qualityList = modal.getByRole('list', { name: 'Qualities in this profile' });
 
     for (let index = 0; index < 2; index++) {

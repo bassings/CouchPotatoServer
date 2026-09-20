@@ -1,4 +1,4 @@
-import { expect, Page } from '@playwright/test';
+import { expect, Locator, Page } from '@playwright/test';
 
 /**
  * Shared E2E helpers.
@@ -30,6 +30,26 @@ import { expect, Page } from '@playwright/test';
 export async function waitForPageReady(page: Page): Promise<void> {
   await page.waitForLoadState('domcontentloaded');
   await expect(page.locator('#main-content')).toBeVisible();
+}
+
+/**
+ * Prove a dialog is named by one unique heading, not merely wired to an ID
+ * string which could be duplicated or resolve to the wrong element.
+ */
+export async function expectDialogNamedByUniqueHeading(
+  page: Page,
+  dialog: Locator,
+  name: string,
+  level: number,
+): Promise<void> {
+  const heading = dialog.getByRole('heading', { name, level });
+  await expect(heading).toBeVisible();
+  await expect(dialog).toHaveAccessibleName(name);
+
+  const headingId = await heading.getAttribute('id');
+  expect(headingId, `${name} heading has no id`).toBeTruthy();
+  await expect(dialog).toHaveAttribute('aria-labelledby', headingId!);
+  await expect(page.locator(`[id="${headingId}"]`), `${name} heading id is not unique`).toHaveCount(1);
 }
 
 export type MovieActionMock = {
