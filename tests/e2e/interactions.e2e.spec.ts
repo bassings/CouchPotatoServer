@@ -103,9 +103,8 @@ test.describe('Navigation', () => {
     await expect(menuBtn).toBeVisible();
 
     await menuBtn.click();
-    await page.waitForTimeout(300);
     // Mobile menu should be visible
-    const mobileNav = page.locator('[role="menu"], #mobile-menu');
+    const mobileNav = page.locator('#mobile-menu');
     await expect(mobileNav).toBeVisible();
   });
 });

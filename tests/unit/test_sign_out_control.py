@@ -184,7 +184,7 @@ def _sidebar(html: str) -> str:
 
 
 def _mobile_menu(html: str) -> str:
-    return _section(html, r'<div[^>]*id="mobile-menu"', r'<!-- MOBILE BOTTOM NAV -->')
+    return _section(html, r'<nav[^>]*id="mobile-menu"', r'<!-- MOBILE BOTTOM NAV -->')
 
 
 class TestTheControlExists:

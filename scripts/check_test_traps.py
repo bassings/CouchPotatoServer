@@ -1031,7 +1031,6 @@ LEGACY_WAIT_IDENTITIES = {
     },
     "tests/e2e/interactions.e2e.spec.ts": {
         ("theme toggle switches modes", "300", "9ed7004d6543b085"): 1,
-        ("mobile menu works on small viewport", "300", "1dcd635fd1ad7640"): 1,
         ("filter buttons work", "300", "1814811e929ba34b"): 1,
         ("text filter input works", "500", "71d5f5a72570ae5a"): 1,
         ("text filter input works", "500", "2d27ad0678435195"): 1,

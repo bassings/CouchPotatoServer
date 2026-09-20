@@ -310,7 +310,7 @@ test.describe('The mobile menu on a short viewport', () => {
     const menu = page.locator('#mobile-menu');
     await expect(menu).toBeVisible();
 
-    const control = menu.getByRole('menuitem', { name: /sign out/i });
+    const control = menu.getByRole('button', { name: /sign out/i });
     await expect(control).toHaveCount(1);
 
     // Scroll it into view WITHIN the panel -- which only works if the panel
@@ -326,4 +326,64 @@ test.describe('The mobile menu on a short viewport', () => {
         'viewport, so it is clipped below the fold and cannot be reached',
     ).toBeLessThanOrEqual(height);
   });
+});
+
+test.describe('The mobile navigation uses native website semantics', () => {
+  test.use({ viewport: { width: 393, height: 852 } });
+
+  for (const theme of ['light', 'dark'] as const) {
+    test(`the open drawer is accessible in the ${theme} theme`, async ({ page }) => {
+      await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+      await signIn(page);
+      await expect.poll(
+        () => page.evaluate(() => document.documentElement.classList.contains('light')),
+      ).toBe(theme === 'light');
+
+      await page.getByRole('button', { name: 'Toggle navigation menu' }).click();
+      const drawer = page.getByRole('navigation', { name: 'Mobile menu' });
+      await expect(drawer).toBeVisible();
+      // Axe factors ancestor opacity into contrast. Wait for Alpine's opening
+      // transition to finish so the measurement represents the settled UI,
+      // not a deliberately translucent animation frame.
+      await expect(drawer).toHaveCSS('opacity', '1');
+      await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible();
+      const links = drawer.getByRole('link');
+      await expect(links).toHaveCount(6);
+
+      const signOut = drawer.getByRole('button', { name: 'Sign out everywhere' });
+      await expect(signOut).toHaveCount(1);
+      await expect(page.getByRole('menu')).toHaveCount(0);
+      await expect(page.getByRole('menubar')).toHaveCount(0);
+      await expect(page.getByRole('menuitem')).toHaveCount(0);
+      await expect(signOut.locator('xpath=ancestor::form')).toHaveAttribute('method', 'post');
+      await expect(signOut.locator('xpath=ancestor::form')).toHaveAttribute('action', /logout\/$/);
+
+      const results = await new AxeBuilder({ page })
+        .include('#mobile-menu')
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .analyze();
+      const detail = results.violations
+        .flatMap((violation) => violation.nodes.map(
+          (node) => `${violation.id}: ${node.html} — ${node.failureSummary}`,
+        ))
+        .join('\n');
+      expect(results.violations.length, `mobile navigation/${theme}:\n${detail}`).toBe(0);
+
+      for (let index = 0; index < 6; index += 1) {
+        await page.keyboard.press('Tab');
+        await expect(links.nth(index)).toBeFocused();
+      }
+      await page.keyboard.press('Tab');
+      await expect(signOut).toBeFocused();
+
+      await expect(links.first()).toHaveAttribute('href', /wanted\/$/);
+      const pageUrl = page.url();
+      await links.first().evaluate((link) => {
+        link.addEventListener('click', (event) => event.preventDefault(), { once: true });
+      });
+      await links.first().click();
+      await expect(page).toHaveURL(pageUrl);
+      await expect(drawer).toBeHidden();
+    });
+  }
 });
