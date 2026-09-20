@@ -2620,3 +2620,14 @@ T9 and T14 exceptions stated above.
   isolation tests, 17 mobile tests, and 100 accessibility tests. T43 is ready for the
   independent clean-agent pre-push gate; exact-master Sonar adjudication
   remains deliberately post-merge.
+- 2026-09-20: PR #410's cloud review found two further test-evidence gaps before
+  merge. Category/profile checks compared only raw `aria-labelledby` strings,
+  so one shared helper now also proves the computed dialog name and uniqueness
+  of each referenced heading ID across all four New/Edit states. The movie
+  route is now deliberately held pending while the test proves the loading
+  dialog is named `Movie details`, then released before it proves the loaded
+  title. Both mechanisms are mutation-proven: requiring two matching IDs and
+  removing the loading fallback each made its owning focused browser test fail;
+  the restored five-test Chromium slice passes. The unrelated mobile Wanted
+  contrast timing flake observed by hosted CI is tracked separately as #411;
+  its clean failed-job rerun does not weaken `--fail-on-flaky-tests`.

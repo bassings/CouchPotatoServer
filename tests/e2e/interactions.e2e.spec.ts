@@ -375,14 +375,21 @@ test.describe('Suggestions Page', () => {
     // The modal's own open() does a real `fetch(.../search?q=...)`, and
     // Skip does a real `fetch(.../charts.ignore/...)` -- both stubbed here
     // so this stays hermetic rather than depending on TMDB.
-    await page.route('**/search?q=tt0137523', route => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        success: true,
-        movie: [{ imdb: 'tt0137523', titles: ['Example Movie'], year: 2026 }],
-      }),
-    }));
+    let releaseSearchResponse!: () => void;
+    const searchResponseMayComplete = new Promise<void>(resolve => {
+      releaseSearchResponse = resolve;
+    });
+    await page.route('**/search?q=tt0137523', async route => {
+      await searchResponseMayComplete;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          movie: [{ imdb: 'tt0137523', titles: ['Example Movie'], year: 2026 }],
+        }),
+      });
+    });
     let skipRequested = false;
     await page.route('**/charts.ignore/**', route => {
       skipRequested = true;
@@ -404,6 +411,8 @@ test.describe('Suggestions Page', () => {
     // in the DOM too as global chrome.
     const modal = page.locator('[role="dialog"]:has(#movie-modal-close)');
     await expect(modal).toBeVisible();
+    await expect(modal).toHaveAccessibleName('Movie details');
+    releaseSearchResponse();
     const movieHeading = modal.getByRole('heading', { name: 'Example Movie', level: 2 });
     await expect(movieHeading).toBeVisible();
     await expect(modal).toHaveAccessibleName('Example Movie');

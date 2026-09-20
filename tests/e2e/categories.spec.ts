@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import { Page, Locator } from '@playwright/test';
+import { expectDialogNamedByUniqueHeading } from './helpers';
 
 /**
  * E2E tests for Category management (Settings → Categories tab).
@@ -140,11 +141,7 @@ test.describe('Category management', () => {
 
     const modal = page.getByTestId('category-edit-modal');
     await expect(modal).toBeVisible();
-    const heading = modal.getByRole('heading', { name: 'New Category', level: 3 });
-    await expect(heading).toBeVisible();
-    const headingId = await heading.getAttribute('id');
-    expect(headingId).toBeTruthy();
-    await expect(modal).toHaveAttribute('aria-labelledby', headingId!);
+    await expectDialogNamedByUniqueHeading(page, modal, 'New Category', 3);
 
     // Fill in the label (required) — target by placeholder, not position
     await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(TEST_CATEGORY_NAME);
@@ -181,11 +178,7 @@ test.describe('Category management', () => {
     // Open editor, rename, save
     await panel.getByRole('button', { name: new RegExp('Edit category: ' + TEST_CATEGORY_NAME, 'i') }).click();
     await expect(modal).toBeVisible();
-    const heading = modal.getByRole('heading', { name: 'Edit Category', level: 3 });
-    await expect(heading).toBeVisible();
-    const headingId = await heading.getAttribute('id');
-    expect(headingId).toBeTruthy();
-    await expect(modal).toHaveAttribute('aria-labelledby', headingId!);
+    await expectDialogNamedByUniqueHeading(page, modal, 'Edit Category', 3);
 
     await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(renamed);
     await modal.getByRole('button', { name: /save changes/i }).click();
