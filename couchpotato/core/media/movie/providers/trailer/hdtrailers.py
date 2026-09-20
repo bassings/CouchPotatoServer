@@ -18,7 +18,13 @@ class HDTrailers(TrailerProvider):
 
     urls = {
         'api': 'https://www.hd-trailers.net/movie/%s/',
-        'backup': 'https://www.hd-trailers.net/blog/',
+        # Not https://www.hd-trailers.net/blog/ -- that 301s to
+        # http://blog.hd-trailers.net/ (measured), so a search term still
+        # crossed the wire in clear text with nothing here disabling redirect
+        # following. blog.hd-trailers.net answers https:// directly with a
+        # valid certificate (measured, 200) -- point at it straight, which
+        # also saves the redirect round trip.
+        'backup': 'https://blog.hd-trailers.net/',
     }
     providers = ['apple.ico', 'yahoo.ico', 'moviefone.ico', 'myspace.ico', 'favicon.ico']
     only_tables_tags = SoupStrainer('table')

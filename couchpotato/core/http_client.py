@@ -97,7 +97,18 @@ class HttpClient:
 
         if proxy_server:
             loc = f"{proxy_username}:{proxy_password}@{proxy_server}" if proxy_username else proxy_server
-            return {"http": f"http://{loc}", "https": f"https://{loc}"}
+            # Both keys point at an http:// proxy URL deliberately -- this is
+            # the scheme of the hop to the PROXY, not to the eventual target.
+            # requests/urllib3 CONNECT-tunnels an https:// target through a
+            # proxy named under the "https" key using the proxy URL's own
+            # scheme; an "https://{loc}" value tells it to speak TLS to the
+            # proxy itself, which almost no proxy (Squid, corporate proxies)
+            # does -- they take a plaintext hop and rely on CONNECT for the
+            # target's TLS. Regression: this used to read
+            # f"https://{loc}" for the "https" key, which broke every https://
+            # request (including every URL this branch just promoted from
+            # http:// to https://) for anyone with use_proxy enabled.
+            return {"http": f"http://{loc}", "https": f"http://{loc}"}
         return getproxies()
 
     def _check_disabled(self, host, show_error=True):

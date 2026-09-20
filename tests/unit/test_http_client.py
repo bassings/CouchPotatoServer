@@ -119,6 +119,44 @@ class TestHttpClient:
         assert 'http' in proxies
         assert 'user:pass@proxy.local:8080' in proxies['http']
 
+    def test_https_target_selects_an_http_proxy_url(self, mock_env):
+        """Both the `http` and `https` proxy dict keys must be http:// proxy URLs.
+
+        requests/urllib3 picks a key by the TARGET's scheme, then uses the
+        SCHEME OF THAT KEY'S VALUE to decide how to talk to the proxy itself
+        -- not how to talk to the target. An `https://` proxy URL tells
+        urllib3 to open a TLS connection directly to the proxy, which almost
+        no proxy speaks: Squid and corporate proxies take a plaintext hop and
+        rely on CONNECT to tunnel an https:// target through. Regression
+        guard: `_get_proxy_config` used to return `f"https://{loc}"` for the
+        "https" key, which broke every https:// request (ProxyError) for
+        anyone with use_proxy enabled, including every URL this repo's S5332
+        clean-up promoted from http:// to https://.
+
+        Drives `requests.utils.select_proxy` -- the actual per-request
+        selection logic requests uses -- rather than asserting on the dict
+        shape by inspection, so this fails for the real reason a live request
+        would fail, not because a key looks wrong.
+        """
+        env, session, response = mock_env
+        env.setting.side_effect = lambda key: {
+            'use_proxy': True, 'proxy_server': 'proxy.local:8080',
+            'proxy_username': None, 'proxy_password': None,
+        }.get(key)
+        client = HttpClient()
+        proxies = client._get_proxy_config()
+
+        selected = requests.utils.select_proxy(
+            'https://www.blu-ray.com/rss/newreleasesfeed.xml', proxies
+        )
+
+        assert selected is not None and selected.startswith('http://'), (
+            f"an https:// target selected proxy URL {selected!r} -- the hop "
+            f"to the proxy itself must stay http://, or requests opens a TLS "
+            f"connection straight to the proxy and raises ProxyError against "
+            f"a plain CONNECT-only proxy"
+        )
+
     def test_default_headers_set(self, mock_env):
         env, session, response = mock_env
         client = HttpClient()

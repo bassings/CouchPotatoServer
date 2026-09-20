@@ -21,7 +21,7 @@ class Slack(Notification):
         message = message.strip()
 
         if self.conf('include_imdb') and 'identifier' in data:
-            template = ' http://www.imdb.com/title/{0[identifier]}/'
+            template = ' https://www.imdb.com/title/{0[identifier]}/'
             message += template.format(data)
 
         payload = {

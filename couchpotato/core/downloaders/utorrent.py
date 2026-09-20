@@ -409,7 +409,7 @@ config = [{
             'list': 'download_providers',
             'name': 'utorrent',
             'label': 'uTorrent',
-            'description': 'Use <a href="http://www.utorrent.com/" target="_blank">uTorrent</a> (3.0+) to download torrents.',
+            'description': 'Use <a href="https://www.utorrent.com/" target="_blank">uTorrent</a> (3.0+) to download torrents.',
             'wizard': True,
             'options': [
                 {

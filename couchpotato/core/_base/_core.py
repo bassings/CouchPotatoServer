@@ -115,7 +115,7 @@ class Core(Plugin):
 
         # Check if lxml is available
         try: from lxml import etree
-        except Exception: log.error('LXML not available, please install for better/faster scraping support: `http://lxml.de/installation.html`')
+        except Exception: log.error('LXML not available, please install for better/faster scraping support: `https://lxml.de/installation.html`')
 
         try:
             import OpenSSL
