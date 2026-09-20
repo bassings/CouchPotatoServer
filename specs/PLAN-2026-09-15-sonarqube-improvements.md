@@ -1148,7 +1148,7 @@ within the authority explicitly granted by the owner.
   one recurrence guard. Covers AC-QA-54..56, AC-SEC-25..26, AC-DATA-5..9,
   AC-OPS-29, and AC-SIMP-36..39.
 - [ ] **T40 — bound all Python regular expressions as one rule-family batch**
-  *(needs: T39)* — state: building. Resolve all nine live medium-reliability
+  *(needs: T39)* — state: awaiting-ci #407. Resolve all nine live medium-reliability
   `python:S8786` findings: five in `scripts/check_test_traps.py` plus BinSearch,
   XBMC, WDTV, and log parsing. Use contract, adversarial scaling, XML round-trip,
   mutation, and static recurrence coverage. Covers AC-QA-57..64, AC-SEC-27..29,
@@ -2258,3 +2258,9 @@ T9 and T14 exceptions stated above.
   12800 measurements are 1.737/3.456/6.928 milliseconds, and the combined
   S8786 plus trap suite passes 325 tests. Final broad verification and clean
   re-review are required before push.
+- 2026-09-20: T40's exact reviewed implementation tree
+  `5a1ff2a527234a50b5813d12a4fbebbad76b45c4` is published as PR #407. After
+  the repeated-token repair, the final broad gate again passed 4,527 tests
+  with 14 skipped and five expected failures; two independent clean-agent
+  reviewers returned CLEAN after killing the quadratic-parser and XML no-op
+  mutations. Hosted CI and cloud review are now pending.
