@@ -2957,3 +2957,12 @@ T9 and T14 exceptions stated above.
   unrelated transient failures (one refused server connection and one missed
   save indicator); both passed immediately when rerun together, and a fresh
   full run is required before push.
+- 2026-09-20: PR #414 cloud review found the failure branch still measured
+  implementation details without loading production Tailwind styles. The
+  standalone browser fixture now runs the repository's vendored production
+  Tailwind bundle and proves it is active, then asserts the revealed fallback
+  is visibly rendered, the enclosing control has its computed accessible name,
+  and real Tab traversal reaches it. Deliberate `invisible`, `aria-hidden`, and
+  `tabindex="-1"` mutations each kill the corresponding assertion. This closes
+  the entire user-observable false-green class instead of adding another raw
+  attribute check.

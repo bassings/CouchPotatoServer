@@ -1,10 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { expect, test, type Page, type Route, type TestInfo } from '@playwright/test';
 
 
 const PYTHON = process.env.PYTHON || (existsSync('.venv/bin/python') ? '.venv/bin/python' : 'python3');
+const TAILWIND = resolve('couchpotato/static/scripts/vendor/new-ui/tailwindcss-cdn.js');
+const TAILWIND_SOURCE = readFileSync(TAILWIND, 'utf-8');
 const SURFACES = ['charts', 'search', 'suggestions', 'library'] as const;
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -27,7 +30,12 @@ async function loadWithHeldPosterRequests(page: Page, html: string): Promise<Map
     const name = new URL(route.request().url()).pathname.split('/').pop()!.replace('.png', '');
     pending.set(name, route);
   });
-  await page.setContent('<main id="poster-fixture"></main>');
+  await page.setContent(
+    `<script>${TAILWIND_SOURCE}</script>` +
+    '<main id="poster-fixture"></main>' +
+    '<div data-tailwind-probe class="invisible">Production-style probe</div>',
+  );
+  await expect(page.locator('[data-tailwind-probe]')).toBeHidden();
   await page.locator('#poster-fixture').evaluate((target, productionHtml) => {
     const parsed = new DOMParser().parseFromString(productionHtml, 'text/html');
     target.append(...parsed.body.childNodes);
@@ -42,7 +50,7 @@ async function loadWithHeldPosterRequests(page: Page, html: string): Promise<Map
       { message: `${surface} poster request never started` },
     ).toBe(true);
     await expect(image).not.toHaveCSS('display', 'none');
-    await expect(image.locator('xpath=following-sibling::*[1]')).toHaveCSS('display', 'none');
+    await expect(image.locator('xpath=following-sibling::*[1]')).toBeHidden();
   }
   return pending;
 }
@@ -70,7 +78,7 @@ test('successful poster requests leave every production fallback hidden', async 
       { message: `${surface} poster did not decode successfully` },
     ).toEqual({ complete: true, naturalWidth: 1, naturalHeight: 1 });
     await expect(image).not.toHaveCSS('display', 'none');
-    await expect(image.locator('xpath=following-sibling::*[1]')).toHaveCSS('display', 'none');
+    await expect(image.locator('xpath=following-sibling::*[1]')).toBeHidden();
   }
   expect(errors).toEqual([]);
 });
@@ -89,10 +97,26 @@ test('failed poster requests reveal each real template fallback without changing
     const fallback = image.locator('xpath=following-sibling::*[1]');
     const control = root.locator('button[aria-label], a[aria-label]').first();
     await expect(image).toHaveCSS('display', 'none');
-    await expect(fallback).toHaveCSS('display', 'flex');
-    await expect(control).toHaveAttribute('aria-label', /fallback movie/i);
-    await control.focus();
-    await expect(control).toBeFocused();
+    await expect(fallback).toBeVisible();
+    await expect(control).toHaveAccessibleName(/fallback movie/i);
+
+    await root.evaluate((element, name) => {
+      const sentinel = document.createElement('button');
+      sentinel.dataset.posterSentinel = name;
+      sentinel.textContent = `Before ${name}`;
+      element.before(sentinel);
+    }, surface);
+    const sentinel = page.locator(`[data-poster-sentinel="${surface}"]`);
+    await sentinel.focus();
+    let reachedControl = false;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await page.keyboard.press('Tab');
+      if (await control.evaluate((element) => document.activeElement === element)) {
+        reachedControl = true;
+        break;
+      }
+    }
+    expect(reachedControl, `${surface} poster control was not reachable by Tab`).toBe(true);
   }
   expect(errors).toEqual([]);
 });
