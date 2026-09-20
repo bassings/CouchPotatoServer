@@ -42,9 +42,10 @@
       <template x-for="opt in getGroupOptions(group)" :key="group.section + '.' + opt.name">
         <div x-show="opt.type !== 'enabler' && (showAdvanced || !opt.advanced) && isOptionVisible(opt, group)"
              :class="(opt.type === 'directory' || opt.type === 'directories' || opt.type === 'combined' || opt.type === 'button') ? 'sm:col-span-2' : ''">
-          <label x-show="opt.type !== 'combined' && opt.type !== 'bool'" 
-                 class="block text-xs text-cp-muted mb-1.5" 
-                 x-text="opt.label || opt.name.replace(/_/g, ' ')"></label>
+          <span aria-hidden="true"
+                x-show="opt.type !== 'combined' && opt.type !== 'bool'"
+                class="block text-xs text-cp-muted mb-1.5"
+                x-text="opt.label || opt.name.replace(/_/g, ' ')"></span>
 
           {% include "partials/settings/field_types.html" %}
         </div>

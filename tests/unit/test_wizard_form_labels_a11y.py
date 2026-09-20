@@ -39,7 +39,7 @@ import re
 from pathlib import Path
 
 import pytest
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATES_DIR = REPO_ROOT / 'couchpotato' / 'ui' / 'templates'
@@ -58,6 +58,7 @@ SCOPE_FILES = [
 ]
 
 FIELD_TAGS = ('input', 'select', 'textarea')
+LABELABLE_TAGS = ('button', 'input', 'meter', 'output', 'progress', 'select', 'textarea')
 
 #: Jinja comments (`{# ... #}`) are not HTML comments, so an HTML parser does
 #: not know to skip them. One exists in movie_cards.html whose prose mentions
@@ -163,6 +164,63 @@ def _script_fragment_violations(html_text, filename):
     return violations
 
 
+def _label_semantics_violations(fragment_html, source):
+    """Return labels that lack text or exactly one associated control."""
+    soup = BeautifulSoup(fragment_html, 'html.parser')
+    violations = []
+
+    for label in soup.find_all('label'):
+        has_text = any(
+            isinstance(child, NavigableString) and str(child).strip()
+            for child in label.descendants
+        ) or any(
+            child.get('x-text') or child.get('x-html')
+            for child in [label, *label.find_all(True)]
+        )
+
+        static_for = (label.get('for') or '').strip()
+        bound_for = (label.get(':for') or '').strip()
+        if static_for or bound_for:
+            id_attr = 'id' if static_for else ':id'
+            target = static_for or bound_for
+            controls = [
+                control for control in soup.find_all(LABELABLE_TAGS)
+                if (control.get(id_attr) or '').strip() == target
+                and not (control.name == 'input' and
+                         (control.get('type') or '').strip().lower() == 'hidden')
+            ]
+        else:
+            controls = [
+                control for control in label.find_all(LABELABLE_TAGS)
+                if not (control.name == 'input' and
+                        (control.get('type') or '').strip().lower() == 'hidden')
+            ]
+
+        if not has_text and len(controls) == 1:
+            has_text = _non_empty_attr(controls[0], 'aria-label', 'aria-labelledby')
+
+        if not has_text or len(controls) != 1:
+            violations.append(
+                '%s: label text=%r target=%r resolves to %d labelable controls'
+                % (source, label.get_text(' ', strip=True) or label.get('x-text'),
+                   static_for or bound_for, len(controls))
+            )
+
+    return violations
+
+
+def find_label_semantics_violations(path):
+    """Find invalid label elements in template and script-generated markup."""
+    text = _strip_jinja_comments(path.read_text())
+    violations = _label_semantics_violations(text, path.name)
+    for script_idx, script in enumerate(_script_bodies(text)):
+        for string_idx, match in enumerate(_JS_HTML_STRING.finditer(script)):
+            source = '%s (script %d, template string %d)' % (
+                path.name, script_idx, string_idx)
+            violations.extend(_label_semantics_violations(match.group(1), source))
+    return violations
+
+
 def find_accessible_name_violations(path):
     """Every accessible-name violation in `path`, across both its own markup
     and any JS-template-literal HTML it injects via x-html."""
@@ -250,6 +308,31 @@ def test_the_checker_treats_an_empty_aria_label_as_no_name():
     for bad in (empty_static, empty_bound):
         violations = _fragment_violations(bad, 'fixture')
         assert violations, 'an empty aria-label must not count as a name: %r' % bad
+
+
+def test_the_label_checker_accepts_explicit_and_implicit_associations():
+    fixtures = (
+        '<label for="name">Name</label><input id="name">',
+        '<label :for="\'field-\' + item.id" x-text="item.label"></label>'
+        '<input :id="\'field-\' + item.id">',
+        '<label><button role="switch">Advanced</button></label>',
+    )
+
+    for good in fixtures:
+        assert _label_semantics_violations(good, 'fixture') == []
+
+
+@pytest.mark.parametrize(
+    'bad',
+    [
+        '<label>Name</label><input aria-label="Name">',
+        '<label for="missing">Name</label><input id="other">',
+        '<label><input></label>',
+        '<label>Name<input><button>Browse</button></label>',
+    ],
+)
+def test_the_label_checker_rejects_orphan_empty_and_ambiguous_labels(bad):
+    assert len(_label_semantics_violations(bad, 'fixture')) == 1
 
 
 def test_the_checker_ignores_jinja_comment_text_that_looks_like_a_tag():
@@ -380,4 +463,16 @@ def test_no_static_id_inside_an_alpine_loop(path):
         'static id/for inside an x-for loop in %s (must be a bound :id/:for '
         'instead, or every iteration renders the same id):\n%s'
         % (path.name, '\n'.join(violations))
+    )
+
+
+@pytest.mark.parametrize('path', SCOPE_FILES, ids=lambda p: p.name)
+def test_every_label_has_text_and_exactly_one_associated_control(path):
+    """A label is semantic, not merely visual: its one control must resolve."""
+    violations = find_label_semantics_violations(path)
+
+    assert violations == [], (
+        'found %d invalid label(s) in %s (need non-empty text and exactly one '
+        'matching for/id target or one wrapped labelable control):\n%s'
+        % (len(violations), path.name, '\n'.join(violations))
     )

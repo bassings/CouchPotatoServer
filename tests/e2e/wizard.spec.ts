@@ -438,17 +438,27 @@ test.describe('Wizard: clicking a label focuses its field (AC-A11Y-3)', () => {
     await page.getByRole('button', { name: /^Torrents/ }).click();
     await page.getByRole('button', { name: /Private Trackers/ }).click();
     await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
+    await page.getByRole('switch', { name: 'Enable HDBits' }).click();
 
     // Bound to `'wizard-tracker-' + tracker.id + '-' + field.name`; PassThePopcorn's
     // id is 'passthepopcorn' and its first field is 'username' -- see
     // setupWizard()'s privateTrackers data.
     const label = page.locator('label[for="wizard-tracker-passthepopcorn-username"]');
     const field = page.locator('#wizard-tracker-passthepopcorn-username');
+    const secondLabel = page.locator('label[for="wizard-tracker-hdbits-username"]');
+    const secondField = page.locator('#wizard-tracker-hdbits-username');
     await expect(field).toBeVisible({ timeout: 5000 });
+    await expect(secondField).toBeVisible({ timeout: 5000 });
 
     await expect(field).toHaveAccessibleName('Username');
+    await expect(secondField).toHaveAccessibleName('Username');
+    await expect(page.locator('#wizard-tracker-passthepopcorn-username')).toHaveCount(1);
+    await expect(page.locator('#wizard-tracker-hdbits-username')).toHaveCount(1);
 
     await label.click();
     await expect(field).toBeFocused();
+
+    await secondLabel.click();
+    await expect(secondField).toBeFocused();
   });
 });
