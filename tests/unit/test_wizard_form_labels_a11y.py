@@ -122,6 +122,16 @@ def _strip_jinja_comments(text):
     return _JINJA_COMMENT.sub('', text)
 
 
+def _normalized_attr_value(value, *, expression):
+    """Return the rendered value represented by a literal attribute source."""
+    value = value.strip()
+    if not value.strip("'\"").strip():
+        return ''
+    if expression and value in {'null', 'undefined'}:
+        return ''
+    return value
+
+
 def _non_empty_attr(tag, *names):
     """True if any of `names`, static or Alpine-bound (`:name`), is present
     with a non-blank value. A quoted empty-string expression (`''`, `""`) is
@@ -131,7 +141,8 @@ def _non_empty_attr(tag, *names):
             value = tag.get(attr)
             if value is None:
                 continue
-            if value.strip().strip("'\"").strip():
+            is_expression = attr.startswith(':') or attr in {'x-text', 'x-html'}
+            if _normalized_attr_value(value, expression=is_expression):
                 return True
     return False
 
@@ -145,11 +156,7 @@ def _association_value(tag, name):
     value = tag.get(name)
     if value is None:
         return ''
-    value = value.strip()
-    if (len(value) >= 2 and value[0] in "'\"" and value[-1] == value[0]
-            and not value[1:-1].strip()):
-        return ''
-    return value
+    return _normalized_attr_value(value, expression=name.startswith(':'))
 
 
 def _wrapped_by_label(tag):
@@ -384,6 +391,19 @@ def test_the_checker_treats_an_empty_aria_label_as_no_name():
         assert violations, 'an empty aria-label must not count as a name: %r' % bad
 
 
+@pytest.mark.parametrize('nullish', ['null', 'undefined'])
+def test_the_checker_treats_nullish_bound_names_as_empty(nullish):
+    bound_aria = f'<input :aria-label="{nullish}">'
+    dynamic_text = f'<label x-text="{nullish}"><input></label>'
+
+    assert len(_fragment_violations(bound_aria, 'fixture')) == 1
+    assert len(_label_semantics_violations(dynamic_text, 'fixture')) == 1
+    static_literal = f'<input aria-label="{nullish}">'
+    bound_literal = f'<input :aria-label="\'{nullish}\'">'
+    assert _fragment_violations(static_literal, 'fixture') == []
+    assert _fragment_violations(bound_literal, 'fixture') == []
+
+
 def test_the_label_checker_accepts_explicit_and_implicit_associations():
     fixtures = (
         '<label for="name">Name</label><input id="name">',
@@ -443,6 +463,25 @@ def test_an_empty_explicit_for_never_becomes_an_implicit_label(empty_explicit):
 
     assert len(_label_semantics_violations(empty_explicit, 'fixture')) == 1
     assert len(_fragment_violations(empty_explicit, 'fixture')) == 1
+
+
+@pytest.mark.parametrize('nullish', ['null', 'undefined'])
+def test_nullish_bound_associations_do_not_match(nullish):
+    nullish_pair = (
+        f'<label :for="{nullish}">Name</label>'
+        f'<input :id="{nullish}">'
+    )
+
+    assert len(_label_semantics_violations(nullish_pair, 'fixture')) == 1
+    assert len(_fragment_violations(nullish_pair, 'fixture')) == 1
+    literal_pairs = (
+        f'<label for="{nullish}">Name</label><input id="{nullish}">',
+        f'<label :for="\'{nullish}\'">Name</label>'
+        f'<input :id="\'{nullish}\'">',
+    )
+    for literal_pair in literal_pairs:
+        assert _label_semantics_violations(literal_pair, 'fixture') == []
+        assert _fragment_violations(literal_pair, 'fixture') == []
 
 
 def test_static_and_bound_associations_cannot_be_combined_on_one_label():

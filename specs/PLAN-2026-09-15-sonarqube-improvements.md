@@ -2814,3 +2814,10 @@ T9 and T14 exceptions stated above.
   uses CodeQL's canonical `/language:javascript-typescript` identity. The
   workflow therefore retains `matrix.language` for initialization and analysis
   categories, while `matrix.check_name` remains display-only.
+- 2026-09-20: The final cloud review exposed another instance of the dynamic-
+  value false-green class: bare Alpine `null` and `undefined` expressions
+  were treated as rendered names and association targets. A shared attribute-
+  value normalizer now rejects those nullish expressions for bound attributes
+  and `x-text`/`x-html` while preserving literal static values. Red-first,
+  parameterized fixtures cover both accessible-name routes and both label-
+  association audits.
