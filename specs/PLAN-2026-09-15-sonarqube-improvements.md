@@ -1240,7 +1240,7 @@ within the authority explicitly granted by the owner.
   mutation, and static recurrence coverage. Covers AC-QA-57..64, AC-SEC-27..29,
   AC-DATA-10..12, AC-OPS-30..33, and AC-SIMP-40..42.
 - [ ] **T41 — bound browser-side regular expressions by workflow** *(needs: T40)*
-  — state: building. Address the two JavaScript S8786 findings with UI behavior,
+  — state: awaiting-ci #408. Address the two JavaScript S8786 findings with UI behavior,
   accessibility, and mobile coverage. Covers AC-QA-65..72, AC-SEC-30..34,
   AC-DESIGN-7, AC-A11Y-11..12, AC-PROD-14..15, AC-OPS-34..36, and AC-SIMP-43.
 
@@ -2411,3 +2411,9 @@ T9 and T14 exceptions stated above.
   observed zero differences over 100,000 and 250,000 deterministic inputs.
   Both hostile-scaling probes remained linear through 800k characters. The
   exact amended commit now receives the final pre-push review gate.
+- 2026-09-20: T41 opened as PR #408 from exact locally reviewed commit
+  `6ef06ac16ece4b1e74ab6889d00fc5c9eb37fc37`. Immediately before delivery,
+  `origin/master` remained `76c0ee1e1cfdeccb97136250f29b499841e155e5`
+  and no other PR was open. The implementation tree passed two further
+  independent reviews after the plan-only amend; hosted CI and cloud review
+  are now the next gate.
