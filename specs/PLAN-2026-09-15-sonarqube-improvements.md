@@ -1691,7 +1691,7 @@ within the authority explicitly granted by the owner.
   the real settings panel, and verify the exact S7781 key on merged master.
   Covers AC-QA-108..110, AC-SEC-44..45, and AC-SIMP-52.
 - [ ] **T50 — make the movie-detail profile bootstrap parseable and inert**
-  *(needs: T49)* — state: awaiting-ci. Move the current profile identifier from
+  *(needs: T49)* — state: awaiting-ci. PR #418 moved the current profile identifier from
   executable template interpolation to an autoescaped data attribute, preserve
   the real editor's selected value, and verify the exact-master Sonar parser
   warning is gone. Covers AC-QA-111..114, AC-SEC-46, AC-A11Y-25,
@@ -3297,3 +3297,21 @@ T9 and T14 exceptions stated above.
   found no defect. Exact warning disappearance and the reliability inventory
   remain correctly pending on the required post-merge exact-master Sonar run;
   T50 now awaits hosted CI and cloud review.
+- 2026-09-21: PR #418 merged as `08aefe64897a93c3d8329534b25a119270ccfb8e`
+  after every hosted gate and cloud review passed. The required clean
+  exact-master scan completed for that SHA but still reported
+  `Unexpected token` at the classic script boundary: the T50 test had removed
+  Jinja control tags even though Sonar parses them literally. A reproduced red
+  test now feeds the complete raw script to Node, and the corrective change
+  removes the script-level feature-flag control tags while leaving the
+  feature-gated markup unchanged. The focused parser, modal, trigger,
+  no-premature-swap, and route-render suite passes 84 tests; T50 remains open
+  until a corrective PR merges and the exact-master scan emits no warning.
+- 2026-09-21: The corrective candidate passed three independent local reviews
+  (security/privacy, QA/reliability, and product/accessibility/design/
+  architecture) with no findings. Reviewers independently measured the old
+  raw script failing on the control tag, the new complete raw script parsing,
+  and disabled/enabled trigger and dialog counts of 0/0 and 1/1. Local evidence
+  also includes Ruff, 355-file trap checking, 221 UI units, 84 focused Python
+  tests, 28 focused Chromium flows, 27 accessibility cases, and five mobile
+  cases. T50 now awaits hosted CI and cloud review on the corrective PR.
