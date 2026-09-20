@@ -2799,3 +2799,9 @@ T9 and T14 exceptions stated above.
   static `for`/`id` and bound `:for`/`:id` associations separate. Dual-mode
   labels fail explicitly. Empty-literal, dual-mode, and cross-mode fixtures
   exercise both the field-name and label-semantic guards.
+- 2026-09-20: The independent local review gate mutation-proved one final
+  dynamic-text false green: `x-text="''"` was non-empty source code but rendered
+  no label text. Dynamic `x-text` and `x-html` content now uses the existing
+  normalized non-empty-expression check. Parameterized fixtures cover blank
+  literals on both the label and descendants, and the real wizard-label
+  mutation is required to fail the focused guard.

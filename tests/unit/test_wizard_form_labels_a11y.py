@@ -235,7 +235,7 @@ def _label_semantics_violations(fragment_html, source):
             isinstance(child, NavigableString) and str(child).strip()
             for child in label.descendants
         ) or any(
-            child.get('x-text') or child.get('x-html')
+            _non_empty_attr(child, 'x-text', 'x-html')
             for child in [label, *label.find_all(True)]
         )
 
@@ -408,6 +408,19 @@ def test_the_label_checker_accepts_explicit_and_implicit_associations():
 )
 def test_the_label_checker_rejects_orphan_empty_and_ambiguous_labels(bad):
     assert len(_label_semantics_violations(bad, 'fixture')) == 1
+
+
+@pytest.mark.parametrize(
+    'empty_dynamic_text',
+    [
+        '<label x-text="\'\'"><input></label>',
+        '<label x-html="\'   \'"><input></label>',
+        '<label><span x-text="\'\'"></span><input></label>',
+        '<label><span x-html="\'   \'"></span><input></label>',
+    ],
+)
+def test_empty_dynamic_label_text_does_not_count_as_a_name(empty_dynamic_text):
+    assert len(_label_semantics_violations(empty_dynamic_text, 'fixture')) == 1
 
 
 def test_an_explicit_label_cannot_also_hide_an_orphan_nested_control():
