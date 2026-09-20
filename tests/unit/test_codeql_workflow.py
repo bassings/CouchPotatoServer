@@ -34,7 +34,7 @@ def test_codeql_matrix_drives_initialization_and_canonical_analysis_categories(w
 
     assert steps["github/codeql-action/init@v4"]["with"]["languages"] == "${{ matrix.language }}"
     assert steps["github/codeql-action/analyze@v4"]["with"]["category"] == (
-        "/language:${{ matrix.language }}"
+        "/language:${{ matrix.check_name }}"
     )
     assert analyze["permissions"] == {"contents": "read", "security-events": "write"}
 

@@ -2805,3 +2805,12 @@ T9 and T14 exceptions stated above.
   normalized non-empty-expression check. Parameterized fixtures cover blank
   literals on both the label and descendants, and the real wizard-label
   mutation is required to fail the focused guard.
+- 2026-09-20: PR #412's CodeQL aggregate exposed two CI-specific failures.
+  The template-literal regex used overlapping alternatives and triggered a
+  high-severity exponential-backtracking alert; its non-escape branch now
+  excludes backslashes as well as backticks, and an escaped-backtick fixture
+  preserves extraction behavior. The JavaScript analysis also changed its
+  established category from `/language:javascript` to
+  `/language:javascript-typescript`, so pull-request comparison reported the
+  master configuration missing. Analysis categories now use the stable matrix
+  `check_name`, while initialization still uses CodeQL's canonical language.

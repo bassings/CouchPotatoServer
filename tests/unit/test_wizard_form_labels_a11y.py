@@ -75,7 +75,7 @@ _JINJA_COMMENT = re.compile(r'{#.*?#}', re.S)
 #: A JS template-literal string, inside a <script> block, that contains form
 #: markup -- see the getDownloaderFields() note above.
 _JS_HTML_MARKUP = re.compile(r'<(?:input|label|select|textarea)\b')
-_JS_TEMPLATE_LITERAL = re.compile(r'`((?:\\.|[^`])*)`', re.S)
+_JS_TEMPLATE_LITERAL = re.compile(r'`((?:\\.|[^\\`])*)`', re.S)
 #: Script bodies are extracted with the HTML parser, NOT a regex. CodeQL's
 #: py/bad-tag-filter flagged the regex form on PR 301 and was right about the
 #: code even though the severity does not apply here (this parses the
@@ -513,6 +513,13 @@ def test_script_markup_extraction_respects_comment_markers_inside_strings():
 
     for script in scripts:
         assert list(_js_html_strings(script)) == [markup]
+
+
+def test_script_markup_extraction_keeps_an_escaped_backtick_inside_the_span():
+    markup = '<label for="name">Name</label><input id="name">'
+    content = rf'escaped \` tick {markup}'
+
+    assert list(_js_html_strings(f'const rendered = `{content}`;')) == [content]
 
 
 def test_the_loop_checker_flags_a_static_id_inside_x_for():
