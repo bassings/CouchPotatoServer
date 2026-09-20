@@ -74,8 +74,7 @@ _JINJA_COMMENT = re.compile(r'{#.*?#}', re.S)
 
 #: A JS template-literal string, inside a <script> block, that contains form
 #: markup -- see the getDownloaderFields() note above.
-_JS_HTML_STRING = re.compile(r'`([^`]*<(?:input|label|select|textarea)[^`]*)`', re.S)
-_JS_COMMENT = re.compile(r'//[^\n]*|/\*.*?\*/', re.S)
+_JS_HTML_MARKUP = re.compile(r'<(?:input|label|select|textarea)\b')
 #: Script bodies are extracted with the HTML parser, NOT a regex. CodeQL's
 #: py/bad-tag-filter flagged the regex form on PR 301 and was right about the
 #: code even though the severity does not apply here (this parses the
@@ -89,13 +88,46 @@ def _script_bodies(html_text):
     return [script.string or script.get_text() or '' for script in soup.find_all('script')]
 
 
-def _js_html_strings(script):
-    """Yield markup-bearing template literals, excluding prose in comments."""
-    comment_ranges = [(match.start(), match.end()) for match in _JS_COMMENT.finditer(script)]
-    for match in _JS_HTML_STRING.finditer(script):
-        if any(start <= match.start() < end for start, end in comment_ranges):
+def _skip_js_quoted(script, start, quote):
+    """Return the index after one JS string and its unescaped raw content."""
+    content = []
+    index = start + 1
+    while index < len(script):
+        char = script[index]
+        if char == '\\' and index + 1 < len(script):
+            content.extend((char, script[index + 1]))
+            index += 2
             continue
-        yield match
+        if char == quote:
+            return index + 1, ''.join(content)
+        content.append(char)
+        index += 1
+    return len(script), ''.join(content)
+
+
+def _js_html_strings(script):
+    """Yield markup-bearing JS template literals outside strings/comments."""
+    index = 0
+    while index < len(script):
+        if script.startswith('//', index):
+            newline = script.find('\n', index + 2)
+            index = len(script) if newline == -1 else newline + 1
+            continue
+        if script.startswith('/*', index):
+            closing = script.find('*/', index + 2)
+            index = len(script) if closing == -1 else closing + 2
+            continue
+
+        char = script[index]
+        if char in ("'", '"'):
+            index, _ = _skip_js_quoted(script, index, char)
+            continue
+        if char == '`':
+            index, content = _skip_js_quoted(script, index, char)
+            if _JS_HTML_MARKUP.search(content):
+                yield content
+            continue
+        index += 1
 
 
 def _strip_jinja_comments(text):
@@ -172,9 +204,9 @@ def _fragment_violations(fragment_html, source):
 def _script_fragment_violations(html_text, filename):
     violations = []
     for script_idx, script in enumerate(_script_bodies(html_text)):
-        for string_idx, match in enumerate(_js_html_strings(script)):
+        for string_idx, fragment in enumerate(_js_html_strings(script)):
             source = '%s (script %d, template string %d)' % (filename, script_idx, string_idx)
-            violations.extend(_fragment_violations(match.group(1), source))
+            violations.extend(_fragment_violations(fragment, source))
     return violations
 
 
@@ -233,10 +265,10 @@ def find_label_semantics_violations(path):
     text = _strip_jinja_comments(path.read_text())
     violations = _label_semantics_violations(text, path.name)
     for script_idx, script in enumerate(_script_bodies(text)):
-        for string_idx, match in enumerate(_js_html_strings(script)):
+        for string_idx, fragment in enumerate(_js_html_strings(script)):
             source = '%s (script %d, template string %d)' % (
                 path.name, script_idx, string_idx)
-            violations.extend(_label_semantics_violations(match.group(1), source))
+            violations.extend(_label_semantics_violations(fragment, source))
     return violations
 
 
@@ -375,9 +407,22 @@ def test_script_markup_extraction_ignores_backtick_examples_in_comments():
         'const rendered = `<label for="name">Name</label><input id="name">`;'
     )
 
-    assert [match.group(1) for match in _js_html_strings(script)] == [
+    assert list(_js_html_strings(script)) == [
         '<label for="name">Name</label><input id="name">'
     ]
+
+
+def test_script_markup_extraction_respects_comment_markers_inside_strings():
+    markup = '<label for="name">Name</label><input id="name">'
+    scripts = (
+        f'const docs = "https://example.test"; const rendered = `{markup}`;',
+        f'const token = "/*"; const rendered = `{markup}`; const end = "*/";',
+        f'const quote = "escaped \\\" // text"; const rendered = `{markup}`;',
+        f'/* example only: `{markup}` */ const rendered = `{markup}`;',
+    )
+
+    for script in scripts:
+        assert list(_js_html_strings(script)) == [markup]
 
 
 def test_the_loop_checker_flags_a_static_id_inside_x_for():

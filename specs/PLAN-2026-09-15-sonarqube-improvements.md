@@ -2751,3 +2751,13 @@ T9 and T14 exceptions stated above.
   helper wording around valid icon-only labels; AC-QA-81 and the source guard
   now explicitly accept one ARIA-named wrapped control while continuing to
   reject an empty unnamed wrapper.
+- 2026-09-20: T44 review round two found one shared-mechanism false green: a
+  raw JavaScript comment regex treated `//` in a quoted URL as a comment and
+  could hide a later markup template literal. A quote-aware scanner now skips
+  real line/block comments while preserving template discovery after URL,
+  block-marker, and escaped-quote strings; adversarial fixtures cover each
+  boundary. The label guard now discovers all label-bearing served templates,
+  51 focused source tests and the trap/Ruff checks pass, and four 393px mobile
+  checks prove the affected Settings and wizard states in both themes. The
+  separate pre-existing whole-Searchers-page overflow is outside these changed
+  elements and is not folded into this semantic-label batch.
