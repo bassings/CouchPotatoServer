@@ -1472,6 +1472,66 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-53:** Make the smallest template/data-flow repair. Do not exclude
   the template, suppress the parser warning, change Sonar configuration,
   replace the Jinja environment, or refactor unrelated movie-detail behavior.
+- **AC-QA-115:** The scanner resolves the unambiguous commit ref
+  `refs/remotes/origin/master^{commit}`, requires a full 40-character SHA, and
+  requires it to equal the full `HEAD` SHA while `HEAD` is symbolically attached
+  to local `master`. Focused fake-command and real-repository tests separately
+  reject a missing, malformed, or symbolic tracking ref (including a dangling
+  symbolic target), detached HEAD, and local master that is ahead of, behind,
+  or divergent from the tracking ref; preflight
+  rejection occurs before coverage, npm, scanner upload, CE polling, or stamp
+  mutation.
+- **AC-QA-116:** The HEAD-to-tracking-ref comparison runs at all four existing
+  checkout-validation boundaries: before coverage, after coverage, after the
+  isolated scanner installation, and immediately after scanner upload. Drift
+  during coverage or installation prevents upload; drift during upload reports
+  that the result must be disregarded, performs no CE polling, and preserves
+  the previous freshness stamp. Command-order evidence proves no later phase
+  moves ahead of its preceding validation.
+- **AC-QA-117:** Applied-and-restored mutations that omit the equality check,
+  resolve ambiguous `origin/master` instead of the full remote-tracking ref, or
+  omit a post-work revalidation fail an owning regression. Restoration returns
+  the focused scanner, plan-status, trap, and proportionate broad gates to
+  green.
+- **AC-QA-118:** Reconcile the requested MooTools deletion as already completed
+  by PR #373 rather than creating a second deletion. Durable evidence retains
+  the exact inventory of 19 JavaScript files, 4,487 JavaScript lines, and one
+  image, while the recurrence guard continues to require zero files below
+  `couchpotato/core/**/static`.
+- **AC-QA-119:** Supply the missing literal render proof as evidence-only work
+  pinned to `7a993cb3^` and `7a993cb3`, not as production churn. A single
+  non-empty deterministic browser manifest covers every current page family
+  formerly represented by the deleted assets; the same scenarios render
+  successfully before and after, retain their page identity and redirect
+  behavior, and request none of the deleted asset paths. Record any scenario
+  that cannot be replayed rather than silently treating it as equivalent.
+- **AC-SEC-47:** Git provenance checks run as fixed argv under the existing
+  scrubbed environment and add no fetch, remote request, credential use, shell
+  interpolation, or environment inheritance. A missing, malformed, unequal,
+  or changing tracking ref fails closed without exposing a token, remote URL,
+  private-network detail, media path, or user data.
+- **AC-ARCH-4:** Keep `checkout_sha()` as the single Git-state authority. Add
+  no duplicate Makefile preflight, configurable branch mode, upstream
+  shorthand, ancestry heuristic, dependency, or second orchestration layer;
+  scanner project version and SCM revision remain the initially captured full
+  SHA.
+- **AC-OPS-41:** A provenance failure names the locally fetched
+  `origin/master` boundary and gives a non-destructive recovery path: fetch
+  `origin master`, reconcile local `master` in a clean worktree, and retry. It
+  must not fetch, checkout, merge, reset, create a branch, or mutate refs
+  automatically. Post-upload failure retains the existing explicit
+  “disregard and re-run” warning and does not replace the freshness stamp.
+- **AC-OPS-42:** After merge, explicitly fetch `origin/master`, verify clean
+  local `master` equals both the fetched tracking ref and the merge SHA, then
+  run `make sonar`. Completion evidence records CE success, matching full
+  revision/project version/freshness stamp, plausible coverage, and the open
+  reliability inventory; it does not imply that a local tracking ref is
+  cryptographic proof of the live remote.
+- **AC-SIMP-54:** Limit implementation to the existing scanner preflight, its
+  tests, and the historical render evidence. Do not automatically fetch,
+  change Sonar configuration or exclusions, alter staleness semantics, add
+  compatibility loaders or placeholder assets, or reopen the already-merged
+  MooTools deletion.
 
 ## Implementation sequence
 
@@ -1690,12 +1750,25 @@ within the authority explicitly granted by the owner.
   normalization with `replaceAll`, prove the complete refusal announcement in
   the real settings panel, and verify the exact S7781 key on merged master.
   Covers AC-QA-108..110, AC-SEC-44..45, and AC-SIMP-52.
-- [ ] **T50 — make the movie-detail profile bootstrap parseable and inert**
-  *(needs: T49)* — state: awaiting-ci. PR #418 moved the current profile identifier from
+- [x] **T50 — make the movie-detail profile bootstrap parseable and inert**
+  *(needs: T49)* — state: merged #419. PR #418 moved the current profile identifier from
   executable template interpolation to an autoescaped data attribute, preserve
   the real editor's selected value, and verify the exact-master Sonar parser
   warning is gone. Covers AC-QA-111..114, AC-SEC-46, AC-A11Y-25,
   AC-DESIGN-15, AC-PROD-22, AC-ARCH-3, AC-OPS-40, and AC-SIMP-53.
+- [ ] **T51 — pin Sonar analysis to fetched master provenance** *(needs: T50)*
+  — state: in-progress. Extend the existing repeated checkout validation so a
+  scan proceeds only while clean local `master` HEAD exactly equals
+  `refs/remotes/origin/master`, with fail-closed recovery and mutation-resistant
+  tests. Covers AC-QA-115..117, AC-SEC-47, AC-ARCH-4, AC-OPS-41..42, and
+  AC-SIMP-54.
+- [ ] **T52 — replay the completed dead-static deletion before and after**
+  *(needs: T51)* — state: queued. Do not delete or exclude anything: PR #373
+  already removed the exact 19 JavaScript files, 4,487 JavaScript lines, and
+  one image. Re-run a deterministic non-empty page-family manifest at the
+  parent and merge commits, prove both sides render the same current workflows
+  without requesting deleted paths, and retain the zero-file recurrence guard.
+  Covers AC-QA-118..119 and AC-SIMP-54.
 
 All tasks also cover AC-SIMP-3 and AC-QA-6. AC-SIMP-4 applies with the explicit
 T9 and T14 exceptions stated above.
@@ -3315,3 +3388,72 @@ T9 and T14 exceptions stated above.
   also includes Ruff, 355-file trap checking, 221 UI units, 84 focused Python
   tests, 28 focused Chromium flows, 27 accessibility cases, and five mobile
   cases. T50 now awaits hosted CI and cloud review on the corrective PR.
+- 2026-09-21: PR #419 merged as
+  `5aa73eabb2e4976fc20a8210bcf2cda4d246b5a2` after every hosted gate and
+  cloud review passed. A fresh clean checkout whose local `master`, HEAD, and
+  `origin/master` all matched that SHA completed exact-master analysis
+  `b40a0909-20e4-483f-a928-7921a1e23641` with 63.7% coverage and no
+  `movie_detail.html` parse warning. The one remaining medium reliability
+  impact was the behavior-proven operator-candidate wrapping-label false
+  positive first documented by T33; exact evidence and expiry conditions were
+  added to key `782798b4-29d3-46ba-a07d-986935aede09` before transitioning only
+  that key. Both reliability ratings are now 1.0/A with zero open reliability
+  impacts and zero bugs. T50 is complete.
+- 2026-09-21: The T51/T52 plan cycle selected security, QA, simplicity,
+  architecture, and operability. All five lenses confirmed the live scanner
+  gap is centralized: `checkout_sha()` repeatedly checks local branch,
+  cleanliness, and stable HEAD but never compares the fully qualified remote
+  tracking ref. They also independently reconciled T14/PR #373 as already
+  complete: current master contains zero core static assets, its recurrence
+  guard passes, and the exact deletion was 19 JavaScript files (4,487 lines)
+  plus one image. T51 implements only the provenance guard; T52 supplies the
+  user's requested literal historical render proof without reopening or
+  excluding the deleted code.
+- 2026-09-21: T51's red phase produced four expected failures for an unequal,
+  malformed, missing, or coverage-drifting remote-tracking ref. The green
+  implementation resolves only `refs/remotes/origin/master^{commit}` through
+  fixed argv in the scrubbed environment and repeats equality validation at
+  every existing checkout boundary. Three applied-and-restored mutations
+  (bypassed equality, ambiguous ref, and omitted post-install validation) were
+  each killed by an owning test. Focused verification passed 141 tests; the
+  fast gate passed Ruff, the 355-file trap check, 4,575 Python units, 42 Python
+  integrations, and 221 UI units. T51 now awaits exact-commit local review.
+- 2026-09-21: The first exact-commit security review found that Git permits
+  `refs/remotes/origin/master` itself to be symbolic. Pointing it at local
+  `master` made an arbitrary ahead commit compare equal, so candidate
+  `e484eb98` was correctly withheld from push. A real-repository test first
+  reproduced that acceptance, then the scanner was tightened to require a
+  direct remote-tracking ref before resolving its commit. Bypassing the new
+  direct-ref check makes both its fake-command and real-Git regressions fail.
+  All exact-commit reviews must be repeated on the replacement commit.
+- 2026-09-21: Replacement-commit operability review then found that
+  `for-each-ref` omits a dangling symbolic tracking ref. The scan failed closed,
+  but its suggested fetch could not repair that state. Candidate `ddc2600f` was
+  withheld too. Direct-ref classification now uses `git symbolic-ref --quiet`
+  with only its documented zero/one statuses accepted, so valid and dangling
+  symbolic refs share one fail-closed path. The message names the narrow
+  operator-controlled repair (`git symbolic-ref --delete` for only the remote
+  tracking ref, then fetch); a real local remote proves those commands preserve
+  local `master`, recreate a direct tracking ref, and allow validation. The
+  restored symbolic-check mutation is killed by three owning regressions, and
+  focused verification passes 145 tests. Exact-commit reviews restart again.
+- 2026-09-21: Third-round QA found the injected-runner unexpected-status check
+  was correct but not load-bearing: deleting it left all scanner tests green.
+  A focused regression now supplies status 128 while only zero/one are allowed,
+  requires the bounded diagnostic, and proves child stderr is not disclosed;
+  disabling the check makes that regression fail. The unchanged production
+  implementation also passed the repeated fast gate: Ruff, 355-file trap
+  checking, 4,579 Python units, 42 integrations, and 221 UI units. Reviews
+  restart on the final replacement commit because no prior clean verdict is
+  carried across an amendment.
+- 2026-09-21: The fresh verification lens found the remaining fake/real Git
+  mismatch: real detached HEAD returns status one from `symbolic-ref`, so a
+  post-upload detach failed closed but lost the mandatory disregard warning.
+  The final candidate was withheld. Branch lookup now treats Git's documented
+  zero/one statuses as branch/detached data, and every checkout-state command
+  failure is wrapped with the same post-upload warning. A real detached-repo
+  regression requires both the accurate detached diagnosis and disregard
+  text; npm/upload drift coverage now includes detachment; an injected fatal
+  Git failure proves the mechanism retains the warning without disclosing
+  stderr. Applied-and-restored mutations of both status classification and
+  warning propagation are killed by their owning tests.

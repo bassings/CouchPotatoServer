@@ -70,9 +70,13 @@ class FakeCommands:
     def __init__(self, repo: Path, sha: str = SHA_A):
         self.repo = repo
         self.sha = sha
+        self.origin_sha = sha
+        self.origin_ref_exists = True
+        self.origin_symref = ""
         self.branch = "master"
         self.dirty = False
         self.change_head_after_coverage = False
+        self.change_origin_after_coverage = False
         self.drift_after_npm = None
         self.drift_after_scanner = None
         self.write_scanner_report = True
@@ -82,29 +86,54 @@ class FakeCommands:
 
     def __call__(self, argv, **kwargs):
         self.calls.append((list(argv), kwargs))
+        returncode = 0
         command = "coverage" if argv[-1:] == ["coverage"] else argv[0]
         if command == self.fail_command:
             raise subprocess.CalledProcessError(1, argv)
         if command == self.timeout_command:
             raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
-        if argv[:3] == ["git", "symbolic-ref", "--short"]:
-            stdout = self.branch + "\n"
+        if argv == ["git", "symbolic-ref", "--quiet", "--short", "HEAD"]:
+            stdout = self.branch + "\n" if self.branch else ""
+            returncode = 0 if self.branch else 1
         elif argv[:3] == ["git", "status", "--porcelain"]:
             stdout = " M tracked.py\n" if self.dirty else ""
         elif argv[:3] == ["git", "rev-parse", "HEAD"]:
             stdout = self.sha + "\n"
+        elif argv == [
+            "git",
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/master",
+        ]:
+            stdout = self.origin_symref + "\n" if self.origin_symref else ""
+            returncode = 0 if self.origin_symref else 1
+        elif argv == [
+            "git",
+            "rev-parse",
+            "--verify",
+            "refs/remotes/origin/master^{commit}",
+        ]:
+            if not self.origin_ref_exists:
+                raise subprocess.CalledProcessError(128, argv)
+            stdout = self.origin_sha + "\n"
         elif argv[-1:] == ["coverage"]:
             stdout = ""
             if self.change_head_after_coverage:
                 self.sha = SHA_B
+            if self.change_origin_after_coverage:
+                self.origin_sha = SHA_B
         elif argv[0] == "npm":
             stdout = ""
             if self.drift_after_npm == "branch":
                 self.branch = "feature"
+            elif self.drift_after_npm == "detached":
+                self.branch = ""
             elif self.drift_after_npm == "dirty":
                 self.dirty = True
             elif self.drift_after_npm == "head":
                 self.sha = SHA_B
+            elif self.drift_after_npm == "origin":
+                self.origin_sha = SHA_B
         elif argv[0] == "node":
             stdout = ""
             if self.write_scanner_report:
@@ -113,13 +142,17 @@ class FakeCommands:
                 report.write_text("ceTaskId=ce-task-123\nserverUrl=http://evil.invalid\n")
             if self.drift_after_scanner == "branch":
                 self.branch = "feature"
+            elif self.drift_after_scanner == "detached":
+                self.branch = ""
             elif self.drift_after_scanner == "dirty":
                 self.dirty = True
             elif self.drift_after_scanner == "head":
                 self.sha = SHA_B
+            elif self.drift_after_scanner == "origin":
+                self.origin_sha = SHA_B
         else:  # pragma: no cover - makes unexpected command shapes obvious
             raise AssertionError(f"unexpected command: {argv}")
-        return subprocess.CompletedProcess(argv, 0, stdout, "")
+        return subprocess.CompletedProcess(argv, returncode, stdout, "")
 
 
 def config(tmp_path: Path, sha: str = SHA_A):
@@ -411,6 +444,87 @@ def test_non_exact_sha_fails_before_coverage(tmp_path):
     assert not any(call[0][-1:] == ["coverage"] for call in commands.calls)
 
 
+@pytest.mark.parametrize(
+    ("origin_sha", "origin_ref_exists"),
+    [(SHA_B, True), ("short-origin-sha", True), (SHA_A, False)],
+)
+def test_origin_master_must_resolve_to_the_same_exact_commit_before_coverage(
+    tmp_path, origin_sha, origin_ref_exists
+):
+    cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
+    commands.origin_sha = origin_sha
+    commands.origin_ref_exists = origin_ref_exists
+
+    with pytest.raises(sonar_scan.ScanError, match="origin/master"):
+        sonar_scan.run_scan(cfg, run=commands, open_url=success_opener)
+
+    assert not any(call[0][-1:] == ["coverage"] for call in commands.calls)
+    assert not any(call[0][0] in {"npm", "node"} for call in commands.calls)
+
+
+def test_origin_master_change_during_coverage_refuses_upload(tmp_path):
+    cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
+    commands.change_origin_after_coverage = True
+
+    with pytest.raises(sonar_scan.ScanError, match="origin/master"):
+        sonar_scan.run_scan(cfg, run=commands, open_url=success_opener)
+
+    assert not any(call[0][0] in {"npm", "node"} for call in commands.calls)
+
+
+def test_symbolic_origin_master_refuses_scan_before_coverage(tmp_path):
+    commands = FakeCommands(tmp_path)
+    commands.origin_symref = "refs/heads/master"
+
+    with pytest.raises(sonar_scan.ScanError, match="direct remote-tracking ref"):
+        sonar_scan.run_scan(config(tmp_path), run=commands, open_url=success_opener)
+
+    assert not any(call[0][-1:] == ["coverage"] for call in commands.calls)
+    assert not any(call[0][0] in {"npm", "node"} for call in commands.calls)
+
+
+def test_missing_origin_master_has_non_destructive_recovery_without_fetching(tmp_path):
+    cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
+    commands.origin_ref_exists = False
+
+    with pytest.raises(sonar_scan.ScanError) as error:
+        sonar_scan.run_scan(cfg, run=commands, open_url=success_opener)
+
+    assert "git fetch origin master" in str(error.value)
+    assert "reset" not in str(error.value)
+    assert not any(call[0][:2] == ["git", "fetch"] for call in commands.calls)
+
+
+def test_successful_provenance_checks_use_only_read_only_git_commands(tmp_path):
+    commands = FakeCommands(tmp_path)
+
+    sonar_scan.run_scan(config(tmp_path), run=commands, open_url=success_opener)
+
+    git_calls = [argv for argv, _kwargs in commands.calls if argv[0] == "git"]
+    allowed = {
+        ("git", "symbolic-ref", "--quiet", "--short", "HEAD"),
+        ("git", "status", "--porcelain", "--untracked-files=all"),
+        ("git", "rev-parse", "HEAD"),
+        (
+            "git",
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/master",
+        ),
+        (
+            "git",
+            "rev-parse",
+            "--verify",
+            "refs/remotes/origin/master^{commit}",
+        ),
+    }
+    assert git_calls
+    assert all(tuple(call) in allowed for call in git_calls)
+
+
 def test_head_change_after_coverage_refuses_upload(tmp_path):
     cfg = config(tmp_path)
     commands = FakeCommands(tmp_path)
@@ -422,7 +536,7 @@ def test_head_change_after_coverage_refuses_upload(tmp_path):
     assert not any(call[0][0] in {"npm", "node"} for call in commands.calls)
 
 
-@pytest.mark.parametrize("drift", ["branch", "dirty", "head"])
+@pytest.mark.parametrize("drift", ["branch", "detached", "dirty", "head", "origin"])
 def test_checkout_drift_during_npm_install_refuses_upload(tmp_path, drift):
     cfg = config(tmp_path)
     commands = FakeCommands(tmp_path)
@@ -435,7 +549,7 @@ def test_checkout_drift_during_npm_install_refuses_upload(tmp_path, drift):
     assert not any(call[0][0] == "node" for call in commands.calls)
 
 
-@pytest.mark.parametrize("drift", ["branch", "dirty", "head"])
+@pytest.mark.parametrize("drift", ["branch", "detached", "dirty", "head", "origin"])
 def test_post_scanner_checkout_drift_preserves_stamp_and_disregards_upload(tmp_path, drift):
     cfg = config(tmp_path)
     commands = FakeCommands(tmp_path)
@@ -467,6 +581,20 @@ def test_scan_order_revalidates_after_upload_before_ce_and_stamp(tmp_path, monke
                 events.append("upload-boundary-check")
             elif revision_reads == 4:
                 events.append("postcheck")
+        elif argv == [
+            "git",
+            "symbolic-ref",
+            "--quiet",
+            "refs/remotes/origin/master",
+        ]:
+            events.append("origin-kind-check")
+        elif argv == [
+            "git",
+            "rev-parse",
+            "--verify",
+            "refs/remotes/origin/master^{commit}",
+        ]:
+            events.append("origin-check")
         elif argv[0] == "node":
             events.append("scanner")
         return result
@@ -493,11 +621,19 @@ def test_scan_order_revalidates_after_upload_before_ce_and_stamp(tmp_path, monke
     )
 
     assert events == [
+        "origin-kind-check",
+        "origin-check",
         "coverage",
         "recheck",
+        "origin-kind-check",
+        "origin-check",
         "upload-boundary-check",
+        "origin-kind-check",
+        "origin-check",
         "scanner",
         "postcheck",
+        "origin-kind-check",
+        "origin-check",
         "PENDING",
         "IN_PROGRESS",
         "SUCCESS",
@@ -605,6 +741,32 @@ def test_external_work_has_a_bounded_timeout_and_preserves_stamp(tmp_path, comma
     ) == command)
     assert 0 < timed_out_call["timeout"] <= 15 * 60
     assert stamp.read_bytes() == b"previous\n"
+
+
+def test_custom_runner_rejects_unexpected_allowed_command_status(tmp_path):
+    def unexpected_status(argv, **kwargs):
+        assert kwargs["check"] is False
+        return subprocess.CompletedProcess(
+            argv,
+            128,
+            "",
+            "fatal detail with sqa_private-diagnostic",
+        )
+
+    with pytest.raises(
+        sonar_scan.ScanError,
+        match="Command failed: origin/master kind lookup",
+    ) as error:
+        sonar_scan._command(
+            unexpected_status,
+            ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/master"],
+            tmp_path,
+            env=sonar_scan._safe_env(),
+            description="origin/master kind lookup",
+            allowed_returncodes=(0, 1),
+        )
+
+    assert "sqa_private-diagnostic" not in str(error.value)
 
 
 def test_real_timeout_terminates_the_entire_subprocess_group(tmp_path):
@@ -949,7 +1111,7 @@ def make_git_repo(path: Path, relative_path: str, contents: str) -> str:
         capture_output=True,
         env=sanitized_git_env(),
     )
-    return subprocess.run(
+    sha = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=path,
         check=True,
@@ -957,6 +1119,177 @@ def make_git_repo(path: Path, relative_path: str, contents: str) -> str:
         text=True,
         env=sanitized_git_env(),
     ).stdout.strip()
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/master", sha],
+        cwd=path,
+        check=True,
+        env=sanitized_git_env(),
+    )
+    return sha
+
+
+def git_fixture(repo: Path, *args: str, input_text: str | None = None) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        input=input_text,
+        env=sanitized_git_env(),
+    ).stdout.strip()
+
+
+def commit_fixture_change(repo: Path, contents: str) -> str:
+    (repo / "app.py").write_text(contents)
+    git_fixture(repo, "add", "app.py")
+    git_fixture(repo, "commit", "-m", contents.strip())
+    return git_fixture(repo, "rev-parse", "HEAD")
+
+
+def test_real_checkout_accepts_equal_master_and_tracking_ref(tmp_path):
+    repo = tmp_path / "repo"
+    sha = make_git_repo(repo, "app.py", "base\n")
+    cfg = sonar_scan.Config(
+        repo=repo,
+        host_url="http://sonar.internal:9000",
+        token_file=tmp_path / "unused-token",
+        scanner_version="5.0.0",
+    )
+
+    assert sonar_scan.checkout_sha(cfg, subprocess.run) == sha
+
+
+def test_real_post_upload_detached_head_requires_disregard_warning(tmp_path):
+    repo = tmp_path / "repo"
+    make_git_repo(repo, "app.py", "base\n")
+    git_fixture(repo, "switch", "--detach")
+    cfg = sonar_scan.Config(
+        repo=repo,
+        host_url="http://sonar.internal:9000",
+        token_file=tmp_path / "unused-token",
+        scanner_version="5.0.0",
+    )
+
+    with pytest.raises(sonar_scan.ScanError) as error:
+        sonar_scan.checkout_sha(cfg, subprocess.run, after_upload=True)
+
+    assert "current branch is detached" in str(error.value)
+    assert "uploaded result must be disregarded and re-run" in str(error.value)
+
+
+def test_post_upload_git_lookup_failure_requires_disregard_warning(tmp_path):
+    def failed_lookup(argv, **_kwargs):
+        raise subprocess.CalledProcessError(
+            128,
+            argv,
+            stderr="fatal detail with sqa_private-diagnostic",
+        )
+
+    cfg = sonar_scan.Config(
+        repo=tmp_path,
+        host_url="http://sonar.internal:9000",
+        token_file=tmp_path / "unused-token",
+        scanner_version="5.0.0",
+    )
+
+    with pytest.raises(sonar_scan.ScanError) as error:
+        sonar_scan.checkout_sha(cfg, failed_lookup, after_upload=True)
+
+    assert "master branch lookup" in str(error.value)
+    assert "uploaded result must be disregarded and re-run" in str(error.value)
+    assert "sqa_private-diagnostic" not in str(error.value)
+
+
+def test_documented_symbolic_ref_recovery_restores_direct_tracking_ref(tmp_path):
+    repo = tmp_path / "repo"
+    remote = tmp_path / "origin.git"
+    sha = make_git_repo(repo, "app.py", "base\n")
+    git_fixture(remote.parent, "init", "--bare", str(remote))
+    git_fixture(repo, "remote", "add", "origin", str(remote))
+    git_fixture(repo, "push", "--set-upstream", "origin", "master")
+    git_fixture(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/origin/master",
+        "refs/heads/missing",
+    )
+    cfg = sonar_scan.Config(
+        repo=repo,
+        host_url="http://sonar.internal:9000",
+        token_file=tmp_path / "unused-token",
+        scanner_version="5.0.0",
+    )
+
+    with pytest.raises(sonar_scan.ScanError) as error:
+        sonar_scan.checkout_sha(cfg, subprocess.run)
+
+    message = str(error.value)
+    assert "git symbolic-ref --delete refs/remotes/origin/master" in message
+    assert "git fetch origin master" in message
+    git_fixture(repo, "symbolic-ref", "--delete", "refs/remotes/origin/master")
+    git_fixture(repo, "fetch", "origin", "master")
+
+    assert git_fixture(repo, "rev-parse", "HEAD") == sha
+    assert sonar_scan.checkout_sha(cfg, subprocess.run) == sha
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "ahead",
+        "behind",
+        "diverged",
+        "detached",
+        "missing",
+        "non-commit",
+        "symbolic",
+        "dangling-symbolic",
+    ],
+)
+def test_real_checkout_rejects_noncanonical_master_states(tmp_path, state):
+    repo = tmp_path / "repo"
+    make_git_repo(repo, "app.py", "base\n")
+
+    if state == "ahead":
+        commit_fixture_change(repo, "local ahead\n")
+    elif state in {"behind", "diverged"}:
+        git_fixture(repo, "switch", "-c", "remote-master")
+        remote_sha = commit_fixture_change(repo, "remote ahead\n")
+        git_fixture(repo, "update-ref", "refs/remotes/origin/master", remote_sha)
+        git_fixture(repo, "switch", "master")
+        if state == "diverged":
+            commit_fixture_change(repo, "local diverged\n")
+    elif state == "detached":
+        git_fixture(repo, "switch", "--detach")
+    elif state == "missing":
+        git_fixture(repo, "update-ref", "-d", "refs/remotes/origin/master")
+    elif state in {"symbolic", "dangling-symbolic"}:
+        git_fixture(
+            repo,
+            "symbolic-ref",
+            "refs/remotes/origin/master",
+            "refs/heads/master" if state == "symbolic" else "refs/heads/missing",
+        )
+    else:
+        blob_sha = git_fixture(repo, "hash-object", "-w", "--stdin", input_text="not a commit\n")
+        git_fixture(repo, "update-ref", "refs/remotes/origin/master", blob_sha)
+
+    cfg = sonar_scan.Config(
+        repo=repo,
+        host_url="http://sonar.internal:9000",
+        token_file=tmp_path / "unused-token",
+        scanner_version="5.0.0",
+    )
+    expected = "master" if state == "detached" else "origin/master"
+
+    with pytest.raises(sonar_scan.ScanError, match=expected) as error:
+        sonar_scan.checkout_sha(cfg, subprocess.run)
+
+    if state == "dangling-symbolic":
+        assert "git symbolic-ref --delete refs/remotes/origin/master" in str(
+            error.value
+        )
 
 
 def contaminated_git_environment(monkeypatch, other_repo: Path):
