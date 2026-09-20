@@ -134,7 +134,7 @@ class FolderScannerMixin:
 
         del files
 
-        leftovers = set(sorted(leftovers, reverse=True))
+        leftovers = set(leftovers)
 
         # Group files minus extension
         ignored_identifiers = []
