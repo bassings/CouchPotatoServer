@@ -231,18 +231,6 @@ RUNNER_RE = re.compile(
 # Filters that discard the upstream exit status when they succeed.
 FILTER_RE = re.compile(r"\|\s*(tail|head|grep|tee|awk|sed|sort|uniq|wc|cat|less|more|jq)\b")
 
-# Matches `set -o pipefail`, `set -euo pipefail`, `set -eu -o pipefail`,
-# `set -o errexit -o pipefail`, `set -eox pipefail`. Anything containing an `o`
-# in the flag cluster (or a preceding `-o word`) followed by the literal
-# `pipefail` counts; `set +o pipefail` deliberately does not.
-# Note `o` may sit ANYWHERE in the flag cluster: `set -eox pipefail` really does
-# enable pipefail (verified: `set -eox pipefail; set -o | grep pipefail` -> on),
-# so anchoring on a cluster that *ends* in `o` missed it and flagged a correct
-# script.
-PIPEFAIL_RE = re.compile(
-    r"set\s+(?:[+-][a-zA-Z]*(?:\s+[a-z]+)?\s+)*-[a-zA-Z]*o[a-zA-Z]*\s+pipefail\b"
-)
-
 SHELL_SUFFIXES = (".sh",)
 WORKFLOW_SUFFIXES = (".yml", ".yaml")
 
@@ -412,10 +400,47 @@ def _has_pipefail(text: str) -> bool:
     A mention in a comment does not count, and neither does one inside a string
     literal — both were live false-green holes.
     """
-    cleaned = "\n".join(
-        strip_shell_comments(ln, blank_strings=True) for ln in text.split("\n")
-    )
-    return bool(PIPEFAIL_RE.search(cleaned))
+    cleaned = [strip_shell_comments(ln, blank_strings=True) for ln in text.split("\n")]
+    for _line_number, line in join_continuations(cleaned):
+        for command in line.replace(";", "\n").splitlines():
+            words = command.split()
+            search_at = 0
+            while search_at < len(words):
+                try:
+                    set_at = words.index("set", search_at)
+                except ValueError:
+                    break
+                index = set_at + 1
+                while index < len(words):
+                    option = words[index]
+                    flags = option[1:]
+                    if (
+                        len(option) < 1
+                        or option[0] not in "+-"
+                        or not flags.isascii()
+                        or (flags and not flags.isalpha())
+                    ):
+                        break
+                    if (
+                        option.startswith("-")
+                        and "o" in flags
+                        and index + 1 < len(words)
+                        and words[index + 1] == "pipefail"
+                    ):
+                        return True
+                    index += 1
+                    if (
+                        index < len(words)
+                        and words[index].isascii()
+                        and words[index].isalpha()
+                        and words[index].islower()
+                    ):
+                        index += 1
+                # The option scan has already classified every word through
+                # ``index``. Resume there rather than reconsidering each
+                # embedded ``set`` and rescanning its entire suffix.
+                search_at = max(index, set_at + 1)
+    return False
 
 
 def _is_vitest_spec(path: Path) -> bool:
@@ -479,7 +504,14 @@ def _has_real_pipeline(lines: list[str]) -> bool:
     """
     for raw in lines:
         line = strip_shell_comments(raw, blank_strings=True)
-        if re.match(r"\s*case\s", line) or re.search(r"^\s*[^()]*\)\s*$", line):
+        stripped = line.strip()
+        is_case = stripped.startswith("case ") or stripped.startswith("case\t")
+        is_case_arm = (
+            stripped.endswith(")")
+            and "(" not in stripped
+            and ")" not in stripped[:-1]
+        )
+        if is_case or is_case_arm:
             continue
         if re.search(r"(?<!\|)\|(?!\|)", line):
             return True
@@ -1050,7 +1082,25 @@ LEGACY_WAIT_IDENTITIES = {
 # unconditional. Must be on the SAME line as the `if` (where every opt-out
 # written for T1.4 puts it) — a comment three lines away could belong to
 # anything, and "near the guard" is not a check the next edit can rely on.
-OPT_OUT_RE = re.compile(r"//\s*vacuous-guard-ok:\s*(.*)$")
+_VACUOUS_GUARD_MARKER = "vacuous-guard-ok:"
+
+
+def _vacuous_guard_reason(source_line: str) -> tuple[bool, str]:
+    """Return whether the same-line exemption exists and its stripped reason."""
+    search_at = 0
+    while (comment_at := source_line.find("//", search_at)) >= 0:
+        marker_at = comment_at + 2
+        while marker_at < len(source_line) and source_line[marker_at].isspace():
+            marker_at += 1
+        if source_line.startswith(_VACUOUS_GUARD_MARKER, marker_at):
+            reason_at = marker_at + len(_VACUOUS_GUARD_MARKER)
+            while reason_at < len(source_line) and source_line[reason_at].isspace():
+                reason_at += 1
+            return True, source_line[reason_at:].strip()
+        # Advance one character so an overlapping ``//`` in ``///`` remains
+        # visible, matching the leftmost-search semantics of the old regex.
+        search_at = comment_at + 1
+    return False, ""
 
 E2E_AST_HELPER = REPO_ROOT / "scripts" / "check_e2e_test_traps.mjs"
 
@@ -1154,10 +1204,10 @@ def check_e2e_ast_traps(path: Path, text: str):
         kind = finding["kind"]
         source_line = str(finding["sourceLine"])
         if kind in {"click-guard", "expect-guard"}:
-            opt_out = OPT_OUT_RE.search(source_line)
-            if opt_out and opt_out.group(1).strip():
+            has_opt_out, reason = _vacuous_guard_reason(source_line)
+            if has_opt_out and reason:
                 continue
-            if opt_out:
+            if has_opt_out:
                 yield (
                     line_no,
                     "`// vacuous-guard-ok:` opt-out has no reason after the colon.",
@@ -1233,29 +1283,12 @@ _git_env = git_env
 _GIT_IDENTITY_PREFIXES = GIT_IDENTITY_PREFIXES
 
 
-#: A declaration that binds a locator to a live-region test id.
-#:
-#: This is master's regex, restored verbatim after a rewrite that tried to
-#: satisfy python:S8786 by matching the declaration and the test id in two
-#: steps. Review found FOUR shapes that rewrite silently stopped catching,
-#: each one narrower than this pattern: a declaration carrying an assertion,
-#: a declaration behind control flow on the same line (`if (ready) { const
-#: status = ...`), a second declaration on one line, and a name shadowed in
-#: a nested scope. Every one of them is a spec that hides a live region with
-#: the suite green, which is the defect this rule exists to catch.
-#:
-#: A possessive `[^;]*+` was tried too and is worse: it consumes to the `;`
-#: and can never backtrack to `data-testid=`, so it matches nothing at all.
-#: Measured, not assumed.
-#:
-#: So S8786 stays open, deliberately. The backtracking is real, and in this
-#: context it is not a risk worth contorting correct matching for: this is a
-#: build-time script over our own source, not untrusted input, and the
-#: measured worst case on a 60,000 character line with no match is 0.574ms.
-#: Revisit if this ever reads input it does not control.
-_LOCATOR_BINDING = re.compile(
-    r"""(?:const|let|var)\s+(\w+)\s*=\s*[^;]*?data-testid=["']([\w-]+)["']"""
-)
+#: Declaration starts are found separately from their semicolon-bounded value.
+#: Keeping that boundary explicit retains the four shapes a previous two-step
+#: rewrite lost: declarations carrying assertions, control-flow prefixes,
+#: second declarations on one line, and nested name shadowing. Pull-request
+#: source is CI input, so this scan must also stay single-pass on a long line.
+_LOCATOR_DECLARATION = re.compile(r"(?:const|let|var)\s+(\w+)\s*=")
 _TESTID = re.compile(r"""data-testid=["']([\w-]+)["']""")
 
 #: Only for deciding whether a line STARTS an unfinished declaration, which
@@ -1304,13 +1337,15 @@ def _live_region_bindings(source):
     A statement can name more than one element (a ternary picking between
     two), so all of them are returned.
     """
-    m = _LOCATOR_BINDING.search(source)
-    if not m:
-        return None
-    found = tuple(t for t in _TESTID.findall(source) if t in _LIVE_REGION_TESTIDS)
-    if not found:
-        return None
-    return m.group(1), found
+    for statement in source.split(";"):
+        declaration = _LOCATOR_DECLARATION.search(statement)
+        if not declaration:
+            continue
+        value = statement[declaration.end():]
+        found = tuple(t for t in _TESTID.findall(value) if t in _LIVE_REGION_TESTIDS)
+        if found:
+            return declaration.group(1), found
+    return None
 
 
 def check_live_region_visibility(_path: Path, text: str):
@@ -1636,10 +1671,24 @@ def _node_check(body: str, *, module: bool):
     if result.returncode == 0:
         return (True, 0, "", True)
     line_match = re.search(r"\[stdin\]:(\d+)", result.stderr)
-    msg_match = re.search(r"^(\S*Error:.*)$", result.stderr, re.MULTILINE)
-    if not (line_match and msg_match):
+    message = _node_error_message(result.stderr)
+    if not (line_match and message):
         return (False, 0, result.stderr.strip()[:300] or "no output from node", False)
-    return (False, int(line_match.group(1)), msg_match.group(1), True)
+    return (False, int(line_match.group(1)), message, True)
+
+
+def _node_error_message(stderr: str) -> str | None:
+    """Return Node's first compact ``*Error:`` diagnostic line."""
+    return next(
+        (
+            line
+            for line in stderr.splitlines()
+            if ":" in line
+            and line.partition(":")[0].endswith("Error")
+            and not any(char.isspace() for char in line.partition(":")[0])
+        ),
+        None,
+    )
 
 
 def check_html_template(path: Path, text: str):

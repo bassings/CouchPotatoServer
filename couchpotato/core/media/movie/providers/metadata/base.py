@@ -14,6 +14,53 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 
+def compactPrettyXmlText(xml_string):
+    """Preserve the legacy compaction of indented plain-text XML nodes.
+
+    ``minidom.toprettyxml`` puts text that begins with whitespace on lines
+    between its tags. The old regex removed that formatting whitespace but
+    could backtrack super-linearly. This statement-oriented pass performs the
+    same transformation without repeatedly rescanning a suffix.
+    """
+    compacted = []
+    copied_to = 0
+    search_from = 0
+    while True:
+        opening = xml_string.find('>\n', search_from)
+        if opening < 0:
+            break
+        content = opening + 2
+        if content >= len(xml_string) or not xml_string[content].isspace():
+            search_from = opening + 1
+            continue
+        while content < len(xml_string) and xml_string[content].isspace():
+            content += 1
+        if content >= len(xml_string) or xml_string[content] in '<>':
+            search_from = opening + 1
+            continue
+
+        line_end = xml_string.find('\n', content)
+        closing = -1
+        while line_end >= 0:
+            closing = line_end + 1
+            if closing >= len(xml_string) or not xml_string[closing].isspace():
+                line_end = xml_string.find('\n', closing)
+                continue
+            while closing < len(xml_string) and xml_string[closing].isspace():
+                closing += 1
+            if xml_string.startswith('</', closing):
+                break
+            line_end = xml_string.find('\n', closing)
+        if line_end < 0:
+            break
+
+        compacted.extend((xml_string[copied_to:opening + 1], xml_string[content:line_end], '</'))
+        copied_to = closing + 2
+        search_from = copied_to
+    compacted.append(xml_string[copied_to:])
+    return ''.join(compacted)
+
+
 class MovieMetaData(MetaDataBase):
 
     enabled_option = 'meta_enabled'
