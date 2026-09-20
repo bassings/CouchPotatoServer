@@ -1,11 +1,10 @@
 from xml.etree.ElementTree import Element, SubElement, tostring
 import os
-import re
 import traceback
 import xml.dom.minidom
 import time
 
-from couchpotato.core.media.movie.providers.metadata.base import MovieMetaData
+from couchpotato.core.media.movie.providers.metadata.base import MovieMetaData, compactPrettyXmlText
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import getTitle
 from couchpotato.core.logger import CPLog
@@ -227,9 +226,7 @@ class XBMC(MovieMetaData):
 
         # Clean up the xml and return it
         nfoxml = xml.dom.minidom.parseString(tostring(nfoxml))
-        xml_string = nfoxml.toprettyxml(indent = '  ')
-        text_re = re.compile('>\n\\s+([^<>\\s].*?)\n\\s+</', re.DOTALL)
-        xml_string = text_re.sub(r'>\g<1></', xml_string)
+        xml_string = compactPrettyXmlText(nfoxml.toprettyxml(indent = '  '))
 
         return xml_string.encode('utf-8')
 

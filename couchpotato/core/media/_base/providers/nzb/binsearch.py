@@ -10,6 +10,20 @@ from couchpotato.core.media._base.providers.nzb.base import NZBProvider
 log = CPLog(__name__)
 
 
+def _age_in_days(value):
+    """Return the first ``<digits>d`` age token without regex backtracking."""
+    digit_start = None
+    for index, character in enumerate(value):
+        if character.isdecimal():
+            if digit_start is None:
+                digit_start = index
+            continue
+        if character == 'd' and digit_start is not None:
+            return tryInt(value[digit_start:index])
+        digit_start = None
+    return 0
+
+
 class Base(NZBProvider):
 
     urls = {
@@ -45,8 +59,10 @@ class Base(NZBProvider):
                     size_match = re.search(r'size:.(?P<size>[0-9\.]+.[GMB]+)', info.text)
 
                     age = 0
-                    try: age = re.search(r'(?P<size>\d+d)', row.find_all('td')[-1:][0].text).group('size')[:-1]
-                    except Exception: pass
+                    try:
+                        age = _age_in_days(row.find_all('td')[-1:][0].text)
+                    except Exception:
+                        pass
 
                     def extra_check(item):
                         parts = re.search(r'available:.(?P<parts>\d+)./.(?P<total>\d+)', info.text)

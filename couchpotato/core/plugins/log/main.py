@@ -12,6 +12,54 @@ from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
+_LOG_LEVELS = frozenset(('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'))
+
+
+def _next_field(value, start):
+    while start < len(value) and value[start].isspace():
+        start += 1
+    end = start
+    while end < len(value) and not value[end].isspace():
+        end += 1
+    return value[start:end], end
+
+
+def _is_log_date(value):
+    return (
+        len(value) == 5
+        and value[2] == '-'
+        and value[:2].isdecimal()
+        and value[3:].isdecimal()
+    )
+
+
+def _is_log_time(value):
+    return (
+        len(value) == 8
+        and value[2] == ':'
+        and value[5] == ':'
+        and value[:2].isdecimal()
+        and value[3:5].isdecimal()
+        and value[6:].isdecimal()
+    )
+
+
+def _parse_log_header(line):
+    """Parse one formatter line in a bounded number of passes."""
+    if not line or line[0].isspace():
+        return None
+    date, date_end = _next_field(line, 0)
+    time, time_end = _next_field(line, date_end)
+    level, level_end = _next_field(line, time_end)
+    if not (_is_log_date(date) and _is_log_time(time) and level in _LOG_LEVELS):
+        return None
+    if level_end >= len(line) or not line[level_end].isspace():
+        return None
+    message_start = level_end
+    while message_start < len(line) and line[message_start].isspace():
+        message_start += 1
+    return line[:time_end], level, line[message_start:]
+
 
 class Logging(Plugin):
 
@@ -138,18 +186,17 @@ class Logging(Plugin):
         logs = []
         # Match log lines: "MM-DD HH:MM:SS LEVEL [module] message"
         # Continuation lines (starting with whitespace) are appended to previous entry
-        log_pattern = re.compile(r'^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+(.*)$')
-
         current_entry = None
         for line in log_content.split('\n'):
-            match = log_pattern.match(line)
-            if match:
+            header = _parse_log_header(line)
+            if header:
                 if current_entry:
                     logs.append(current_entry)
+                timestamp, level, message = header
                 current_entry = {
-                    'time': match.group(1),
-                    'type': match.group(2),
-                    'message': match.group(3)
+                    'time': timestamp,
+                    'type': level,
+                    'message': message
                 }
             elif current_entry and line.strip():
                 current_entry['message'] += '\n' + line

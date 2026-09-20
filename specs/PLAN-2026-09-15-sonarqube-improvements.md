@@ -883,6 +883,104 @@ and fix small, evidenced defect classes rather than optimise the dashboard.
 - **AC-SIMP-39:** Leave `couchpotato/core/plugins/renamer/cleanup.py`'s two
   `sorted(list(...))[0]` expressions unchanged because they intentionally
   select by sorted order and are not members of the direct S8519 class.
+- **AC-QA-57:** Resolve all nine live Python `S8786` findings as one
+  rule-family batch. Focused contracts cover the five test-trap boundaries,
+  BinSearch age extraction, both metadata serializers, and log-line parsing;
+  ordinary valid, malformed, empty, multiline, and adversarial inputs retain
+  their documented outcomes.
+- **AC-QA-58:** Exact-master characterization precedes production edits. Each
+  replacement is mutation-tested by independently restoring its vulnerable
+  expression or changing its parser decision and observing the owning focused
+  contract fail; the restored focused suites, Ruff, test-trap gate, and broad
+  repository gate pass before review.
+- **AC-QA-59:** A static, CWD-independent recurrence test reads source without
+  importing it and rejects reintroduction of the nine vulnerable expressions
+  at their owning boundaries. It reports only file and boundary names, never
+  source or input content, and synthetic checks prove it fails on every
+  forbidden shape.
+- **AC-QA-60:** Pipefail recognition preserves `set -o pipefail`, clustered
+  `-euo`/`-eox`, separated `-eu -o`, and repeated `-o` forms while rejecting
+  `+o`, comments, and quoted mentions. Pipeline recognition keeps real pipes
+  and rejects `||`, quoted pipes, and `case a|b)` arms.
+- **AC-QA-61:** Same-line vacuous-guard exemptions still require a nonblank
+  reason. Live-region binding retains declarations carrying assertions,
+  control-flow prefixes, second declarations on one line, nested shadowing,
+  multiline/ternary locators, per-element visibility, and negative assertions.
+- **AC-QA-62:** Node diagnostic extraction preserves success, exact stdin line
+  mapping and error text, unrecognized-output `ran=False`, and OS/timeout
+  failure behavior without scanning long stderr super-linearly.
+- **AC-QA-63:** BinSearch valid, embedded, missing, malformed, and long hostile
+  ages; both populated and sparse metadata providers; and all five log levels,
+  empty/space-containing messages, ANSI, continuations, preamble, flush, and
+  malformed-line boundaries have direct focused coverage.
+- **AC-QA-64:** Exact-master Sonar is the general recurrence analyzer: it must
+  report zero open `python:S8786` after merge. The local inventory test guards
+  these nine repaired boundaries and does not pretend to be a general regex
+  complexity implementation.
+- **AC-SEC-27:** Treat repository source, Node diagnostics, BinSearch HTML,
+  movie metadata, and log-file contents as untrusted. Replacements use no
+  evaluation, dynamic import, shell execution, template rendering, path or URL
+  following, and retain the parse-only Node invocation with `NODE_OPTIONS`
+  removed.
+- **AC-SEC-28:** Long non-matching source, digit, whitespace, metadata, and log
+  inputs complete with bounded scaling. No new diagnostic includes repository
+  source, provider bodies, movie metadata, log contents, credentials, URLs,
+  library paths, or local-network details.
+- **AC-SEC-29:** Kodi and WDTV metadata continues to encode text as XML data,
+  not markup. Synthetic `<`, `>`, `&`, quote, newline, and secret-shaped values
+  round-trip through an XML parser without element injection or diagnostic
+  disclosure.
+- **AC-DATA-10:** BinSearch keeps the existing integer-day result for a valid
+  age suffix and its zero fallback for missing/malformed ages; candidate size,
+  availability, password, detail URL, ordering, and provider failure boundaries
+  do not change.
+- **AC-DATA-11:** The shared metadata whitespace compactor changes formatting
+  only if exact-master characterization proves it is still active. XBMC and
+  WDTV retain byte-identical output, parsed trees, element order, text,
+  escaping, encoding, and byte return type for representative populated,
+  sparse, multiline, and adversarial metadata; a no-op cleanup is deleted
+  rather than replaced.
+- **AC-DATA-12:** Log parsing preserves production-formatter entry boundaries:
+  timestamp plus known level starts an entry; message and nonblank continuation
+  text are retained; blank lines and preamble are ignored; malformed lines do
+  not invent entries or hide a later valid record.
+- **AC-OPS-30:** Test-trap findings and exemptions, Node syntax diagnostics,
+  BinSearch candidate handling, metadata creation, and the logging API retain
+  their existing visible messages and failure modes. The batch adds no retry,
+  network/database/filesystem operation, log volume, or full-file log-reading
+  claim beyond the regex boundaries being repaired.
+- **AC-OPS-31:** Large no-match inputs exercise every repaired subgroup under
+  a hard deadline; large late-match inputs exercise searching boundaries, and
+  a large matching message exercises the intentionally anchored log parser.
+  Record N/2N timings as evidence rather than asserting a flaky ratio;
+  independently restoring each old expression must fail its inventory or
+  owning behavioral contract.
+- **AC-OPS-32:** Malformed BinSearch ages remain zero without dropping a valid
+  row; NFO generation retains its UTF-8 bytes/existing caller error path; and
+  malformed logs remain continuations or ignored while later valid records stay
+  visible. No new input content is logged.
+- **AC-OPS-33:** One exact-master analysis closes all nine recorded issue keys
+  (`12198d65-f5b7-46be-8657-288144b1f2e7`,
+  `12c4f731-0b23-4d3d-9150-d0bb5786ebcb`,
+  `c5f78078-9e07-4a68-9e9e-73b24ae4ff9a`,
+  `b4a5a7e9-636b-415b-a2af-134ceb3aad89`,
+  `1f9c8549-c469-4bf1-b9c1-798c387c33b6`,
+  `f6bd63c7-94d3-4d87-893d-f64ad9d1e2dd`,
+  `882a3d65-3be1-408d-a577-8aa3f433feb6`,
+  `3b6f8b61-66c0-4e50-b68a-1f081cefdf94`, and
+  `6afa476a-60ac-4674-8849-5b4d831ff634`) without a new reliability finding.
+- **AC-SIMP-40:** Prefer small single-pass string/token parsers at each owning
+  boundary. The two metadata providers may share one bounded compactor in their
+  existing base module when activating-shape characterization proves deletion
+  is not equivalent. Add no dependency, new module, public API, route,
+  configuration, unrelated regex sweep, or broad parser framework.
+- **AC-SIMP-41:** Remove the stale assertion that pull-request source is trusted
+  input. Keep the existing four live-region declaration shapes and lexical
+  scoping behavior rather than weakening the false-green gate to satisfy the
+  analyzer.
+- **AC-SIMP-42:** Leave adjacent BinSearch exception policy, metadata builder
+  duplication, log retrieval/pagination behavior, and unrelated regular
+  expressions unchanged.
 
 ## Implementation sequence
 
@@ -1043,22 +1141,19 @@ within the authority explicitly granted by the owner.
 - [x] **T38 — make movie re-add category precedence explicit** *(needs: T37)*
   — state: merged #405.
   Covers AC-QA-51..53, AC-SEC-24, AC-DATA-4, AC-PROD-13, and AC-SIMP-35.
-- [ ] **T39 — remove direct first-item materialization as one rule-family batch**
-  *(needs: T38)* — state: awaiting-ci #406.
+- [x] **T39 — remove direct first-item materialization as one rule-family batch**
+  *(needs: T38)* — state: merged #406.
   Resolve all four live medium-reliability `python:S8519` findings in scanner,
   profile, renamer, and searcher code, with site-specific behavior coverage and
   one recurrence guard. Covers AC-QA-54..56, AC-SEC-25..26, AC-DATA-5..9,
   AC-OPS-29, and AC-SIMP-36..39.
-- [ ] **T40 — bound the test-trap regular expressions as one file batch**
-  *(needs: T39)* — state: queued. Resolve the five medium-reliability
-  `python:S8786` findings in `scripts/check_test_traps.py` with equivalence and
-  adversarial runtime coverage plus a recurrence mechanism.
-- [ ] **T41 — bound server-side application regular expressions by contract**
-  *(needs: T40)* — state: queued. Address the remaining server-side S8786
-  findings, beginning with `couchpotato/core/plugins/log/main.py`, in
-  behavior-compatible provider/logging groups rather than unrelated one-off
-  PRs.
-- [ ] **T42 — bound browser-side regular expressions by workflow** *(needs: T41)*
+- [ ] **T40 — bound all Python regular expressions as one rule-family batch**
+  *(needs: T39)* — state: awaiting-ci #407. Resolve all nine live medium-reliability
+  `python:S8786` findings: five in `scripts/check_test_traps.py` plus BinSearch,
+  XBMC, WDTV, and log parsing. Use contract, adversarial scaling, XML round-trip,
+  mutation, and static recurrence coverage. Covers AC-QA-57..64, AC-SEC-27..29,
+  AC-DATA-10..12, AC-OPS-30..33, and AC-SIMP-40..42.
+- [ ] **T41 — bound browser-side regular expressions by workflow** *(needs: T40)*
   — state: queued. Address the two JavaScript S8786 findings with UI behavior,
   accessibility, and mobile coverage.
 
@@ -2109,3 +2204,63 @@ T9 and T14 exceptions stated above.
   reproducing scanner, profile, renamer, searcher, zero-word, and recurrence
   mutations in isolated checkouts. PR #406 is open at the reviewed production
   tip; this tracking-only commit awaits its own local review before push.
+- 2026-09-20: T39 merged as PR #406 at exact master
+  `62ffc33ddab09f6c026e1551495d0a3a0390ac38`; the merge tree exactly matched
+  the twice-reviewed PR tree. The clean-master Sonar analysis
+  `1776121e-9de9-42bf-8f4b-5280b068e56f` reported that exact revision and
+  closed all four S8519 keys as `FIXED`. Open reliability impacts fell from 36
+  to 32: medium 28 to 24 and low unchanged at 8.
+- 2026-09-20: At the owner's request, T40 expands type batching to all nine
+  live Python S8786 findings in one PR, split internally into four behavioral
+  groups. Security, QA, data/operability, and simplicity planning found real
+  quadratic no-match growth in the shell-case and BinSearch-age expressions;
+  the live-region matcher is the highest regression risk because a prior
+  analyzer-driven rewrite silently lost four ordinary TypeScript shapes. The
+  plan therefore requires exact characterization, adversarial deadlines,
+  XML round trips, the full historical live-region corpus, nine independent
+  mutations, a local boundary inventory, and exact-master Sonar as the general
+  recurrence analyzer.
+- 2026-09-20: T40 red/green completed across all nine boundaries. Thirteen
+  behavior characterizations passed on exact master while the boundary
+  inventory failed on exactly the nine live expressions. Single-pass token or
+  string parsers now own pipefail, case-arm, exemption, live-region, Node
+  diagnostic, BinSearch-age, and log-header decisions. Review found that the
+  two metadata substitutions still compact leading-whitespace text, so a
+  shared single-cursor compactor in the existing metadata base preserves that
+  behavior. N/2N hostile measurements at 50k/100k units were
+  2.859/5.643ms (case), 3.780/6.534ms (pipefail), 0.133/0.244ms (locator), and
+  0.845/1.575ms (age). Nine independent behavior mutations were killed and
+  restored. The focused gate passed 373 tests, the standalone trap gate scanned
+  339 files cleanly, Ruff passed, and the broad gate passed 4,516 tests with 14
+  skipped and five expected failures.
+- 2026-09-20: T40 review-driven performance evidence now covers every repaired
+  boundary with 25k/50k-unit median N/2N timings (milliseconds, no-match then
+  late/large-match): pipeline 11.934/23.676 and 13.281/26.411; pipefail
+  12.633/25.679 and 12.905/28.389; exemption 0.095/0.190 and 0.102/0.197;
+  live-region binding 7.260/14.516 and 7.268/14.426; Node diagnostics
+  0.532/1.192 and 0.544/1.180; BinSearch age 0.463/0.954 and 0.464/0.952;
+  metadata 6.374/12.673 and 0.564/1.141; and anchored log header
+  0.002/0.003 and 0.002/0.004. A two-second contract independently exercises
+  all no-match and applicable late-match shapes. Randomized legacy
+  differential checks found zero divergence for the exemption parser after
+  correcting overlapping `//` search semantics.
+- 2026-09-20: T40's final local implementation gate passed 384 focused tests,
+  Ruff, `git diff --check`, and the standalone trap scan over 339 files. The
+  broad repository gate passed 4,527 tests with 14 skipped and five expected
+  failures. Final security/privacy, QA, and data/operability/simplicity Harness
+  reviews are clean; exact-master Sonar closure remains post-merge evidence.
+- 2026-09-20: The mandatory clean-agent gate found a missed adversarial class:
+  repeated `set -e` tokens made the first pipefail replacement rescan suffixes
+  quadratically (measured 800/1600/3200 repetitions at
+  0.0410/0.1637/0.6546 seconds) despite the original long-input contract being
+  green. A new deadline test first reproduced the timeout, then the parser was
+  changed to advance past words already classified. The repaired 3200/6400/
+  12800 measurements are 1.737/3.456/6.928 milliseconds, and the combined
+  S8786 plus trap suite passes 325 tests. Final broad verification and clean
+  re-review are required before push.
+- 2026-09-20: T40's exact reviewed implementation tree
+  `5a1ff2a527234a50b5813d12a4fbebbad76b45c4` is published as PR #407. After
+  the repeated-token repair, the final broad gate again passed 4,527 tests
+  with 14 skipped and five expected failures; two independent clean-agent
+  reviewers returned CLEAN after killing the quadratic-parser and XML no-op
+  mutations. Hosted CI and cloud review are now pending.
