@@ -9,6 +9,19 @@ import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
 
 // Helper to check a11y violations
 async function checkA11y(page: any, pageName: string) {
+  await expect.poll(async () => page.evaluate(() => document.getAnimations()
+    .filter((animation) => {
+      const timing = animation.effect?.getComputedTiming();
+      const target = (animation.effect as KeyframeEffect | null)?.target as Element | null;
+      return animation.playState === 'running'
+        && timing?.iterations !== Infinity
+        && target !== null
+        && target.getClientRects().length > 0;
+    }).length), {
+    message: `${pageName} still has visible finite animations, so axe would sample a transition frame`,
+    timeout: 3000,
+  }).toBe(0);
+
   const accessibilityScanResults = await new AxeBuilder({ page })
     // wcag22aa added (T1.4b/AC-A11Y-9): the project standard is WCAG 2.2 AA,
     // and without this tag 2.5.8 (target-size) and 2.4.11
@@ -291,7 +304,56 @@ test.describe('Accessibility', () => {
     // signal settings finished loading.
     await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
 
-    await checkA11y(page, 'Settings');
+    const tabs = page.getByRole('tablist', { name: 'Settings categories' }).getByRole('tab');
+    const tabNames = (await tabs.allTextContents()).map((name) => name.trim()).filter(Boolean);
+    expect(tabNames.length, 'Settings rendered too few tabs for the accessibility sweep')
+      .toBeGreaterThanOrEqual(8);
+
+    for (const tabName of tabNames) {
+      const tab = page.getByRole('tab', { name: tabName, exact: true });
+      await tab.click();
+      await expect(tab, `${tabName} never became the active Settings tab`)
+        .toHaveAttribute('aria-selected', 'true');
+
+      const activePanel = page.locator(
+        '[role="tabpanel"]:visible, [x-show="!customPanelTabs.includes(activeTab)"]:visible',
+      );
+      await expect(activePanel.first(), `${tabName} has no visible panel`).toBeVisible();
+      expect(
+        await activePanel.locator('button:visible, input:visible, select:visible, textarea:visible, h2:visible, h3:visible').count(),
+        `${tabName} selected successfully but rendered no accessible content`,
+      ).toBeGreaterThan(0);
+
+      await checkA11y(page, `Settings — ${tabName}`);
+
+      if (tabName === 'Logs') {
+        const logRegion = page.getByRole('region', { name: 'Application logs' });
+        await expect(logRegion, 'the scrollable log region is not keyboard reachable').toHaveAttribute('tabindex', '0');
+      }
+    }
+  });
+
+  test('Settings editors are accessible while their dialogs are open', async ({ page }) => {
+    await page.goto('/settings/');
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+
+    await page.getByRole('tab', { name: 'Categories' }).click();
+    const newCategory = page.getByRole('button', { name: 'New Category', exact: true });
+    await expect(newCategory).toBeVisible();
+    await newCategory.click();
+    const categoryDialog = page.getByTestId('category-edit-modal');
+    await expect(categoryDialog).toBeVisible();
+    await checkA11y(page, 'Settings — New Category dialog');
+    await categoryDialog.getByRole('button', { name: 'Close modal' }).click();
+    await expect(categoryDialog).toBeHidden();
+
+    await page.getByRole('tab', { name: 'Profiles' }).click();
+    const newProfile = page.getByRole('button', { name: 'New Profile', exact: true });
+    await expect(newProfile).toBeVisible();
+    await newProfile.click();
+    const profileDialog = page.getByTestId('edit-modal');
+    await expect(profileDialog).toBeVisible();
+    await checkA11y(page, 'Settings — New Profile dialog');
   });
 
   test('dynamic Settings headings expose their hydrated hierarchy', async ({ page }) => {
@@ -372,6 +434,7 @@ test.describe('Accessibility', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog, 'the folder browser dialog never opened').toBeVisible();
+    await checkA11y(page, 'Settings — Folder browser dialog');
 
     // If either role comes back, it must come back WITH arrow keys,
     // aria-selected and a single tab stop. Until then, absence is correct.
