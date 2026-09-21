@@ -51,10 +51,14 @@ Identity is (file, literal value), not (file, line number, value): line
 numbers drift as unrelated code around them changes, which would make the
 allow-list brittle for no security benefit. Where the same literal value
 recurs at more than one call site in the same file for the same underlying
-reason (e.g. `http_client.py`'s bare `'http://'` used both to register the
-request-session scheme handler and to build the deliberately-http proxy
-URL), one entry's reason covers all of them; that is stated inline wherever
-it applies.
+reason (e.g. `helpers/variable.py`'s bare `'http://'`, used both by the
+loop that strips a scheme prefix off an arbitrary host and by the ternary
+that builds one), one entry's reason covers all of them; that is stated
+inline wherever it applies. `http_client.py`'s bare `'http://'` entry used
+to be exactly this shape too (shared between `session.mount()` and
+`_get_proxy_config`'s proxy dict) until a 2026-10 fix round made the proxy
+URL's scheme configurable rather than hard-coded, which correctly dropped
+its count from 3 to 1 -- see that entry's own comment.
 
 **Every ALLOWLIST entry pins an exact occurrence COUNT alongside its
 reason, not just membership.** A membership-only allow-list has a hole a
@@ -429,21 +433,23 @@ ALLOWLIST = {
           "reviewer proved a second, brand-new clear-text call appended to "
           "this same file previously collapsed onto this entry unnoticed"),
 
-    # --- requests scheme registration and the deliberate proxy-hop scheme:
-    # --- both explained in http_client.py itself at the literal's call site.
+    # --- requests scheme registration: explained in http_client.py itself
+    # --- at the literal's call site. This USED to be a 3-occurrence entry
+    # --- shared with _get_proxy_config's proxy dict, which also hard-coded
+    # --- http:// for both keys; a 2026-10 fix round made the proxy URL's
+    # --- scheme honour what the user configured (parsed via
+    # --- _split_proxy_scheme, defaulting to http), so that dict no longer
+    # --- contains an 'http://' LITERAL at all -- it is built from a
+    # --- variable, which is the whole point (a Squid/corporate proxy still
+    # --- gets http:// by default, and someone who configured
+    # --- https://proxy.corp:8443 gets that). The count dropped from 3 to 1
+    # --- as a direct, correct consequence, not a guard regression.
     (
         "couchpotato/core/http_client.py",
         "http://",
-    ): (3, "three occurrences share this literal, all explained at their "
-          "call site in http_client.py: (1) session.mount('http://', "
-          "adapter) is a scheme-registration call, not a URL (both schemes "
-          "must be mounted for outgoing requests of either kind to work); "
-          "(2) and (3) are the 'http' and 'https' keys of "
-          "_get_proxy_config's proxy dict, which deliberately BOTH use "
-          "http:// because that is the scheme of the hop to the PROXY "
-          "itself, not to the eventual target. Count pinned at 3 "
-          "(2026-09-28 fix round): a reviewer proved a bare-prefix entry "
-          "with no count is silently exempt from the sweep for that value"),
+    ): (1, "session.mount('http://', adapter) is a scheme-registration "
+          "call, not a URL -- both schemes must be mounted for outgoing "
+          "requests of either kind to work"),
 
     # --- generic host-string handling: not a URL to any specific service.
     (
