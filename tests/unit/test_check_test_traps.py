@@ -3691,6 +3691,53 @@ class TestLiveRegionVisibilityRule:
             }});
         """)
 
+    @pytest.mark.parametrize(
+        "matcher,value",
+        (
+            ("toHaveAccessibleName", "'Connected'"),
+            ("toHaveAccessibleDescription", "'Connected'"),
+            ("toHaveValue", "'Connected'"),
+        ),
+    )
+    def test_accessible_content_assertions_are_flagged(self, matcher, value):
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status).{matcher}({value});
+            }});
+        """)
+
+    def test_each_expect_in_a_promise_all_is_classified_independently(self):
+        """Another live region's visibility cannot silence status content."""
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              const code = page.locator('{self.CODE}');
+              await Promise.all([
+                expect(status).toHaveAccessibleName('Connected'),
+                expect(code).toBeVisible(),
+              ]);
+            }});
+        """)
+
+    def test_a_matcher_split_across_lines_is_classified_as_one_assertion(self):
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status)
+                .toHaveAccessibleDescription('Connected');
+            }});
+        """)
+
+    def test_a_split_visibility_assertion_is_not_mistaken_for_content(self):
+        assert not self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status)
+                .toBeVisible();
+            }});
+        """)
+
     def test_a_declaration_that_carries_the_assertion_is_still_scanned(self):
         """The regression this class was written for.
 
@@ -3746,6 +3793,18 @@ class TestLiveRegionVisibilityRule:
               const status = page.locator('{self.STATUS}');
               await expect.poll(async () => {{ const status = 1; return status; }});
               await expect(status).toContainText('x');
+            }});
+        """)
+
+    def test_an_inner_non_live_binding_does_not_inherit_the_outer_live_region(self):
+        """A valid inner symbol must never fall back to a same-named locator."""
+        assert not self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              if (ready) {{
+                const status = page.locator('.ordinary-status');
+                await expect(status).toHaveText('x');
+              }}
             }});
         """)
 
