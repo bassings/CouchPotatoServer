@@ -81,7 +81,7 @@ mutants/
 .scannerwork/
 coverage/
 
-# Lighthouse reports (local only -- see lighthouserc.js upload block)
+# Lighthouse reports (local only -- written by scripts/lighthouse-runner.mjs)
 .lighthouseci/
 
 # Multi-lens harness run ledger. Telemetry for /optimise-cycle, written by

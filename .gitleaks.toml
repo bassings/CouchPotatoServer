@@ -73,9 +73,10 @@ paths = [
   '''^test_data/''',
 
   # Lighthouse reports (T47/T65). NOT root-anchored, deliberately, unlike
-  # test_data/ above: lhci resolves outputDir against the working directory,
-  # so `npm run test:lighthouse` from a subdirectory writes
-  # couchpotato/.lighthouseci/. That is the same reasoning that widened
+  # test_data/ above: historical LHCI runs could resolve outputDir against the
+  # working directory and write couchpotato/.lighthouseci/. The current runner
+  # is root-confined, but old or manually copied reports remain sensitive. That
+  # is the same reasoning that widened
   # .dockerignore to **/.lighthouseci in the same round, and .gitignore's
   # slash-less entry already matches at any depth -- this list was the odd one
   # out. Measured with real gitleaks: a nested copy was REPORTED under the
