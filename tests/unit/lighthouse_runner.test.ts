@@ -377,9 +377,37 @@ describe('audit orchestration', () => {
       'WARN Chromium cleanup failed after an earlier Lighthouse failure',
     );
   });
+
+  it('reports a Chromium cleanup failure after otherwise successful audits', async () => {
+    const close = vi.fn(async () => { throw new Error('cleanup exploded'); });
+    await expect(
+      runAuditSuite({
+        repoRoot: REPO_ROOT,
+        preflight: vi.fn(async () => undefined),
+        launchBrowser: vi.fn(async () => ({port: 9222, close})),
+        runLighthouse: vi.fn(async (url: string) => {
+          const route = POLICY.routes.find(({path: routePath}) => url === `${POLICY.baseUrl}${routePath}`);
+          return {
+            lhr: passingLhr(`${POLICY.baseUrl}${route?.expectedPath}`),
+            report: ['<html>report</html>', '{"ok":true}'],
+          };
+        }),
+        resetOutput: vi.fn(async () => undefined),
+        writeReport: vi.fn(async () => undefined),
+        writeSummary: vi.fn(async () => undefined),
+        log: vi.fn(),
+      }),
+    ).rejects.toThrow(/Chromium cleanup failed after Lighthouse completed/i);
+    expect(close).toHaveBeenCalledOnce();
+  });
 });
 
 describe('dependency and privacy closure', () => {
+  it('does not throw from the Chromium cleanup finally block', async () => {
+    const source = await readFile(path.join(REPO_ROOT, 'scripts', 'lighthouse-policy.mjs'), 'utf8');
+    expect(source).not.toMatch(/finally\s*\{[\s\S]*?throw new Error\('Chromium cleanup failed/);
+  });
+
   it('removes LHCI and extract-zip from the manifest and lockfile', async () => {
     const manifest = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8'));
     const lock = await readFile(path.join(REPO_ROOT, 'package-lock.json'), 'utf8');

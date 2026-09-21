@@ -212,9 +212,10 @@ export async function runAuditSuite({
       await browser.close();
     } catch (error) {
       if (!primaryError) {
-        throw new Error('Chromium cleanup failed after Lighthouse completed', {cause: error});
+        primaryError = new Error('Chromium cleanup failed after Lighthouse completed', {cause: error});
+      } else {
+        log('WARN Chromium cleanup failed after an earlier Lighthouse failure');
       }
-      log('WARN Chromium cleanup failed after an earlier Lighthouse failure');
     }
   }
 
