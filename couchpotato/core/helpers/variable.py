@@ -507,6 +507,22 @@ def longestBracketedName(name):
     return max(_bracketedGroups(name), key = len).strip()
 
 
+def firstQuotedName(name):
+    """Return the first substring enclosed by the same single or double quote.
+
+    The returned value includes its quote delimiters, matching the historical
+    callers' contract.  A direct scan avoids both regex backreference mistakes
+    and backtracking on provider-controlled release names.
+    """
+    for open_at, quote in enumerate(name):
+        if quote not in "'\"":
+            continue
+        close_at = name.find(quote, open_at + 1)
+        if close_at != -1:
+            return name[open_at:close_at + 1]
+    raise ValueError('name has no matching quote pair')
+
+
 def _brace_password(name):
     # Python's ``$`` accepts a match immediately before exactly one terminal
     # newline. Keep that legacy boundary without putting untrusted provider

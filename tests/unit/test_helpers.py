@@ -12,7 +12,15 @@ from urllib.parse import urlparse
 import pytest
 
 from couchpotato.core.helpers.encoding import toUnicode, toSafeString, simplifyString
-from couchpotato.core.helpers.variable import cleanHost, removePyc, tryInt, getImdb, isLocalIP, longestBracketedName
+from couchpotato.core.helpers.variable import (
+    cleanHost,
+    firstQuotedName,
+    getImdb,
+    isLocalIP,
+    longestBracketedName,
+    removePyc,
+    tryInt,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -642,3 +650,39 @@ class TestLongestBracketedNamePerformance:
             'provider-supplied release name cannot make it run quadratic '
             'cost against tens of thousands of characters' % elapsed
         )
+
+
+class TestFirstQuotedName:
+    @pytest.mark.parametrize(
+        ('name', 'expected'),
+        [
+            ('Movie "Title" 2024', '"Title"'),
+            ("Movie 'Title' 2024", "'Title'"),
+            ('Movie \'single\' and "double"', "'single'"),
+            ('Movie "first" then "second"', '"first"'),
+        ],
+    )
+    def test_returns_first_nearest_same_quote_pair(self, name, expected):
+        assert firstQuotedName(name) == expected
+
+    @pytest.mark.parametrize(
+        'name',
+        [
+            'Movie "unclosed title',
+            "Movie 'unclosed title",
+            'Movie without quotes',
+        ],
+    )
+    def test_raises_when_there_is_no_complete_pair(self, name):
+        with pytest.raises(ValueError, match='matching quote pair'):
+            firstQuotedName(name)
+
+    def test_skips_an_unclosed_quote_when_a_later_pair_is_complete(self):
+        assert firstQuotedName("Movie 'unclosed but \"complete\"") == '"complete"'
+
+    def test_large_unclosed_input_is_bounded(self):
+        name = 'x' * 64000 + '"'
+        started = time.perf_counter()
+        with pytest.raises(ValueError):
+            firstQuotedName(name)
+        assert time.perf_counter() - started < 0.05
