@@ -16,6 +16,57 @@ test.describe('Settings', () => {
     await expect(tabs.first()).toBeVisible({ timeout: 5000 });
   });
 
+  test('settings helpers resolve only their owning panel', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const root = document.querySelector('[x-data="settingsPanel()"]');
+      if (!root) throw new Error('settingsPanel root is absent');
+
+      const child = document.createElement('div');
+      root.appendChild(child);
+      const owner = (window as any).Alpine.$data(root);
+      owner.__testOwnerMarker = 'owning-panel';
+      const components = [
+        (window as any).buttonField('test', {}),
+        (window as any).traktDeviceAuth(),
+        (window as any).combinedField('test', {}),
+        (window as any).directoriesField('test', {}),
+      ];
+      const fromOwner = components.map((component) => component.getPanel.call({ $el: child }));
+
+      child.remove();
+      const fromDetachedChild = components.map((component) => component.getPanel.call({ $el: child }));
+
+      return {
+        foundOwner: fromOwner.every((panel) => panel?.__testOwnerMarker === 'owning-panel'),
+        detachedIsIsolated: fromDetachedChild.every((panel) => panel === null),
+      };
+    });
+
+    expect(result).toEqual({ foundOwner: true, detachedIsIsolated: true });
+  });
+
+  test('reloading settings does not multiply panel watchers', async ({ page }) => {
+    const updateCount = await page.evaluate(async () => {
+      const root = document.querySelector('[x-data="settingsPanel()"]');
+      if (!root) throw new Error('settingsPanel root is absent');
+      const panel = (window as any).Alpine.$data(root);
+
+      await Promise.all([panel.init(), panel.init()]);
+
+      let calls = 0;
+      const original = panel.updateCurrentGroups;
+      panel.updateCurrentGroups = (...args: unknown[]) => {
+        calls += 1;
+        return original.apply(panel, args);
+      };
+      panel.activeTab = panel.activeTab === 'general' ? 'logs' : 'general';
+      await new Promise<void>((resolve) => panel.$nextTick(resolve));
+      return calls;
+    });
+
+    expect(updateCount).toBe(1);
+  });
+
   test('should be able to switch tabs', async ({ page }) => {
     // Wait for settings to load
     await page.waitForTimeout(1000);

@@ -3,6 +3,16 @@
    SETTINGS PAGE - ALPINE.JS COMPONENTS
    ══════════════════════════════════════════════════════════════════════════ */
 
+/** Resolve the settings panel that owns a component.
+ *
+ * Deliberately ancestry-scoped: a detached component must not reach back into
+ * whichever settings panel happens to remain in the document.
+ */
+function getSettingsPanel(element) {
+  const panel = element && element.closest('[x-data="settingsPanel()"]');
+  return panel ? Alpine.$data(panel) : null;
+}
+
 /* ── Logs panel (embedded in Settings) ── */
 function logsPanel() {
   return {
@@ -96,6 +106,7 @@ function settingsPanel() {
     pendingSaves: {},
     version: '',
     updateAvailable: null,
+    _watchersRegistered: false,
 
     // Directory browser state
     browserOpen: false,
@@ -213,6 +224,16 @@ function settingsPanel() {
     },
 
     async init() {
+      // Register synchronously before the first await. Action buttons can
+      // start overlapping refreshes; registering after fetch completion lets
+      // both continuations observe an unregistered panel and duplicate these
+      // watchers.
+      if (!this._watchersRegistered) {
+        this.$watch('activeTab', () => this.updateCurrentGroups());
+        this.$watch('showAdvanced', () => this.updateCurrentGroups());
+        this._watchersRegistered = true;
+      }
+
       try {
         const resp = await fetch(CP.apiBase + '/settings/');
         const data = await resp.json();
@@ -250,8 +271,6 @@ function settingsPanel() {
         this.toast('Failed to load settings', 'error');
       }
       this.loading = false;
-      this.$watch('activeTab', () => this.updateCurrentGroups());
-      this.$watch('showAdvanced', () => this.updateCurrentGroups());
     },
 
     computeOpenGroups() {
@@ -713,10 +732,7 @@ function buttonField(section, opt) {
     },
 
     getPanel() {
-      let el = this.$el;
-      while (el && !el.__x_panel) el = el.parentElement;
-      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
-      return el ? Alpine.$data(el) : null;
+      return getSettingsPanel(this.$el);
     },
 
     buildDescription() {
@@ -949,10 +965,7 @@ function traktDeviceAuth() {
     },
 
     getPanel() {
-      let el = this.$el;
-      while (el && !el.__x_panel) el = el.parentElement;
-      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
-      return el ? Alpine.$data(el) : null;
+      return getSettingsPanel(this.$el);
     },
   };
 }
@@ -979,10 +992,7 @@ function combinedField(section, opt) {
     },
     
     getPanel() {
-      let el = this.$el;
-      while (el && !el.__x_panel) el = el.parentElement;
-      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
-      return el ? Alpine.$data(el) : null;
+      return getSettingsPanel(this.$el);
     },
     
     buildDescription() {
@@ -1057,10 +1067,7 @@ function directoriesField(section, opt) {
     },
     
     getPanel() {
-      let el = this.$el;
-      while (el && !el.__x_panel) el = el.parentElement;
-      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
-      return el ? Alpine.$data(el) : null;
+      return getSettingsPanel(this.$el);
     },
     
     sync() {
