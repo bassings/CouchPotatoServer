@@ -112,23 +112,21 @@ htmlcov/
 
 # Lighthouse reports. Same argument as the block above, and the payload is
 # worse: a Lighthouse HTML report embeds full-page SCREENSHOTS, and
-# lighthouserc.js collects `/`, `/available/`, `/add/` and `/settings/` on port
-# 5050 -- the production port -- so these are pictures of the operator's own
-# media library. T47 stopped `lhci` publishing them to a public Google endpoint
-# and gitignored the directory, and review then measured that a local
+# scripts/lighthouse-runner.mjs collects `/`, `/available/`, `/add/` and
+# `/settings/` on port 5050 -- the production port -- so these are pictures of
+# the operator's own media library. T47 stopped the former LHCI tool publishing
+# them to a public Google endpoint and gitignored the directory, and review then
+# measured that a local
 # `docker build` still baked them into the image through the `COPY
 # --chown=couchpotato:couchpotato . ${APP_DIR}/` line in the Dockerfile
 # (greppable symbol, not a line number -- see .gitleaks.toml's own rule
 # against citations that go stale). Two routes closed and a third left open is
 # not a fix.
 #
-# Note `collect` wrote reports here BEFORE T47 changed anything, so this line
-# closes a pre-existing path, not one T47 created.
-#
 # `**/.lighthouseci`, NOT the root-anchored `.lighthouseci/` this line used to
-# be. lhci resolves `outputDir` against the CWD, and the CWD depends on where
-# `npm run test:lighthouse` is invoked from, so a nested
-# `couchpotato/.lighthouseci/` is just as reachable as a root one. Measured
+# be. The current runner writes only to the repository root, but the broader
+# exclusion also protects old or manually copied reports at nested paths. It was
+# measured
 # with a real `docker build` over a synthetic context: the root-anchored form
 # excluded a root-level `.lighthouseci/report.html` but left a nested
 # `couchpotato/.lighthouseci/report.html` in the image (a control file present
@@ -136,7 +134,7 @@ htmlcov/
 # excluded both.
 #
 # NOT PINNED BY ANY TEST. A hand-rolled matcher tried to check this line from
-# tests/unit/lighthouse_upload_stays_local.test.ts and was removed after being
+# the former LHCI privacy test and was removed after being
 # measured wrong against a real docker build three times -- see that file's
 # KNOWN LIMITS. T65 (specs/REMEDIATION-2026-08.md) owns writing the real
 # guard; until it lands, changing or deleting this line breaks nothing red.
