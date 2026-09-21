@@ -59,7 +59,7 @@ class XBMC(MovieMetaData):
 
         # return imdb url only
         if self.conf('meta_url_only'):
-            return 'http://www.imdb.com/title/%s/' % toUnicode(data['identifier'])
+            return 'https://www.imdb.com/title/%s/' % toUnicode(data['identifier'])
 
         nfoxml = Element('movie')
 

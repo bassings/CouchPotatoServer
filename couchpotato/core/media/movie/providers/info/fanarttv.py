@@ -16,7 +16,7 @@ autoload = 'FanartTV'
 class FanartTV(MovieProvider):
 
     urls = {
-        'api': 'http://webservice.fanart.tv/v3/movies/%s?api_key=%s'
+        'api': 'https://webservice.fanart.tv/v3/movies/%s?api_key=%s'
     }
 
     # Shipped application key, mirroring themoviedb.py's `ak` pool.

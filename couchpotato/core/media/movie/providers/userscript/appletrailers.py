@@ -35,7 +35,7 @@ def _film_id(page):
 
 class AppleTrailers(UserscriptBase):
 
-    includes = ['http://trailers.apple.com/trailers/*']
+    includes = ['*://trailers.apple.com/trailers/*']
 
     def getMovie(self, url):
 

@@ -3,6 +3,7 @@
 Provides rate limiting per host, and proxy support.
 """
 
+import re
 import threading
 import time
 import traceback
@@ -65,6 +66,25 @@ def create_session(retry_total=DEFAULT_RETRY_TOTAL, retry_backoff=DEFAULT_RETRY_
 DISABLE_DURATION = 900  # 15 minutes
 MAX_FAILURES_BEFORE_DISABLE = 5
 
+_PROXY_SCHEME_RE = re.compile(r'^(https?)://(.*)$', re.IGNORECASE)
+
+
+def _split_proxy_scheme(proxy_server):
+    """Split a user-typed `proxy_server` setting into (scheme, host).
+
+    `scheme` defaults to 'http' (lower-case) when the value has none.
+    Surrounding whitespace on the whole value is stripped first, and a typed
+    scheme is matched case-insensitively then normalised to lower-case.
+    Anything that does not look like an http/https scheme prefix is treated
+    as part of the host, not as an error -- Settings has always accepted a
+    bare `host:port`, and that must keep working unchanged.
+    """
+    value = (proxy_server or '').strip()
+    match = _PROXY_SCHEME_RE.match(value)
+    if match:
+        return match.group(1).lower(), match.group(2)
+    return 'http', value
+
 
 class HttpClient:
     """HTTP client with per-host rate limiting, failure tracking, and proxy support."""
@@ -96,8 +116,40 @@ class HttpClient:
         proxy_password = Env.setting('proxy_password')
 
         if proxy_server:
-            loc = f"{proxy_username}:{proxy_password}@{proxy_server}" if proxy_username else proxy_server
-            return {"http": f"http://{loc}", "https": f"https://{loc}"}
+            # Pre-existing, not fixed here (this branch only touches the
+            # return statement below): proxy_username/proxy_password are not
+            # percent-encoded before being interpolated into this URL. A
+            # password containing '@' or ':' produces an ambiguous
+            # userinfo@host split that urllib3 may parse incorrectly.
+            #
+            # The proxy URL's scheme is the scheme of the hop to the PROXY,
+            # never the eventual target's scheme -- the "http"/"https" key
+            # below only selects which TARGET scheme routes through this
+            # proxy, and both keys deliberately carry the SAME proxy URL: a
+            # user with one proxy reaches it the same way regardless of
+            # whether the target is http or https.
+            #
+            # That scheme honours whatever the user typed into
+            # `proxy_server` (couchpotato/core/_base/_core.py:630 advertises
+            # "Route outbound connections via an HTTP(S) proxy", so a typed
+            # scheme is a real, supported input, not noise to strip), and
+            # defaults to http:// when they typed none. This sits between
+            # two past defects on opposite sides of it. Unconditional
+            # https:// (the original code) broke every ordinary proxy:
+            # Squid and corporate proxies take a plaintext hop and rely on
+            # CONNECT to tunnel an https:// target through, and an
+            # https://-scheme proxy URL instead tells urllib3 to open TLS
+            # straight to the proxy, which almost none speak. Unconditional
+            # http:// (this file's own previous fix) broke the opposite,
+            # smaller case: an installation whose proxy IS a
+            # TLS-terminating listener could no longer be reached over TLS,
+            # and if that listener also accepts plaintext, the username and
+            # password crossed the hop unencrypted. Neither extreme is
+            # right; honouring the configured scheme is.
+            scheme, host = _split_proxy_scheme(proxy_server)
+            loc = f"{proxy_username}:{proxy_password}@{host}" if proxy_username else host
+            proxy_url = f"{scheme}://{loc}"
+            return {"http": proxy_url, "https": proxy_url}
         return getproxies()
 
     def _check_disabled(self, host, show_error=True):

@@ -5,4 +5,4 @@ autoload = 'Criticker'
 
 class Criticker(UserscriptBase):
 
-    includes = ['http://www.criticker.com/film/*']
+    includes = ['*://www.criticker.com/film/*']

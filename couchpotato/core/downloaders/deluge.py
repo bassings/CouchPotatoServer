@@ -356,7 +356,7 @@ config = [{
             'list': 'download_providers',
             'name': 'deluge',
             'label': 'Deluge',
-            'description': 'Use <a href="http://www.deluge-torrent.org/" target="_blank">Deluge</a> to download torrents.',
+            'description': 'Use <a href="https://www.deluge-torrent.org/" target="_blank">Deluge</a> to download torrents.',
             'wizard': True,
             'options': [
                 {

@@ -242,7 +242,7 @@ config = [{
                     'type': 'dropdown',
                     'values': [('Link', 'link'), ('Copy', 'copy'), ('Move', 'move'), ('Reverse Symlink', 'symlink_reversed')],
                     'description': ('<strong>Link</strong>, <strong>Copy</strong> or <strong>Move</strong> after download completed.',
-                                    'Link first tries <a href="http://en.wikipedia.org/wiki/Hard_link" target="_blank">hard link</a>, then <a href="http://en.wikipedia.org/wiki/Sym_link" target="_blank">sym link</a> and falls back to Copy. Reverse Symlink moves the file and creates symlink to it in the original location'),
+                                    'Link first tries <a href="https://en.wikipedia.org/wiki/Hard_link" target="_blank">hard link</a>, then <a href="https://en.wikipedia.org/wiki/Sym_link" target="_blank">sym link</a> and falls back to Copy. Reverse Symlink moves the file and creates symlink to it in the original location'),
                     'advanced': True,
                 },
                 {

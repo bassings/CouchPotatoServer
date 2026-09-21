@@ -119,6 +119,82 @@ class TestHttpClient:
         assert 'http' in proxies
         assert 'user:pass@proxy.local:8080' in proxies['http']
 
+    @pytest.mark.parametrize('proxy_server,expected_scheme,expected_host', [
+        ('proxy.local:8080', 'http', 'proxy.local:8080'),
+        ('http://proxy.local:8080', 'http', 'proxy.local:8080'),
+        ('https://proxy.local:8080', 'https', 'proxy.local:8080'),
+        ('HTTPS://proxy.local:8080', 'https', 'proxy.local:8080'),
+        ('  proxy.local:8080  ', 'http', 'proxy.local:8080'),
+    ], ids=[
+        'bare-host-defaults-to-http',
+        'explicit-http-preserved',
+        'explicit-https-preserved',
+        'uppercase-scheme-normalised',
+        'surrounding-whitespace-tolerated',
+    ])
+    @pytest.mark.parametrize('proxy_username', [None, 'user'], ids=['no-credentials', 'with-credentials'])
+    def test_proxy_url_honours_the_configured_scheme(
+        self, mock_env, proxy_server, expected_scheme, expected_host, proxy_username,
+    ):
+        """The proxy URL's scheme comes from what the user typed, defaulting to http://.
+
+        Two past defects sit on opposite sides of this test. The ORIGINAL
+        code unconditionally used `https://` for the "https" key, which
+        broke every ordinary proxy (Squid, corporate proxies): they take a
+        plaintext hop and CONNECT-tunnel an https:// target through, and an
+        `https://` proxy URL instead tells urllib3 to open TLS straight to
+        the proxy, which almost none speak. Round 1 fixed that by making
+        BOTH keys unconditionally `http://` -- correct for the ordinary
+        case, but it also removed a real capability: an installation whose
+        `proxy_server` IS a TLS-terminating proxy (the settings UI advertises
+        "Route outbound connections via an HTTP(S) proxy",
+        couchpotato/core/_base/_core.py:630) can no longer reach it over
+        TLS, and if that listener also accepts plaintext, the username and
+        password now cross the hop unencrypted. Honouring the scheme the
+        user actually typed, defaulting to http:// when they typed none, is
+        correct for both: an ordinary proxy still gets http:// by default,
+        and someone who explicitly configured `https://proxy.corp:8443`
+        gets what they asked for.
+
+        Both keys must still resolve to the SAME proxy URL -- that
+        invariant from round 1 is not up for renegotiation here. The key
+        name ("http" vs "https") selects which TARGET scheme routes through
+        the proxy; the proxy URL's own scheme is the hop to the proxy
+        itself, and a user with one proxy reaches it the same way
+        regardless of the target's scheme. Checked here by driving
+        `requests.utils.select_proxy` for BOTH an http:// and an https://
+        target and asserting they select the identical URL.
+
+        Parametrized over both credential branches (loc is built
+        differently in each -- see the round-2 commit this replaces, which
+        caught a bug scoped to only one of them) and over the scheme-parsing
+        cases the owner asked for: a bare host defaults to http, an
+        explicit scheme survives, scheme case is normalised, and
+        surrounding whitespace is tolerated.
+
+        Full URL EQUALITY, not `.startswith`: a prefix check also passes
+        for a proxy URL with an empty or missing host.
+        """
+        env, session, response = mock_env
+        env.setting.side_effect = lambda key: {
+            'use_proxy': True, 'proxy_server': proxy_server,
+            'proxy_username': proxy_username, 'proxy_password': 'pass',
+        }.get(key)
+        client = HttpClient()
+        proxies = client._get_proxy_config()
+
+        loc = f'user:pass@{expected_host}' if proxy_username else expected_host
+        expected_url = f'{expected_scheme}://{loc}'
+
+        for target_scheme in ('http', 'https'):
+            selected = requests.utils.select_proxy(
+                f'{target_scheme}://www.blu-ray.com/rss/newreleasesfeed.xml', proxies
+            )
+            assert selected == expected_url, (
+                f"a {target_scheme}:// target with proxy_server={proxy_server!r} "
+                f"selected proxy URL {selected!r}, expected {expected_url!r}"
+            )
+
     def test_default_headers_set(self, mock_env):
         env, session, response = mock_env
         client = HttpClient()

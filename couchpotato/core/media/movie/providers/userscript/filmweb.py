@@ -11,7 +11,7 @@ class Filmweb(UserscriptBase):
 
     version = 3
 
-    includes = ['http://www.filmweb.pl/film/*']
+    includes = ['*://www.filmweb.pl/film/*']
 
     def getMovie(self, url):
 
