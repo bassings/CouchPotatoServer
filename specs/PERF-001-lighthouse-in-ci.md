@@ -235,6 +235,10 @@ fails on day one and immediately learning to ignore.
   against a directory symlink and proves the external sentinel survives, the
   symlink is replaced by a real local directory, and stale local results are
   gone.
+- 2026-09-21: Pull-request review found two operator-diagnostic gaps. Result
+  validation failures now include the route and run number, and a threshold
+  failure is established as the primary error before Chromium cleanup so a
+  simultaneous cleanup failure cannot hide the recorded audit violations.
 - 2026-09-21: A real run against an isolated seeded CouchPotato instance
   completed all 12 audits in 77.92 seconds, wrote 12 HTML reports, 12 JSON
   reports and one final summary, and recorded zero error-level findings. Across

@@ -168,8 +168,19 @@ export async function runAuditSuite({
             {cause: error},
           );
         }
-        const {lhr, html, json} = validateReports(rawResult);
-        const findings = evaluateLhr(lhr, route.expectedPath);
+        let lhr;
+        let html;
+        let json;
+        let findings;
+        try {
+          ({lhr, html, json} = validateReports(rawResult));
+          findings = evaluateLhr(lhr, route.expectedPath);
+        } catch (error) {
+          throw new Error(
+            `Lighthouse result failed for ${route.slug} run ${runNumber}: ${error.message}`,
+            {cause: error},
+          );
+        }
         const reports = reportPaths(repoRoot, route.slug, runNumber);
         await runStage(`Write HTML report for ${route.slug} run ${runNumber}`, () =>
           writeReport(reports.html, html));
@@ -187,6 +198,12 @@ export async function runAuditSuite({
     }
     await runStage('Write Lighthouse summary', () =>
       writeSummary(path.join(repoRoot, '.lighthouseci', 'summary.json'), summary));
+    if (summary.errors.length > 0) {
+      const details = summary.errors
+        .map((error) => `${error.route} run ${error.run}: ${error.id} ${error.actual} (${error.expected})`)
+        .join('; ');
+      primaryError = new Error(`Lighthouse error thresholds failed: ${details}`);
+    }
   } catch (error) {
     primaryError = error;
     throw error;
@@ -204,12 +221,7 @@ export async function runAuditSuite({
   for (const warning of summary.warnings) {
     log(`WARN ${warning.route} run ${warning.run}: ${warning.id} ${warning.actual} (expected ${warning.expected})`);
   }
-  if (summary.errors.length > 0) {
-    const details = summary.errors
-      .map((error) => `${error.route} run ${error.run}: ${error.id} ${error.actual} (${error.expected})`)
-      .join('; ');
-    throw new Error(`Lighthouse error thresholds failed: ${details}`);
-  }
+  if (primaryError) throw primaryError;
   log(`Lighthouse completed 12 audits; reports are in .lighthouseci/`);
   return summary;
 }

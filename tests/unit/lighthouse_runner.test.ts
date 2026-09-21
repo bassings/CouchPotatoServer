@@ -339,12 +339,14 @@ describe('audit orchestration', () => {
         writeSummary: vi.fn(),
         log: vi.fn(),
       }),
-    ).rejects.toThrow(/incomplete result or report set/i);
+    ).rejects.toThrow(/home.*run 1.*incomplete result or report set/i);
     expect(close).toHaveBeenCalledOnce();
   });
 
   it('processes all audits, records error findings, then exits nonzero', async () => {
     const writeSummary = vi.fn(async () => undefined);
+    const close = vi.fn(async () => { throw new Error('cleanup exploded'); });
+    const log = vi.fn();
     const failed = passingLhr();
     failed.audits['image-alt'].score = 0;
     const runLighthouse = vi.fn(async (url: string) => {
@@ -358,18 +360,22 @@ describe('audit orchestration', () => {
       runAuditSuite({
         repoRoot: REPO_ROOT,
         preflight: vi.fn(async () => undefined),
-        launchBrowser: vi.fn(async () => ({port: 9222, close: vi.fn()})),
+        launchBrowser: vi.fn(async () => ({port: 9222, close})),
         runLighthouse,
         resetOutput: vi.fn(async () => undefined),
         writeReport: vi.fn(async () => undefined),
         writeSummary,
-        log: vi.fn(),
+        log,
       }),
     ).rejects.toThrow(/error thresholds failed.*image-alt/i);
     expect(runLighthouse).toHaveBeenCalledTimes(12);
     expect(writeSummary).toHaveBeenCalledOnce();
     expect(writeSummary.mock.calls[0][1]).toMatchObject({completed: 12});
     expect(writeSummary.mock.calls[0][1].errors).toHaveLength(12);
+    expect(close).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledWith(
+      'WARN Chromium cleanup failed after an earlier Lighthouse failure',
+    );
   });
 });
 
