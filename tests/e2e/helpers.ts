@@ -33,6 +33,40 @@ export async function waitForPageReady(page: Page): Promise<void> {
 }
 
 /**
+ * Wait until visible, finite CSS/Web Animations have stayed quiet long enough
+ * for an axe scan to observe the rendered state rather than a transition frame.
+ *
+ * The quiet window is deliberate: Alpine can schedule a class change on its
+ * next render tick, so a single zero-animation sample can occur immediately
+ * before the transition starts. Infinite decorative animations (for example
+ * spinners) cannot settle and are excluded; hidden animations cannot affect
+ * the pixels axe measures and are excluded as well.
+ */
+export async function expectVisualTransitionsToSettle(
+  page: Page,
+  context: string,
+): Promise<void> {
+  let quietSamples = 0;
+  await expect.poll(async () => {
+    const activeAnimations = await page.evaluate(() => document.getAnimations()
+      .filter((animation) => {
+        const timing = animation.effect?.getComputedTiming();
+        const target = (animation.effect as KeyframeEffect | null)?.target as Element | null;
+        return animation.playState === 'running'
+          && timing?.iterations !== Infinity
+          && target !== null
+          && target.getClientRects().length > 0;
+      }).length);
+    quietSamples = activeAnimations === 0 ? quietSamples + 1 : 0;
+    return quietSamples;
+  }, {
+    message: `${context} still has visible finite animations, so axe would sample a transition frame`,
+    intervals: [75, 75, 75, 75, 75],
+    timeout: 3000,
+  }).toBeGreaterThanOrEqual(3);
+}
+
+/**
  * Prove a dialog is named by one unique heading, not merely wired to an ID
  * string which could be duplicated or resolve to the wrong element.
  */

@@ -1049,7 +1049,6 @@ LEGACY_WAIT_IDENTITIES = {
     },
     "tests/e2e/review-queue.a11y.spec.ts": {
         ("activating the Review chip mutates nothing when films awaiting review are present (AC-A11Y-4)", "500", "8ef5b9180dbeb8ef"): 1,
-        ("Mark Failed clears the contrast floor ON HOVER, not just at rest (dark theme, AC-A11Y-13)", "400", "0209586c0113bf5c"): 1,
         ("Mark Done on a card with others remaining: defined focus, a real Library-naming announcement, and a confined grid update (AC-A11Y-9/10/11, others-remain case, REAL backend)", "1000", "e50c7f5123a38f65"): 1,
     },
     "tests/e2e/search.spec.ts": {

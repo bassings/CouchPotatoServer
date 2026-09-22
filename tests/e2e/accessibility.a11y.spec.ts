@@ -1,6 +1,10 @@
 import { test, expect } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
-import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
+import {
+  expectVisualTransitionsToSettle,
+  mockSuggestionsCharts,
+  waitForSuggestionsReady,
+} from './helpers';
 
 /**
  * Accessibility tests for CouchPotato new UI using axe-core.
@@ -9,18 +13,7 @@ import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
 
 // Helper to check a11y violations
 async function checkA11y(page: any, pageName: string) {
-  await expect.poll(async () => page.evaluate(() => document.getAnimations()
-    .filter((animation) => {
-      const timing = animation.effect?.getComputedTiming();
-      const target = (animation.effect as KeyframeEffect | null)?.target as Element | null;
-      return animation.playState === 'running'
-        && timing?.iterations !== Infinity
-        && target !== null
-        && target.getClientRects().length > 0;
-    }).length), {
-    message: `${pageName} still has visible finite animations, so axe would sample a transition frame`,
-    timeout: 3000,
-  }).toBe(0);
+  await expectVisualTransitionsToSettle(page, pageName);
 
   const accessibilityScanResults = await new AxeBuilder({ page })
     // wcag22aa added (T1.4b/AC-A11Y-9): the project standard is WCAG 2.2 AA,
