@@ -4,7 +4,7 @@ import traceback
 from couchpotato.core.event import fireEvent
 from couchpotato.core.event_names import SCANNER_NAME_YEAR
 from couchpotato.core.helpers.encoding import simplifyString
-from couchpotato.core.helpers.variable import longestBracketedName, tryInt
+from couchpotato.core.helpers.variable import firstQuotedName, longestBracketedName, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 
@@ -80,7 +80,7 @@ def namePositionScore(nzb_name, movie_name):
     qualities = fireEvent('quality.all', single = True)
 
     try:
-        nzb_name = re.search(r'([\'"])[^\1]*\1', nzb_name).group(0)
+        nzb_name = firstQuotedName(nzb_name)
     except Exception:
         pass
 
@@ -200,8 +200,8 @@ def sceneScore(nzb_name):
 
     check_names = [nzb_name]
 
-    # Match names between "
-    try: check_names.append(re.search(r'([\'"])[^\1]*\1', nzb_name).group(0))
+    # Match names between quotes
+    try: check_names.append(firstQuotedName(nzb_name))
     except Exception: pass
 
     # Match longest name between []
