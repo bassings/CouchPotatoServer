@@ -512,14 +512,37 @@ def firstQuotedName(name):
 
     The returned value includes its quote delimiters, matching the historical
     callers' contract.  A direct scan avoids both regex backreference mistakes
-    and backtracking on provider-controlled release names.
+    and backtracking on provider-controlled release names. Backslash-escaped
+    quotes and apostrophes inside a word are literals. Word-final apostrophes
+    are syntactically indistinguishable from closing single quotes and must be
+    backslash-escaped; unescaped quotes always preserve nearest-pair priority.
     """
-    for open_at, quote in enumerate(name):
-        if quote not in "'\"":
+    delimiters = {"'": [], '"': []}
+    backslashes = 0
+    for position, quote in enumerate(name):
+        if quote == '\\':
+            backslashes += 1
             continue
-        close_at = name.find(quote, open_at + 1)
-        if close_at != -1:
-            return name[open_at:close_at + 1]
+
+        escaped = backslashes % 2 == 1
+        backslashes = 0
+        if quote not in delimiters or escaped:
+            continue
+        if (
+            quote == "'"
+            and position > 0
+            and position + 1 < len(name)
+            and name[position - 1].isalnum()
+            and name[position + 1].isalnum()
+        ):
+            continue
+        if len(delimiters[quote]) < 2:
+            delimiters[quote].append(position)
+
+    pairs = [positions for positions in delimiters.values() if len(positions) == 2]
+    if pairs:
+        open_at, close_at = min(pairs, key=lambda positions: positions[0])
+        return name[open_at:close_at + 1]
     raise ValueError('name has no matching quote pair')
 
 

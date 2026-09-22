@@ -680,6 +680,23 @@ class TestFirstQuotedName:
     def test_skips_an_unclosed_quote_when_a_later_pair_is_complete(self):
         assert firstQuotedName("Movie 'unclosed but \"complete\"") == '"complete"'
 
+    def test_unclosed_later_quote_does_not_widen_an_earlier_pair(self):
+        assert firstQuotedName("'first' then 'unclosed") == "'first'"
+
+    def test_title_ending_in_s_keeps_nearest_pair_priority(self):
+        assert firstQuotedName("'James' Bond'") == "'James'"
+
+    @pytest.mark.parametrize(
+        'name',
+        [
+            "'Ocean's Eleven 2001 1080p-GRP'",
+            r"'Ocean\'s Eleven 2001 1080p-GRP'",
+            r"'Girls\' Night Out 1998 1080p-GRP'",
+        ],
+    )
+    def test_apostrophe_inside_single_quoted_name_is_not_a_delimiter(self, name):
+        assert firstQuotedName(name) == name
+
     def test_large_unclosed_input_is_bounded(self):
         name = 'x' * 64000 + '"'
         started = time.perf_counter()
