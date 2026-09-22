@@ -492,10 +492,9 @@ only one of the two return paths. That guard is T1 below.
   which point the navigate-away test passes and the in-flight test fails with
   Expected 2, Received 4.
 - 2026-09-08 One item cut from T6's scope and raised as #332 instead: four
-  copies of a lookup on `__x_panel`, which is read four times in the whole
-  repository and written zero times, so the walk always fails and the
-  fallback always fires. Real, but pre-existing, working today, and not this
-  branch's code.
+  copies of a lookup on an unwritten private panel marker, so the walk always
+  fails and the fallback always fires. Real, but pre-existing, working today,
+  and not this branch's code.
 - 2026-09-08 T8 cannot proceed as written: it names five films and records
   none of their titles, and they appear nowhere in the repository. Blocked on
   the owner for the list rather than on any work.

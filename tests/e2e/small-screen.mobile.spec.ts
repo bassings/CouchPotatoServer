@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { Page } from '@playwright/test';
+import { Locator, Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 /**
@@ -52,6 +52,31 @@ async function expectNoHorizontalOverflow(page: Page, context: string) {
     `${context}: the page scrolls horizontally (${measured.scrollWidth}px of content in ` +
       `${measured.clientWidth}px) — controls past the right edge cannot be reached`,
   ).toBeLessThanOrEqual(measured.clientWidth);
+}
+
+async function expectRenderedColorsToSettle(locator: Locator) {
+  await expect(locator).toBeVisible();
+  await expect(locator).toHaveAttribute('aria-pressed', 'true');
+
+  let previous = '';
+  let stableSamples = 0;
+  await expect.poll(async () => {
+    const signature = await locator.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return `${style.color}|${style.backgroundColor}`;
+    });
+    if (signature === previous) {
+      stableSamples += 1;
+    } else {
+      previous = signature;
+      stableSamples = 0;
+    }
+    return stableSamples;
+  }, {
+    message: 'selected filter colours never reached a stable rendered state',
+    intervals: [75, 75, 75, 75, 75],
+    timeout: 2000,
+  }).toBeGreaterThanOrEqual(3);
 }
 
 test.describe('Small-screen layout', () => {
@@ -138,22 +163,34 @@ test.describe('Small-screen layout', () => {
     }
   });
 
-  test('the wanted list has no reach-blocking accessibility failures', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('#movie-grid')).toBeAttached({ timeout: 10000 });
-    await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
+  for (const theme of ['light', 'dark'] as const) {
+    test(`the wanted list has no reach-blocking accessibility failures in ${theme} theme`, async ({ page }) => {
+      await page.addInitScript((selectedTheme) => {
+        localStorage.setItem('cp-theme', selectedTheme);
+      }, theme);
+      await page.goto('/');
+      await expect(page.locator('html').evaluate((element) => element.classList.contains('light')))
+        .resolves.toBe(theme === 'light');
+      await expect(page.locator('#movie-grid')).toBeAttached({ timeout: 10000 });
+
+      // Alpine hydrates the selected chip after first paint and Tailwind then
+      // transitions both colours. axe can sample the invalid midpoint even
+      // though the final pair passes. Wait on the rendered pair itself, not a
+      // timeout or an unrelated load event, and cover both theme palettes.
+      await expectRenderedColorsToSettle(page.getByRole('button', { name: 'All', exact: true }));
+      await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
 
     // Wait for the control under test to be VISIBLE before scanning. axe skips
     // hidden nodes, and Alpine's x-show had not flushed in 6 of 8 measured
     // iterations immediately after fill() -- so a fast analyze() would pass
     // with zero coverage, and only ever green. A silent false pass.
-    await expect(page.locator('#filter-movies ~ button')).toBeVisible();
+      await expect(page.locator('#filter-movies ~ button')).toBeVisible();
 
-    await expectNoHorizontalOverflow(page, 'wanted list with a filter applied');
+      await expectNoHorizontalOverflow(page, `wanted list with a filter applied in ${theme} theme`);
 
-    const results = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
-      .analyze();
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .analyze();
 
     // T1.4b/AC-A11Y-11: this used to filter to button-name + target-size
     // before asserting, so any OTHER WCAG violation on this page (in this
@@ -161,10 +198,11 @@ test.describe('Small-screen layout', () => {
     // the full violation list -- .withTags already includes wcag22aa above,
     // so target-size (2.5.8) is still evaluated; button-name is a `critical`
     // rule that was already covered either way.
-    const violations = results.violations;
-    const detail = violations
-      .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html}`))
-      .join('\n');
-    expect(violations.length, `a11y violations:\n${detail}`).toBe(0);
-  });
+      const violations = results.violations;
+      const detail = violations
+        .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html}`))
+        .join('\n');
+      expect(violations.length, `a11y violations:\n${detail}`).toBe(0);
+    });
+  }
 });

@@ -44,6 +44,15 @@ const swallowedPromises = new Set();
 const swallowedResponses = new Set();
 const waits = [];
 const findings = [];
+const liveRegionBindings = new Map();
+const liveRegionBindingsByName = new Map();
+const assertions = [];
+const liveRegionTestIds = new Set([
+  'trakt-auth-status',
+  'trakt-auth-message',
+  'trakt-user-code',
+  'trakt-verification-url',
+]);
 
 function symbolOf(node) {
   return node && ts.isIdentifier(node) ? checker.getSymbolAtLocation(node) : undefined;
@@ -349,6 +358,27 @@ function collectBindings(node) {
       if (ts.isIdentifier(node.name)) track(guardNames, node.name);
     }
     collectSwallowedBinding(node.name, node.initializer);
+    if (ts.isIdentifier(node.name)) {
+      const testids = new Set();
+      contains(node.initializer, child => {
+        if (ts.isStringLiteral(child) || ts.isNoSubstitutionTemplateLiteral(child)) {
+          for (const testid of liveRegionTestIds) {
+            if (child.text.includes(`data-testid="${testid}"`) ||
+                child.text.includes(`data-testid='${testid}'`)) {
+              testids.add(testid);
+            }
+          }
+        }
+        return false;
+      });
+      const symbol = symbolOf(node.name);
+      if (symbol && testids.size) liveRegionBindings.set(symbol, [...testids]);
+      if (testids.size) {
+        const prior = liveRegionBindingsByName.get(node.name.text) || [];
+        prior.push({ line: lineOf(node), testids: [...testids] });
+        liveRegionBindingsByName.set(node.name.text, prior);
+      }
+    }
   }
   if (ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -366,7 +396,38 @@ function collectBindings(node) {
 // Aliases can refer to an earlier alias, so converge before classifying calls.
 for (let pass = 0; pass < 3; pass += 1) collectBindings(source);
 
+function assertionFromCall(node) {
+  if (!ts.isCallExpression(node)) return null;
+  const callee = unwrap(node.expression);
+  if (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee)) {
+    return null;
+  }
+  const matcher = propertyName(callee);
+  if (!matcher) return null;
+
+  let receiver = unwrap(callee.expression);
+  let negative = false;
+  while (ts.isPropertyAccessExpression(receiver) || ts.isElementAccessExpression(receiver)) {
+    if (propertyName(receiver) === 'not') negative = true;
+    receiver = unwrap(receiver.expression);
+  }
+  if (!isRootExpectCall(receiver)) return null;
+  const target = unwrap(receiver.arguments[0]);
+  if (!target || !ts.isIdentifier(target)) return null;
+  const targetSymbol = symbolOf(target);
+  let testids = liveRegionBindings.get(targetSymbol);
+  if (!targetSymbol) {
+    const candidates = liveRegionBindingsByName.get(target.text) || [];
+    testids = candidates.filter(binding => binding.line <= lineOf(node)).at(-1)?.testids;
+  }
+  if (!testids) return null;
+  return { line: lineOf(node), matcher, negative, testids };
+}
+
 function visit(node) {
+  const assertion = assertionFromCall(node);
+  if (assertion) assertions.push(assertion);
+
   if (ts.isCallExpression(node) && isWaitTarget(node.expression)) {
     const line = lineOf(node);
     waits.push({
@@ -438,6 +499,7 @@ visit(source);
 process.stdout.write(JSON.stringify({
   waits,
   findings,
+  assertions,
   parseErrors: source.parseDiagnostics.length,
   sourceFileCount: program.getSourceFiles().length,
   unexpectedHostReads,
