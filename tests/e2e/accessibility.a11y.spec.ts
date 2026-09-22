@@ -319,10 +319,12 @@ test.describe('Accessibility', () => {
         '[role="tabpanel"]:visible, [x-show="!customPanelTabs.includes(activeTab)"]:visible',
       );
       await expect(activePanel.first(), `${tabName} has no visible panel`).toBeVisible();
-      expect(
-        await activePanel.locator('button:visible, input:visible, select:visible, textarea:visible, h2:visible, h3:visible').count(),
-        `${tabName} selected successfully but rendered no accessible content`,
-      ).toBeGreaterThan(0);
+      const renderedContent = activePanel.locator(
+        'button:visible, input:visible, select:visible, textarea:visible, h2:visible, h3:visible',
+      );
+      await expect.poll(() => renderedContent.count(), {
+        message: `${tabName} selected successfully but rendered no accessible content`,
+      }).toBeGreaterThan(0);
 
       await checkA11y(page, `Settings — ${tabName}`);
 
