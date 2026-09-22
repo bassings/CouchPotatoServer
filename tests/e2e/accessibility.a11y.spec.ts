@@ -315,10 +315,43 @@ test.describe('Accessibility', () => {
       await expect(tab, `${tabName} never became the active Settings tab`)
         .toHaveAttribute('aria-selected', 'true');
 
-      const activePanel = page.locator(
-        '[role="tabpanel"]:visible, [x-show="!customPanelTabs.includes(activeTab)"]:visible',
-      );
-      await expect(activePanel.first(), `${tabName} has no visible panel`).toBeVisible();
+      const tabId = (await tab.getAttribute('id'))?.replace(/^tab-/, '');
+      expect(tabId, `${tabName} has no stable tab id`).toBeTruthy();
+
+      let activePanel;
+      if (tabId === 'categories') {
+        activePanel = page.locator('#categories-panel');
+        await expect(activePanel.getByRole('button', { name: 'New Category', exact: true }),
+          'Categories content never finished loading').toBeVisible();
+      } else if (tabId === 'profiles') {
+        activePanel = page.locator('#profiles-panel');
+        await expect(activePanel.getByRole('button', { name: 'New Profile', exact: true }),
+          'Profiles content never finished loading').toBeVisible();
+      } else if (tabId === 'logs') {
+        activePanel = page.locator('#panel-logs');
+        await expect(activePanel.getByRole('region', { name: 'Application logs' }),
+          'Logs content never rendered').toBeVisible();
+      } else {
+        activePanel = page.locator('[x-show="!customPanelTabs.includes(activeTab)"]');
+        const settingsRoot = page.locator('[x-data="settingsPanel()"]');
+        await expect.poll(async () => settingsRoot.evaluate((element, selectedTab) => {
+          const state = (window as any).Alpine.$data(element);
+          if (state.activeTab !== selectedTab) return false;
+
+          const expected = state.getTabGroups(selectedTab)
+            .map((group: any, index: number) => state.groupKey(group, index));
+          const rendered = Array.from(
+            element.querySelectorAll('[data-settings-group]'),
+            (group) => group.getAttribute('data-settings-group'),
+          );
+          return expected.length > 0
+            && JSON.stringify(rendered) === JSON.stringify(expected);
+        }, tabId), {
+          message: `${tabName} selected but its Settings groups never replaced the prior tab's content`,
+        }).toBe(true);
+      }
+
+      await expect(activePanel, `${tabName} has no visible panel`).toBeVisible();
       const renderedContent = activePanel.locator(
         'button:visible, input:visible, select:visible, textarea:visible, h2:visible, h3:visible',
       );
