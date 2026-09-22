@@ -143,6 +143,7 @@ finding.
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import os
 import re
@@ -1104,21 +1105,13 @@ def _vacuous_guard_reason(source_line: str) -> tuple[bool, str]:
 E2E_AST_HELPER = REPO_ROOT / "scripts" / "check_e2e_test_traps.mjs"
 
 
-def check_e2e_ast_traps(path: Path, text: str):
-    """Run the TypeScript AST guard and enforce stable legacy wait identities."""
+@functools.lru_cache(maxsize=128)
+def _e2e_ast_payload(path: Path, text: str):
+    """Return the stdin-only helper payload once per exact source snapshot."""
     node = shutil.which("node")
     if node is None:
-        yield (
-            1,
-            "cannot check Playwright false-green traps: node is not installed, "
-            "so the TypeScript AST guard cannot run.",
-        )
-        return
+        return None, "node is not installed"
     try:
-        # NODE_OPTIONS can execute an arbitrary --require payload before this
-        # parse-only helper starts. Match _node_check's environment boundary:
-        # ambient Node configuration must not turn a repository scan into code
-        # execution.
         env = {key: value for key, value in os.environ.items()
                if key != "NODE_OPTIONS"}
         result = subprocess.run(
@@ -1133,18 +1126,33 @@ def check_e2e_ast_traps(path: Path, text: str):
         )
         payload = json.loads(result.stdout) if result.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
-        yield (1, "TypeScript AST guard failed to run: %s" % exc)
-        return
-    if not isinstance(payload, dict):
-        stderr_lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
-        useful_lines = [
-            line for line in stderr_lines
-            if not line.startswith("Node.js v") and not line.startswith("at ")
-        ]
-        detail = next(
-            (line for line in useful_lines if "Error" in line),
-            useful_lines[0] if useful_lines else "no JSON output",
+        return None, str(exc)
+    if isinstance(payload, dict):
+        return payload, None
+    stderr_lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+    useful_lines = [
+        line for line in stderr_lines
+        if not line.startswith("Node.js v") and not line.startswith("at ")
+    ]
+    detail = next(
+        (line for line in useful_lines if "Error" in line),
+        useful_lines[0] if useful_lines else "no JSON output",
+    )
+    return None, detail
+
+
+def check_e2e_ast_traps(path: Path, text: str):
+    """Run the TypeScript AST guard and enforce stable legacy wait identities."""
+    node = shutil.which("node")
+    if node is None:
+        yield (
+            1,
+            "cannot check Playwright false-green traps: node is not installed, "
+            "so the TypeScript AST guard cannot run.",
         )
+        return
+    payload, detail = _e2e_ast_payload(path, text)
+    if payload is None:
         yield (1, "TypeScript AST guard failed to run: %s" % detail)
         return
     if payload.get("parseErrors"):
@@ -1269,7 +1277,13 @@ _LIVE_REGION_TESTIDS = (
     "trakt-verification-url",
 )
 
-_TEXT_ONLY_MATCHERS = ("toContainText", "toHaveText")
+_CONTENT_MATCHERS = {
+    "toContainText",
+    "toHaveText",
+    "toHaveAccessibleName",
+    "toHaveAccessibleDescription",
+    "toHaveValue",
+}
 
 
 # `_git_env()`/`_GIT_IDENTITY_PREFIXES` now live in `scripts/git_env.py`,
@@ -1350,9 +1364,9 @@ def _live_region_bindings(source):
 def check_live_region_visibility(_path: Path, text: str):
     """Flag a live region asserted by TEXT but never by VISIBILITY.
 
-    `toContainText` and `toHaveText` read textContent, which `display:none`
-    does not affect, so a spec that only ever reads text cannot tell a working
-    announcement from one nobody can see. Found twice on one branch (#311):
+    Text, accessible-name/description, and value matchers read content without
+    proving it is visible, so a spec that only reads content cannot tell a
+    working announcement from one nobody can see. Found twice on one branch (#311):
     hiding the device code box, and then the status message beside it, each
     left every spec green. The axe scans do not cover the gap either, because
     axe skips hidden subtrees.
@@ -1366,6 +1380,24 @@ def check_live_region_visibility(_path: Path, text: str):
     lines = strip_js_comments(text)
     if not any(t in "\n".join(lines) for t in _LIVE_REGION_TESTIDS):
         return
+
+    if shutil.which("node") is not None:
+        payload, _detail = _e2e_ast_payload(_path, text)
+        if (isinstance(payload, dict) and not payload.get("parseErrors")
+                and payload.get("sourceFileCount") == 1
+                and payload.get("unexpectedHostReads") == 0):
+            text_line = {}
+            has_visibility = set()
+            for assertion in payload.get("assertions", []):
+                matcher = str(assertion.get("matcher", ""))
+                negative = bool(assertion.get("negative"))
+                for testid in assertion.get("testids", []):
+                    if matcher in {"toBeVisible", "toBeHidden"}:
+                        has_visibility.add(testid)
+                    elif matcher in _CONTENT_MATCHERS and not negative:
+                        text_line.setdefault(testid, int(assertion["line"]))
+            yield from _live_region_findings(text_line, has_visibility)
+            return
 
     in_scope = {}
     text_line = {}
@@ -1391,7 +1423,7 @@ def check_live_region_visibility(_path: Path, text: str):
             if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):
                 continue
             visible = 'toBeVisible' in source or 'toBeHidden' in source
-            texty = (any(m in source for m in _TEXT_ONLY_MATCHERS)
+            texty = (any(m in source for m in _CONTENT_MATCHERS)
                      and 'not.' not in source)
             for testid in testids:
                 if visible:
@@ -1399,14 +1431,18 @@ def check_live_region_visibility(_path: Path, text: str):
                 elif texty:
                     text_line.setdefault(testid, idx + 1)
 
+    yield from _live_region_findings(text_line, has_visibility)
+
+
+def _live_region_findings(text_line, has_visibility):
     for testid, line_no in sorted(text_line.items()):
         if testid in has_visibility:
             continue
         yield (
             line_no,
             "`%s` is a live region, asserted by text but never by visibility "
-            "in this file. `toContainText` and `toHaveText` read textContent, "
-            "which `display:none` does not affect, so hiding this element "
+            "in this file. Content and accessible-name/value matchers do not "
+            "prove visibility, so hiding this element "
             "permanently leaves the spec green and the control unusable. The "
             "axe scans do not cover the gap either: axe skips hidden "
             "subtrees, so zero violations degrades to nothing scanned. Assert "

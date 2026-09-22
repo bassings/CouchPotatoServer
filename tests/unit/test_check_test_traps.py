@@ -49,8 +49,8 @@ _NODE_ON_THIS_MACHINE = shutil.which("node") is not None
 
 requires_node = pytest.mark.skipif(
     not _NODE_ON_THIS_MACHINE,
-    reason="node is not installed; required for check_test_traps' template "
-    "inline-script rule (CI-003 Part B, AC-QA-74).",
+    reason="node is not installed; required for check_test_traps' Node-backed "
+    "AST and template rules (CI-003 Part B, AC-QA-74).",
 )
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -3664,7 +3664,21 @@ def test_a_new_template_in_either_render_root_is_covered_by_the_walk(tmp_path):
         assert root.is_dir(), "%s must be entered as a DIRECTORY, not a file" % root
 
 
-class TestLiveRegionVisibilityRule:
+def test_ast_only_live_region_cases_share_the_visible_node_gate():
+    """One class-level marker prevents the next AST-only case missing it."""
+    assert requires_node.mark in TestLiveRegionVisibilityAstRule.pytestmark
+
+
+class _LiveRegionVisibilityFixture:
+    STATUS = '[data-testid="trakt-auth-status"]'
+    CODE = '[data-testid="trakt-user-code"]'
+
+    def _findings(self, source):
+        return list(check_test_traps.check_live_region_visibility(
+            Path('tests/e2e/probe.spec.ts'), textwrap.dedent(source)))
+
+
+class TestLiveRegionVisibilityRule(_LiveRegionVisibilityFixture):
     """`check_live_region_visibility` had no tests at all, on either side of a
     refactor that changed its behaviour.
 
@@ -3676,18 +3690,27 @@ class TestLiveRegionVisibilityRule:
     These pin the shapes that must fail, and the ones that must not.
     """
 
-    STATUS = '[data-testid="trakt-auth-status"]'
-    CODE = '[data-testid="trakt-user-code"]'
-
-    def _findings(self, source):
-        return list(check_test_traps.check_live_region_visibility(
-            Path('tests/e2e/probe.spec.ts'), textwrap.dedent(source)))
-
     def test_text_only_assertion_is_flagged(self):
         assert self._findings(f"""
             test('t', async ({{ page }}) => {{
               const status = page.locator('{self.STATUS}');
               await expect(status).toContainText('x');
+            }});
+        """)
+
+    @pytest.mark.parametrize(
+        "matcher,value",
+        (
+            ("toHaveAccessibleName", "'Connected'"),
+            ("toHaveAccessibleDescription", "'Connected'"),
+            ("toHaveValue", "'Connected'"),
+        ),
+    )
+    def test_accessible_content_assertions_are_flagged(self, matcher, value):
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status).{matcher}({value});
             }});
         """)
 
@@ -3791,6 +3814,54 @@ class TestLiveRegionVisibilityRule:
             test('t', async ({{ page }}) => {{
               const status = page.locator('{self.STATUS}');
               await expect(status).not.toContainText('x');
+            }});
+        """)
+
+
+@requires_node
+class TestLiveRegionVisibilityAstRule(_LiveRegionVisibilityFixture):
+    """Cases whose guarantee comes specifically from the TypeScript AST."""
+
+    def test_each_expect_in_a_promise_all_is_classified_independently(self):
+        """Another live region's visibility cannot silence status content."""
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              const code = page.locator('{self.CODE}');
+              await Promise.all([
+                expect(status).toHaveAccessibleName('Connected'),
+                expect(code).toBeVisible(),
+              ]);
+            }});
+        """)
+
+    def test_a_matcher_split_across_lines_is_classified_as_one_assertion(self):
+        assert self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status)
+                .toHaveAccessibleDescription('Connected');
+            }});
+        """)
+
+    def test_a_split_visibility_assertion_is_not_mistaken_for_content(self):
+        assert not self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              await expect(status)
+                .toBeVisible();
+            }});
+        """)
+
+    def test_an_inner_non_live_binding_does_not_inherit_the_outer_live_region(self):
+        """A valid inner symbol must never fall back to a same-named locator."""
+        assert not self._findings(f"""
+            test('t', async ({{ page }}) => {{
+              const status = page.locator('{self.STATUS}');
+              if (ready) {{
+                const status = page.locator('.ordinary-status');
+                await expect(status).toHaveText('x');
+              }}
             }});
         """)
 
