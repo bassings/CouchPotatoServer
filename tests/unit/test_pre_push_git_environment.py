@@ -12,6 +12,18 @@ from tests.unit.conftest import sanitized_git_env
 HOOK = Path(__file__).resolve().parents[2] / '.githooks' / 'pre-push'
 
 
+def test_hook_enumerates_git_variables_with_the_bash_3_pattern():
+    """Keep namespace discovery on the repository's Bash 3-safe mechanism."""
+    source = HOOK.read_text()
+
+    assert '${!GIT_' not in source, (
+        'indirect prefix expansion is not the supported portability mechanism; '
+        'enumerate env names through the Bash 3-compatible read loop'
+    )
+    assert "while IFS='=' read -r name _value; do" in source
+    assert 'done < <(env)' in source
+
+
 def _write_executable(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)

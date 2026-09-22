@@ -12,12 +12,12 @@ set -euo pipefail
 # worktrees. Strip the whole namespace before even asking git for the root;
 # otherwise this hook and every child gate can operate on a different tree.
 # Commit identity only changes what a future commit records, so preserve it.
-for git_var in "${!GIT_@}"; do
-  case "$git_var" in
+while IFS='=' read -r name _value; do
+  case "$name" in
     GIT_AUTHOR_*|GIT_COMMITTER_*) ;;
-    *) unset "$git_var" ;;
+    GIT_*) unset "$name" ;;
   esac
-done
+done < <(env)
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
