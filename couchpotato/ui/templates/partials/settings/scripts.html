@@ -682,6 +682,11 @@ function settingsPanel() {
       this.browserLoading = false;
     },
 
+    goToParentDirectory() {
+      if (this.browserIsRoot || this.browserLoading) return;
+      return this.loadDirectories(this.browserParent);
+    },
+
     selectDirectory(dir) { this.loadDirectories(dir); },
 
     confirmDirectory() {

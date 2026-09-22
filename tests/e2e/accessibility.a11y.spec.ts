@@ -562,6 +562,56 @@ test.describe('Accessibility', () => {
       .toBeEnabled();
   });
 
+  test('folder browser Up keeps focus at root and cannot navigate above it', async ({ page }) => {
+    await page.goto('/settings/');
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Library' }).click();
+    await page.getByRole('heading', { name: 'Movie Library' }).click();
+    await page.locator('button', { hasText: '+ Add folder' }).click();
+    await page.getByRole('button', { name: 'Browse for folder 1' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await waitForFolderBrowserContent(dialog);
+
+    const settingsRoot = page.locator('[x-data="settingsPanel()"]');
+    await settingsRoot.evaluate((element: Element) => {
+      const state = (window as any).Alpine.$data(element);
+      const originalLoadDirectories = state.loadDirectories.bind(state);
+      state._upRegressionLoadCount = 0;
+      state.loadDirectories = async (path: string) => {
+        state._upRegressionLoadCount += 1;
+        return originalLoadDirectories(path);
+      };
+    });
+
+    const firstDirectory = dialog.locator('button.w-full.px-4.py-2.text-left').first();
+    await firstDirectory.click();
+    await expect.poll(() => settingsRoot.evaluate((element: Element) => {
+      const state = (window as any).Alpine.$data(element);
+      return !state.browserLoading && !state.browserIsRoot;
+    }), { message: 'the folder browser never entered the child directory' }).toBe(true);
+
+    const up = dialog.getByRole('button', { name: 'Up one folder' });
+    await up.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => settingsRoot.evaluate((element: Element) => {
+      const state = (window as any).Alpine.$data(element);
+      return !state.browserLoading && state.browserIsRoot;
+    }), { message: 'Up never returned the folder browser to root' }).toBe(true);
+
+    await expect(up, 'returning to root must not destroy keyboard focus').toBeFocused();
+    await expect(up).toHaveAttribute('aria-disabled', 'true');
+
+    const loadCountAtRoot = await settingsRoot.evaluate((element: Element) =>
+      (window as any).Alpine.$data(element)._upRegressionLoadCount);
+    await page.keyboard.press('Enter');
+    await expect.poll(() => settingsRoot.evaluate((element: Element) =>
+      (window as any).Alpine.$data(element)._upRegressionLoadCount), {
+      message: 'the aria-disabled Up control re-entered directory loading at root',
+    }).toBe(loadCountAtRoot);
+  });
+
   test('settings folder/row "Add" buttons and the folder browser "Up" button lead with their visible text (WCAG 2.5.3)', async ({ page }) => {
     await page.goto('/settings/');
     // The tablist is gated behind Alpine's settings-loading state, so its

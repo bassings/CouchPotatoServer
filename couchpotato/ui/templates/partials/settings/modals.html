@@ -79,9 +79,10 @@
     <!-- Path bar -->
     <div class="px-4 py-2 border-b border-white/[0.04] bg-white/[0.02]">
       <div class="flex items-center gap-2 text-xs">
-        <button @click="loadDirectories(browserParent)"
-                :disabled="browserIsRoot"
-                class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] disabled:opacity-30 disabled:cursor-not-allowed"
+        <button @click="goToParentDirectory()"
+                :aria-disabled="(browserIsRoot || browserLoading).toString()"
+                :class="browserIsRoot || browserLoading ? 'opacity-30 cursor-not-allowed' : ''"
+                class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06]"
                 aria-label="Up one folder">
           ↑ Up
         </button>
