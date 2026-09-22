@@ -1,6 +1,10 @@
 import { test, expect } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
-import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
+import {
+  expectVisualTransitionsToSettle,
+  mockSuggestionsCharts,
+  waitForSuggestionsReady,
+} from './helpers';
 
 /**
  * Accessibility tests for CouchPotato new UI using axe-core.
@@ -9,6 +13,8 @@ import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
 
 // Helper to check a11y violations
 async function checkA11y(page: any, pageName: string) {
+  await expectVisualTransitionsToSettle(page, pageName);
+
   const accessibilityScanResults = await new AxeBuilder({ page })
     // wcag22aa added (T1.4b/AC-A11Y-9): the project standard is WCAG 2.2 AA,
     // and without this tag 2.5.8 (target-size) and 2.4.11
@@ -56,6 +62,161 @@ async function checkA11y(page: any, pageName: string) {
   ).toBe(0);
 
   return accessibilityScanResults;
+}
+
+type SettingsDisplayMode = {
+  name: string;
+  theme: 'light' | 'dark';
+  viewport?: { width: number; height: number };
+};
+
+const settingsDisplayModes: SettingsDisplayMode[] = [
+  { name: 'desktop light', theme: 'light' },
+  { name: 'desktop dark', theme: 'dark' },
+  { name: 'phone light', theme: 'light', viewport: { width: 393, height: 851 } },
+];
+
+async function openSettingsInMode(page: any, mode: SettingsDisplayMode) {
+  if (mode.viewport) await page.setViewportSize(mode.viewport);
+  await page.addInitScript((theme: string) => localStorage.setItem('cp-theme', theme), mode.theme);
+  await page.goto('/settings/');
+  await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.classList.contains('light') ? 'light' : 'dark'
+  ), { message: `Settings did not render in ${mode.theme} theme` }).toBe(mode.theme);
+}
+
+async function waitForFolderBrowserContent(dialog: any) {
+  await expect(dialog.getByRole('status', { name: 'Loading folders…' }),
+    'the folder browser request never finished').toBeHidden();
+  const entries = dialog.locator('button.w-full.px-4.py-2.text-left');
+  const emptyState = dialog.getByText('Empty folder', { exact: true });
+  await expect.poll(async () =>
+    (await entries.count()) > 0 || await emptyState.isVisible(), {
+    message: 'the folder browser rendered neither directory entries nor its empty state',
+  }).toBe(true);
+}
+
+async function sweepSettingsTabs(page: any, modeName: string) {
+  const tabs = page.getByRole('tablist', { name: 'Settings categories' }).getByRole('tab');
+  const tabNames = (await tabs.allTextContents()).map((name: string) => name.trim()).filter(Boolean);
+  expect(tabNames.length, 'Settings rendered too few tabs for the accessibility sweep')
+    .toBeGreaterThanOrEqual(8);
+
+  for (const tabName of tabNames) {
+    const tab = page.getByRole('tab', { name: tabName, exact: true });
+    await tab.click();
+    await expect(tab, `${tabName} never became the active Settings tab`)
+      .toHaveAttribute('aria-selected', 'true');
+
+    const tabId = (await tab.getAttribute('id'))?.replace(/^tab-/, '');
+    expect(tabId, `${tabName} has no stable tab id`).toBeTruthy();
+
+    let activePanel;
+    if (tabId === 'categories') {
+      activePanel = page.locator('#categories-panel');
+      await expect(activePanel.getByRole('button', { name: 'New Category', exact: true }),
+        'Categories content never finished loading').toBeVisible();
+    } else if (tabId === 'profiles') {
+      activePanel = page.locator('#profiles-panel');
+      await expect(activePanel.getByRole('button', { name: 'New Profile', exact: true }),
+        'Profiles content never finished loading').toBeVisible();
+    } else if (tabId === 'logs') {
+      activePanel = page.locator('#panel-logs');
+      await expect(activePanel.getByRole('region', { name: 'Application logs' }),
+        'Logs content never rendered').toBeVisible();
+    } else {
+      activePanel = page.locator('[x-show="!customPanelTabs.includes(activeTab)"]');
+      const settingsRoot = page.locator('[x-data="settingsPanel()"]');
+      await expect.poll(async () => settingsRoot.evaluate((element: Element, selectedTab: string) => {
+        const state = (window as any).Alpine.$data(element);
+        if (state.activeTab !== selectedTab) return false;
+
+        const expected = state.getTabGroups(selectedTab)
+          .map((group: any, index: number) => state.groupKey(group, index));
+        const rendered = Array.from(
+          element.querySelectorAll('[data-settings-group]'),
+          (group) => group.getAttribute('data-settings-group'),
+        );
+        return expected.length > 0 && JSON.stringify(rendered) === JSON.stringify(expected);
+      }, tabId), {
+        message: `${tabName} selected but its Settings groups never replaced the prior tab's content`,
+      }).toBe(true);
+    }
+
+    await expect(activePanel, `${tabName} has no visible panel`).toBeVisible();
+    await expect.poll(() => activePanel.locator(
+      'button:visible, input:visible, select:visible, textarea:visible, h2:visible, h3:visible',
+    ).count(), {
+      message: `${tabName} selected successfully but rendered no accessible content`,
+    }).toBeGreaterThan(0);
+
+    await checkA11y(page, `Settings — ${tabName} (${modeName})`);
+
+    if (tabName === 'Logs') {
+      await expect(page.getByRole('region', { name: 'Application logs' }),
+        'the scrollable log region is not keyboard reachable').toHaveAttribute('tabindex', '0');
+    }
+  }
+}
+
+async function openDeleteDialog(page: any, panelSelector: string, testId: string) {
+  const panel = page.locator(panelSelector);
+  await panel.evaluate((element: Element) => {
+    const state = (window as any).Alpine.$data(element);
+    state.confirmDelete({ _id: 'accessibility-scan', label: 'Accessibility scan' });
+  });
+  const dialog = page.getByTestId(testId);
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function sweepSettingsDialogs(page: any, modeName: string) {
+  await page.getByRole('tab', { name: 'Categories' }).click();
+  await expect(page.getByRole('button', { name: 'New Category', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'New Category', exact: true }).click();
+  const categoryEditor = page.getByTestId('category-edit-modal');
+  await expect(categoryEditor).toBeVisible();
+  await checkA11y(page, `Settings — New Category dialog (${modeName})`);
+  await categoryEditor.getByRole('button', { name: 'Close modal' }).click();
+  await expect(categoryEditor).toBeHidden();
+
+  const categoryDelete = await openDeleteDialog(page, '#categories-panel', 'category-delete-dialog');
+  await checkA11y(page, `Settings — Delete Category dialog (${modeName})`);
+  await categoryDelete.getByRole('button', { name: 'Cancel delete' }).click();
+  await expect(categoryDelete).toBeHidden();
+
+  await page.getByRole('tab', { name: 'Profiles' }).click();
+  await expect(page.getByRole('button', { name: 'New Profile', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'New Profile', exact: true }).click();
+  const profileEditor = page.getByTestId('edit-modal');
+  await expect(profileEditor).toBeVisible();
+  await checkA11y(page, `Settings — New Profile dialog (${modeName})`);
+  await profileEditor.getByRole('button', { name: 'Close modal' }).click();
+  await expect(profileEditor).toBeHidden();
+
+  const profileDelete = await openDeleteDialog(page, '#profiles-panel', 'delete-confirm-dialog');
+  await checkA11y(page, `Settings — Delete Profile dialog (${modeName})`);
+  await profileDelete.getByRole('button', { name: 'Cancel delete' }).click();
+  await expect(profileDelete).toBeHidden();
+
+  await page.getByRole('tab', { name: 'Library' }).click();
+  await page.getByRole('heading', { name: 'Movie Library' }).click();
+  const addFolder = page.locator('button', { hasText: '+ Add folder' });
+  await expect(addFolder).toBeVisible();
+  await addFolder.click();
+  // Make the lazy-content boundary deterministic. browseDirectory() displays
+  // the dialog before awaiting this request, so without the readiness helper
+  // below axe would scan only the spinner and miss every inserted entry.
+  await page.route('**/directory.list/**', async (route: any) => {
+    await new Promise(resolve => setTimeout(resolve, 750));
+    await route.continue();
+  }, { times: 1 });
+  await page.getByRole('button', { name: 'Browse for folder 1' }).click();
+  const folderBrowser = page.getByRole('dialog');
+  await expect(folderBrowser).toBeVisible();
+  await waitForFolderBrowserContent(folderBrowser);
+  await checkA11y(page, `Settings — Folder browser dialog (${modeName})`);
 }
 
 // Scoped a11y check for toggle switches specifically: aria-required-attr /
@@ -283,16 +444,14 @@ test.describe('Accessibility', () => {
     await checkA11y(page, 'Add Movie');
   });
 
-  test('Settings page should be accessible', async ({ page }) => {
-    await page.goto('/settings/');
-    await page.waitForLoadState('networkidle');
-    // Settings loads via Alpine's own `loading` flag, not htmx -- the tabs
-    // are gated behind `x-show="!loading"`, so waiting for them is the real
-    // signal settings finished loading.
-    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
-
-    await checkA11y(page, 'Settings');
-  });
+  for (const mode of settingsDisplayModes) {
+    test(`all Settings tabs and dialogs should be accessible in ${mode.name}`, async ({ page }) => {
+      test.setTimeout(90_000);
+      await openSettingsInMode(page, mode);
+      await sweepSettingsTabs(page, mode.name);
+      await sweepSettingsDialogs(page, mode.name);
+    });
+  }
 
   test('dynamic Settings headings expose their hydrated hierarchy', async ({ page }) => {
     await page.goto('/settings/');
@@ -372,6 +531,8 @@ test.describe('Accessibility', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog, 'the folder browser dialog never opened').toBeVisible();
+    await waitForFolderBrowserContent(dialog);
+    await checkA11y(page, 'Settings — Folder browser dialog');
 
     // If either role comes back, it must come back WITH arrow keys,
     // aria-selected and a single tab stop. Until then, absence is correct.
@@ -399,6 +560,56 @@ test.describe('Accessibility', () => {
     await expect(entries.first(),
       'a directory entry is not keyboard focusable, so the keyboard path was removed along with the false listbox promise')
       .toBeEnabled();
+  });
+
+  test('folder browser Up keeps focus at root and cannot navigate above it', async ({ page }) => {
+    await page.goto('/settings/');
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Library' }).click();
+    await page.getByRole('heading', { name: 'Movie Library' }).click();
+    await page.locator('button', { hasText: '+ Add folder' }).click();
+    await page.getByRole('button', { name: 'Browse for folder 1' }).click();
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await waitForFolderBrowserContent(dialog);
+
+    const settingsRoot = page.locator('[x-data="settingsPanel()"]');
+    await settingsRoot.evaluate((element: Element) => {
+      const state = (window as any).Alpine.$data(element);
+      const originalLoadDirectories = state.loadDirectories.bind(state);
+      state._upRegressionLoadCount = 0;
+      state.loadDirectories = async (path: string) => {
+        state._upRegressionLoadCount += 1;
+        return originalLoadDirectories(path);
+      };
+    });
+
+    const firstDirectory = dialog.locator('button.w-full.px-4.py-2.text-left').first();
+    await firstDirectory.click();
+    await expect.poll(() => settingsRoot.evaluate((element: Element) => {
+      const state = (window as any).Alpine.$data(element);
+      return !state.browserLoading && !state.browserIsRoot;
+    }), { message: 'the folder browser never entered the child directory' }).toBe(true);
+
+    const up = dialog.getByRole('button', { name: 'Up one folder' });
+    await up.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => settingsRoot.evaluate((element: Element) => {
+      const state = (window as any).Alpine.$data(element);
+      return !state.browserLoading && state.browserIsRoot;
+    }), { message: 'Up never returned the folder browser to root' }).toBe(true);
+
+    await expect(up, 'returning to root must not destroy keyboard focus').toBeFocused();
+    await expect(up).toHaveAttribute('aria-disabled', 'true');
+
+    const loadCountAtRoot = await settingsRoot.evaluate((element: Element) =>
+      (window as any).Alpine.$data(element)._upRegressionLoadCount);
+    await page.keyboard.press('Enter');
+    await expect.poll(() => settingsRoot.evaluate((element: Element) =>
+      (window as any).Alpine.$data(element)._upRegressionLoadCount), {
+      message: 'the aria-disabled Up control re-entered directory loading at root',
+    }).toBe(loadCountAtRoot);
   });
 
   test('settings folder/row "Add" buttons and the folder browser "Up" button lead with their visible text (WCAG 2.5.3)', async ({ page }) => {
@@ -461,11 +672,10 @@ test.describe('Accessibility', () => {
    * mode has never been scanned page-wide. The toast contrast test below is
    * the only place dark theme gets exercised at all, and that is exactly the
    * blind spot that let the dark success toast ship at 3.30:1 (see the
-   * comment above that test). Cover one plain content page (Wanted) and one
-   * form-bearing page (Settings) in dark, following the same
-   * addInitScript-before-goto pattern the toast test uses.
+   * comment above that test). Cover the plain Wanted page here; the exhaustive
+   * Settings sweep above now owns every Settings tab and dialog in dark mode.
    */
-  test('Wanted and Settings pages should be accessible in the dark theme', async ({ page }) => {
+  test('Wanted page should be accessible in the dark theme', async ({ page }) => {
     await page.addInitScript((t) => {
       localStorage.setItem('cp-theme', t);
     }, 'dark');
@@ -482,16 +692,6 @@ test.describe('Accessibility', () => {
       .toBe(false);
 
     await checkA11y(page, 'Wanted (dark theme)');
-
-    await page.goto('/settings/');
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
-
-    await expect
-      .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
-      .toBe(false);
-
-    await checkA11y(page, 'Settings (dark theme)');
   });
 
   // FEAT-007 Part B: the release list's filter/sort controls (B12). Follows

@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
-import { Locator, Page } from '@playwright/test';
+import { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { expectVisualTransitionsToSettle } from './helpers';
 
 /**
  * Mobile and small-screen coverage — an AGENTS.md high-priority dimension
@@ -52,31 +53,6 @@ async function expectNoHorizontalOverflow(page: Page, context: string) {
     `${context}: the page scrolls horizontally (${measured.scrollWidth}px of content in ` +
       `${measured.clientWidth}px) — controls past the right edge cannot be reached`,
   ).toBeLessThanOrEqual(measured.clientWidth);
-}
-
-async function expectRenderedColorsToSettle(locator: Locator) {
-  await expect(locator).toBeVisible();
-  await expect(locator).toHaveAttribute('aria-pressed', 'true');
-
-  let previous = '';
-  let stableSamples = 0;
-  await expect.poll(async () => {
-    const signature = await locator.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return `${style.color}|${style.backgroundColor}`;
-    });
-    if (signature === previous) {
-      stableSamples += 1;
-    } else {
-      previous = signature;
-      stableSamples = 0;
-    }
-    return stableSamples;
-  }, {
-    message: 'selected filter colours never reached a stable rendered state',
-    intervals: [75, 75, 75, 75, 75],
-    timeout: 2000,
-  }).toBeGreaterThanOrEqual(3);
 }
 
 test.describe('Small-screen layout', () => {
@@ -177,7 +153,10 @@ test.describe('Small-screen layout', () => {
       // transitions both colours. axe can sample the invalid midpoint even
       // though the final pair passes. Wait on the rendered pair itself, not a
       // timeout or an unrelated load event, and cover both theme palettes.
-      await expectRenderedColorsToSettle(page.getByRole('button', { name: 'All', exact: true }));
+      const allFilter = page.getByRole('button', { name: 'All', exact: true });
+      await expect(allFilter).toBeVisible();
+      await expect(allFilter).toHaveAttribute('aria-pressed', 'true');
+      await expectVisualTransitionsToSettle(page, `selected All filter in ${theme} theme`);
       await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
 
     // Wait for the control under test to be VISIBLE before scanning. axe skips

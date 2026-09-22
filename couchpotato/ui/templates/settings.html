@@ -43,7 +43,8 @@
     {# ==================== SETTINGS TABS ==================== #}
     <div x-show="!customPanelTabs.includes(activeTab)" class="space-y-4">
       <template x-for="(group, groupIdx) in currentGroups" :key="groupIdx">
-        <div x-show="!group.advanced || showAdvanced">
+        <div x-show="!group.advanced || showAdvanced"
+             :data-settings-group="groupKey(group, groupIdx)">
           
           {# Category Header #}
           <template x-if="shouldShowCategoryHeader(groupIdx)">

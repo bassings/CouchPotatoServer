@@ -48,7 +48,8 @@
 
   <!-- Log entries -->
   <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden font-mono text-[11px] leading-relaxed">
-    <div class="max-h-[calc(100vh-280px)] overflow-y-auto" id="log-container">
+    <div class="max-h-[calc(100vh-280px)] overflow-y-auto" id="log-container"
+         tabindex="0" role="region" aria-label="Application logs">
       <!-- Empty state -->
       <template x-if="logs.length === 0 && !logLoading">
         <div class="px-4 py-8 text-center text-cp-muted text-xs">No log entries found.</div>

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { layoutPx, TARGET_SIZE_MIN } from './helpers';
+import { expectVisualTransitionsToSettle, layoutPx, TARGET_SIZE_MIN } from './helpers';
 import { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
@@ -562,9 +562,9 @@ test.describe('FEAT-010 Review queue accessibility', () => {
     await expect(markFailed).toBeVisible({ timeout: 10000 });
 
     await markFailed.hover();
-    // Let the transition settle, then measure: reading at the instant of the
-    // hover would sample the resting colours and prove nothing.
-    await page.waitForTimeout(400);
+    // Read only after the shared semantic transition gate has observed a
+    // quiet window; a fixed delay can still sample either endpoint under load.
+    await expectVisualTransitionsToSettle(page, 'hovered Mark Failed control');
 
     const results = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
     const detail = results.violations
@@ -587,6 +587,8 @@ test.describe('FEAT-010 Review queue accessibility', () => {
         reviewCards.first(),
         'no review-gated card is present -- the seed did not run, or this must FAIL rather than scan nothing (AC-A11Y-13)',
       ).toBeVisible({ timeout: 10000 });
+
+      await expectVisualTransitionsToSettle(page, `Wanted review queue in ${theme} theme`);
 
       const results = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
