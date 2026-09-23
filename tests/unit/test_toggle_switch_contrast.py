@@ -121,10 +121,13 @@ def _all_style_rules():
     return rules
 
 
-def _rule_colour(selector: str, prop: str = 'background-color'):
+_BACKGROUND_DECLARATION_RE = re.compile(r'^background(-color)?\s*:\s*(#[0-9a-fA-F]{6})$')
+
+
+def _rule_colour(selector: str):
     """The single top-level rule matching `selector` exactly, asserting
-    there is exactly one and it sits at depth 0, and return its `prop`
-    value. Fails with a specific reason otherwise -- missing entirely
+    there is exactly one and it sits at depth 0, and return its background
+    colour. Fails with a specific reason otherwise -- missing entirely
     (stripped by a `{% if false %}` guard, or never written), duplicated
     (two rules with the same selector -- the later one wins the cascade,
     silently), or present but nested (an `@media` wrapper that keeps the
@@ -148,9 +151,26 @@ def _rule_colour(selector: str, prop: str = 'background-color'):
         'rule "existing" in the file proves nothing about what renders.'
         % (selector, depth)
     )
-    m = re.search(prop + r':\s*(#[0-9a-fA-F]{6})', body)
-    assert m, 'no `%s: #rrggbb` found in the `%s` rule body (%r)' % (prop, selector, body.strip())
-    return m.group(1)
+
+    # Anchored at a DECLARATION start (each body split on `;`, stripped),
+    # matching only the `background`/`background-color` property name --
+    # NOT a substring search, so a custom property like
+    # `--x-background-color: #333333` cannot match. CSS also applies the
+    # LAST declaration for a given property, not the first, so a rule body
+    # that happens to carry two background-color declarations is not safely
+    # resolved by taking the first one (a bare `re.search` did exactly
+    # that) -- it is ambiguous, and this counts declarations rather than
+    # trusting the first line found.
+    declarations = [d.strip() for d in body.split(';') if d.strip()]
+    background_matches = [m for d in declarations for m in [_BACKGROUND_DECLARATION_RE.match(d)] if m]
+    assert len(background_matches) == 1, (
+        'expected exactly one `background`/`background-color: #rrggbb` '
+        'declaration in the `%s` rule body, found %d (%r) -- CSS applies '
+        'the LAST declaration for a repeated property, not the first, so '
+        'more than one is ambiguous rather than safely ignorable.'
+        % (selector, len(background_matches), declarations)
+    )
+    return background_matches[0].group(2)
 
 
 def _theme_surface(theme: str, var: str) -> str:
@@ -211,13 +231,20 @@ def test_on_dark_knob_rule_is_a_single_top_level_rule_with_the_pinned_colour():
 
 
 def test_no_other_rule_in_the_stylesheet_targets_the_switch_role():
-    """A later rule appended anywhere else in the stylesheet that also
-    matches `[role=switch]` can win the cascade over the three pinned rules
-    above without ever touching them -- the three checks above would still
-    pass, having found their own rule exactly once, unaware a fourth rule
-    now decides what actually paints. This is the only check standing
-    between "the pinned rule exists" and "the pinned rule is not
-    overridden"."""
+    """Guards against a second rule spelled with `[role=switch]` appended
+    anywhere else in the stylesheet, which can win the cascade over the
+    three pinned rules above without ever touching them -- the three checks
+    above would still pass, having found their own rule exactly once,
+    unaware a fourth rule now decides what actually paints.
+
+    This is a selector-text match, nothing more: an override keyed on some
+    OTHER selector that still reaches the same element (a class, an id, a
+    different attribute combination), one carrying `!important`, one sitting
+    in a media-scoped `<style>` this file does not parse the same way, or
+    anything Tailwind's CDN script injects into the page at runtime, are
+    all invisible to it. Catching those is `tests/e2e/toggle-switch-
+    contrast.a11y.spec.ts`'s job -- it reads what a browser actually
+    resolves, cascade and all."""
     rules = _all_style_rules()
     expected = {TOGGLE_OFF_SELECTOR, TOGGLE_ON_LIGHT_SELECTOR, TOGGLE_ON_DARK_KNOB_SELECTOR}
     extra = [

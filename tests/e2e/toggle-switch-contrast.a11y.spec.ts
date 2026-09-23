@@ -66,6 +66,13 @@ import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
  * read back OFF a few hundred ms later, mid-measurement, with no click of
  * ours in between. Echoing the submitted value back keeps `this.values` in
  * sync with what we actually set, the way a real save response would.
+ *
+ * WARNING: this echoes back whatever was POSTed, in plain text. Never use
+ * it for a password field, and never promote it to helpers.ts as a
+ * general-purpose replacement for `mockSettingsSave` -- the omitted
+ * `value` there is deliberate for exactly that case (see saveSingle()'s
+ * own comment in scripts.html). This helper is only safe for the boolean
+ * toggle values this file clicks.
  */
 async function mockSettingsSaveEchoingValue(page: Page): Promise<void> {
   await mockSettingsSave(page);
@@ -215,7 +222,16 @@ function assertMeasurement(label: string, m: Measurement) {
 /**
  * Measure and assert every element `switches` currently resolves to, one at
  * a time: the CURRENT state, then click + settle + the FLIPPED state, then
- * click again to restore the original state before moving on.
+ * click again to restore the original state before moving on. Returns the
+ * accessible name (`aria-label`) of each toggle it actually measured, so a
+ * caller can assert the exact SET it expected to cover -- not just that the
+ * sweep found "something". A toggle re-marked `role="button"` (or otherwise
+ * dropped from the `switches` locator) simply narrows what this returns,
+ * and `switches.count() > 0` still passes on whatever is left: only
+ * checking the returned names against the caller's own expected set catches
+ * that class of silent gap. Measured: mutating one field_types.html row's
+ * `role="switch"` to `role="button"` left every one of this file's original
+ * assertions green.
  *
  * `switches` is re-evaluated (via `.nth(i)`) on every access, so a click
  * that changes what else is in the DOM is reflected on the NEXT iteration
@@ -228,14 +244,16 @@ function assertMeasurement(label: string, m: Measurement) {
  * against a control that is not actually wired to the switch pattern axe
  * and screen readers expect.
  */
-async function sweepToggles(page: Page, switches: Locator, contextLabel: string): Promise<void> {
+async function sweepToggles(page: Page, switches: Locator, contextLabel: string): Promise<string[]> {
   const count = await switches.count();
   expect(count, `${contextLabel}: no toggle(s) found to sweep`).toBeGreaterThan(0);
+  const measuredNames: string[] = [];
 
   for (let i = 0; i < count; i++) {
     const toggle = switches.nth(i);
     if (!(await toggle.isVisible())) continue;
     const label = `${contextLabel} #${i}`;
+    measuredNames.push((await toggle.getAttribute('aria-label')) ?? '');
 
     const ariaBefore = await toggle.getAttribute('aria-checked');
     expect(
@@ -261,6 +279,7 @@ async function sweepToggles(page: Page, switches: Locator, contextLabel: string)
     await toggle.click();
     await expectVisualTransitionsToSettle(page, `${label} post-restore`);
   }
+  return measuredNames;
 }
 
 for (const theme of ['dark', 'light'] as const) {
@@ -278,20 +297,25 @@ for (const theme of ['dark', 'light'] as const) {
     // background (no bg-cp-card ancestor).
     const headerToggle = page.getByRole('switch', { name: 'Show advanced settings' });
     await expect(headerToggle).toBeVisible();
-    await sweepToggles(page, headerToggle, `${theme} theme, header.html "Show advanced settings"`);
+    const headerNames = await sweepToggles(page, headerToggle, `${theme} theme, header.html "Show advanced settings"`);
+    expect(headerNames, 'expected to measure exactly the one header.html toggle').toEqual(['Show advanced settings']);
 
     // provider_card.html + field_types.html: the Newznab card on Searchers.
     //
     // Newznab's SEEDED default is enabled, but that default is not this
-    // test's to assume: accessibility.a11y.spec.ts's wizard flow clicks
-    // "Enable Newznab Indexers" (an ON -> OFF toggle, since it starts
-    // enabled) and that save really persists to this worker's DB via
-    // mockSettingsSave-free code elsewhere -- so whichever spec in this
-    // project happened to run first decides what state this test's own
-    // Newznab card starts in. Measured: with that spec running first,
-    // Newznab is OFF here, its card is collapsed, and "+ Add" is hidden --
-    // a real, deterministic run-order dependency, not a timing flake.
-    // Establish the precondition explicitly instead of assuming it.
+    // test's to assume. wizard.html's own `formData.newznab.enabled`
+    // literal default is FALSE (wizard.html:966) -- accessibility.a11y.
+    // spec.ts's wizard flow clicks "Enable Newznab Indexers" to turn it ON
+    // (false -> true) as part of exercising the wizard's Providers step,
+    // unrelated to this test. The persisted OFF this test used to see did
+    // not come from that click (a wizard toggle click alone is a local
+    // Alpine mutation, nothing saved yet); it came from that SAME wizard
+    // flow later pressing Continue, which calls `saveCurrentStep()` and
+    // really POSTs `newznab.enabled` to this worker's DB. Whichever spec's
+    // wizard flow runs first, and in whatever state it leaves that field,
+    // decides what this test's own Newznab card starts in -- a real,
+    // deterministic run-order dependency, not a timing flake. Establish
+    // the precondition explicitly instead of assuming it.
     await page.getByRole('tab', { name: 'Searchers' }).click();
     await expectVisualTransitionsToSettle(page, `${theme} theme, Searchers tab opened`);
     const newznabCard = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
@@ -311,29 +335,50 @@ for (const theme of ['dark', 'light'] as const) {
       await expect(newznabEnabler).toHaveAttribute('aria-checked', 'true');
     }
 
-    // Create a combined host/key row so its field_types.html "use" toggle
-    // exists to be swept below -- it does not exist until "+ Add" is
-    // clicked, and the card must be open (enabler ON, settled) first.
+    // The seed data already gives Newznab rows 1-6 (each with its own
+    // field_types.html "use" toggle), so "+ Add" is not needed just to
+    // reach that markup. It is still clicked here, to create row 7,
+    // because the seeded rows are all rendered from the page's INITIAL
+    // load -- clicking "+ Add" is the only way this test also covers a row
+    // added live, mid-session, which is the row a real user's "+ Add"
+    // click actually produces and the one most likely to regress if that
+    // path ever renders differently from the seeded ones.
     const addRowBtn = newznabCard.getByRole('button', { name: 'Add row' });
     await expect(addRowBtn, 'the "+ Add" row button never rendered under Newznab').toBeVisible();
     await addRowBtn.click();
 
-    // Sweeps the card's OWN enabler (provider_card.html) and the new row's
+    // Sweeps the card's OWN enabler (provider_card.html) and every row's
     // "use" toggle (field_types.html) together. The enabler is swept FIRST
     // (DOM order): toggling it off/on-and-restore happens before the loop
-    // reaches the row toggle's index, so the row is never hidden when its
-    // turn comes.
-    await sweepToggles(
+    // reaches any row toggle's index, so no row is hidden when its turn
+    // comes.
+    const newznabNames = await sweepToggles(
       page,
       newznabCard.locator('[role="switch"]:visible'),
       `${theme} theme, Newznab card (provider_card.html enabler + field_types.html row)`,
     );
+    expect(newznabNames, 'expected the provider_card.html enabler among the measured toggles')
+      .toContain('Enable Newznab');
+    expect(
+      newznabNames.some((name) => /^Enable row \d+$/.test(name)),
+      `expected at least one field_types.html row toggle (name matching /^Enable row \\d+$/) among ${JSON.stringify(newznabNames)}`,
+    ).toBe(true);
   });
 }
 
 for (const theme of ['dark', 'light'] as const) {
   test(`wizard toggles meet 1.4.11 in the ${theme} theme (canonical toggle.html, on tinted row panels)`, async ({ page }) => {
     test.setTimeout(90_000);
+    // Continue (below) calls saveCurrentStep(), which really POSTs to
+    // settings.save for every provider touched on this step -- unmocked,
+    // that persists `newznab`/`binsearch`/`thepiratebay`/`yts`/
+    // `torrentpotato` `enabled=0` to this worker's DB (this sweep always
+    // restores each toggle to its original, disabled `formData` value
+    // before Continue is pressed). Measured leaking into a later spec in
+    // this same worker: the settings page's own "Enable Newznab" read back
+    // OFF with no click of that test's own. wizard.spec.ts already mocks
+    // this for the same reason.
+    await mockSettingsSave(page);
     await page.addInitScript((t) => localStorage.setItem('cp-theme', t), theme);
     await page.goto('/wizard/');
     await page.waitForLoadState('networkidle');
@@ -366,21 +411,29 @@ for (const theme of ['dark', 'light'] as const) {
     await page.getByRole('button', { name: /^Both/ }).click();
     await expect(providersStep.locator('button[role="switch"]:visible').first()).toBeVisible();
 
-    await sweepToggles(
+    const providersNames = await sweepToggles(
       page,
       providersStep.locator('button[role="switch"]:visible'),
       `${theme} theme, wizard Providers step (toggle.html)`,
     );
+    expect(providersNames.slice().sort(), 'expected exactly the 5 "Both" provider toggles').toEqual([
+      'Enable BinSearch',
+      'Enable Jackett / TorrentPotato',
+      'Enable Newznab Indexers',
+      'Enable ThePirateBay',
+      'Enable YTS',
+    ]);
 
     // Providers -> Downloader. Black Hole's own enabler is another
     // toggle.html instance, on the same kind of tinted panel.
     await page.getByRole('button', { name: 'Continue' }).click();
     await expect(page.getByRole('heading', { name: 'Download Clients' })).toBeVisible();
 
-    await sweepToggles(
+    const downloaderNames = await sweepToggles(
       page,
       downloaderStep.locator('button[role="switch"]:visible'),
       `${theme} theme, wizard Download Clients step (toggle.html)`,
     );
+    expect(downloaderNames, 'expected exactly the one Black Hole toggle on this step').toEqual(['Enable Black Hole']);
   });
 }
