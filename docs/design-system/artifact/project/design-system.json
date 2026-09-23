@@ -49,8 +49,8 @@
   },
   "lastChange": {
     "by": "bassings",
-    "at": "2026-09-23T08:04:58Z",
-    "via": "GitHub \u00b7 bassings/CouchPotatoServer@3d4a096",
-    "note": "Extracted from couchpotato/ui/templates (base.html + partials): 29 colours x 2 themes, 9 type styles, 10 components, 3 logo files."
+    "at": "2026-09-23T16:34:00Z",
+    "via": "GitHub \u00b7 bassings/CouchPotatoServer@1e64a27",
+    "note": "Toggle re-synced to the WCAG 1.4.11 fix: cp-switch-off/on/knob-on tokens, Toggle guidelines and preview CSS."
   }
 }
