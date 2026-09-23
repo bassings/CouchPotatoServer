@@ -211,11 +211,17 @@ const DOWNLOAD_CLIENTS_STEP_TOGGLE_NAMES = ['Enable Black Hole'];
  * Wait, web-first, for EACH of `names` to be visible within `scope` before
  * returning. A reveal (an `x-show`/`x-transition` step change, an enabler
  * opening its card) does not make every one of its toggles visible in the
- * same tick -- measured directly: waiting only for `.first()` to appear let
- * `sweepToggles` snapshot `:visible` while YTS and Jackett were still
- * mid-transition, silently sweeping 3 of 5 Providers-step toggles instead
- * of 5. Waiting on every expected NAME, not just "at least one control",
- * is what actually proves the reveal finished.
+ * same tick -- waiting only for `.first()` to appear let `sweepToggles`
+ * snapshot `:visible` while some were still mid-transition, silently
+ * sweeping fewer toggles than the step actually renders. (A reviewer's
+ * probe, sampled every 15ms after the "Both" click, found the specific
+ * shape on the Providers step: the wizard's default `searchType` is
+ * `'torrents'` -- wizard.html:962 -- so ThePirateBay, YTS and Jackett are
+ * already visible when "Both" is clicked; Newznab Indexers and BinSearch,
+ * the USENET section revealed by that same click, are the ones still
+ * arriving -- n=3 at 0ms, n=5 by 16ms, settled by 184ms.) Waiting on every
+ * expected NAME, not just "at least one control", is what actually proves
+ * the reveal finished, regardless of which control happens to lag.
  */
 async function waitForToggleNames(scope: Locator, names: string[]): Promise<void> {
   for (const name of names) {
@@ -394,12 +400,21 @@ for (const theme of ['dark', 'light'] as const) {
       newznabCard.locator('[role="switch"]:visible'),
       `${theme} theme, Newznab card (provider_card.html enabler + field_types.html row)`,
     );
-    expect(newznabNames, 'expected the provider_card.html enabler among the measured toggles')
-      .toContain('Enable Newznab');
-    expect(
-      newznabNames,
-      `"+ Add" must produce a real, measured row -- expected "${expectedNewRowName}" among ${JSON.stringify(newznabNames)}`,
-    ).toContain(expectedNewRowName);
+    // The exact SET, not `toContain` on the enabler and the new row alone:
+    // `sweepToggles`' `if (!isVisible) continue` silently drops any toggle
+    // that never becomes visible, so a `toContain` pair cannot tell "the
+    // enabler plus the new row, plus every seeded row" apart from "the
+    // enabler plus the new row, and nothing else" -- a regression that
+    // hides even one seeded row (e.g. row 1 alone) would pass both
+    // `toContain` checks unnoticed. rowCountBefore (enabler + N seeded
+    // rows, counted before "+ Add") is exactly the new row's 1-based
+    // ordinal, so rows 1..rowCountBefore is the complete post-add set.
+    const expectedNewznabNames = [
+      'Enable Newznab',
+      ...Array.from({ length: rowCountBefore }, (_, i) => `Enable row ${i + 1}`),
+    ];
+    expect(newznabNames.slice().sort(), `expected exactly ${JSON.stringify(expectedNewznabNames)}`)
+      .toEqual(expectedNewznabNames.slice().sort());
   });
 }
 
