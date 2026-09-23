@@ -376,7 +376,7 @@ for (const theme of ['dark', 'light'] as const) {
     // Count rows BEFORE the click, so what gets asserted below is that the
     // click produced a row named "Enable row N+1" -- not just "a row exists",
     // which the seeded rows alone would satisfy even if "+ Add" were a no-op.
-    // (Presence of N+1 only; it does not check that exactly one row was added.)
+    // The exact-set assertion below also fails if the click adds more than one row.
     const rowCountBefore = await newznabCard.locator('[role="switch"]').count();
     // rowCountBefore counted the enabler too, so the new row's 1-based
     // ordinal is rowCountBefore itself (enabler + rows 1..N before, then
