@@ -2,7 +2,10 @@
    CouchPotato Design System — theme tokens
    Drop into the htmx UI (load after the Tailwind CDN + tailwind.config).
    Dark is default; add class="light" on <html> to switch. Persist to
-   localStorage['cp-theme']. Mirrors couchpotato/ui/templates/base.html.
+   localStorage['cp-theme']. Mirrors the theme tokens and shared a11y
+   overrides in couchpotato/ui/templates/base.html (component-scoped rules,
+   e.g. data-testid selectors, stay in base.html). Hand-kept, not
+   machine-checked; base.html wins on any difference.
    ========================================================================== */
 
 :root {
@@ -82,7 +85,8 @@
 :focus:not(:focus-visible) { outline: none; }
 
 /* Toggle switch, WCAG 1.4.11 (keyed on ARIA state; mirrors base.html).
-   Off track 3.74:1+ on every surface; knob-vs-track 3:1+ in every state. */
+   Track and knob clear 3:1 in every state; measured ratios live in
+   tests/e2e/toggle-switch-contrast.a11y.spec.ts. */
 [role=switch][aria-checked=false] { background-color: #71717a; }
 :root.light [role=switch][aria-checked=true] { background-color: #0e7490; }
 :root:not(.light) [role=switch][aria-checked=true] > span { background-color: #0d0d0d; }
