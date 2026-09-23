@@ -67,7 +67,7 @@ Restrained and fast: 150ms colour/hover transitions, a 200ms `fade-in` (opacity 
 
 ## Not synced
 
-- Source docs `docs/design-system/README.md` lag `base.html` in three places, and this system follows the code: primary buttons use black text (`cp-on-accent`), not `cp-bg`; light theme darkens status text (`cp-*-text`) and the focus ring (`cp-focus-ring`).
+- Values follow `couchpotato/ui/templates/base.html`. Where the repo's handoff docs and the code disagree, the code wins.
 - Previews are static renditions styled by `components/bundle.css`, a hand-written transcription of the Tailwind classes used in the templates; there is no JS component library to bundle.
 - Heroicons path data and the 30-glyph legacy mapping stay in the repo's design-system README; not copied as icon assets.
 - Inter is hosted by Google Fonts, so no font files are stored here.

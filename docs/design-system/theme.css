@@ -81,6 +81,12 @@
 :root:not(.light) :focus-visible { outline-color: #35c5f4; } /* beats Tailwind focus:outline-none; not :root.dark */
 :focus:not(:focus-visible) { outline: none; }
 
+/* Toggle switch, WCAG 1.4.11 (keyed on ARIA state; mirrors base.html).
+   Off track 3.74:1+ on every surface; knob-vs-track 3:1+ in every state. */
+[role=switch][aria-checked=false] { background-color: #71717a; }
+:root.light [role=switch][aria-checked=true] { background-color: #0e7490; }
+:root:not(.light) [role=switch][aria-checked=true] > span { background-color: #0d0d0d; }
+
 .skip-link { position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden; z-index: 9999; }
 .skip-link:focus { position: fixed; top: 1rem; left: 1rem; width: auto; height: auto; padding: 0.75rem 1.5rem;
   background: #35c5f4; color: #0d0d0d; font-weight: 600; border-radius: 0.5rem; text-decoration: none; }

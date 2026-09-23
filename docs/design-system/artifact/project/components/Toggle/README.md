@@ -1,6 +1,6 @@
 # Toggle
 
-The one sanctioned switch: a 32×16 track with a 12px white knob, used for every on/off setting.
+The one sanctioned switch: a 32×16 track with a 12px knob, used for every on/off setting.
 
 ## Use
 - Always render via `partials/settings/toggle.html` (`toggle_click`, `toggle_model`, `toggle_label` or `toggle_label_expr`); never hand-roll it.
