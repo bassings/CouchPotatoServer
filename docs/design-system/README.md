@@ -55,7 +55,7 @@ Dark is the default; `<html class="light">` switches the theme. Persist the choi
 **Accent (brand):** `#35c5f4` cyan. Hover `#4dd4ff`.
 **Accent-as-text contrast rule:** cyan text fails AA on light tints, so in light mode `.text-cp-accent` is overridden to **`#0e7490`** (same hue, sufficient contrast). Keep this override.
 
-**Semantic (fixed across themes):** success `#3ddc84` · warning `#e5a00d` · danger `#f04848`.
+**Semantic (fixed fills across themes):** success `#3ddc84` · warning `#e5a00d` · danger `#f04848`. **As text in light mode** they fail AA on near-white (1.78–3.67:1), so `base.html` darkens `.text-cp-success/-warning/-danger/-blue:not(.on-dark)` to `#047857` / `#b45309` / `#b91c1c` / `#0e7490`; badges over poster art or `from-black/90` add `on-dark` to keep the bright colour.
 
 **Translucent layers** (borders/fills, used heavily as `white/[0.0x]` in dark): in light mode invert to black-based — e.g. `border-white/[0.04]` → `rgba(0,0,0,0.08)`, `bg-white/[0.03]` → `rgba(0,0,0,0.04)`. These overrides already exist in `base.html`.
 
@@ -125,7 +125,7 @@ The two glyphs with no Heroicon (`sunglasses`, `coffee`) should be drawn fresh a
 All examples use existing Tailwind/`cp.*` tokens. Hover/focus states are required.
 
 ### Buttons
-- **Primary:** `bg-cp-accent text-cp-bg rounded-lg px-4 py-2 text-sm font-semibold hover:bg-cp-accentHover`
+- **Primary:** `bg-cp-accent text-black rounded-lg px-4 py-2 text-sm font-semibold hover:bg-cp-accentHover` — text is `text-black` (10.4:1), never `text-cp-bg`, which turns `#f5f5f7` in light (1.9:1 on the accent).
 - **Ghost (secondary):** `border border-cp-border text-cp-text rounded-lg px-4 py-2 hover:bg-white/[0.03]`
 - **Danger:** `border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10`
 
@@ -134,7 +134,7 @@ All examples use existing Tailwind/`cp.*` tokens. Hover/focus states are require
 
 **10 field types** (from `partials/settings/field_types.html`): `string` · `int`/`float` (number) · `password` · `dropdown` (select) · `bool` (checkbox, `text-cp-accent` accent) · `directory` (input + Browse button → folder modal) · `directories` (repeatable rows with remove + "+ Add folder") · `combined` (multi-column rows: a `use` toggle switch + text inputs, headers, "+ Add") · `button` (async action: spinner + inline success/error result).
 
-**Toggle switch:** `w-8 h-4 rounded-full` track (`bg-cp-accent` on / `bg-white/[0.08]` off), `role="switch" :aria-checked`, knob `w-3 h-3 bg-white` translating `translate-x-4` / `translate-x-0.5`, plus an `aria-label` describing what the toggle controls. This is the **only sanctioned toggle size** — do not introduce a larger/smaller variant. Render it via the shared partial `couchpotato/ui/templates/partials/settings/toggle.html` rather than hand-rolling the markup.
+**Toggle switch:** `w-8 h-4 rounded-full` track (`bg-cp-accent` on / `bg-white/[0.08]` off), `role="switch" :aria-checked`, knob `w-3 h-3 bg-white` translating `translate-x-4` / `translate-x-0.5`, plus an `aria-label` describing what the toggle controls. This is the **only sanctioned toggle size** — do not introduce a larger/smaller variant. Render it via the shared partial `couchpotato/ui/templates/partials/settings/toggle.html` rather than hand-rolling the markup. **Colours are set by `base.html` rules keyed on `[role=switch][aria-checked]`** (WCAG 1.4.11, both themes): off track `#71717a`; on track `#35c5f4` with a `#0d0d0d` knob in dark, `#0e7490` with a white knob in light. Keep `role="switch"` and a string `aria-checked` on every instance or the colours fall back to the failing Tailwind ones.
 
 **Settings row layout:** label + hint on the left, control right-aligned; rows divided by `border-white/[0.04]`.
 
@@ -175,7 +175,7 @@ Restrained and fast. `fade-in` (opacity 0→1, translateY 4px→0, 0.2s ease-out
 
 ## Accessibility
 Built-in, with a Playwright + axe suite. Rules every component follows:
-- `:focus-visible` → `2px solid #35c5f4`, `outline-offset: 2px`; suppress on mouse (`:focus:not(:focus-visible)`).
+- `:focus-visible` → `2px solid #35c5f4` (dark, scoped `:root:not(.light)`) / `#0e7490` (light: `#35c5f4` is only 1.85:1 on `--cp-bg`), `outline-offset: 2px`; suppress on mouse (`:focus:not(:focus-visible)`).
 - **Skip link** ("Skip to main content") — off-screen until focused, first tab stop.
 - `aria-current` on active nav; `aria-label` on every icon-only button; `aria-hidden` on decorative SVGs.
 - `role` + `aria-live` on toasts/status regions; `aria-modal` + focus trap on dialogs; `sr-only` for visually-hidden labels.
@@ -190,6 +190,7 @@ Built-in, with a Playwright + axe suite. Rules every component follows:
 - `screenshots/` — annotated PNGs of each section (dark), plus `13-colour-light.png` and `14-forms-light.png` for the light theme: `01-overview` · `02-colour` · `03-typography` · `04-icons` · `05-components` · `06-forms` · `07-modals` · `08-states` · `09-surfaces` · `10-motion` · `11-accessibility` · `12-migration`.
 - `couchpotato-design-system.dc.html` — static design-canvas export (tokens, components, and the **icon path data** in its `iconGroups` array). Reference/data only — not a browsable page (see "About the Design Files"); this README is authoritative.
 - `couchpotato-design-system-classic.dc.html` — the retired red/Open Sans/Lobster system, for historical reference only.
+- `artifact/` — source of the published Design System artefact (tokens.json, brand book, component guidelines and previews). Extracted from the live templates; see `artifact/README.md`.
 
 ### Source files in the repo to align with
 - `couchpotato/ui/templates/base.html` — Tailwind config, CSS variables, sidebar/chrome, toasts, theme toggle, a11y scaffolding.

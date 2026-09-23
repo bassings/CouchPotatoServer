@@ -2,7 +2,10 @@
    CouchPotato Design System — theme tokens
    Drop into the htmx UI (load after the Tailwind CDN + tailwind.config).
    Dark is default; add class="light" on <html> to switch. Persist to
-   localStorage['cp-theme']. Mirrors couchpotato/ui/templates/base.html.
+   localStorage['cp-theme']. Mirrors the theme tokens and shared a11y
+   overrides in couchpotato/ui/templates/base.html (component-scoped rules,
+   e.g. data-testid selectors, stay in base.html). Hand-kept, not
+   machine-checked; base.html wins on any difference.
    ========================================================================== */
 
 :root {
@@ -30,6 +33,14 @@
 
 /* Light-mode contrast + translucent-layer overrides ------------------------ */
 :root.light .text-cp-accent { color: #0e7490; }            /* AA on light tints */
+:root.light .text-cp-success:not(.on-dark) { color: #047857; } /* 5.48:1 on #fff */
+:root.light .text-cp-warning:not(.on-dark) { color: #b45309; } /* 5.02:1 */
+:root.light .text-cp-danger:not(.on-dark)  { color: #b91c1c; } /* 6.47:1 */
+:root.light .text-cp-blue:not(.on-dark)    { color: #0e7490; } /* 5.35:1 */
+/* .on-dark opts out: badges over poster art / from-black/90 keep the bright token. */
+
+/* Toast foreground, theme-independent (text-white is repainted in light). */
+.cp-toast-fg { color: #ffffff; }
 :root.light .bg-black\/80   { background-color: rgba(255,255,255,0.9); }
 :root.light .bg-black\/60   { background-color: rgba(255,255,255,0.8); }
 :root.light .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.04); }
@@ -69,7 +80,16 @@
 
 /* Accessibility ------------------------------------------------------------ */
 :focus-visible { outline: 2px solid #35c5f4; outline-offset: 2px; }
+:root.light :focus-visible { outline-color: #0e7490; }      /* 1.4.11: 4.92:1 on --cp-bg */
+:root:not(.light) :focus-visible { outline-color: #35c5f4; } /* beats Tailwind focus:outline-none; not :root.dark */
 :focus:not(:focus-visible) { outline: none; }
+
+/* Toggle switch, WCAG 1.4.11 (keyed on ARIA state; mirrors base.html).
+   Track and knob clear 3:1 in every state; measured ratios live in
+   tests/e2e/toggle-switch-contrast.a11y.spec.ts. */
+[role=switch][aria-checked=false] { background-color: #71717a; }
+:root.light [role=switch][aria-checked=true] { background-color: #0e7490; }
+:root:not(.light) [role=switch][aria-checked=true] > span { background-color: #0d0d0d; }
 
 .skip-link { position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden; z-index: 9999; }
 .skip-link:focus { position: fixed; top: 1rem; left: 1rem; width: auto; height: auto; padding: 0.75rem 1.5rem;
