@@ -13,8 +13,8 @@ updates:
       include: "scope"
     ignore:
       # guessit 4.x requires rebulk>=6, but the subtitle stack caps rebulk<4:
-      # subliminal (hard dep) -> knowit -> trakit==0.2.5 (latest) requires
-      # rebulk<4. trakit and knowit are unmaintained (~1yr, no rebulk-6 work),
+      # subliminal (hard dep) -> knowit -> trakit requires rebulk<4. Although
+      # trakit is maintained again, 0.4.0 still caps rebulk below 4,
       # and the whole ecosystem — including Bazarr — is pinned at guessit 3.8.0 /
       # rebulk 3.2.0 for the same reason. We don't even use knowit/trakit (the
       # metadata refiner is never invoked). Ignoring the major bumps so they stop
@@ -59,4 +59,4 @@ updates:
       - "bassings"
     commit-message:
       prefix: "docker"
-      include: "scope" 
+      include: "scope"
