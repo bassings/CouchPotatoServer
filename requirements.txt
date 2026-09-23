@@ -43,7 +43,7 @@ srt==3.5.3
 tomlkit==0.15.1
 click-option-group==0.5.9
 defusedxml==0.7.1
-trakit==0.2.5
+trakit==0.4.0
 decorator==5.3.1
 # 4.5 is a SECURITY fix, not a routine minor: GHSA-94vx-95fq-wwvp (High),
 # unbounded read with comments, published 2026-08-02. No CVE was assigned,
