@@ -334,10 +334,10 @@ for (const theme of ['dark', 'light'] as const) {
     // path ever renders differently from the seeded ones.
     const addRowBtn = newznabCard.getByRole('button', { name: 'Add row' });
     await expect(addRowBtn, 'the "+ Add" row button never rendered under Newznab').toBeVisible();
-    // Count rows BEFORE the click, so the click's actual effect -- one more
-    // row than existed already, specifically named "Enable row N+1" -- is
-    // what gets asserted below, not just "a row exists" (which the seeded
-    // rows alone would already satisfy even if "+ Add" were a no-op).
+    // Count rows BEFORE the click, so what gets asserted below is that the
+    // click produced a row named "Enable row N+1" -- not just "a row exists",
+    // which the seeded rows alone would satisfy even if "+ Add" were a no-op.
+    // (Presence of N+1 only; it does not check that exactly one row was added.)
     const rowCountBefore = await newznabCard.locator('[role="switch"]').count();
     await addRowBtn.click();
     await expectVisualTransitionsToSettle(page, `${theme} theme, Newznab row added`);

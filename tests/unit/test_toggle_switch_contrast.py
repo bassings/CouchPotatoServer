@@ -102,21 +102,11 @@ _BACKGROUND_PROPERTY_RE = re.compile(r'^(background|background-color)\s*:\s*(.*)
 
 
 def _rule_colour(selector: str):
-    """The single top-level rule matching `selector` exactly, asserting
-    there is exactly one and it sits at depth 0, then return a plain
-    `#rrggbb` literal for its background declaration's value.
-
-    This does not decide which declaration wins if a rule body has more
-    than one, does not resolve `rgb()`/8-digit hex/multi-token shorthand,
-    and does not know about `!important` -- that is cascade and value
-    semantics, and static analysis stopped modelling those (round 4
-    review: a "count exactly one 6-digit-hex declaration" version of this
-    check still missed `background:#333`, `rgb()`, `BACKGROUND-COLOR:`,
-    8-digit hex and multi-token shorthand, all overriding silently).
-    This function's only job is to supply a literal for the contrast
-    arithmetic below; a value that is not that literal fails loudly
-    instead of being parsed further, and cascade correctness is
-    `tests/e2e/toggle-switch-contrast.a11y.spec.ts`'s job.
+    """The single top-level rule matching `selector` exactly (asserted to
+    be exactly one, at depth 0), returning the plain `#rrggbb` value of its
+    FIRST background/background-color declaration for the contrast
+    arithmetic. Only that first declaration is checked; which declaration
+    the browser actually applies is the E2E spec's job.
     """
     rules = _all_style_rules()
     matches = [r for r in rules if r[0] == selector]
