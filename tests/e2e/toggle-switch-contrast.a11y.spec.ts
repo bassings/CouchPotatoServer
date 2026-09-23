@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { expectVisualTransitionsToSettle } from './helpers';
 
 /**
  * WCAG 2.2 AA 1.4.11 (non-text contrast) for the settings toggle switch.
@@ -61,13 +62,34 @@ async function measureToggle(toggle: import('@playwright/test').Locator) {
       };
       return 0.2126 * chan(c.r) + 0.7152 * chan(c.g) + 0.0722 * chan(c.b);
     };
-    const contrast = (fgStr: string, bgStr: string) => {
-      const fg = parseColor(fgStr);
-      const bg = parseColor(bgStr);
-      if (!fg || !bg) return null;
+    const contrastOf = (fg: { r: number; g: number; b: number }, bg: { r: number; g: number; b: number }) => {
       const l1 = luminance(fg);
       const l2 = luminance(bg);
       return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+    };
+    /**
+     * Alpha-composite a possibly-translucent computed colour over an opaque
+     * background, returning the colour actually visible on screen.
+     *
+     * Reading the raw channel values and ignoring alpha (an earlier version
+     * of this helper did exactly that) treats `rgba(255, 255, 255, 0.08)` --
+     * the OFF track's colour if its light-theme override is ever missing or
+     * mis-scoped -- as solid opaque white. Against a dark surface that
+     * reports a falsely huge ratio instead of the ~1.3:1 the pixel actually
+     * shows, so a real regression there would pass silently.
+     */
+    const compositeOver = (
+      colorStr: string,
+      bg: { r: number; g: number; b: number },
+    ): { r: number; g: number; b: number } | null => {
+      const c = parseColor(colorStr);
+      if (!c) return null;
+      if (c.a >= 1) return { r: c.r, g: c.g, b: c.b };
+      return {
+        r: c.a * c.r + (1 - c.a) * bg.r,
+        g: c.a * c.g + (1 - c.a) * bg.g,
+        b: c.a * c.b + (1 - c.a) * bg.b,
+      };
     };
 
     const knob = el.querySelector(':scope > span') as HTMLElement | null;
@@ -107,10 +129,17 @@ async function measureToggle(toggle: import('@playwright/test').Locator) {
             b: c.a * c.b + (1 - c.a) * surfaceRgb.b,
           };
     }
-    const surfaceColor = `rgb(${surfaceRgb!.r}, ${surfaceRgb!.g}, ${surfaceRgb!.b})`;
+    const surface = surfaceRgb!;
+    const surfaceColor = `rgb(${surface.r}, ${surface.g}, ${surface.b})`;
 
     const trackColor = getComputedStyle(el).backgroundColor;
     const knobColor = getComputedStyle(knob).backgroundColor;
+
+    // Composited BEFORE both ratios: the track over the real surface, then
+    // the knob over that composited (not raw) track -- so a translucent
+    // track never gets read as if it were opaque at either step.
+    const effectiveTrack = compositeOver(trackColor, surface);
+    const effectiveKnob = effectiveTrack ? compositeOver(knobColor, effectiveTrack) : null;
 
     return {
       ariaChecked: el.getAttribute('aria-checked'),
@@ -118,8 +147,8 @@ async function measureToggle(toggle: import('@playwright/test').Locator) {
       trackColor,
       knobColor,
       surfaceColor,
-      trackVsSurface: contrast(trackColor, surfaceColor),
-      knobVsTrack: contrast(knobColor, trackColor),
+      trackVsSurface: effectiveTrack ? contrastOf(effectiveTrack, surface) : null,
+      knobVsTrack: effectiveTrack && effectiveKnob ? contrastOf(effectiveKnob, effectiveTrack) : null,
     };
   });
 }
@@ -170,6 +199,12 @@ for (const theme of ['dark', 'light'] as const) {
 
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    // The track carries `transition-colors` (150ms). Measuring immediately
+    // reads a mid-transition frame -- reviewers caught this producing
+    // rgb(68..111, 114..128, 126..143), neither the OFF nor the ON colour --
+    // which let a broken ON-state rule pass by accident against whatever
+    // that transient shade happened to contrast with.
+    await expectVisualTransitionsToSettle(page, `${theme} theme, header toggle, post-click`);
     const after = await measureToggle(toggle);
     assertMeasurement(`${theme} theme, header toggle, ON`, after);
   });
@@ -206,6 +241,9 @@ for (const theme of ['dark', 'light'] as const) {
 
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-checked', firstState === 'true' ? 'false' : 'true');
+    // See the header toggle test above: without this, the track is read
+    // mid `transition-colors` rather than at its settled colour.
+    await expectVisualTransitionsToSettle(page, `${theme} theme, provider card toggle, post-click`);
     const after = await measureToggle(toggle);
     assertMeasurement(`${theme} theme, provider card toggle, ${firstState === 'true' ? 'OFF' : 'ON'} (after click)`, after);
   });
