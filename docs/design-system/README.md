@@ -55,7 +55,7 @@ Dark is the default; `<html class="light">` switches the theme. Persist the choi
 **Accent (brand):** `#35c5f4` cyan. Hover `#4dd4ff`.
 **Accent-as-text contrast rule:** cyan text fails AA on light tints, so in light mode `.text-cp-accent` is overridden to **`#0e7490`** (same hue, sufficient contrast). Keep this override.
 
-**Semantic (fixed across themes):** success `#3ddc84` · warning `#e5a00d` · danger `#f04848`.
+**Semantic (fixed fills across themes):** success `#3ddc84` · warning `#e5a00d` · danger `#f04848`. **As text in light mode** they fail AA on near-white (1.78–3.67:1), so `base.html` darkens `.text-cp-success/-warning/-danger/-blue:not(.on-dark)` to `#047857` / `#b45309` / `#b91c1c` / `#0e7490`; badges over poster art or `from-black/90` add `on-dark` to keep the bright colour.
 
 **Translucent layers** (borders/fills, used heavily as `white/[0.0x]` in dark): in light mode invert to black-based — e.g. `border-white/[0.04]` → `rgba(0,0,0,0.08)`, `bg-white/[0.03]` → `rgba(0,0,0,0.04)`. These overrides already exist in `base.html`.
 
@@ -125,7 +125,7 @@ The two glyphs with no Heroicon (`sunglasses`, `coffee`) should be drawn fresh a
 All examples use existing Tailwind/`cp.*` tokens. Hover/focus states are required.
 
 ### Buttons
-- **Primary:** `bg-cp-accent text-cp-bg rounded-lg px-4 py-2 text-sm font-semibold hover:bg-cp-accentHover`
+- **Primary:** `bg-cp-accent text-black rounded-lg px-4 py-2 text-sm font-semibold hover:bg-cp-accentHover` — text is `text-black` (10.4:1), never `text-cp-bg`, which turns `#f5f5f7` in light (1.9:1 on the accent).
 - **Ghost (secondary):** `border border-cp-border text-cp-text rounded-lg px-4 py-2 hover:bg-white/[0.03]`
 - **Danger:** `border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10`
 
@@ -175,7 +175,7 @@ Restrained and fast. `fade-in` (opacity 0→1, translateY 4px→0, 0.2s ease-out
 
 ## Accessibility
 Built-in, with a Playwright + axe suite. Rules every component follows:
-- `:focus-visible` → `2px solid #35c5f4`, `outline-offset: 2px`; suppress on mouse (`:focus:not(:focus-visible)`).
+- `:focus-visible` → `2px solid #35c5f4` (dark, scoped `:root:not(.light)`) / `#0e7490` (light: `#35c5f4` is only 1.85:1 on `--cp-bg`), `outline-offset: 2px`; suppress on mouse (`:focus:not(:focus-visible)`).
 - **Skip link** ("Skip to main content") — off-screen until focused, first tab stop.
 - `aria-current` on active nav; `aria-label` on every icon-only button; `aria-hidden` on decorative SVGs.
 - `role` + `aria-live` on toasts/status regions; `aria-modal` + focus trap on dialogs; `sr-only` for visually-hidden labels.
