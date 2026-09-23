@@ -32,11 +32,10 @@
 .cp-help summary { color: var(--cp-accent-text); cursor: pointer; }
 
 /* Toggle */
-.cp-toggle { position: relative; width: 32px; height: 16px; border-radius: var(--radius-full); border: 0; padding: 0; cursor: pointer; background: rgba(255,255,255,0.08); transition: background-color .15s; flex-shrink: 0; }
-[data-theme="light"] .cp-toggle { background: rgba(0,0,0,0.12); }
-.cp-toggle[aria-checked="true"] { background: var(--cp-accent); }
+.cp-toggle { position: relative; width: 32px; height: 16px; border-radius: var(--radius-full); border: 0; padding: 0; cursor: pointer; background: var(--cp-switch-off); transition: background-color .15s; flex-shrink: 0; }
+.cp-toggle[aria-checked="true"] { background: var(--cp-switch-on); }
 .cp-toggle > span { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: var(--radius-full); background: #ffffff; transition: transform .15s; }
-.cp-toggle[aria-checked="true"] > span { transform: translateX(14px); }
+.cp-toggle[aria-checked="true"] > span { transform: translateX(14px); background: var(--cp-switch-knob-on); }
 .cp-setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--cp-hairline); max-width: 420px; }
 
 /* Badges */

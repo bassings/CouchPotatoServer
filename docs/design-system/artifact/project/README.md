@@ -63,7 +63,7 @@ Restrained and fast: 150ms colour/hover transitions, a 200ms `fade-in` (opacity 
 - A skip link "Skip to main content" is the first tab stop, off-screen until focused (`cp-accent` fill, `cp-on-accent` text, `radius-lg`).
 - `aria-current="page"` on the active nav item; `role="switch"` + `aria-checked` + `aria-label` on toggles; `role="dialog" aria-modal="true"` with Escape, scrim click and a focus trap on modals.
 - Toast nodes are `aria-hidden`; announcements go through two persistent `sr-only` live regions (polite, and assertive for errors), cleared then set so repeated messages are re-announced.
-- Known source gaps kept exact: `cp-border` is 1.17:1 on `cp-bg` and input borders (`cp-hairline-strong`) are fainter still, so a field's boundary relies on its fill and label, not its outline. The toggle's white knob on `cp-accent` is 2.0:1; the switch state is carried by knob position and `aria-checked`.
+- Known source gaps kept exact: `cp-border` is 1.17:1 on `cp-bg` and input borders (`cp-hairline-strong`) are fainter still, so a field's boundary relies on its fill and label, not its outline.
 
 ## Not synced
 
