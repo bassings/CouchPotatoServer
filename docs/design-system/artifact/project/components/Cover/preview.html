@@ -1,0 +1,46 @@
+<!-- @dsCard height=288 -->
+<!doctype html><html><head><meta charset="utf-8">
+<style>
+  body { margin:0; background:var(--cp-bg); font-family:var(--font-sans); }
+  .cover { position:relative; width:960px; height:288px; overflow:hidden; background:var(--cp-bg); }
+  svg { position:absolute; inset:0; }
+  .accent { fill:var(--cp-accent); } .ink { fill:var(--cp-text); }
+  .success { fill:var(--cp-success); } .warning { fill:var(--cp-warning); }
+  .tint { fill:var(--cp-poster-hover); } .tile { fill:var(--cp-border); }
+  .r-md { rx:var(--radius-md); } .r-xl { rx:var(--radius-xl); }
+  .name { position:absolute; left:40px; bottom:40px; max-width:440px; }
+  .name h1 { margin:0; font-size:64px; line-height:.95; font-weight:600; letter-spacing:-0.03em; color:var(--cp-text); }
+  .name p { margin:12px 0 0; font-size:13px; color:var(--cp-muted); letter-spacing:-0.01em; }
+</style></head><body>
+<div class="cover">
+  <svg width="960" height="288" viewBox="0 0 960 288" aria-hidden="true">
+    <!-- blocks: cp-accent slab 3x4 posters (136x264), cp-text block 2x2 (88x128), cp-success + cp-warning single posters, two cp-poster-hover tints
+         arrangement: a poster wall from x=504, 9 columns x 4 rows, some tiles merged into slabs like a library grid with a selection
+         pattern: geometric/modular dense UI -> tiles cut by radius tokens; the poster grid is what CouchPotato shows on every screen
+         scales: tile 40x60 (2:3 aspect-[2/3]), gap 8px (space-2), radius-md tiles, radius-xl slabs -->
+    <rect class="accent r-xl" x="600" y="12" width="136" height="264"/>
+    <rect class="ink r-xl" x="792" y="80" width="88" height="128"/>
+    <rect class="tile r-md" x="504" y="12" width="40" height="60"/>
+    <rect class="tile r-md" x="552" y="12" width="40" height="60"/>
+    <rect class="tile r-md" x="744" y="12" width="40" height="60"/>
+    <rect class="tile r-md" x="792" y="12" width="40" height="60"/>
+    <rect class="tile r-md" x="840" y="12" width="40" height="60"/>
+    <rect class="warning r-md" x="888" y="12" width="40" height="60"/>
+    <rect class="tile r-md" x="504" y="80" width="40" height="60"/>
+    <rect class="tile r-md" x="552" y="80" width="40" height="60"/>
+    <rect class="tint r-md" x="744" y="80" width="40" height="60"/>
+    <rect class="tile r-md" x="888" y="80" width="40" height="60"/>
+    <rect class="tint r-md" x="504" y="148" width="40" height="60"/>
+    <rect class="tile r-md" x="552" y="148" width="40" height="60"/>
+    <rect class="tile r-md" x="744" y="148" width="40" height="60"/>
+    <rect class="tile r-md" x="888" y="148" width="40" height="60"/>
+    <rect class="tile r-md" x="504" y="216" width="40" height="60"/>
+    <rect class="tile r-md" x="552" y="216" width="40" height="60"/>
+    <rect class="success r-md" x="744" y="216" width="40" height="60"/>
+    <rect class="tile r-md" x="792" y="216" width="40" height="60"/>
+    <rect class="tile r-md" x="840" y="216" width="40" height="60"/>
+    <rect class="tile r-md" x="888" y="216" width="40" height="60"/>
+  </svg>
+  <div class="name"><h1>CouchPotato</h1><p>Your movie library, quietly on autopilot.</p></div>
+</div>
+</body></html>

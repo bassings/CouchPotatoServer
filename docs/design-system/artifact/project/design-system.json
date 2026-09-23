@@ -1,0 +1,56 @@
+{
+  "v": 3,
+  "layout": "files",
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-09-23T08:04:58Z"
+  },
+  "title": "CouchPotato",
+  "namespace": "CouchPotato",
+  "libraries": [],
+  "sections": {},
+  "groups": [
+    "Logos"
+  ],
+  "assetGroups": {
+    "Logos": {
+      "name": "Logos",
+      "tile": "l",
+      "order": [
+        "couch.png",
+        "icon-512.png",
+        "safari.svg"
+      ],
+      "files": {
+        "couch.png": {
+          "name": "couch.png",
+          "blob": "e6a9aa15f979c9a5509bb765e19fd15c",
+          "size": 59047,
+          "type": "image/png"
+        },
+        "icon-512.png": {
+          "name": "icon-512.png",
+          "blob": "f77ac1045928f90f306652804da0a703",
+          "size": 79270,
+          "type": "image/png"
+        },
+        "safari.svg": {
+          "name": "safari.svg",
+          "blob": "cfafa3e0b1ab10d3dd900ff3a1d5cc08",
+          "size": 1309,
+          "type": "image/svg+xml"
+        }
+      }
+    }
+  },
+  "blobs": {},
+  "docs": {
+    "sections": []
+  },
+  "lastChange": {
+    "by": "bassings",
+    "at": "2026-09-23T08:04:58Z",
+    "via": "GitHub \u00b7 bassings/CouchPotatoServer@3d4a096",
+    "note": "Extracted from couchpotato/ui/templates (base.html + partials): 29 colours x 2 themes, 9 type styles, 10 components, 3 logo files."
+  }
+}

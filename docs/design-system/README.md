@@ -190,6 +190,7 @@ Built-in, with a Playwright + axe suite. Rules every component follows:
 - `screenshots/` — annotated PNGs of each section (dark), plus `13-colour-light.png` and `14-forms-light.png` for the light theme: `01-overview` · `02-colour` · `03-typography` · `04-icons` · `05-components` · `06-forms` · `07-modals` · `08-states` · `09-surfaces` · `10-motion` · `11-accessibility` · `12-migration`.
 - `couchpotato-design-system.dc.html` — static design-canvas export (tokens, components, and the **icon path data** in its `iconGroups` array). Reference/data only — not a browsable page (see "About the Design Files"); this README is authoritative.
 - `couchpotato-design-system-classic.dc.html` — the retired red/Open Sans/Lobster system, for historical reference only.
+- `artifact/` — source of the published Design System artefact (tokens.json, brand book, component guidelines and previews). Extracted from the live templates; see `artifact/README.md`.
 
 ### Source files in the repo to align with
 - `couchpotato/ui/templates/base.html` — Tailwind config, CSS variables, sidebar/chrome, toasts, theme toggle, a11y scaffolding.
