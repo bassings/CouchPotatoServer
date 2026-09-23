@@ -1,33 +1,10 @@
 """Structural + arithmetic checks for the settings toggle switch's WCAG 2.2 AA
 1.4.11 (non-text contrast) fix in `base.html`.
 
-REFRAME (round 2 review): a prior version of this file tried to model CSS
-scope and the cascade with regexes -- first an unanchored `re.search` that
-let a rule silently scoped under `:root.light` pass as if it applied
-everywhere, then a "fixed" fullmatch version that still could not tell a
-rule that EXISTS from one that actually WINS the cascade, or notice a
-tinted real surface it never rendered. Two review rounds found a new
-instance of that same class. Per CLAUDE.md rule 11 ("after three failed
-fixes, question the frame"), this file stops trying to be a browser:
-
-  - It CAN honestly prove: exactly one rule exists for each of the three
-    pinned selectors, at the stylesheet's top level (not nested inside an
-    `@media` block, not stripped away by a Jinja `{% if %}`), with the exact
-    colour literal this fix pins -- and that no OTHER rule in the whole
-    stylesheet also targets the switch role (a later override could win the
-    cascade over the pinned rule without ever removing it). It also proves
-    the pinned colour LITERALS clear 3:1 against the theme's own CSS custom
-    properties, by the same exact WCAG formula axe and a browser use.
-  - It CANNOT honestly prove what a real browser actually paints: cascade
-    outcome against Tailwind's utility classes, specificity ties, transition
-    timing, or the true composited colour of a translucent/tinted real
-    surface (a previous version of this file guessed at the wizard's tinted
-    panel colour and measured the wrong element). That is
-    `tests/e2e/toggle-switch-contrast.a11y.spec.ts`'s job: it renders the
-    real four host templates, in both themes, waits for CSS transitions to
-    settle, and reads `getComputedStyle` on every real switch on the page.
-    That spec is the source of truth for the actual contrast ratios;
-    nothing here restates its numbers.
+Static checks prove the pinned rules exist, unnested, with these literals,
+and that those literals meet 3:1; they do not model the cascade or which
+declaration wins. tests/e2e/toggle-switch-contrast.a11y.spec.ts measures
+what the browser paints and is the authority.
 """
 import re
 
@@ -121,17 +98,26 @@ def _all_style_rules():
     return rules
 
 
-_BACKGROUND_DECLARATION_RE = re.compile(r'^background(-color)?\s*:\s*(#[0-9a-fA-F]{6})$')
+_BACKGROUND_PROPERTY_RE = re.compile(r'^(background|background-color)\s*:\s*(.*)$', re.I)
 
 
 def _rule_colour(selector: str):
     """The single top-level rule matching `selector` exactly, asserting
-    there is exactly one and it sits at depth 0, and return its background
-    colour. Fails with a specific reason otherwise -- missing entirely
-    (stripped by a `{% if false %}` guard, or never written), duplicated
-    (two rules with the same selector -- the later one wins the cascade,
-    silently), or present but nested (an `@media` wrapper that keeps the
-    text in the file but stops it applying to the screen)."""
+    there is exactly one and it sits at depth 0, then return a plain
+    `#rrggbb` literal for its background declaration's value.
+
+    This does not decide which declaration wins if a rule body has more
+    than one, does not resolve `rgb()`/8-digit hex/multi-token shorthand,
+    and does not know about `!important` -- that is cascade and value
+    semantics, and static analysis stopped modelling those (round 4
+    review: a "count exactly one 6-digit-hex declaration" version of this
+    check still missed `background:#333`, `rgb()`, `BACKGROUND-COLOR:`,
+    8-digit hex and multi-token shorthand, all overriding silently).
+    This function's only job is to supply a literal for the contrast
+    arithmetic below; a value that is not that literal fails loudly
+    instead of being parsed further, and cascade correctness is
+    `tests/e2e/toggle-switch-contrast.a11y.spec.ts`'s job.
+    """
     rules = _all_style_rules()
     matches = [r for r in rules if r[0] == selector]
     assert len(matches) == 1, (
@@ -152,25 +138,17 @@ def _rule_colour(selector: str):
         % (selector, depth)
     )
 
-    # Anchored at a DECLARATION start (each body split on `;`, stripped),
-    # matching only the `background`/`background-color` property name --
-    # NOT a substring search, so a custom property like
-    # `--x-background-color: #333333` cannot match. CSS also applies the
-    # LAST declaration for a given property, not the first, so a rule body
-    # that happens to carry two background-color declarations is not safely
-    # resolved by taking the first one (a bare `re.search` did exactly
-    # that) -- it is ambiguous, and this counts declarations rather than
-    # trusting the first line found.
     declarations = [d.strip() for d in body.split(';') if d.strip()]
-    background_matches = [m for d in declarations for m in [_BACKGROUND_DECLARATION_RE.match(d)] if m]
-    assert len(background_matches) == 1, (
-        'expected exactly one `background`/`background-color: #rrggbb` '
-        'declaration in the `%s` rule body, found %d (%r) -- CSS applies '
-        'the LAST declaration for a repeated property, not the first, so '
-        'more than one is ambiguous rather than safely ignorable.'
-        % (selector, len(background_matches), declarations)
+    background_decls = [m for d in declarations for m in [_BACKGROUND_PROPERTY_RE.match(d)] if m]
+    assert background_decls, 'no background declaration in the `%s` rule body (%r)' % (selector, body.strip())
+
+    value = background_decls[0].group(2).strip()
+    m = re.fullmatch(r'#[0-9a-fA-F]{6}', value)
+    assert m, (
+        'value is not a plain #rrggbb, got %r; the contrast arithmetic needs a literal'
+        % value
     )
-    return background_matches[0].group(2)
+    return value
 
 
 def _theme_surface(theme: str, var: str) -> str:
@@ -231,20 +209,9 @@ def test_on_dark_knob_rule_is_a_single_top_level_rule_with_the_pinned_colour():
 
 
 def test_no_other_rule_in_the_stylesheet_targets_the_switch_role():
-    """Guards against a second rule spelled with `[role=switch]` appended
-    anywhere else in the stylesheet, which can win the cascade over the
-    three pinned rules above without ever touching them -- the three checks
-    above would still pass, having found their own rule exactly once,
-    unaware a fourth rule now decides what actually paints.
-
-    This is a selector-text match, nothing more: an override keyed on some
-    OTHER selector that still reaches the same element (a class, an id, a
-    different attribute combination), one carrying `!important`, one sitting
-    in a media-scoped `<style>` this file does not parse the same way, or
-    anything Tailwind's CDN script injects into the page at runtime, are
-    all invisible to it. Catching those is `tests/e2e/toggle-switch-
-    contrast.a11y.spec.ts`'s job -- it reads what a browser actually
-    resolves, cascade and all."""
+    """This is a selector-text match for a second `[role=switch]` rule, not
+    a cascade check; an override keyed on any other selector is
+    tests/e2e/toggle-switch-contrast.a11y.spec.ts's job to catch."""
     rules = _all_style_rules()
     expected = {TOGGLE_OFF_SELECTOR, TOGGLE_ON_LIGHT_SELECTOR, TOGGLE_ON_DARK_KNOB_SELECTOR}
     extra = [

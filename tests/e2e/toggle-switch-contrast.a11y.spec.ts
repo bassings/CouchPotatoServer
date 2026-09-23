@@ -302,20 +302,9 @@ for (const theme of ['dark', 'light'] as const) {
 
     // provider_card.html + field_types.html: the Newznab card on Searchers.
     //
-    // Newznab's SEEDED default is enabled, but that default is not this
-    // test's to assume. wizard.html's own `formData.newznab.enabled`
-    // literal default is FALSE (wizard.html:966) -- accessibility.a11y.
-    // spec.ts's wizard flow clicks "Enable Newznab Indexers" to turn it ON
-    // (false -> true) as part of exercising the wizard's Providers step,
-    // unrelated to this test. The persisted OFF this test used to see did
-    // not come from that click (a wizard toggle click alone is a local
-    // Alpine mutation, nothing saved yet); it came from that SAME wizard
-    // flow later pressing Continue, which calls `saveCurrentStep()` and
-    // really POSTs `newznab.enabled` to this worker's DB. Whichever spec's
-    // wizard flow runs first, and in whatever state it leaves that field,
-    // decides what this test's own Newznab card starts in -- a real,
-    // deterministic run-order dependency, not a timing flake. Establish
-    // the precondition explicitly instead of assuming it.
+    // Newznab's enabled state is not this test's to assume: other specs
+    // in this worker can persist it, in either direction. Establish the
+    // precondition explicitly -- force it ON -- rather than assuming it.
     await page.getByRole('tab', { name: 'Searchers' }).click();
     await expectVisualTransitionsToSettle(page, `${theme} theme, Searchers tab opened`);
     const newznabCard = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
@@ -323,10 +312,10 @@ for (const theme of ['dark', 'light'] as const) {
 
     // provider_card.html's enabler labels itself `'Enable ' + (group.label
     // || group.name)`, which for this provider is the group's own label,
-    // "Newznab" -- NOT "Enable Newznab Indexers", the wizard's own toggle.html
-    // instance's static label used at accessibility.a11y.spec.ts:820.
+    // "Newznab" -- NOT "Enable Newznab Indexers", a different template's
+    // (toggle.html, used by the wizard) static label for the same provider.
     // Different template, different label; scoping to `newznabCard` alone
-    // is not enough to make the wizard's string match here too.
+    // is not enough to make that other template's string match here too.
     const newznabEnabler = newznabCard.getByRole('switch', { name: 'Enable Newznab' });
     await expect(newznabEnabler).toBeVisible();
     if ((await newznabEnabler.getAttribute('aria-checked')) !== 'true') {
@@ -345,7 +334,13 @@ for (const theme of ['dark', 'light'] as const) {
     // path ever renders differently from the seeded ones.
     const addRowBtn = newznabCard.getByRole('button', { name: 'Add row' });
     await expect(addRowBtn, 'the "+ Add" row button never rendered under Newznab').toBeVisible();
+    // Count rows BEFORE the click, so the click's actual effect -- one more
+    // row than existed already, specifically named "Enable row N+1" -- is
+    // what gets asserted below, not just "a row exists" (which the seeded
+    // rows alone would already satisfy even if "+ Add" were a no-op).
+    const rowCountBefore = await newznabCard.locator('[role="switch"]').count();
     await addRowBtn.click();
+    await expectVisualTransitionsToSettle(page, `${theme} theme, Newznab row added`);
 
     // Sweeps the card's OWN enabler (provider_card.html) and every row's
     // "use" toggle (field_types.html) together. The enabler is swept FIRST
@@ -359,10 +354,14 @@ for (const theme of ['dark', 'light'] as const) {
     );
     expect(newznabNames, 'expected the provider_card.html enabler among the measured toggles')
       .toContain('Enable Newznab');
+    // rowCountBefore counted the enabler too, so the new row's 1-based
+    // ordinal is rowCountBefore itself (enabler + rows 1..N before, then
+    // the click adds row N+1 -- i.e. row number rowCountBefore).
+    const expectedNewRowName = `Enable row ${rowCountBefore}`;
     expect(
-      newznabNames.some((name) => /^Enable row \d+$/.test(name)),
-      `expected at least one field_types.html row toggle (name matching /^Enable row \\d+$/) among ${JSON.stringify(newznabNames)}`,
-    ).toBe(true);
+      newznabNames,
+      `"+ Add" must produce a real, measured row -- expected "${expectedNewRowName}" among ${JSON.stringify(newznabNames)}`,
+    ).toContain(expectedNewRowName);
   });
 }
 
