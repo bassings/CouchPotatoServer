@@ -190,6 +190,39 @@ async function measureToggle(toggle: Locator) {
 
 const MIN_RATIO = 3.0;
 
+// Single source of truth for each host's expected toggle-name set: used
+// BOTH to wait for every one of them to be visible before a sweep snapshots
+// `:visible` (a reveal driven by `x-show`/`x-transition` can leave some of
+// them still mid-transition for a beat after the FIRST one is already
+// visible -- see waitForToggleNames) and to assert the sweep measured
+// exactly that set. One list for both jobs is deliberate: a wait list and
+// an assertion list that could drift apart would let the wait "succeed"
+// while still measuring a strict subset.
+const PROVIDERS_STEP_TOGGLE_NAMES = [
+  'Enable Newznab Indexers',
+  'Enable BinSearch',
+  'Enable ThePirateBay',
+  'Enable YTS',
+  'Enable Jackett / TorrentPotato',
+];
+const DOWNLOAD_CLIENTS_STEP_TOGGLE_NAMES = ['Enable Black Hole'];
+
+/**
+ * Wait, web-first, for EACH of `names` to be visible within `scope` before
+ * returning. A reveal (an `x-show`/`x-transition` step change, an enabler
+ * opening its card) does not make every one of its toggles visible in the
+ * same tick -- measured directly: waiting only for `.first()` to appear let
+ * `sweepToggles` snapshot `:visible` while YTS and Jackett were still
+ * mid-transition, silently sweeping 3 of 5 Providers-step toggles instead
+ * of 5. Waiting on every expected NAME, not just "at least one control",
+ * is what actually proves the reveal finished.
+ */
+async function waitForToggleNames(scope: Locator, names: string[]): Promise<void> {
+  for (const name of names) {
+    await expect(scope.getByRole('switch', { name, exact: true })).toBeVisible();
+  }
+}
+
 type Measurement = {
   ariaChecked: string | null;
   surfaceOwner: string;
@@ -339,7 +372,16 @@ for (const theme of ['dark', 'light'] as const) {
     // which the seeded rows alone would satisfy even if "+ Add" were a no-op.
     // (Presence of N+1 only; it does not check that exactly one row was added.)
     const rowCountBefore = await newznabCard.locator('[role="switch"]').count();
+    // rowCountBefore counted the enabler too, so the new row's 1-based
+    // ordinal is rowCountBefore itself (enabler + rows 1..N before, then
+    // the click adds row N+1 -- i.e. row number rowCountBefore).
+    const expectedNewRowName = `Enable row ${rowCountBefore}`;
     await addRowBtn.click();
+    // Wait for the SPECIFIC new row's toggle by name, not just "a" toggle
+    // becoming visible -- same reveal-timing hazard as the wizard steps
+    // below: a generic `.first()` or `:visible` check can settle on an
+    // earlier row that was already there.
+    await expect(newznabCard.getByRole('switch', { name: expectedNewRowName, exact: true })).toBeVisible();
     await expectVisualTransitionsToSettle(page, `${theme} theme, Newznab row added`);
 
     // Sweeps the card's OWN enabler (provider_card.html) and every row's
@@ -354,10 +396,6 @@ for (const theme of ['dark', 'light'] as const) {
     );
     expect(newznabNames, 'expected the provider_card.html enabler among the measured toggles')
       .toContain('Enable Newznab');
-    // rowCountBefore counted the enabler too, so the new row's 1-based
-    // ordinal is rowCountBefore itself (enabler + rows 1..N before, then
-    // the click adds row N+1 -- i.e. row number rowCountBefore).
-    const expectedNewRowName = `Enable row ${rowCountBefore}`;
     expect(
       newznabNames,
       `"+ Add" must produce a real, measured row -- expected "${expectedNewRowName}" among ${JSON.stringify(newznabNames)}`,
@@ -408,31 +446,32 @@ for (const theme of ['dark', 'light'] as const) {
     await page.getByRole('button', { name: 'Skip' }).click();
     await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
     await page.getByRole('button', { name: /^Both/ }).click();
-    await expect(providersStep.locator('button[role="switch"]:visible').first()).toBeVisible();
+    // Wait for EVERY expected toggle by name, not just the first one to
+    // appear -- see waitForToggleNames.
+    await waitForToggleNames(providersStep, PROVIDERS_STEP_TOGGLE_NAMES);
+    await expectVisualTransitionsToSettle(page, `${theme} theme, wizard Providers step revealed`);
 
     const providersNames = await sweepToggles(
       page,
       providersStep.locator('button[role="switch"]:visible'),
       `${theme} theme, wizard Providers step (toggle.html)`,
     );
-    expect(providersNames.slice().sort(), 'expected exactly the 5 "Both" provider toggles').toEqual([
-      'Enable BinSearch',
-      'Enable Jackett / TorrentPotato',
-      'Enable Newznab Indexers',
-      'Enable ThePirateBay',
-      'Enable YTS',
-    ]);
+    expect(providersNames.slice().sort(), 'expected exactly the 5 "Both" provider toggles')
+      .toEqual(PROVIDERS_STEP_TOGGLE_NAMES.slice().sort());
 
     // Providers -> Downloader. Black Hole's own enabler is another
     // toggle.html instance, on the same kind of tinted panel.
     await page.getByRole('button', { name: 'Continue' }).click();
     await expect(page.getByRole('heading', { name: 'Download Clients' })).toBeVisible();
+    await waitForToggleNames(downloaderStep, DOWNLOAD_CLIENTS_STEP_TOGGLE_NAMES);
+    await expectVisualTransitionsToSettle(page, `${theme} theme, wizard Download Clients step revealed`);
 
     const downloaderNames = await sweepToggles(
       page,
       downloaderStep.locator('button[role="switch"]:visible'),
       `${theme} theme, wizard Download Clients step (toggle.html)`,
     );
-    expect(downloaderNames, 'expected exactly the one Black Hole toggle on this step').toEqual(['Enable Black Hole']);
+    expect(downloaderNames, 'expected exactly the one Black Hole toggle on this step')
+      .toEqual(DOWNLOAD_CLIENTS_STEP_TOGGLE_NAMES);
   });
 }
