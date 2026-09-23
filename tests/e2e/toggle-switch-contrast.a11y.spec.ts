@@ -54,6 +54,32 @@ import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
  */
 
 /**
+ * `mockSettingsSave`'s fixed `{success:true}` response has no `value` field.
+ * scripts.html's `saveSingle()` deliberately never falls back to the value
+ * it submitted when the response omits one (a password field's response
+ * omits `value` on purpose, to avoid ever writing the plaintext just typed
+ * back into local state) -- so with the plain mock, the moment the 500ms
+ * debounce fires and `dirty` is cleared, `isEnabled()` reads back
+ * whatever `this.values` held from the ORIGINAL page load, silently
+ * reverting a toggle this file just clicked mid-sweep. Measured: the
+ * Newznab enabler, forced ON to establish this test's own precondition,
+ * read back OFF a few hundred ms later, mid-measurement, with no click of
+ * ours in between. Echoing the submitted value back keeps `this.values` in
+ * sync with what we actually set, the way a real save response would.
+ */
+async function mockSettingsSaveEchoingValue(page: Page): Promise<void> {
+  await mockSettingsSave(page);
+  await page.route('**/settings.save/**', async (route) => {
+    const params = new URLSearchParams(route.request().postData() ?? '');
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, value: params.get('value') }),
+    });
+  });
+}
+
+/**
  * Measure a single `role="switch"` element: its own track colour against
  * the real opaque surface behind it (found by walking real DOM ancestry
  * from the toggle's own PARENT, compositing translucent layers), and its
@@ -240,7 +266,7 @@ async function sweepToggles(page: Page, switches: Locator, contextLabel: string)
 for (const theme of ['dark', 'light'] as const) {
   test(`settings page toggles meet 1.4.11 in the ${theme} theme (header.html, provider_card.html, field_types.html)`, async ({ page }) => {
     test.setTimeout(90_000);
-    await mockSettingsSave(page);
+    await mockSettingsSaveEchoingValue(page);
     await page.addInitScript((t) => localStorage.setItem('cp-theme', t), theme);
     await page.goto('/settings/');
     await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
@@ -255,14 +281,39 @@ for (const theme of ['dark', 'light'] as const) {
     await sweepToggles(page, headerToggle, `${theme} theme, header.html "Show advanced settings"`);
 
     // provider_card.html + field_types.html: the Newznab card on Searchers.
-    // Newznab defaults enabled, so its card is open without an extra click.
+    //
+    // Newznab's SEEDED default is enabled, but that default is not this
+    // test's to assume: accessibility.a11y.spec.ts's wizard flow clicks
+    // "Enable Newznab Indexers" (an ON -> OFF toggle, since it starts
+    // enabled) and that save really persists to this worker's DB via
+    // mockSettingsSave-free code elsewhere -- so whichever spec in this
+    // project happened to run first decides what state this test's own
+    // Newznab card starts in. Measured: with that spec running first,
+    // Newznab is OFF here, its card is collapsed, and "+ Add" is hidden --
+    // a real, deterministic run-order dependency, not a timing flake.
+    // Establish the precondition explicitly instead of assuming it.
     await page.getByRole('tab', { name: 'Searchers' }).click();
+    await expectVisualTransitionsToSettle(page, `${theme} theme, Searchers tab opened`);
     const newznabCard = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
     await expect(newznabCard, 'the Newznab provider card never rendered on the Searchers tab').toBeVisible();
 
-    // Create a combined host/key row FIRST so its field_types.html "use"
-    // toggle exists to be swept below -- it does not exist until "+ Add"
-    // is clicked.
+    // provider_card.html's enabler labels itself `'Enable ' + (group.label
+    // || group.name)`, which for this provider is the group's own label,
+    // "Newznab" -- NOT "Enable Newznab Indexers", the wizard's own toggle.html
+    // instance's static label used at accessibility.a11y.spec.ts:820.
+    // Different template, different label; scoping to `newznabCard` alone
+    // is not enough to make the wizard's string match here too.
+    const newznabEnabler = newznabCard.getByRole('switch', { name: 'Enable Newznab' });
+    await expect(newznabEnabler).toBeVisible();
+    if ((await newznabEnabler.getAttribute('aria-checked')) !== 'true') {
+      await newznabEnabler.click();
+      await expectVisualTransitionsToSettle(page, `${theme} theme, Newznab enabler forced ON`);
+      await expect(newznabEnabler).toHaveAttribute('aria-checked', 'true');
+    }
+
+    // Create a combined host/key row so its field_types.html "use" toggle
+    // exists to be swept below -- it does not exist until "+ Add" is
+    // clicked, and the card must be open (enabler ON, settled) first.
     const addRowBtn = newznabCard.getByRole('button', { name: 'Add row' });
     await expect(addRowBtn, 'the "+ Add" row button never rendered under Newznab').toBeVisible();
     await addRowBtn.click();
