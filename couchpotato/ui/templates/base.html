@@ -178,6 +178,66 @@ tailwind.config = {
     color: #f16a6a;
   }
 
+  /* A11Y (WCAG 2.2 AA, 1.4.11 non-text contrast): the settings toggle switch
+     (track + knob) is a pure-colour UI component in FOUR places --
+     partials/settings/toggle.html and the hand-rolled copies in header.html,
+     provider_card.html and field_types.html -- all sharing the same two
+     Tailwind arbitrary-value classes, neither of which was ever measured:
+
+       OFF track `bg-white/[0.08]`: no light-theme override existed, so it
+       composited to #ffffff on the light theme's #ffffff --cp-card (1.0:1,
+       literally invisible), and ~1.3:1 on the dark card.
+       ON track `bg-cp-accent` (#35c5f4): 2.0:1 on a white light-theme card.
+       ON knob (plain white span): 2.0:1 on the #35c5f4 track, in EITHER
+       theme -- the state indicator itself failed even where the track alone
+       would have passed.
+
+     Keyed on the rendered ARIA state (the switch role plus its aria-checked
+     value, see the CSS selectors below) rather than duplicated per template:
+     this fixes all four instances at once, ties the visual directly to the
+     accessibility state every one of them already sets via Alpine's
+     dynamic aria-checked binding (a bool coerced .toString()), and leaves
+     the pinned Tailwind class strings (checked by
+     test_wizard_toggle_conformance.py) untouched.
+
+     `:root.light` / `:root:not(.light)` scoping, NOT `:root.dark` -- same
+     reasoning as the focus-ring rule above: toggleTheme() only ever
+     adds/removes `.light`, so `.dark` and `.light` can coexist on <html>
+     mid-transition, and `:root.dark` would then tie the light rule's
+     specificity and could win on source order.
+
+     Specificity: two attribute selectors ([role=][aria-checked=]) is (0,2,0),
+     already above every Tailwind utility class used here (0,1,0); adding
+     `:root.light`/`:root:not(.light)` (each a class-level selector) only
+     widens that margin, so these beat bg-cp-accent / bg-white/[0.08] /
+     bg-white regardless of the CDN stylesheet's insertion order.
+
+     Measured (against --cp-card / --cp-bg, both themes):
+       OFF (both themes) track #71717a: 3.74:1 dark card, 4.02:1 dark bg,
+         4.83:1 light card, 4.44:1 light bg; knob (unchanged white) on
+         #71717a track: 4.83:1.
+       ON dark: track #35c5f4 unchanged, 8.99:1 on dark card; knob #0d0d0d
+         on track: 9.67:1 -- the same black-on-accent rule the primary
+         button already uses.
+       ON light: track #0e7490: 5.36:1 on light card, 4.92:1 on light bg;
+         knob (unchanged white) on track: 5.36:1. */
+  /* Unquoted attribute values below (role=switch, not role=<quote>switch<quote>)
+     are equivalent CSS -- `switch`/`true`/`false` are all valid identifiers
+     -- and deliberate: the quoted spelling is the exact substring
+     test_wizard_toggle_conformance.py counts occurrences of in the rendered
+     page, to verify every toggle got full a11y markup. This stylesheet
+     comment sits inside that same rendered output, so the quoted form here
+     would inflate that count on every page and break an unrelated, correct
+     guard. */
+  [role=switch][aria-checked=false] {
+    background-color: #71717a;
+  }
+  :root.light [role=switch][aria-checked=true] {
+    background-color: #0e7490;
+  }
+  :root:not(.light) [role=switch][aria-checked=true] > span {
+    background-color: #0d0d0d;
+  }
 
   [x-cloak] { display: none !important; }
   * { letter-spacing: -0.01em; }
