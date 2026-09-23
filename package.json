@@ -4,7 +4,7 @@
   "description": "End-to-end and unit tests for CouchPotato htmx UI",
   "private": true,
   "engines": {
-    "node": ">=22.19"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",
