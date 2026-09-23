@@ -1,53 +1,69 @@
+import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { expectVisualTransitionsToSettle } from './helpers';
+import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
 
 /**
  * WCAG 2.2 AA 1.4.11 (non-text contrast) for the settings toggle switch.
  *
- * The toggle track and knob are pure-colour UI components (no text), so each
- * needs >= 3:1 against the surface it sits on, in EVERY state. Two Tailwind
- * arbitrary-value classes shared by all four toggle template instances
- * (`partials/settings/toggle.html`, and the hand-rolled copies in
- * `header.html`, `provider_card.html`, `field_types.html`) were never
- * measured:
+ * REFRAME (round 2 review): a static, regex-based unit test cannot honestly
+ * model CSS scope or the cascade -- two review rounds found a new instance
+ * of exactly that class of gap (an unanchored match that "found" a rule
+ * regardless of what scoped it away; a "fixed" anchored version that still
+ * could not tell a rule that EXISTS from one that WINS, or notice a real
+ * tinted surface it never rendered). This file is now the source of truth:
+ * it renders the real host templates, in a real browser, in both themes,
+ * and reads real computed styles off real elements after real transitions
+ * settle. `tests/unit/test_toggle_switch_contrast.py` only proves what
+ * static analysis honestly can (the pinned rule exists once, unnested, with
+ * its pinned colour, and nothing else in the stylesheet also targets the
+ * switch role) plus pure arithmetic on those pinned colours against the
+ * theme's CSS custom properties -- it does not, and no longer tries to,
+ * restate a ratio this file measures on a live page.
  *
- *   - OFF track `bg-white/[0.08]` had no light-theme override at all, so it
- *     composited to white-on-white (1.0:1) on the light theme's #ffffff
- *     card -- an OFF toggle was literally invisible.
- *   - ON track `bg-cp-accent` (#35c5f4) is only 2.0:1 on a white light-theme
- *     surface, and the plain-white ON knob sitting on that same accent
- *     track is only 2.0:1 in EITHER theme -- the state indicator itself
- *     failed even where the track alone would have passed.
+ * All four toggle template instances are covered by finding real pages that
+ * render them:
+ *   - partials/settings/header.html   -- /settings/, the "Show advanced
+ *     settings" switch (page-background surface).
+ *   - partials/settings/provider_card.html -- /settings/, Searchers tab,
+ *     the Newznab provider card's enabler switch (bg-cp-card surface).
+ *   - partials/settings/field_types.html   -- the SAME Newznab card, after
+ *     "+ Add" creates a combined host/key row: its "use" toggle is the
+ *     `opt.type === 'combined'` markup this file cannot otherwise reach any
+ *     other way (the wizard's own indexer rows use the canonical
+ *     toggle.html partial instead, not this one).
+ *   - partials/settings/toggle.html (canonical) -- /wizard/, the Providers
+ *     and Download Clients steps, both rendering it on the wizard's
+ *     tinted (`bg-white/[0.0x]`) row panels rather than a flat card colour.
  *
- * `tests/unit/test_toggle_switch_contrast.py` checks the fix's literal
- * colour values against base.html's stylesheet directly (same approach as
- * `test_focus_ring_contrast.py`). This file drives the REAL rendered toggle
- * in a real browser, through a real click, so it catches what the unit test
- * cannot: whether the CSS selectors' specificity actually beats the
- * Tailwind CDN utilities at runtime, on the two real host templates
- * (header.html's "Show advanced settings" toggle, on the page background;
- * provider_card.html's enabler toggle, on a `bg-cp-card` surface) rather
- * than on a static string.
+ * Rather than hand-picking one toggle per page, `sweepToggles` measures
+ * EVERY visible `[role="switch"]` in a given scope, in whatever state it is
+ * already in, then clicks it and measures the flipped state too -- so each
+ * sweep gets one OFF and one ON reading per control, and a control that
+ * defaults to ON is not silently skipped the way a fixed "assume it starts
+ * OFF" precondition would. It restores each toggle immediately after
+ * measuring both states, before moving to the next one, so an enabler
+ * toggle that shows/hides sibling controls does not shift what a later
+ * index in the same sweep resolves to.
+ *
+ * Settings toggles autosave 500ms after a change (scripts.html's
+ * `debounceSave`). `mockSettingsSave` (tests/e2e/helpers.ts) intercepts
+ * that request wherever this file clicks one, so no state written by one
+ * test's toggle click can leak into a later spec sharing this worker's data
+ * dir (Reviewer A, round 2: the initial state of a provider's enabler was
+ * observed flipping between runs before this was added).
  */
 
 /**
- * Measure a single `role="switch"` element: its own track colour against the
- * real opaque surface behind it, and its knob (the direct `<span>` child
- * every one of the four templates renders) against the track.
- *
- * The surface is found by walking real DOM ancestry from the toggle's own
- * PARENT (never the toggle itself, whose own background is exactly what is
- * being measured) up to the first ancestor with a non-transparent computed
- * `background-color`, composited if translucent -- the same hazard the
- * wizard focus-ring contrast test documents: header.html's toggle sits
- * directly on the page body, while provider_card.html's sits on a nested
- * `bg-cp-card` div, and hardcoding either selector for both would either
- * miss the card (measuring against the wrong, more forgiving surface) or
- * fail to find one at all for the header instance. Throws rather than
- * guessing if the walk reaches the top with nothing opaque, or if the knob
- * is missing.
+ * Measure a single `role="switch"` element: its own track colour against
+ * the real opaque surface behind it (found by walking real DOM ancestry
+ * from the toggle's own PARENT, compositing translucent layers), and its
+ * knob (the direct `<span>` child every one of the four templates renders)
+ * against that same composited track. Alpha is composited before BOTH
+ * ratios -- reading raw channel values and ignoring alpha would treat a
+ * translucent OFF track as opaque and report a falsely huge ratio instead
+ * of the real, dimmer one a tinted or dark surface produces.
  */
-async function measureToggle(toggle: import('@playwright/test').Locator) {
+async function measureToggle(toggle: Locator) {
   return toggle.evaluate((el: HTMLElement) => {
     const parseColor = (s: string) => {
       const m = s.match(/rgba?\(([^)]+)\)/);
@@ -67,17 +83,6 @@ async function measureToggle(toggle: import('@playwright/test').Locator) {
       const l2 = luminance(bg);
       return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
     };
-    /**
-     * Alpha-composite a possibly-translucent computed colour over an opaque
-     * background, returning the colour actually visible on screen.
-     *
-     * Reading the raw channel values and ignoring alpha (an earlier version
-     * of this helper did exactly that) treats `rgba(255, 255, 255, 0.08)` --
-     * the OFF track's colour if its light-theme override is ever missing or
-     * mis-scoped -- as solid opaque white. Against a dark surface that
-     * reports a falsely huge ratio instead of the ~1.3:1 the pixel actually
-     * shows, so a real regression there would pass silently.
-     */
     const compositeOver = (
       colorStr: string,
       bg: { r: number; g: number; b: number },
@@ -135,9 +140,6 @@ async function measureToggle(toggle: import('@playwright/test').Locator) {
     const trackColor = getComputedStyle(el).backgroundColor;
     const knobColor = getComputedStyle(knob).backgroundColor;
 
-    // Composited BEFORE both ratios: the track over the real surface, then
-    // the knob over that composited (not raw) track -- so a translucent
-    // track never gets read as if it were opaque at either step.
     const effectiveTrack = compositeOver(trackColor, surface);
     const effectiveKnob = effectiveTrack ? compositeOver(knobColor, effectiveTrack) : null;
 
@@ -155,10 +157,17 @@ async function measureToggle(toggle: import('@playwright/test').Locator) {
 
 const MIN_RATIO = 3.0;
 
-function assertMeasurement(
-  label: string,
-  m: { ariaChecked: string | null; surfaceOwner: string; trackColor: string; knobColor: string; surfaceColor: string; trackVsSurface: number | null; knobVsTrack: number | null },
-) {
+type Measurement = {
+  ariaChecked: string | null;
+  surfaceOwner: string;
+  trackColor: string;
+  knobColor: string;
+  surfaceColor: string;
+  trackVsSurface: number | null;
+  knobVsTrack: number | null;
+};
+
+function assertMeasurement(label: string, m: Measurement) {
   expect(m.trackVsSurface, `${label}: track ${m.trackColor} vs surface ${m.surfaceColor} was not computable`).not.toBeNull();
   expect(m.knobVsTrack, `${label}: knob ${m.knobColor} vs track ${m.trackColor} was not computable`).not.toBeNull();
 
@@ -177,74 +186,150 @@ function assertMeasurement(
   ).toBeGreaterThanOrEqual(MIN_RATIO);
 }
 
+/**
+ * Measure and assert every element `switches` currently resolves to, one at
+ * a time: the CURRENT state, then click + settle + the FLIPPED state, then
+ * click again to restore the original state before moving on.
+ *
+ * `switches` is re-evaluated (via `.nth(i)`) on every access, so a click
+ * that changes what else is in the DOM is reflected on the NEXT iteration
+ * -- but restoring before advancing keeps that from actually mattering here.
+ *
+ * Asserts `aria-checked` is exactly the string "true" or "false" on every
+ * read, catching a toggle instance whose `:aria-checked` binding renders
+ * something else (e.g. a raw stored value like "1"/"0" instead of a
+ * boolean's `.toString()`), which would otherwise measure real colours
+ * against a control that is not actually wired to the switch pattern axe
+ * and screen readers expect.
+ */
+async function sweepToggles(page: Page, switches: Locator, contextLabel: string): Promise<void> {
+  const count = await switches.count();
+  expect(count, `${contextLabel}: no toggle(s) found to sweep`).toBeGreaterThan(0);
+
+  for (let i = 0; i < count; i++) {
+    const toggle = switches.nth(i);
+    if (!(await toggle.isVisible())) continue;
+    const label = `${contextLabel} #${i}`;
+
+    const ariaBefore = await toggle.getAttribute('aria-checked');
+    expect(
+      ariaBefore,
+      `${label}: aria-checked must be exactly "true" or "false", got ${JSON.stringify(ariaBefore)}`,
+    ).toMatch(/^(true|false)$/);
+    assertMeasurement(`${label} (${ariaBefore})`, await measureToggle(toggle));
+
+    await toggle.click();
+    await expectVisualTransitionsToSettle(page, `${label} post-click`);
+
+    const ariaAfter = await toggle.getAttribute('aria-checked');
+    expect(
+      ariaAfter,
+      `${label} after click: aria-checked must be exactly "true" or "false", got ${JSON.stringify(ariaAfter)}`,
+    ).toMatch(/^(true|false)$/);
+    expect(ariaAfter, `${label}: click did not flip aria-checked`).not.toBe(ariaBefore);
+    assertMeasurement(`${label} (${ariaAfter})`, await measureToggle(toggle));
+
+    // Restore immediately: keeps sibling visibility/indices stable for the
+    // rest of THIS sweep, and (with mockSettingsSave already intercepting
+    // the network write) leaves nothing for a later spec to inherit.
+    await toggle.click();
+    await expectVisualTransitionsToSettle(page, `${label} post-restore`);
+  }
+}
+
 for (const theme of ['dark', 'light'] as const) {
-  test(`the "Show advanced settings" toggle (header.html) meets 1.4.11 in the ${theme} theme, ON and OFF`, async ({ page }) => {
+  test(`settings page toggles meet 1.4.11 in the ${theme} theme (header.html, provider_card.html, field_types.html)`, async ({ page }) => {
+    test.setTimeout(90_000);
+    await mockSettingsSave(page);
     await page.addInitScript((t) => localStorage.setItem('cp-theme', t), theme);
     await page.goto('/settings/');
     await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
-
-    // Pin the theme really took effect -- same guard the toast/focus-ring
-    // contrast tests use, so a broken theme pipeline reds loudly here
-    // instead of silently scanning the wrong theme under the right name.
     await expect
       .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
       .toBe(theme === 'light');
 
-    const toggle = page.getByRole('switch', { name: 'Show advanced settings' });
-    await expect(toggle).toBeVisible();
+    // header.html: present on every non-custom-panel tab, on the page
+    // background (no bg-cp-card ancestor).
+    const headerToggle = page.getByRole('switch', { name: 'Show advanced settings' });
+    await expect(headerToggle).toBeVisible();
+    await sweepToggles(page, headerToggle, `${theme} theme, header.html "Show advanced settings"`);
 
-    const before = await measureToggle(toggle);
-    expect(before.ariaChecked, 'test assumes "Show advanced" starts OFF').toBe('false');
-    assertMeasurement(`${theme} theme, header toggle, OFF`, before);
+    // provider_card.html + field_types.html: the Newznab card on Searchers.
+    // Newznab defaults enabled, so its card is open without an extra click.
+    await page.getByRole('tab', { name: 'Searchers' }).click();
+    const newznabCard = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
+    await expect(newznabCard, 'the Newznab provider card never rendered on the Searchers tab').toBeVisible();
 
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-checked', 'true');
-    // The track carries `transition-colors` (150ms). Measuring immediately
-    // reads a mid-transition frame -- reviewers caught this producing
-    // rgb(68..111, 114..128, 126..143), neither the OFF nor the ON colour --
-    // which let a broken ON-state rule pass by accident against whatever
-    // that transient shade happened to contrast with.
-    await expectVisualTransitionsToSettle(page, `${theme} theme, header toggle, post-click`);
-    const after = await measureToggle(toggle);
-    assertMeasurement(`${theme} theme, header toggle, ON`, after);
+    // Create a combined host/key row FIRST so its field_types.html "use"
+    // toggle exists to be swept below -- it does not exist until "+ Add"
+    // is clicked.
+    const addRowBtn = newznabCard.getByRole('button', { name: 'Add row' });
+    await expect(addRowBtn, 'the "+ Add" row button never rendered under Newznab').toBeVisible();
+    await addRowBtn.click();
+
+    // Sweeps the card's OWN enabler (provider_card.html) and the new row's
+    // "use" toggle (field_types.html) together. The enabler is swept FIRST
+    // (DOM order): toggling it off/on-and-restore happens before the loop
+    // reaches the row toggle's index, so the row is never hidden when its
+    // turn comes.
+    await sweepToggles(
+      page,
+      newznabCard.locator('[role="switch"]:visible'),
+      `${theme} theme, Newznab card (provider_card.html enabler + field_types.html row)`,
+    );
   });
+}
 
-  test(`a provider enabler toggle (provider_card.html) meets 1.4.11 in the ${theme} theme, ON and OFF`, async ({ page }) => {
+for (const theme of ['dark', 'light'] as const) {
+  test(`wizard toggles meet 1.4.11 in the ${theme} theme (canonical toggle.html, on tinted row panels)`, async ({ page }) => {
+    test.setTimeout(90_000);
     await page.addInitScript((t) => localStorage.setItem('cp-theme', t), theme);
-    await page.goto('/settings/');
-    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
+    await page.goto('/wizard/');
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
       .toBe(theme === 'light');
 
-    const searcherTab = page.getByRole('tab', { name: /searcher/i });
-    await expect(searcherTab).toBeVisible();
-    await searcherTab.click();
-    await expect(searcherTab).toHaveAttribute('aria-selected', 'true');
+    // Welcome -> Server Security -> (Skip) -> Providers. "Both" renders the
+    // usenet and torrent toggle.html instances together, each sitting on
+    // this step's `bg-white/[0.0x]` tinted row panel (wizard.html), not a
+    // flat --cp-card colour.
+    //
+    // Steps are `x-show="currentStep === N"` with `x-transition`: the step
+    // being LEFT stays present (fading out) for a moment after the next
+    // step's heading is already visible, so a bare page-wide
+    // `[role="switch"]:visible` locator can still resolve to the PREVIOUS
+    // step's toggle -- measured hanging the whole test, retrying a click on
+    // a control from a step already left behind. Scoping to each step's own
+    // `x-show` container (the attribute Alpine reads, still a plain HTML
+    // attribute on the rendered element) makes that impossible regardless
+    // of transition timing.
+    const providersStep = page.locator('[x-show="currentStep === 2"]');
+    const downloaderStep = page.locator('[x-show="currentStep === 3"]');
 
-    // Not every settings group has an enabler toggle (some are plain option
-    // lists, or the "combined" basics card) -- pick a card that actually
-    // contains a role="switch" rather than assuming the first card does.
-    const card = page.locator('[data-settings-group] .bg-cp-card').filter({
-      has: page.getByRole('switch'),
-    }).first();
-    await expect(card).toBeVisible();
-    const toggle = card.getByRole('switch').first();
-    await expect(toggle).toBeVisible();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('heading', { name: 'Server Security' })).toBeVisible();
+    await page.getByRole('button', { name: 'Skip' }).click();
+    await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
+    await page.getByRole('button', { name: /^Both/ }).click();
+    await expect(providersStep.locator('button[role="switch"]:visible').first()).toBeVisible();
 
-    const firstState = await toggle.getAttribute('aria-checked');
+    await sweepToggles(
+      page,
+      providersStep.locator('button[role="switch"]:visible'),
+      `${theme} theme, wizard Providers step (toggle.html)`,
+    );
 
-    const before = await measureToggle(toggle);
-    expect(before.surfaceOwner, 'expected the provider card toggle to sit on a bg-cp-card surface')
-      .toContain('bg-cp-card');
-    assertMeasurement(`${theme} theme, provider card toggle, ${firstState === 'true' ? 'ON' : 'OFF'} (initial)`, before);
+    // Providers -> Downloader. Black Hole's own enabler is another
+    // toggle.html instance, on the same kind of tinted panel.
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('heading', { name: 'Download Clients' })).toBeVisible();
 
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-checked', firstState === 'true' ? 'false' : 'true');
-    // See the header toggle test above: without this, the track is read
-    // mid `transition-colors` rather than at its settled colour.
-    await expectVisualTransitionsToSettle(page, `${theme} theme, provider card toggle, post-click`);
-    const after = await measureToggle(toggle);
-    assertMeasurement(`${theme} theme, provider card toggle, ${firstState === 'true' ? 'OFF' : 'ON'} (after click)`, after);
+    await sweepToggles(
+      page,
+      downloaderStep.locator('button[role="switch"]:visible'),
+      `${theme} theme, wizard Download Clients step (toggle.html)`,
+    );
   });
 }

@@ -191,14 +191,16 @@ tailwind.config = {
      every toggle's a11y markup, and this stylesheet ships on every page.
 
      `:root.light` / `:root:not(.light)` scoping, NOT `:root.dark` -- same
-     reasoning as the focus-ring rule above: toggleTheme() only ever
-     adds/removes `.light`, so `.dark` can still be on <html> in the light
-     theme, and `:root.dark` would tie that rule's specificity.
+     hazard as the focus-ring rule below: <html> starts with class="dark"
+     (base.html:2) and toggleTheme() only ever adds/removes `.light`, never
+     removing `.dark`, so `:root.dark` would ALSO match in the light theme.
 
-     Colour values and every measured contrast ratio are pinned and proven
-     in tests/unit/test_toggle_switch_contrast.py -- see that file for the
-     numbers rather than restating them here, so there is one place to keep
-     in sync instead of two. */
+     Static analysis (tests/unit/test_toggle_switch_contrast.py) can only
+     prove this rule exists once, unnested, with this colour, and that
+     nothing else in the stylesheet also targets the switch role -- it
+     cannot prove what a browser actually paints. The measured, rendered
+     contrast ratios live in tests/e2e/toggle-switch-contrast.a11y.spec.ts,
+     which is the source of truth for the numbers. */
   [role=switch][aria-checked=false] {
     background-color: #71717a;
   }
