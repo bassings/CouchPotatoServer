@@ -410,14 +410,15 @@ describe('dependency and privacy closure', () => {
 
   it('removes LHCI and extract-zip from the manifest and lockfile', async () => {
     const manifest = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8'));
-    const lock = await readFile(path.join(REPO_ROOT, 'package-lock.json'), 'utf8');
+    const lockText = await readFile(path.join(REPO_ROOT, 'package-lock.json'), 'utf8');
+    const lock = JSON.parse(lockText);
     expect(manifest.devDependencies.lighthouse).toBe('13.5.0');
     expect(manifest.devDependencies['chrome-launcher']).toBe('1.2.1');
-    expect(manifest.engines.node).toBe('>=22.19');
+    expect(manifest.engines.node).toBe(lock.packages['node_modules/jsdom'].engines.node);
     expect(manifest.devDependencies['@lhci/cli']).toBeUndefined();
     expect(manifest.devDependencies['@lhci/utils']).toBeUndefined();
-    expect(lock).not.toContain('node_modules/extract-zip');
-    expect(lock).not.toContain('node_modules/@lhci/');
+    expect(lockText).not.toContain('node_modules/extract-zip');
+    expect(lockText).not.toContain('node_modules/@lhci/');
   });
 
   it('keeps the report directory ignored and exposes no upload configuration', async () => {
