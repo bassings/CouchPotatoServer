@@ -35,7 +35,7 @@ stevedore==5.9.1  # was held at 5.8.0 because 5.9.0 requires >=3.11; that
                   # on 2026-08-09 and prod moved to python:3.14-alpine
 pysubs2==1.9.0
 pymediainfo==7.0.1
-knowit==0.6.1
+knowit==0.7.0
 # HELD at 3.2.0: coupled to guessit 3.8.0's expectations — rebulk 6.0.1 fails the
 # whole test suite. Dependabot re-proposes this every cycle; close those PRs.
 rebulk==3.2.0
