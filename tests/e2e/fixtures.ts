@@ -88,6 +88,29 @@ const SEEDED_MOVIE_ID = 'e2e-seed-movie-001';
 type WorkerServer = { baseURL: string; apiBase: string };
 type Exit = { code: number | null; signal: NodeJS.Signals | null };
 
+async function loadSettingsSnapshot(
+  url: string,
+  stage: 'baseline' | 'after' | 'restored',
+): Promise<{ values: Record<string, Record<string, unknown>> }> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('HTTP failure');
+    const payload = await response.json();
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || payload.success === false || !payload.values
+      || typeof payload.values !== 'object' || Array.isArray(payload.values)
+      || Object.values(payload.values).some(
+        (section) => !section || typeof section !== 'object' || Array.isArray(section),
+      )) {
+      throw new Error('Invalid settings payload');
+    }
+    return payload;
+  } catch {
+    // Fetch and JSON errors can include the API key, URL, or setting values.
+    throw new Error(`Could not load valid E2E settings ${stage} snapshot`);
+  }
+}
+
 function decode(chunk: unknown): string {
   return chunk instanceof Buffer ? chunk.toString('utf-8') : String(chunk);
 }
@@ -308,8 +331,19 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
       proc.on('exit', (code, signal) => { exited = { code, signal }; });
 
       await waitForServer(() => exited, `${baseURL}/`, () => output);
+
+      const rootMarkup = await fetch(`${baseURL}/`).then((response) => response.text());
+      const apiBaseMatch = rootMarkup.match(/apiBase:\s*'([^']+)'/);
+      if (!apiBaseMatch) {
+        throw new Error(`worker ${idx}: rendered root did not expose CP.apiBase`);
+      }
+      await use({ baseURL, apiBase: new URL(apiBaseMatch[1], baseURL).toString().replace(/\/$/, '') });
     } catch (err) {
-      if (proc) await stopServer(proc);
+      try {
+        if (proc) await stopServer(proc);
+      } catch {
+        // Still save the log and release the data dir; preserve the original diagnostic.
+      }
       // Persist BEFORE the cleanup below removes the data dir. The startup
       // path is the one the fixture can spend 60 seconds in, and it was the
       // one path that kept nothing.
@@ -326,13 +360,6 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
       }
       throw err;
     }
-
-    const rootMarkup = await fetch(`${baseURL}/`).then((response) => response.text());
-    const apiBaseMatch = rootMarkup.match(/apiBase:\s*'([^']+)'/);
-    if (!apiBaseMatch) {
-      throw new Error(`worker ${idx}: rendered root did not expose CP.apiBase`);
-    }
-    await use({ baseURL, apiBase: new URL(apiBaseMatch[1], baseURL).toString().replace(/\/$/, '') });
 
     // Read BEFORE stopServer, which kills the process and would otherwise
     // set this itself -- an orderly shutdown must not be reported as a crash.
@@ -367,17 +394,18 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
   },
 
   settingsPersistenceGuard: [async ({ page, workerServer }, use, testInfo) => {
-    const blocked: string[] = [];
+    let blocked = 0;
     const pattern = '**/settings.save/**';
     const settingsURL = `${workerServer.apiBase}/settings/`;
-    const before = await fetch(settingsURL).then((response) => response.json());
+    const before = await loadSettingsSnapshot(settingsURL, 'baseline');
 
     await page.route(pattern, async (route) => {
       if (allowsSettingsPersistence(testInfo.annotations)) {
         await route.continue();
         return;
       }
-      blocked.push(route.request().url());
+      // The request URL contains the API key and may contain setting values.
+      blocked += 1;
       await route.fulfill({
         status: 409,
         contentType: 'application/json',
@@ -393,44 +421,57 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
     // browser callback can slip a save into the teardown window.
     await page.close();
 
-    const after = await fetch(settingsURL).then((response) => response.json());
+    const after = await loadSettingsSnapshot(settingsURL, 'after');
     const changed = changedSettings(before, after);
 
+    const restoreFailures = new Set<string>();
     for (const { section, name } of changed) {
       const value = before?.values?.[section]?.[name];
       if (typeof value === 'string' && /^\*+$/.test(value)) {
-        throw new Error(`Cannot safely restore masked setting ${section}.${name}`);
+        restoreFailures.add(`${section}.${name}`);
+        continue;
       }
-      const body = new URLSearchParams({ section, name, value: serializeSettingValue(value) });
-      const response = await fetch(`${workerServer.apiBase}/settings.save/`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body,
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || payload?.success === false) {
-        throw new Error(`Could not restore E2E setting ${section}.${name}`);
+      try {
+        const body = new URLSearchParams({ section, name, value: serializeSettingValue(value) });
+        const response = await fetch(`${workerServer.apiBase}/settings.save/`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || payload?.success === false) {
+          restoreFailures.add(`${section}.${name}`);
+        }
+      } catch {
+        restoreFailures.add(`${section}.${name}`);
       }
     }
 
+    let verificationFailed = false;
     if (changed.length > 0) {
-      const restored = await fetch(settingsURL).then((response) => response.json());
-      const notRestored = changedSettings(before, restored);
-      if (notRestored.length > 0) {
-        throw new Error(
-          `E2E setting restoration did not restore `
-          + notRestored.map(({ section, name }) => `${section}.${name}`).join(', '),
-        );
+      try {
+        const restored = await loadSettingsSnapshot(settingsURL, 'restored');
+        for (const { section, name } of changedSettings(before, restored)) {
+          restoreFailures.add(`${section}.${name}`);
+        }
+      } catch {
+        verificationFailed = true;
+        for (const { section, name } of changed) restoreFailures.add(`${section}.${name}`);
       }
     }
-
-    if (blocked.length > 0 || (changed.length > 0 && !allowsSettingsPersistence(testInfo.annotations))) {
+    if (restoreFailures.size > 0) {
       throw new Error(
-        `This test sent ${Math.max(blocked.length, changed.length)} unmocked settings.save request(s), which would `
+        `E2E setting restoration failed or could not safely restore: ${[...restoreFailures].join(', ')}`
+        + (verificationFailed ? '; snapshot verification failed' : ''),
+      );
+    }
+
+    if (blocked > 0 || (changed.length > 0 && !allowsSettingsPersistence(testInfo.annotations))) {
+      throw new Error(
+        `This test sent ${Math.max(blocked, changed.length)} unmocked settings.save request(s), which would `
         + `persist into the worker database and leak into later tests. Mock settings.save, `
         + `or explicitly annotate an intentional persistence test with `
-        + `{ type: '${SETTINGS_PERSISTENCE_ANNOTATION}' }. First request: `
-        + `${blocked[0] ?? `${changed[0]?.section}.${changed[0]?.name}`}`,
+        + `{ type: '${SETTINGS_PERSISTENCE_ANNOTATION}' }.`,
       );
     }
   }, { auto: true }],
