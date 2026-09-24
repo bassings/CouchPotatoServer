@@ -4,6 +4,8 @@ import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { assertE2EPortAvailable, resolveE2EPort } from './port';
+
 /**
  * The whole session, in a real browser, with authentication genuinely ON.
  * AC-QA-27, and the browser half of AC-A11Y-7.
@@ -37,8 +39,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const VENV_PYTHON = '.venv/bin/python';
 const PYTHON = process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
 
-/** Well clear of fixtures.ts's 5150 block and of the app default (5050). */
-const BASE_PORT = 5250;
+/** Offset keeps this private server clear of the ordinary per-worker range. */
+const AUTH_SERVER_PORT_OFFSET = 100;
 /** Well clear of fixtures.ts's `parallelIndex` block, same safety helper. */
 const DATA_DIR_INDEX_BASE = 90;
 const PASSWORD = 'e2e-authenticated-session-pw';
@@ -94,8 +96,13 @@ async function waitForLoginPage(
 const test = base.extend<Record<string, never>, { authServer: AuthServer }>({
   authServer: [async ({}, use, workerInfo) => {
     const idx = DATA_DIR_INDEX_BASE + workerInfo.parallelIndex;
-    const port = BASE_PORT + workerInfo.parallelIndex;
+    const port = resolveE2EPort(
+      process.env.BASE_PORT,
+      AUTH_SERVER_PORT_OFFSET + workerInfo.parallelIndex,
+    );
     const baseURL = `http://localhost:${port}`;
+
+    await assertE2EPortAvailable(port, `authenticated worker ${workerInfo.parallelIndex}`);
 
     // The same guarded helper every other worker data dir goes through
     // (AC-DATA-24/25/26): validated before a server starts, refused if a
