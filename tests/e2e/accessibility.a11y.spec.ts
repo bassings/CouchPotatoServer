@@ -2,6 +2,7 @@ import { test, expect } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import {
   expectVisualTransitionsToSettle,
+  mockSettingsSave,
   mockSuggestionsCharts,
   waitForSuggestionsReady,
 } from './helpers';
@@ -774,6 +775,7 @@ test.describe('Accessibility', () => {
   }
 
   test('Setup Wizard page should be accessible', async ({ page }) => {
+    await mockSettingsSave(page);
     await page.goto('/wizard/');
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
@@ -960,10 +962,16 @@ test.describe('Accessibility', () => {
   });
 
   test('Setup Wizard downloader and library toggles are accessible', async ({ page }) => {
+    await mockSettingsSave(page);
     await navigateWizardToProviders(page, 'Both');
+    const settingsBefore = await page.evaluate(async () => {
+      const response = await fetch(window.CP.apiBase + '/settings/');
+      return response.json();
+    });
 
-    // Step 3: Providers -> Continue to Downloader (saves the providers step
-    // for real against the local test server).
+    // Step 3: Providers -> Continue to Downloader. This is an interaction and
+    // accessibility check, so its autosaves are mocked rather than leaking
+    // provider changes into the next spec on this worker.
     await page.getByRole('button', { name: 'Continue' }).click();
 
     // Black Hole toggle is always visible on the Downloader step.
@@ -986,6 +994,12 @@ test.describe('Accessibility', () => {
     expect(trackClass).not.toContain('w-10 h-5');
 
     await checkToggleA11y(page, 'Setup Wizard — Library step');
+
+    const settingsAfter = await page.evaluate(async () => {
+      const response = await fetch(window.CP.apiBase + '/settings/');
+      return response.json();
+    });
+    expect(settingsAfter).toEqual(settingsBefore);
   });
 
   test('Navigation should have proper ARIA landmarks', async ({ page }) => {

@@ -27,6 +27,12 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { test as base, expect } from '@playwright/test';
 
 import { assertE2EPortAvailable, resolveE2EPort } from './port';
+import {
+  allowsSettingsPersistence,
+  changedSettings,
+  serializeSettingValue,
+  SETTINGS_PERSISTENCE_ANNOTATION,
+} from './settings_persistence';
 
 // Same interpreter-resolution order as playwright.config.ts used to apply
 // to its single shared server -- see that file's history for why a bare
@@ -79,7 +85,7 @@ const LOG_DIR = 'test-results';
 // tests) and the seed script is Python.
 const SEEDED_MOVIE_ID = 'e2e-seed-movie-001';
 
-type WorkerServer = { baseURL: string };
+type WorkerServer = { baseURL: string; apiBase: string };
 type Exit = { code: number | null; signal: NodeJS.Signals | null };
 
 function decode(chunk: unknown): string {
@@ -247,7 +253,7 @@ async function stopServer(proc: ChildProcess): Promise<void> {
   }
 }
 
-export const test = base.extend<{}, { workerServer: WorkerServer }>({
+export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServer: WorkerServer }>({
   workerServer: [async ({}, use, workerInfo) => {
     // parallelIndex (not workerIndex): bounded to the actual concurrency
     // level (0..workers-1) and STABLE across a worker restart after a
@@ -321,7 +327,12 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
       throw err;
     }
 
-    await use({ baseURL });
+    const rootMarkup = await fetch(`${baseURL}/`).then((response) => response.text());
+    const apiBaseMatch = rootMarkup.match(/apiBase:\s*'([^']+)'/);
+    if (!apiBaseMatch) {
+      throw new Error(`worker ${idx}: rendered root did not expose CP.apiBase`);
+    }
+    await use({ baseURL, apiBase: new URL(apiBaseMatch[1], baseURL).toString().replace(/\/$/, '') });
 
     // Read BEFORE stopServer, which kills the process and would otherwise
     // set this itself -- an orderly shutdown must not be reported as a crash.
@@ -354,6 +365,75 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
   baseURL: async ({ workerServer }, use) => {
     await use(workerServer.baseURL);
   },
+
+  settingsPersistenceGuard: [async ({ page, workerServer }, use, testInfo) => {
+    const blocked: string[] = [];
+    const pattern = '**/settings.save/**';
+    const settingsURL = `${workerServer.apiBase}/settings/`;
+    const before = await fetch(settingsURL).then((response) => response.json());
+
+    await page.route(pattern, async (route) => {
+      if (allowsSettingsPersistence(testInfo.annotations)) {
+        await route.continue();
+        return;
+      }
+      blocked.push(route.request().url());
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          error: `E2E test did not declare ${SETTINGS_PERSISTENCE_ANNOTATION}`,
+        }),
+      });
+    });
+
+    await use();
+    // Closing the page cancels its debounce timers. Audit only after no later
+    // browser callback can slip a save into the teardown window.
+    await page.close();
+
+    const after = await fetch(settingsURL).then((response) => response.json());
+    const changed = changedSettings(before, after);
+
+    for (const { section, name } of changed) {
+      const value = before?.values?.[section]?.[name];
+      if (typeof value === 'string' && /^\*+$/.test(value)) {
+        throw new Error(`Cannot safely restore masked setting ${section}.${name}`);
+      }
+      const body = new URLSearchParams({ section, name, value: serializeSettingValue(value) });
+      const response = await fetch(`${workerServer.apiBase}/settings.save/`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.success === false) {
+        throw new Error(`Could not restore E2E setting ${section}.${name}`);
+      }
+    }
+
+    if (changed.length > 0) {
+      const restored = await fetch(settingsURL).then((response) => response.json());
+      const notRestored = changedSettings(before, restored);
+      if (notRestored.length > 0) {
+        throw new Error(
+          `E2E setting restoration did not restore `
+          + notRestored.map(({ section, name }) => `${section}.${name}`).join(', '),
+        );
+      }
+    }
+
+    if (blocked.length > 0 || (changed.length > 0 && !allowsSettingsPersistence(testInfo.annotations))) {
+      throw new Error(
+        `This test sent ${Math.max(blocked.length, changed.length)} unmocked settings.save request(s), which would `
+        + `persist into the worker database and leak into later tests. Mock settings.save, `
+        + `or explicitly annotate an intentional persistence test with `
+        + `{ type: '${SETTINGS_PERSISTENCE_ANNOTATION}' }. First request: `
+        + `${blocked[0] ?? `${changed[0]?.section}.${changed[0]?.name}`}`,
+      );
+    }
+  }, { auto: true }],
 });
 
 export { expect };

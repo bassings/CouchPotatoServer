@@ -1063,8 +1063,6 @@ LEGACY_WAIT_IDENTITIES = {
         ("Jackett sync button should have description (DEF-003)", "1000", "5ae224a2452b3030"): 1,
         ("Jackett sync button should have description (DEF-003)", "500", "11e2f5d2ef0b67ff"): 1,
         ('the "Require login" toggle renders and reflects the stored value', "1000", "2c91b0ed9608d2e5"): 1,
-        ("should auto-save settings", "1000", "d9e7ace3ed3bdf51"): 1,
-        ("should auto-save settings", "1000", "d64bd64f320e499c"): 1,
         ("focus then blur WITHOUT typing saves nothing", "1500", "fc7de2fd80a333f8"): 1,
     },
     "tests/e2e/trakt-device-auth.spec.ts": {

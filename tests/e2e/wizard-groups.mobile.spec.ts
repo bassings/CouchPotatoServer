@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import { Locator, Page } from '@playwright/test';
+import { mockSettingsSave } from './helpers';
 
 
 async function expectGroupFitsPhone(group: Locator, page: Page, name: string) {
@@ -47,6 +48,7 @@ async function expectGroupFitsPhone(group: Locator, page: Page, name: string) {
 
 for (const theme of ['light', 'dark'] as const) {
   test(`wizard provider and downloader groups fit a phone viewport in ${theme} theme`, async ({ page }) => {
+    await mockSettingsSave(page);
     await page.addInitScript((selectedTheme) => {
       localStorage.setItem('cp-theme', selectedTheme);
     }, theme);
