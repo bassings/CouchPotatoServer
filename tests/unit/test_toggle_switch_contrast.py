@@ -22,6 +22,14 @@ MIN_RATIO = 3.0
 TOGGLE_OFF_SELECTOR = '[role=switch][aria-checked=false]'
 TOGGLE_ON_LIGHT_SELECTOR = ':root.light [role=switch][aria-checked=true]'
 TOGGLE_ON_DARK_KNOB_SELECTOR = ':root:not(.light) [role=switch][aria-checked=true] > span'
+FORCED_COLOURS_SELECTORS = {
+    '[role=switch]',
+    '[role=switch] > span',
+    '[role=switch][aria-checked=false]',
+    '[role=switch][aria-checked=false] > span',
+    '[role=switch][aria-checked=true]',
+    '[role=switch][aria-checked=true] > span',
+}
 
 # The exact colour literals this fix pins. Measured, real contrast ratios
 # against a live-rendered page live in the E2E spec, not here.
@@ -109,7 +117,7 @@ def _rule_colour(selector: str):
     the browser actually applies is the E2E spec's job.
     """
     rules = _all_style_rules()
-    matches = [r for r in rules if r[0] == selector]
+    matches = [r for r in rules if r[0] == selector and r[2] == 0]
     assert len(matches) == 1, (
         'expected exactly one `%s { ... }` rule in the rendered stylesheet, '
         'found %d. Zero can mean the rule was removed, or wrapped in a '
@@ -203,14 +211,19 @@ def test_no_other_rule_in_the_stylesheet_targets_the_switch_role():
     a cascade check; an override keyed on any other selector is
     tests/e2e/toggle-switch-contrast.a11y.spec.ts's job to catch."""
     rules = _all_style_rules()
-    expected = {TOGGLE_OFF_SELECTOR, TOGGLE_ON_LIGHT_SELECTOR, TOGGLE_ON_DARK_KNOB_SELECTOR}
+    expected = {
+        (TOGGLE_OFF_SELECTOR, 0),
+        (TOGGLE_ON_LIGHT_SELECTOR, 0),
+        (TOGGLE_ON_DARK_KNOB_SELECTOR, 0),
+        *((selector, 1) for selector in FORCED_COLOURS_SELECTORS),
+    }
     extra = [
-        selector for selector, _body, _depth in rules
-        if _ROLE_SWITCH_SELECTOR_RE.search(selector) and selector not in expected
+        (selector, depth) for selector, _body, depth in rules
+        if _ROLE_SWITCH_SELECTOR_RE.search(selector) and (selector, depth) not in expected
     ]
     assert not extra, (
         'found %d additional CSS rule(s) targeting the switch role beyond '
-        'the three pinned selectors: %r' % (len(extra), extra)
+        'the pinned screen and forced-colours selectors: %r' % (len(extra), extra)
     )
 
 

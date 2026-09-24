@@ -418,6 +418,72 @@ for (const theme of ['dark', 'light'] as const) {
   });
 }
 
+test('settings toggle remains visible and exposes state in forced colours', async ({ page }) => {
+  await mockSettingsSaveEchoingValue(page);
+  await page.emulateMedia({ forcedColors: 'active' });
+  await page.goto('/settings/');
+
+  const toggle = page.getByRole('switch', { name: 'Show advanced settings' });
+  await expect(toggle).toBeVisible();
+
+  const appearance = () => toggle.evaluate((track) => {
+    const knob = track.querySelector(':scope > span');
+    if (!(knob instanceof HTMLElement)) throw new Error('toggle knob is missing');
+    const trackStyle = getComputedStyle(track);
+    const knobStyle = getComputedStyle(knob);
+    return {
+      checked: track.getAttribute('aria-checked'),
+      borderStyle: trackStyle.borderStyle,
+      borderWidth: parseFloat(trackStyle.borderWidth),
+      borderColor: trackStyle.borderColor,
+      track: trackStyle.backgroundColor,
+      knob: knobStyle.backgroundColor,
+    };
+  });
+
+  const system = await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.forcedColorAdjust = 'none';
+    document.body.append(probe);
+    const resolve = (color: string) => {
+      probe.style.backgroundColor = color;
+      return getComputedStyle(probe).backgroundColor;
+    };
+    const colors = {
+      canvas: resolve('Canvas'),
+      buttonText: resolve('ButtonText'),
+      highlight: resolve('Highlight'),
+      highlightText: resolve('HighlightText'),
+    };
+    probe.remove();
+    return colors;
+  });
+
+  const assertStateAppearance = (value: Awaited<ReturnType<typeof appearance>>) => {
+    expect(value.borderStyle).toBe('solid');
+    expect(value.borderWidth).toBeGreaterThanOrEqual(1);
+    if (value.checked === 'true') {
+      expect(value.borderColor).toBe(system.highlight);
+      expect(value.track).toBe(system.highlight);
+      expect(value.knob).toBe(system.highlightText);
+    } else {
+      expect(value.checked).toBe('false');
+      expect(value.borderColor).toBe(system.buttonText);
+      expect(value.track).toBe(system.canvas);
+      expect(value.knob).toBe(system.buttonText);
+    }
+  };
+
+  const before = await appearance();
+  assertStateAppearance(before);
+
+  await toggle.click();
+  await expect(toggle).not.toHaveAttribute('aria-checked', before.checked ?? '');
+  await expectVisualTransitionsToSettle(page, 'forced-colours toggle post-click');
+  const after = await appearance();
+  assertStateAppearance(after);
+});
+
 for (const theme of ['dark', 'light'] as const) {
   test(`wizard toggles meet 1.4.11 in the ${theme} theme (canonical toggle.html, on tinted row panels)`, async ({ page }) => {
     test.setTimeout(90_000);
