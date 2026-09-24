@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 import { layoutPx, TARGET_SIZE_MIN, TARGET_SIZE_MIN_LARGE } from './helpers';
 import { type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
@@ -43,6 +44,7 @@ function candidatesResponse(candidates: string[]) {
 }
 
 async function gotoReviewMovie(page: Page, movieId: string) {
+  test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
   await page.goto(`/movie/${movieId}`);
   const loaded = await page.locator('#movie-releases')
     .waitFor({ state: 'attached', timeout: 15000 })

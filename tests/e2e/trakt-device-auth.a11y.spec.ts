@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 import AxeBuilder from '@axe-core/playwright';
 import { type Page } from '@playwright/test';
 
@@ -110,6 +111,7 @@ async function openTraktGroupInState(
   expectedStatus: string,
   interval = 30,
 ) {
+  test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
   await page.route(DEVICE_CODE_ROUTE, (route) => route.fulfill(deviceCodeResponse(interval)));
   await page.route(POLL_ROUTE, (route) => route.fulfill(pollResponse));
 
@@ -255,6 +257,7 @@ test.describe('Trakt device authorisation accessibility (FEAT #311)', () => {
   });
 
   test('the button label leads with its visible text and the button stays focusable while busy (WCAG 2.5.3 / 2.1.1)', async ({ page }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
     await page.route(DEVICE_CODE_ROUTE, (route) => route.fulfill(deviceCodeResponse()));
     await page.route(POLL_ROUTE, (route) => route.fulfill(pollPendingResponse()));
 

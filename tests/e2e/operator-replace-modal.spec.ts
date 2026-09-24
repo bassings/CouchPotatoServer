@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 import { type Page } from '@playwright/test';
 
 /**
@@ -72,6 +73,7 @@ function candidatesResponse(candidates: string[]) {
  * tests).
  */
 async function gotoReviewMovie(page: Page, movieId: string) {
+  test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
   await page.goto(`/movie/${movieId}`);
   const loaded = await page.locator('#movie-releases')
     .waitFor({ state: 'attached', timeout: 15000 })

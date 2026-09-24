@@ -237,8 +237,15 @@ test.describe('Settings', () => {
   });
 
   test('should auto-save settings', async ({ page }) => {
-    // Wait for settings to load
-    await page.waitForTimeout(1000);
+    let savedValue: string | null = null;
+    await page.route('**/settings.save/**', async (route) => {
+      savedValue = new URLSearchParams(route.request().postData() || '').get('value');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
 
     // `:visible`, not `.first()` on the bare selector: General has
     // `advanced`-flagged text inputs earlier in DOM order that are
@@ -248,14 +255,15 @@ test.describe('Settings', () => {
     // false by construction and this always fell through to nothing being
     // asserted. General always renders at least one plain (non-advanced)
     // text field, so this is unconditional.
-    const firstInput = page.locator('input[type="text"]:visible').first();
+    const firstInput = page.getByRole('textbox', { name: 'Username' });
     await expect(firstInput).toBeVisible({ timeout: 5000 });
 
-    // Type something
-    await firstInput.fill('test-value-123');
+    const originalValue = await firstInput.inputValue();
+    const nextValue = originalValue === 'test-value-123' ? 'test-value-456' : 'test-value-123';
+    await firstInput.fill(nextValue);
+    await firstInput.blur();
 
-    // Wait for auto-save
-    await page.waitForTimeout(1000);
+    await expect.poll(() => savedValue).toBe(nextValue);
 
     // Should show "Saved" indicator
     const savedIndicator = page.getByText(/saved/i);

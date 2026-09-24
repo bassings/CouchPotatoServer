@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 import { type Page } from '@playwright/test';
 
 /**
@@ -79,6 +80,7 @@ function pollErrorResponse(error: string) {
  * Returns the group's Start Authorisation button.
  */
 async function openTraktGroup(page: Page) {
+  test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
   await page.goto('/settings/');
   await expect(page.locator('h1')).toContainText('Settings');
 
@@ -356,7 +358,11 @@ test.describe('Trakt device authorisation (FEAT #311)', () => {
         sawSecretSave = true;
         if (!deviceCodeRequested) secretSavedBeforeDeviceCode = true;
       }
-      return route.continue();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
     });
     await page.route(DEVICE_CODE_ROUTE, (route) => {
       deviceCodeRequested = true;
