@@ -8,7 +8,7 @@
      x-init="$watch('$root.activeTab', v => { if(v==='logs') init(); else stopAutoRefresh(); })">
   
   <!-- Log controls -->
-  <div class="flex items-center gap-3 mb-4">
+  <div class="flex flex-wrap items-center gap-3 mb-4">
     <label for="settings-log-level" class="sr-only">Filter by log level</label>
     <select id="settings-log-level" x-model="logType" @change="refresh()"
             class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
