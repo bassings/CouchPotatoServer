@@ -90,6 +90,31 @@
 [role=switch][aria-checked=false] { background-color: #71717a; }
 :root.light [role=switch][aria-checked=true] { background-color: #0e7490; }
 :root:not(.light) [role=switch][aria-checked=true] > span { background-color: #0d0d0d; }
+@media (forced-colors: active) {
+  [role=switch] {
+    border: 1px solid ButtonText;
+    forced-color-adjust: none;
+  }
+  [role=switch] > span {
+    forced-color-adjust: none;
+  }
+  [role=switch]:focus-visible {
+    outline-color: Highlight !important;
+  }
+  [role=switch][aria-checked=false] {
+    background-color: Canvas !important;
+  }
+  [role=switch][aria-checked=false] > span {
+    background-color: ButtonText !important;
+  }
+  [role=switch][aria-checked=true] {
+    border-color: Highlight !important;
+    background-color: Highlight !important;
+  }
+  [role=switch][aria-checked=true] > span {
+    background-color: HighlightText !important;
+  }
+}
 
 .skip-link { position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden; z-index: 9999; }
 .skip-link:focus { position: fixed; top: 1rem; left: 1rem; width: auto; height: auto; padding: 0.75rem 1.5rem;

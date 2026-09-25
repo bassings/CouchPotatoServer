@@ -210,6 +210,31 @@ tailwind.config = {
   :root:not(.light) [role=switch][aria-checked=true] > span {
     background-color: #0d0d0d;
   }
+  @media (forced-colors: active) {
+    [role=switch] {
+      border: 1px solid ButtonText;
+      forced-color-adjust: none;
+    }
+    [role=switch] > span {
+      forced-color-adjust: none;
+    }
+    [role=switch]:focus-visible {
+      outline-color: Highlight !important;
+    }
+    [role=switch][aria-checked=false] {
+      background-color: Canvas !important;
+    }
+    [role=switch][aria-checked=false] > span {
+      background-color: ButtonText !important;
+    }
+    [role=switch][aria-checked=true] {
+      border-color: Highlight !important;
+      background-color: Highlight !important;
+    }
+    [role=switch][aria-checked=true] > span {
+      background-color: HighlightText !important;
+    }
+  }
 
   [x-cloak] { display: none !important; }
   * { letter-spacing: -0.01em; }

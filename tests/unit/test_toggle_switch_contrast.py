@@ -7,6 +7,7 @@ declaration wins. tests/e2e/toggle-switch-contrast.a11y.spec.ts measures
 what the browser paints and is the authority.
 """
 import re
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +23,15 @@ MIN_RATIO = 3.0
 TOGGLE_OFF_SELECTOR = '[role=switch][aria-checked=false]'
 TOGGLE_ON_LIGHT_SELECTOR = ':root.light [role=switch][aria-checked=true]'
 TOGGLE_ON_DARK_KNOB_SELECTOR = ':root:not(.light) [role=switch][aria-checked=true] > span'
+FORCED_COLOURS_SELECTORS = {
+    '[role=switch]',
+    '[role=switch] > span',
+    '[role=switch]:focus-visible',
+    '[role=switch][aria-checked=false]',
+    '[role=switch][aria-checked=false] > span',
+    '[role=switch][aria-checked=true]',
+    '[role=switch][aria-checked=true] > span',
+}
 
 # The exact colour literals this fix pins. Measured, real contrast ratios
 # against a live-rendered page live in the E2E spec, not here.
@@ -98,6 +108,22 @@ def _all_style_rules():
     return rules
 
 
+def _unique_at_rule_body(css: str, prelude: str) -> str:
+    starts = [m.start() for m in re.finditer(re.escape(prelude), css)]
+    assert len(starts) == 1, 'expected exactly one %s block, found %d' % (prelude, len(starts))
+    opening = css.find('{', starts[0] + len(prelude))
+    assert opening >= 0
+    depth = 1
+    for index in range(opening + 1, len(css)):
+        if css[index] == '{':
+            depth += 1
+        elif css[index] == '}':
+            depth -= 1
+            if depth == 0:
+                return css[opening + 1:index]
+    raise AssertionError('%s block is not closed' % prelude)
+
+
 _BACKGROUND_PROPERTY_RE = re.compile(r'^(background|background-color)\s*:\s*(.*)$', re.I)
 
 
@@ -109,7 +135,7 @@ def _rule_colour(selector: str):
     the browser actually applies is the E2E spec's job.
     """
     rules = _all_style_rules()
-    matches = [r for r in rules if r[0] == selector]
+    matches = [r for r in rules if r[0] == selector and r[2] == 0]
     assert len(matches) == 1, (
         'expected exactly one `%s { ... }` rule in the rendered stylesheet, '
         'found %d. Zero can mean the rule was removed, or wrapped in a '
@@ -203,15 +229,34 @@ def test_no_other_rule_in_the_stylesheet_targets_the_switch_role():
     a cascade check; an override keyed on any other selector is
     tests/e2e/toggle-switch-contrast.a11y.spec.ts's job to catch."""
     rules = _all_style_rules()
-    expected = {TOGGLE_OFF_SELECTOR, TOGGLE_ON_LIGHT_SELECTOR, TOGGLE_ON_DARK_KNOB_SELECTOR}
+    expected = {
+        (TOGGLE_OFF_SELECTOR, 0),
+        (TOGGLE_ON_LIGHT_SELECTOR, 0),
+        (TOGGLE_ON_DARK_KNOB_SELECTOR, 0),
+        *((selector, 1) for selector in FORCED_COLOURS_SELECTORS),
+    }
     extra = [
-        selector for selector, _body, _depth in rules
-        if _ROLE_SWITCH_SELECTOR_RE.search(selector) and selector not in expected
+        (selector, depth) for selector, _body, depth in rules
+        if _ROLE_SWITCH_SELECTOR_RE.search(selector) and (selector, depth) not in expected
     ]
     assert not extra, (
         'found %d additional CSS rule(s) targeting the switch role beyond '
-        'the three pinned selectors: %r' % (len(extra), extra)
+        'the pinned screen and forced-colours selectors: %r' % (len(extra), extra)
     )
+
+
+def test_design_system_mirrors_every_forced_colour_switch_rule():
+    prelude = '@media (forced-colors: active)'
+    app_css = '\n'.join(_style_block_contents(_render_base_html()))
+    design_css = Path('docs/design-system/theme.css').read_text()
+    normalise = lambda css: [
+        (selector, re.sub(r'\s+', ' ', body).strip())
+        for selector, body, depth in _iter_rules(_strip_comments(_unique_at_rule_body(css, prelude)))
+        if depth == 0 and _ROLE_SWITCH_SELECTOR_RE.search(selector)
+    ]
+    app_rules = normalise(app_css)
+    design_rules = normalise(design_css)
+    assert design_rules == app_rules
 
 
 # ---------------------------------------------------------------------------
