@@ -418,9 +418,11 @@ for (const theme of ['dark', 'light'] as const) {
   });
 }
 
-test('settings toggle remains visible and exposes state in forced colours', async ({ page }) => {
+for (const theme of ['dark', 'light'] as const) {
+test(`settings toggle remains visible, stateful and focused in forced colours (${theme} theme)`, async ({ page }) => {
   await mockSettingsSaveEchoingValue(page);
   await page.emulateMedia({ forcedColors: 'active' });
+  await page.addInitScript((t) => localStorage.setItem('cp-theme', t), theme);
   await page.goto('/settings/');
 
   const toggle = page.getByRole('switch', { name: 'Show advanced settings' });
@@ -436,6 +438,9 @@ test('settings toggle remains visible and exposes state in forced colours', asyn
       borderStyle: trackStyle.borderStyle,
       borderWidth: parseFloat(trackStyle.borderWidth),
       borderColor: trackStyle.borderColor,
+      outlineColor: trackStyle.outlineColor,
+      outlineStyle: trackStyle.outlineStyle,
+      outlineWidth: parseFloat(trackStyle.outlineWidth),
       track: trackStyle.backgroundColor,
       knob: knobStyle.backgroundColor,
     };
@@ -477,12 +482,22 @@ test('settings toggle remains visible and exposes state in forced colours', asyn
   const before = await appearance();
   assertStateAppearance(before);
 
+  await toggle.focus();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  await expect(toggle).toBeFocused();
+  const focused = await appearance();
+  expect(focused.outlineColor).toBe(system.highlight);
+  expect(focused.outlineStyle).toBe('solid');
+  expect(focused.outlineWidth).toBeGreaterThanOrEqual(2);
+
   await toggle.click();
   await expect(toggle).not.toHaveAttribute('aria-checked', before.checked ?? '');
   await expectVisualTransitionsToSettle(page, 'forced-colours toggle post-click');
   const after = await appearance();
   assertStateAppearance(after);
 });
+}
 
 for (const theme of ['dark', 'light'] as const) {
   test(`wizard toggles meet 1.4.11 in the ${theme} theme (canonical toggle.html, on tinted row panels)`, async ({ page }) => {

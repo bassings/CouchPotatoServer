@@ -218,6 +218,9 @@ tailwind.config = {
     [role=switch] > span {
       forced-color-adjust: none;
     }
+    [role=switch]:focus-visible {
+      outline-color: Highlight !important;
+    }
     [role=switch][aria-checked=false] {
       background-color: Canvas !important;
     }

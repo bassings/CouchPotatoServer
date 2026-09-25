@@ -7,6 +7,7 @@ declaration wins. tests/e2e/toggle-switch-contrast.a11y.spec.ts measures
 what the browser paints and is the authority.
 """
 import re
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +26,7 @@ TOGGLE_ON_DARK_KNOB_SELECTOR = ':root:not(.light) [role=switch][aria-checked=tru
 FORCED_COLOURS_SELECTORS = {
     '[role=switch]',
     '[role=switch] > span',
+    '[role=switch]:focus-visible',
     '[role=switch][aria-checked=false]',
     '[role=switch][aria-checked=false] > span',
     '[role=switch][aria-checked=true]',
@@ -104,6 +106,22 @@ def _all_style_rules():
     for block in blocks:
         rules.extend(_iter_rules(_strip_comments(block)))
     return rules
+
+
+def _unique_at_rule_body(css: str, prelude: str) -> str:
+    starts = [m.start() for m in re.finditer(re.escape(prelude), css)]
+    assert len(starts) == 1, 'expected exactly one %s block, found %d' % (prelude, len(starts))
+    opening = css.find('{', starts[0] + len(prelude))
+    assert opening >= 0
+    depth = 1
+    for index in range(opening + 1, len(css)):
+        if css[index] == '{':
+            depth += 1
+        elif css[index] == '}':
+            depth -= 1
+            if depth == 0:
+                return css[opening + 1:index]
+    raise AssertionError('%s block is not closed' % prelude)
 
 
 _BACKGROUND_PROPERTY_RE = re.compile(r'^(background|background-color)\s*:\s*(.*)$', re.I)
@@ -225,6 +243,20 @@ def test_no_other_rule_in_the_stylesheet_targets_the_switch_role():
         'found %d additional CSS rule(s) targeting the switch role beyond '
         'the pinned screen and forced-colours selectors: %r' % (len(extra), extra)
     )
+
+
+def test_design_system_mirrors_every_forced_colour_switch_rule():
+    prelude = '@media (forced-colors: active)'
+    app_css = '\n'.join(_style_block_contents(_render_base_html()))
+    design_css = Path('docs/design-system/theme.css').read_text()
+    normalise = lambda css: [
+        (selector, re.sub(r'\s+', ' ', body).strip())
+        for selector, body, depth in _iter_rules(_strip_comments(_unique_at_rule_body(css, prelude)))
+        if depth == 0 and _ROLE_SWITCH_SELECTOR_RE.search(selector)
+    ]
+    app_rules = normalise(app_css)
+    design_rules = normalise(design_css)
+    assert design_rules == app_rules
 
 
 # ---------------------------------------------------------------------------
