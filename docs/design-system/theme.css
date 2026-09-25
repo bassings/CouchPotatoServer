@@ -13,6 +13,8 @@
   --cp-surface: #111113;
   --cp-card: #161618;
   --cp-border: #1e1e22;
+  --cp-input-border: #71717a;
+  --cp-input-focus-border: #35c5f4;
   --cp-text: #e0e0e4;
   --cp-muted: #9b9ba8;
 }
@@ -22,6 +24,8 @@
   --cp-surface: #fafafa;
   --cp-card: #ffffff;
   --cp-border: #e0e0e4;
+  --cp-input-border: #71717a;
+  --cp-input-focus-border: #0e7490;
   --cp-text: #1a1a1a;
   --cp-muted: #666666;
 }
@@ -43,6 +47,12 @@
 .cp-toast-fg { color: #ffffff; }
 :root.light .bg-black\/80   { background-color: rgba(255,255,255,0.9); }
 :root.light .bg-black\/60   { background-color: rgba(255,255,255,0.8); }
+:root :is(input, select, textarea).bg-white\/\[0\.03\].border-white\/\[0\.06\] {
+  border-color: var(--cp-input-border);
+}
+:root :is(input, select, textarea).bg-white\/\[0\.03\].border-white\/\[0\.06\]:focus {
+  border-color: var(--cp-input-focus-border);
+}
 :root.light .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.04); }
 :root.light .border-white\/\[0\.04\],
 :root.light .border-white\/\[0\.05\],

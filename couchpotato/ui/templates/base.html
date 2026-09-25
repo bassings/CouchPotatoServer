@@ -85,6 +85,8 @@ tailwind.config = {
     --cp-card: #161618;
     --cp-surface: #111113;
     --cp-border: #1e1e22;
+    --cp-input-border: #71717a;
+    --cp-input-focus-border: #35c5f4;
     --cp-text: #e0e0e4;
     --cp-muted: #9b9ba8;
   }
@@ -93,6 +95,8 @@ tailwind.config = {
     --cp-card: #ffffff;
     --cp-surface: #fafafa;
     --cp-border: #e0e0e4;
+    --cp-input-border: #71717a;
+    --cp-input-focus-border: #0e7490;
     --cp-text: #1a1a1a;
     --cp-muted: #666666;
   }
@@ -104,6 +108,16 @@ tailwind.config = {
   :root.light .bg-black\/60 { background-color: rgba(255,255,255,0.8); }
   :root.light .border-white\/\[0\.04\], :root.light .border-white\/\[0\.05\], :root.light .border-white\/\[0\.06\] { border-color: rgba(0,0,0,0.08); }
   :root.light .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.04); }
+  /* A11Y (WCAG 2.2 AA, 1.4.11): the input grammar's translucent border
+     measures only 1.17:1 on the dark card and 1.20:1 on the light card.
+     Keep the pinned Tailwind grammar intact and give native text controls a
+     single theme-independent boundary token instead (3.74:1 / 4.83:1). */
+  :root :is(input, select, textarea).bg-white\/\[0\.03\].border-white\/\[0\.06\] {
+    border-color: var(--cp-input-border);
+  }
+  :root :is(input, select, textarea).bg-white\/\[0\.03\].border-white\/\[0\.06\]:focus {
+    border-color: var(--cp-input-focus-border);
+  }
   :root.light .text-white\/80, :root.light .text-white\/90, :root.light .text-white { color: var(--cp-text); }
   /* A11Y (WCAG 2.2 AA, 1.4.3): toast foreground, theme-independent.
      `text-white` cannot be used here: `:root.light .text-white` above

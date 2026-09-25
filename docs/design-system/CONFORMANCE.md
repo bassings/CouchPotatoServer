@@ -25,7 +25,7 @@ deliberately does not repeat hex values, so it can't drift out of sync.
 
 ## Components
 - [ ] **Buttons** — primary / ghost / danger variants with hover + focus states.
-- [ ] **Inputs** — the 10 field types (`string`, `int`/`float`, `password`, `dropdown`, `bool`, `directory`, `directories`, `combined`, `button`) follow the field grammar; helper text + `<details>` learn-more.
+- [ ] **Inputs** — the 10 field types (`string`, `int`/`float`, `password`, `dropdown`, `bool`, `directory`, `directories`, `combined`, `button`) follow the field grammar; native text controls use the shared rest/focus input-border tokens with at least 3:1 contrast in both themes; helper text + `<details>` learn-more.
 - [ ] **Toggle switch** — track `w-8 h-4`, knob `w-3 h-3`, `translate-x-4` (on) /
       `translate-x-0.5` (off) — this is the **only sanctioned size**; there is no
       "large" variant. `role="switch"` + `:aria-checked` + an `aria-label` are
