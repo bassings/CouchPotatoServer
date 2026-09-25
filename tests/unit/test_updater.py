@@ -38,7 +38,13 @@ def _commit(repo, filename, content, message):
     with open(path, 'w') as f:
         f.write(content)
     porcelain.add(repo, paths=[path])
-    return porcelain.commit(repo, message=message.encode(), author=AUTHOR, committer=AUTHOR)
+    return porcelain.commit(
+        repo,
+        message=message.encode(),
+        author=AUTHOR,
+        committer=AUTHOR,
+        sign=False,
+    )
 
 
 def _make_updater(app_dir, dev=False):
@@ -96,6 +102,29 @@ class TestSignatureDriftGuard:
         assert hasattr(Repo, 'head')
         assert hasattr(Repo, '__getitem__')
         assert hasattr(Repo, 'get_config')
+
+    def test_fixture_commits_ignore_global_signing_config(self, tmp_path, monkeypatch):
+        """A developer's ~/.gitconfig must not control throwaway commits."""
+        home = tmp_path / 'hostile-home'
+        home.mkdir()
+        (home / '.gitconfig').write_text(
+            '[commit]\n'
+            '    gpgsign = true\n'
+            '[gpg]\n'
+            '    format = ssh\n'
+            '[user]\n'
+            '    signingKey = /definitely/missing/test-signing-key\n'
+        )
+        monkeypatch.setenv('HOME', str(home))
+        monkeypatch.setenv('XDG_CONFIG_HOME', str(home / 'xdg'))
+
+        repo_path = tmp_path / 'repo'
+        repo_path.mkdir()
+        repo = Repo.init(str(repo_path))
+
+        commit_id = _commit(repo, 'version.txt', 'v1', 'isolated commit')
+
+        assert repo.head() == commit_id
 
 
 class TestGetVersion:
