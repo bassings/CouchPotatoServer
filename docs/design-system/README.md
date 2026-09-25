@@ -49,6 +49,8 @@ Dark is the default; `<html class="light">` switches the theme. Persist the choi
 | `--cp-surface` | inset / inputs | `#111113` | `#fafafa` |
 | `--cp-card` | card surface | `#161618` | `#ffffff` |
 | `--cp-border` | dividers, borders | `#1e1e22` | `#e0e0e4` |
+| `--cp-input-border` | text-input boundary | `#71717a` | `#71717a` |
+| `--cp-input-focus-border` | focused text-input boundary | `#35c5f4` | `#0e7490` |
 | `--cp-text` | primary text | `#e0e0e4` | `#1a1a1a` |
 | `--cp-muted` | secondary text | `#9b9ba8` | `#666666` |
 
@@ -57,7 +59,7 @@ Dark is the default; `<html class="light">` switches the theme. Persist the choi
 
 **Semantic (fixed fills across themes):** success `#3ddc84` · warning `#e5a00d` · danger `#f04848`. **As text in light mode** they fail AA on near-white (1.78–3.67:1), so `base.html` darkens `.text-cp-success/-warning/-danger/-blue:not(.on-dark)` to `#047857` / `#b45309` / `#b91c1c` / `#0e7490`; badges over poster art or `from-black/90` add `on-dark` to keep the bright colour.
 
-**Translucent layers** (borders/fills, used heavily as `white/[0.0x]` in dark): in light mode invert to black-based — e.g. `border-white/[0.04]` → `rgba(0,0,0,0.08)`, `bg-white/[0.03]` → `rgba(0,0,0,0.04)`. These overrides already exist in `base.html`.
+**Translucent layers** (borders/fills, used heavily as `white/[0.0x]` in dark): in light mode invert to black-based — e.g. `border-white/[0.04]` → `rgba(0,0,0,0.08)`, `bg-white/[0.03]` → `rgba(0,0,0,0.04)`. These overrides already exist in `base.html`. Text inputs are the exception: their pinned `border-white/[0.06]` grammar is repainted with opaque `--cp-input-border` so the boundary clears WCAG 1.4.11 against `--cp-card` in both themes.
 
 ### Typography
 - **Family:** `Inter` (Google Fonts, weights 300/400/500/600/700). Single family — no secondary face. (The legacy Open Sans + Lobster pairing is retired.)
@@ -130,7 +132,7 @@ All examples use existing Tailwind/`cp.*` tokens. Hover/focus states are require
 - **Danger:** `border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10`
 
 ### Inputs (settings field grammar)
-`w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30`. Helper text `text-[10px] text-cp-muted mt-1.5`. Optional `<details>` "Learn more" disclosure (`summary` in `text-cp-accent`).
+`w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30`. The class string stays canonical, while `base.html` repaints that grammar on native `input`, `select`, and `textarea` elements with `--cp-input-border` (`#71717a`: 3.74:1 on the dark card, 4.83:1 on the light card) and the focused state with `--cp-input-focus-border` (`#35c5f4` dark, `#0e7490` light). Helper text `text-[10px] text-cp-muted mt-1.5`. Optional `<details>` "Learn more" disclosure (`summary` in `text-cp-accent`).
 
 **10 field types** (from `partials/settings/field_types.html`): `string` · `int`/`float` (number) · `password` · `dropdown` (select) · `bool` (checkbox, `text-cp-accent` accent) · `directory` (input + Browse button → folder modal) · `directories` (repeatable rows with remove + "+ Add folder") · `combined` (multi-column rows: a `use` toggle switch + text inputs, headers, "+ Add") · `button` (async action: spinner + inline success/error result).
 
