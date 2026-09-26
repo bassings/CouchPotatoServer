@@ -138,6 +138,8 @@ All examples use existing Tailwind/`cp.*` tokens. Hover/focus states are require
 
 **Toggle switch:** `w-8 h-4 rounded-full` track (`bg-cp-accent` on / `bg-white/[0.08]` off), `role="switch" :aria-checked`, knob `w-3 h-3 bg-white` translating `translate-x-4` / `translate-x-0.5`, plus an `aria-label` describing what the toggle controls. This is the **only sanctioned toggle size** — do not introduce a larger/smaller variant. Render it via the shared partial `couchpotato/ui/templates/partials/settings/toggle.html` rather than hand-rolling the markup. **Colours are set by `base.html` rules keyed on `[role=switch][aria-checked]`** (WCAG 1.4.11, both themes): off track `#71717a`; on track `#35c5f4` with a `#0d0d0d` knob in dark, `#0e7490` with a white knob in light. Keep `role="switch"` and a string `aria-checked` on every instance or the colours fall back to the failing Tailwind ones.
 
+The provider-card switch keeps that 32 × 16 visual track but uses a 32 × 24 pointer box (`h-6 py-1 bg-clip-content`). Its header is a separate collapse target, so the visual-only 16px box cannot use the spacing exception. The knob sits at `top-1.5` to stay centred on the painted track.
+
 **Settings row layout:** label + hint on the left, control right-aligned; rows divided by `border-white/[0.04]`.
 
 ### Status & quality badges
