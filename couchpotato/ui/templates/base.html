@@ -208,7 +208,7 @@ tailwind.config = {
      every toggle's a11y markup, and this stylesheet ships on every page.
 
      `:root.light` / `:root:not(.light)` scoping, NOT `:root.dark` -- same
-     hazard as the focus-ring rule below: <html> starts with class="dark"
+     hazard as the focus-ring rule below: the document root starts with class="dark"
      (base.html:2) and toggleTheme() only ever adds/removes `.light`, never
      removing `.dark`, so `:root.dark` would ALSO match in the light theme.
 
@@ -284,7 +284,7 @@ tailwind.config = {
      solid transparent`) beat the base rule above (0,1,0) on every control
      carrying it and painted the ring transparent. `:root.dark` is NOT used
      here: toggleTheme() only ever adds/removes `.light` and never removes
-     `.dark`, so both classes sit on <html> together in the light theme --
+     `.dark`, so both classes sit on the root element in the light theme --
      a `:root.dark` selector would match there too and, tying the light rule's
      specificity (0,3,0 each), win on source order and repaint the ring
      #35c5f4 in the light theme. `:not(.light)` is exclusive with the light
