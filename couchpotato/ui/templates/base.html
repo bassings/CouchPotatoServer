@@ -79,6 +79,7 @@ tailwind.config = {
 }
 </script>
 <style>
+  /* DESIGN-SYSTEM-SHARED:START */
   /* IMP-006: Theme variables */
   :root {
     --cp-bg: #0d0d0d;
@@ -186,12 +187,14 @@ tailwind.config = {
      controls rather than the shared token, because the detail-page button
      sits directly on the page background where the original colour is
      fine. */
+  /* DESIGN-SYSTEM-SHARED:END */
   :root:not(.light) .poster-card [data-testid="review-mark-failed"],
   :root:not(.light) [data-testid="operator-replace-modal"] [data-testid="operator-replace-confirm"],
   :root:not(.light) #movie-releases [data-testid="release-mark-failed"] {
     color: #f16a6a;
   }
 
+  /* DESIGN-SYSTEM-SHARED:START */
   /* A11Y (WCAG 2.2 AA, 1.4.11 non-text contrast): the settings toggle switch
      (track + knob), duplicated across FOUR templates (toggle.html,
      header.html, provider_card.html, field_types.html). Keyed on the
@@ -307,6 +310,7 @@ tailwind.config = {
       scroll-behavior: auto !important;
     }
   }
+  /* DESIGN-SYSTEM-SHARED:END */
 </style>
 <script>
   // Global so the deferred UI-logic module (below) can attach CP.ui, and so

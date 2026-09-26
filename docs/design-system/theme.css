@@ -4,14 +4,15 @@
    Dark is default; add class="light" on <html> to switch. Persist to
    localStorage['cp-theme']. Mirrors the theme tokens and shared a11y
    overrides in couchpotato/ui/templates/base.html (component-scoped rules,
-   e.g. data-testid selectors, stay in base.html). Hand-kept, not
-   machine-checked; base.html wins on any difference.
+   e.g. data-testid selectors, stay in base.html). The shared-rule contract is
+   enforced by tests/unit/test_design_system_theme_mirror.py; base.html wins
+   on any difference.
    ========================================================================== */
 
 :root {
   --cp-bg: #0d0d0d;
-  --cp-surface: #111113;
   --cp-card: #161618;
+  --cp-surface: #111113;
   --cp-border: #1e1e22;
   --cp-input-border: #71717a;
   --cp-input-focus-border: #35c5f4;
@@ -21,8 +22,8 @@
 
 :root.light {
   --cp-bg: #f5f5f7;
-  --cp-surface: #fafafa;
   --cp-card: #ffffff;
+  --cp-surface: #fafafa;
   --cp-border: #e0e0e4;
   --cp-input-border: #71717a;
   --cp-input-focus-border: #0e7490;
@@ -66,8 +67,8 @@
 
 /* Scrollbars --------------------------------------------------------------- */
 ::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--cp-bg); }
-::-webkit-scrollbar-thumb { background: var(--cp-border); border-radius: 3px; }
+::-webkit-scrollbar-track { background: #0d0d0d; }
+::-webkit-scrollbar-thumb { background: #1e1e22; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #2a2a30; }
 :root.light ::-webkit-scrollbar-track { background: #f0f0f0; }
 :root.light ::-webkit-scrollbar-thumb { background: #c0c0c0; }
