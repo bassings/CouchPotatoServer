@@ -477,9 +477,10 @@ def test_origin_master_change_during_coverage_refuses_upload(tmp_path):
 def test_symbolic_origin_master_refuses_scan_before_coverage(tmp_path):
     commands = FakeCommands(tmp_path)
     commands.origin_symref = "refs/heads/master"
+    cfg = config(tmp_path)
 
     with pytest.raises(sonar_scan.ScanError, match="direct remote-tracking ref"):
-        sonar_scan.run_scan(config(tmp_path), run=commands, open_url=success_opener)
+        sonar_scan.run_scan(cfg, run=commands, open_url=success_opener)
 
     assert not any(call[0][-1:] == ["coverage"] for call in commands.calls)
     assert not any(call[0][0] in {"npm", "node"} for call in commands.calls)
@@ -644,13 +645,14 @@ def test_scan_order_revalidates_after_upload_before_ce_and_stamp(tmp_path, monke
 @pytest.mark.parametrize("status", ["FAILED", "CANCELED"])
 def test_terminal_ce_failure_preserves_previous_stamp(tmp_path, status):
     cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
     stamp = tmp_path / ".sonar-last-analysis"
     stamp.write_text("previous\nold-time\n")
 
     with pytest.raises(sonar_scan.ScanError, match=status):
         sonar_scan.run_scan(
             cfg,
-            run=FakeCommands(tmp_path),
+            run=commands,
             open_url=lambda *_args, **_kwargs: Response({"task": {"status": status}}),
         )
 
@@ -660,13 +662,14 @@ def test_terminal_ce_failure_preserves_previous_stamp(tmp_path, status):
 @pytest.mark.parametrize("payload", [{}, {"task": {}}, {"task": {"status": 7}}])
 def test_malformed_ce_response_preserves_previous_stamp(tmp_path, payload):
     cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
     stamp = tmp_path / ".sonar-last-analysis"
     stamp.write_text("previous\n")
 
     with pytest.raises(sonar_scan.ScanError, match="malformed"):
         sonar_scan.run_scan(
             cfg,
-            run=FakeCommands(tmp_path),
+            run=commands,
             open_url=lambda *_args, **_kwargs: Response(payload),
         )
 
@@ -675,6 +678,7 @@ def test_malformed_ce_response_preserves_previous_stamp(tmp_path, payload):
 
 def test_ce_auth_failure_preserves_previous_stamp(tmp_path):
     cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
     stamp = tmp_path / ".sonar-last-analysis"
     stamp.write_text("previous\n")
 
@@ -682,13 +686,14 @@ def test_ce_auth_failure_preserves_previous_stamp(tmp_path):
         raise HTTPError(request.full_url, 401, "Unauthorized", {}, None)
 
     with pytest.raises(sonar_scan.ScanError, match="authentication"):
-        sonar_scan.run_scan(cfg, run=FakeCommands(tmp_path), open_url=unauthorized)
+        sonar_scan.run_scan(cfg, run=commands, open_url=unauthorized)
 
     assert stamp.read_text() == "previous\n"
 
 
 def test_ce_timeout_is_bounded_and_preserves_previous_stamp(tmp_path):
     cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
     cfg.poll_timeout = 1.0
     stamp = tmp_path / ".sonar-last-analysis"
     stamp.write_text("previous\n")
@@ -697,7 +702,7 @@ def test_ce_timeout_is_bounded_and_preserves_previous_stamp(tmp_path):
     with pytest.raises(sonar_scan.ScanError, match="timed out"):
         sonar_scan.run_scan(
             cfg,
-            run=FakeCommands(tmp_path),
+            run=commands,
             open_url=lambda *_args, **_kwargs: Response({"task": {"status": "PENDING"}}),
             sleep=lambda _seconds: None,
             monotonic=lambda: next(ticks),
@@ -708,6 +713,7 @@ def test_ce_timeout_is_bounded_and_preserves_previous_stamp(tmp_path):
 
 @pytest.mark.parametrize("command", ["coverage", "npm", "node"])
 def test_subprocess_failure_skips_ce_and_preserves_previous_stamp(tmp_path, command):
+    cfg = config(tmp_path)
     commands = FakeCommands(tmp_path)
     commands.fail_command = command
     stamp = tmp_path / ".sonar-last-analysis"
@@ -720,7 +726,7 @@ def test_subprocess_failure_skips_ce_and_preserves_previous_stamp(tmp_path, comm
         raise AssertionError("CE must not be polled after a failed command")
 
     with pytest.raises(sonar_scan.ScanError, match=f"Command failed: {command}"):
-        sonar_scan.run_scan(config(tmp_path), run=commands, open_url=unexpected_ce)
+        sonar_scan.run_scan(cfg, run=commands, open_url=unexpected_ce)
 
     assert ce_requested is False
     assert stamp.read_bytes() == b"previous\nold-time\n"
@@ -728,13 +734,14 @@ def test_subprocess_failure_skips_ce_and_preserves_previous_stamp(tmp_path, comm
 
 @pytest.mark.parametrize("command", ["coverage", "npm", "node"])
 def test_external_work_has_a_bounded_timeout_and_preserves_stamp(tmp_path, command):
+    cfg = config(tmp_path)
     commands = FakeCommands(tmp_path)
     commands.timeout_command = command
     stamp = tmp_path / ".sonar-last-analysis"
     stamp.write_bytes(b"previous\n")
 
     with pytest.raises(sonar_scan.ScanError, match=f"Command timed out: {command}"):
-        sonar_scan.run_scan(config(tmp_path), run=commands, open_url=success_opener)
+        sonar_scan.run_scan(cfg, run=commands, open_url=success_opener)
 
     timed_out_call = next(kwargs for argv, kwargs in commands.calls if (
         "coverage" if argv[-1:] == ["coverage"] else argv[0]
@@ -753,6 +760,7 @@ def test_custom_runner_rejects_unexpected_allowed_command_status(tmp_path):
             "fatal detail with sqa_private-diagnostic",
         )
 
+    safe_env = sonar_scan._safe_env()
     with pytest.raises(
         sonar_scan.ScanError,
         match="Command failed: origin/master kind lookup",
@@ -761,7 +769,7 @@ def test_custom_runner_rejects_unexpected_allowed_command_status(tmp_path):
             unexpected_status,
             ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/master"],
             tmp_path,
-            env=sonar_scan._safe_env(),
+            env=safe_env,
             description="origin/master kind lookup",
             allowed_returncodes=(0, 1),
         )
@@ -783,12 +791,13 @@ def test_real_timeout_terminates_the_entire_subprocess_group(tmp_path):
         "time.sleep(30)"
     )
 
+    safe_env = sonar_scan._safe_env()
     with pytest.raises(sonar_scan.ScanError, match="Command timed out: process tree"):
         sonar_scan._command(
             subprocess.run,
             [sys.executable, "-c", parent_code],
             tmp_path,
-            env=sonar_scan._safe_env(),
+            env=safe_env,
             timeout=0.2,
             description="process tree",
         )

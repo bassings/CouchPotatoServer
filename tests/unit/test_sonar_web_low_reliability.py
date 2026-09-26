@@ -109,8 +109,9 @@ def test_duplicate_dynamic_anchor_identity_is_not_collapsed(tmp_path):
     anchor = source[source.index("<a :href="):source.index("</a>") + 4]
     path.write_text(source.replace(anchor, anchor * 2, 1))
 
+    discovered = _discover(template_root)
     with pytest.raises(AssertionError):
-        _assert_inventory(_discover(template_root))
+        _assert_inventory(discovered)
 
 
 def test_exposing_the_security_example_creates_a_real_missing_alt_image(tmp_path):
@@ -127,8 +128,9 @@ def test_exposing_the_security_example_creates_a_real_missing_alt_image(tmp_path
     assert _served_images_without_alternatives(template_root) == [
         ("base.html", "/logout/"),
     ]
+    discovered = _discover(template_root)
     with pytest.raises(AssertionError):
-        _assert_inventory(_discover(template_root))
+        _assert_inventory(discovered)
 
 
 def test_removing_a_real_logo_alternative_is_detected(tmp_path):

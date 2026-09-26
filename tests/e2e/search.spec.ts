@@ -47,10 +47,7 @@ test.describe('Movie Search', () => {
     const searchInput = page.locator('input[type="text"]').first();
     await searchInput.fill('The Matrix');
     
-    // Wait for htmx to load results (debounced)
-    await page.waitForTimeout(500);
-    
-    // Check for results container
+    // The card assertion waits for the debounced htmx response.
     const resultsContainer = page.locator('#search-results');
     await expect(resultsContainer).toBeVisible({ timeout: 10000 });
     
@@ -63,8 +60,6 @@ test.describe('Movie Search', () => {
     const searchInput = page.locator('input[type="text"]').first();
     await searchInput.fill('The Matrix');
     
-    // Wait for results
-    await page.waitForTimeout(500);
     const resultsContainer = page.locator('#search-results');
     await expect(resultsContainer).toBeVisible({ timeout: 10000 });
     
@@ -82,8 +77,6 @@ test.describe('Movie Search', () => {
     const searchInput = page.locator('input[type="text"]').first();
     await searchInput.fill('Inception');
     
-    // Wait for results
-    await page.waitForTimeout(500);
     const resultsContainer = page.locator('#search-results');
     await expect(resultsContainer).toBeVisible({ timeout: 10000 });
     
@@ -96,8 +89,6 @@ test.describe('Movie Search', () => {
     const searchInput = page.locator('input[type="text"]').first();
     await searchInput.fill('Inception');
     
-    // Wait for results
-    await page.waitForTimeout(500);
     const resultsContainer = page.locator('#search-results');
     await expect(resultsContainer).toBeVisible({ timeout: 10000 });
     

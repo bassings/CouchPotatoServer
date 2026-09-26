@@ -122,8 +122,9 @@ def test_duplicate_source_occurrences_are_not_collapsed(tmp_path):
     source = base_path.read_text()
     base_path.write_text(source + source)
 
+    discovered = _discover_medium_sources(template_root)
     with pytest.raises(AssertionError):
-        _assert_inventory_matches(_discover_medium_sources(template_root))
+        _assert_inventory_matches(discovered)
 
 
 def test_navigation_without_native_destination_links_is_rejected(tmp_path):
@@ -134,8 +135,9 @@ def test_navigation_without_native_destination_links_is_rejected(tmp_path):
     bottom = bottom.replace("<a ", "<span ", 1).replace("</a>", "</span>", 1)
     base_path.write_text(before + marker + bottom)
 
+    discovered = _discover_medium_sources(template_root)
     with pytest.raises(AssertionError):
-        _assert_inventory_matches(_discover_medium_sources(template_root))
+        _assert_inventory_matches(discovered)
 
 
 def test_navigation_with_non_post_logout_is_rejected(tmp_path):
@@ -150,5 +152,6 @@ def test_navigation_with_non_post_logout_is_rejected(tmp_path):
     )
     base_path.write_text(before + marker + mobile)
 
+    discovered = _discover_medium_sources(template_root)
     with pytest.raises(AssertionError):
-        _assert_inventory_matches(_discover_medium_sources(template_root))
+        _assert_inventory_matches(discovered)

@@ -90,8 +90,9 @@ def test_each_handler_owns_hiding_the_failed_image(tmp_path, relative_path):
     assert source.count(HANDLER) == 1
     path.write_text(source.replace(HANDLER, "this.nextElementSibling.style.display='flex'"))
 
+    discovered = _discover(template_root)
     with pytest.raises(AssertionError):
-        _assert_exact_inventory(_discover(template_root))
+        _assert_exact_inventory(discovered)
 
 
 def test_a_duplicate_occurrence_is_not_collapsed(tmp_path):
@@ -101,8 +102,18 @@ def test_a_duplicate_occurrence_is_not_collapsed(tmp_path):
     image_and_fallback = source[source.index("<img "):source.index("{% else %}")]
     path.write_text(source.replace(image_and_fallback, image_and_fallback * 2, 1))
 
+    discovered = _discover(template_root)
     with pytest.raises(AssertionError):
-        _assert_exact_inventory(_discover(template_root))
+        _assert_exact_inventory(discovered)
+
+
+def test_discovery_failure_cannot_satisfy_the_inventory_assertion(tmp_path, monkeypatch):
+    def broken_discovery(_template_root):
+        raise AssertionError("discovery failed")
+
+    monkeypatch.setitem(globals(), "_discover", broken_discovery)
+    with pytest.raises(AssertionError, match="discovery failed"):
+        test_a_duplicate_occurrence_is_not_collapsed(tmp_path)
 
 
 def test_the_fallback_must_remain_the_initially_hidden_immediate_sibling(tmp_path):
@@ -116,8 +127,9 @@ def test_the_fallback_must_remain_the_initially_hidden_immediate_sibling(tmp_pat
     )
     path.write_text(source)
 
+    discovered = _discover(template_root)
     with pytest.raises(AssertionError):
-        _assert_exact_inventory(_discover(template_root))
+        _assert_exact_inventory(discovered)
 
 
 def test_the_fallback_must_not_be_visible_before_an_error(tmp_path):
@@ -127,5 +139,6 @@ def test_the_fallback_must_not_be_visible_before_an_error(tmp_path):
     assert source.count('style="display:none"') >= 1
     path.write_text(source.replace('style="display:none"', 'style="display:flex"', 1))
 
+    discovered = _discover(template_root)
     with pytest.raises(AssertionError):
-        _assert_exact_inventory(_discover(template_root))
+        _assert_exact_inventory(discovered)
