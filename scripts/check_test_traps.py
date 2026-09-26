@@ -1051,12 +1051,6 @@ LEGACY_WAIT_IDENTITIES = {
         ("activating the Review chip mutates nothing when films awaiting review are present (AC-A11Y-4)", "500", "8ef5b9180dbeb8ef"): 1,
         ("Mark Done on a card with others remaining: defined focus, a real Library-naming announcement, and a confined grid update (AC-A11Y-9/10/11, others-remain case, REAL backend)", "1000", "e50c7f5123a38f65"): 1,
     },
-    "tests/e2e/search.spec.ts": {
-        ("should show search results when typing", "500", "0bb9b9a7a4ebd0c1"): 1,
-        ("should show year and identifying info for search results (DEF-007)", "500", "0bb9b9a7a4ebd0c1"): 1,
-        ("should have Add button on search results", "500", "8c09f9de9642b2c0"): 1,
-        ("should show profile selector in search results", "500", "8c09f9de9642b2c0"): 1,
-    },
     "tests/e2e/settings.spec.ts": {
         ("should be able to switch tabs", "1000", "5ae224a2452b3030"): 1,
         ("should show Advanced toggle", "1000", "d109bd3a375919ad"): 1,

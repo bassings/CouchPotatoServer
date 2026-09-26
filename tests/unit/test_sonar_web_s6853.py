@@ -101,8 +101,6 @@ def test_duplicate_source_occurrences_are_not_collapsed(tmp_path):
     )
     identity = ("duplicate.html", "dynamic-label", "item.label", "item.id")
 
+    discovered = _discover_s6853_sources(tmp_path)
     with pytest.raises(AssertionError):
-        _assert_inventory_matches(
-            _discover_s6853_sources(tmp_path),
-            {identity: "synthetic-issue-key"},
-        )
+        _assert_inventory_matches(discovered, {identity: "synthetic-issue-key"})
