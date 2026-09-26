@@ -8,6 +8,8 @@ application implementation details rather than reusable design-system rules.
 import re
 from pathlib import Path
 
+import pytest
+
 from couchpotato.ui import _jinja
 
 
@@ -63,6 +65,26 @@ def _leaf_rule_map(css: str) -> dict[tuple[str, ...], list[str]]:
     return rules
 
 
+def _leaf_rule_order(css: str) -> list[tuple[str, ...]]:
+    ordered_paths = []
+    css = _strip_comments(css)
+    stack = []
+    last_end = 0
+    for index, character in enumerate(css):
+        if character == '{':
+            stack.append((_normalise(css[last_end:index]), index + 1))
+            last_end = index + 1
+        elif character == '}':
+            selector, body_start = stack.pop()
+            body = _normalise(css[body_start:index])
+            if '{' not in body:
+                ordered_paths.append(tuple(item[0] for item in stack) + (selector,))
+            last_end = index + 1
+
+    assert not stack, 'unclosed CSS rule in shared theme contract'
+    return ordered_paths
+
+
 def _assert_same_rules(documented: dict[tuple[str, ...], list[str]], application: dict[tuple[str, ...], list[str]]) -> None:
     missing = sorted(application.keys() - documented.keys())
     extra = sorted(documented.keys() - application.keys())
@@ -76,10 +98,31 @@ def _assert_same_rules(documented: dict[tuple[str, ...], list[str]], application
     assert not changed, 'shared declaration(s) differ for selector(s): %s' % display(changed)
 
 
+def _assert_same_theme(documented_css: str, application_css: str) -> None:
+    _assert_same_rules(_leaf_rule_map(documented_css), _leaf_rule_map(application_css))
+    documented_order = _leaf_rule_order(documented_css)
+    application_order = _leaf_rule_order(application_css)
+    assert documented_order == application_order, 'cascade order differs for shared selector(s)'
+
+
 def test_documented_theme_mirrors_every_shared_application_rule():
     app_css = _shared_application_css(_rendered_app_css())
     documented_css = _strip_comments(Path('docs/design-system/theme.css').read_text())
-    _assert_same_rules(_leaf_rule_map(documented_css), _leaf_rule_map(app_css))
+    _assert_same_theme(documented_css, app_css)
+
+
+def test_mirror_comparison_preserves_cascade_order_across_contexts():
+    application = '.fade-in { animation: fadeIn 1s; } @media (reduce) { .fade-in { animation: none; } }'
+    reordered = '@media (reduce) { .fade-in { animation: none; } } .fade-in { animation: fadeIn 1s; }'
+    with pytest.raises(AssertionError, match='cascade order differs'):
+        _assert_same_theme(reordered, application)
+
+
+def test_mirror_comparison_preserves_order_for_overlapping_selectors():
+    application = ':root.light .text-white { color: #1a1a1a; } :root.light .text-cp-accent { color: #0e7490; }'
+    reordered = ':root.light .text-cp-accent { color: #0e7490; } :root.light .text-white { color: #1a1a1a; }'
+    with pytest.raises(AssertionError, match='cascade order differs'):
+        _assert_same_theme(reordered, application)
 
 
 def test_component_scoped_application_rules_are_explicitly_outside_the_mirror():
