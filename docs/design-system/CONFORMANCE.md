@@ -30,7 +30,10 @@ deliberately does not repeat hex values, so it can't drift out of sync.
       `translate-x-0.5` (off) — this is the **only sanctioned size**; there is no
       "large" variant. `role="switch"` + `:aria-checked` + an `aria-label` are
       required on every instance. Use the shared partial
-      `partials/settings/toggle.html` rather than hand-rolling markup.
+      `partials/settings/toggle.html` rather than hand-rolling markup. The
+      provider-card switch alone uses a 24px-high pointer box with 4px vertical
+      padding and a clipped 16px painted track, because its parent header is
+      another pointer target.
 - [ ] **Status & quality badges** — pill classes per status (wanted/done/snatched/quality).
 - [ ] **Toasts** — Alpine `toast(msg,type,duration)` queue, `aria-live="polite"`, auto-dismiss + manual close.
 - [ ] **Poster card** — structure, lazy img + gradient fallback, badges, hover checkbox + refresh, hover glow.

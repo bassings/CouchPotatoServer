@@ -124,7 +124,11 @@ def test_already_conformant_settings_toggles_stay_canonical(template_path):
 
     assert 'w-10 h-5' not in source
     assert 'translate-x-5' not in source
-    assert 'w-8 h-4' in source
+    if template_path.endswith('provider_card.html'):
+        assert 'w-8 h-6 py-1 bg-clip-content' in source
+        assert 'w-3 h-3 bg-white rounded-full transition-transform absolute top-1.5' in source
+    else:
+        assert 'w-8 h-4' in source
 
 
 def test_no_template_in_new_ui_renders_non_conformant_toggle_size():
