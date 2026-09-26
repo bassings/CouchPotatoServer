@@ -73,6 +73,32 @@ def _style_block_contents(html: str):
     return re.findall(r'<style\b[^>]*>(.*?)</style>', html, re.S)
 
 
+def _css_comments_with_html_opening_tags(template_source: str) -> list[str]:
+    """Inspect source, because Sonar scans Jinja branches that never render."""
+    comments = [
+        comment
+        for css in _style_block_contents(template_source)
+        for comment in re.findall(r'/\*.*?\*/', css, re.S)
+    ]
+    assert comments, 'base.html should have CSS comments for this guard to inspect'
+    return [comment for comment in comments if re.search(r'<\s*html\b', comment, re.I)]
+
+
+def test_css_comments_do_not_look_like_html_opening_tags():
+    """A source CSS comment must not create a false HTML-language finding."""
+    template_source = Path('couchpotato/ui/templates/base.html').read_text()
+    assert not _css_comments_with_html_opening_tags(template_source)
+
+
+def test_css_comment_guard_sees_jinja_hidden_source():
+    source = Path('couchpotato/ui/templates/base.html').read_text()
+    marker = '</style>'
+    assert marker in source
+    mutated = source.replace(marker, '{% if false %}/* <html> */{% endif %}\n' + marker, 1)
+    assert mutated != source
+    assert _css_comments_with_html_opening_tags(mutated) == ['/* <html> */']
+
+
 def _iter_rules(css: str):
     """Yield (normalised_selector, body, depth) for every brace-delimited
     rule in `css`, via a real brace-depth stack.
