@@ -59,7 +59,6 @@ async function showLogin(page: Page, state: string, theme: 'light' | 'dark') {
     route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }),
   );
   await page.goto('/login/');
-  await page.waitForLoadState('networkidle');
 
   // The theme really took effect. Load-bearing: without it a broken theme
   // pipeline would quietly run every "dark" case in the light theme, which is
