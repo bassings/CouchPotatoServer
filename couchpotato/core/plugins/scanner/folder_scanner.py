@@ -84,7 +84,7 @@ class FolderScannerMixin:
         folder = sp(folder)
 
         if not folder or not os.path.isdir(folder):
-            log.error('Folder doesn\'t exists: %s', folder)
+            self._log_diagnostic(log.error, 'Folder doesn\'t exists: %s', folder)
             return {}
 
         movie_files = {}
@@ -93,7 +93,7 @@ class FolderScannerMixin:
         if not files:
             files = self._gatherFiles(folder)
 
-            log.debug('Found %s files to scan and group in %s', len(files), folder)
+            self._log_diagnostic(log.debug, 'Found %s files to scan and group in %s', len(files), folder)
         else:
             check_file_date = False
             files = [sp(x) for x in files]
@@ -142,7 +142,7 @@ class FolderScannerMixin:
             if identifier not in group['identifiers'] and len(identifier) > 0:
                 group['identifiers'].append(identifier)
 
-            log.debug('Grouping files: %s', identifier)
+            self._log_diagnostic(log.debug, 'Grouping files: %s', identifier)
 
             has_ignored = 0
             for file_path in list(group['unsorted_files']):
@@ -175,7 +175,7 @@ class FolderScannerMixin:
         # Group files based on identifier
         delete_identifiers = []
         for identifier, found_files in path_identifiers.items():
-            log.debug('Grouping files on identifier: %s', identifier)
+            self._log_diagnostic(log.debug, 'Grouping files on identifier: %s', identifier)
             group = movie_files.get(identifier)
             if group:
                 group['unsorted_files'].extend(found_files)
@@ -192,7 +192,7 @@ class FolderScannerMixin:
         # Group based on folder
         delete_identifiers = []
         for identifier, found_files in path_identifiers.items():
-            log.debug('Grouping files on foldername: %s', identifier)
+            self._log_diagnostic(log.debug, 'Grouping files on foldername: %s', identifier)
             for ff in found_files:
                 new_identifier = self.createStringIdentifier(os.path.dirname(ff), folder)
                 group = movie_files.get(new_identifier)
@@ -204,7 +204,7 @@ class FolderScannerMixin:
                 break
 
         if leftovers:
-            log.debug('Some files are still left over: %s', leftovers)
+            self._log_diagnostic(log.debug, 'Some files are still left over: %s', leftovers)
 
         for identifier in delete_identifiers:
             if path_identifiers.get(identifier):
@@ -222,8 +222,9 @@ class FolderScannerMixin:
             if check_file_date:
                 files_too_new, time_string = self.checkFilesChanged(group['unsorted_files'])
                 if files_too_new:
-                    log.info('Files seem to be still unpacking or just unpacked (created on %s), ignoring for now: %s',
-                             time_string, identifier)
+                    self._log_diagnostic(log.info,
+                                         'Files seem to be still unpacking or just unpacked (created on %s), ignoring for now: %s',
+                                         time_string, identifier)
                     del group['unsorted_files']
                     continue
 
@@ -235,8 +236,9 @@ class FolderScannerMixin:
                         has_new_files = True
                         break
                 if not has_new_files:
-                    log.debug('None of the files have changed since %s for %s, skipping.',
-                              time.ctime(newer_than), identifier)
+                    self._log_diagnostic(log.debug,
+                                         'None of the files have changed since %s for %s, skipping.',
+                                         time.ctime(newer_than), identifier)
                     del group['unsorted_files']
                     continue
 
@@ -247,11 +249,13 @@ class FolderScannerMixin:
         total_found = len(valid_files)
 
         if release_download and total_found == 0:
-            log.info('Download ID provided (%s), but no groups found! Make sure the download contains valid media files (fully extracted).',
-                     release_download.get('imdb_id'))
+            self._log_diagnostic(log.info,
+                                 'Download ID provided (%s), but no groups found! Make sure the download contains valid media files (fully extracted).',
+                                 release_download.get('imdb_id'))
         elif release_download and total_found > 1:
-            log.info('Download ID provided (%s), but more than one group found (%s). Ignoring Download ID...',
-                     release_download.get('imdb_id'), len(valid_files))
+            self._log_diagnostic(log.info,
+                                 'Download ID provided (%s), but more than one group found (%s). Ignoring Download ID...',
+                                 release_download.get('imdb_id'), len(valid_files))
             release_download = None
 
         # Determine file types
@@ -263,7 +267,7 @@ class FolderScannerMixin:
                 break
 
             if return_ignored is False and identifier in ignored_identifiers:
-                log.debug('Ignore file found, ignoring release: %s', identifier)
+                self._log_diagnostic(log.debug, 'Ignore file found, ignoring release: %s', identifier)
                 total_found -= 1
                 continue
 
@@ -282,11 +286,11 @@ class FolderScannerMixin:
                 group['files']['movie'] = self.getMediaFiles(group['unsorted_files'])
 
             if len(group['files']['movie']) == 0:
-                log.error('Couldn\'t find any movie files for %s', identifier)
+                self._log_diagnostic(log.error, 'Couldn\'t find any movie files for %s', identifier)
                 total_found -= 1
                 continue
 
-            log.debug('Getting metadata for %s', identifier)
+            self._log_diagnostic(log.debug, 'Getting metadata for %s', identifier)
             group['meta_data'] = self.getMetaData(group, folder=folder, release_download=release_download)
 
             group['subtitle_language'] = self.getSubtitleLanguage(group) if not simple else {}
@@ -314,7 +318,7 @@ class FolderScannerMixin:
 
             group['media'] = self.determineMedia(group, release_download=release_download)
             if not group['media']:
-                log.error('Unable to determine media: %s', group['identifiers'])
+                self._log_diagnostic(log.error, 'Unable to determine media: %s', group['identifiers'])
             else:
                 group['identifier'] = getIdentifier(group['media']) or group['media']['info'].get('imdb')
 
@@ -324,13 +328,13 @@ class FolderScannerMixin:
                 on_found(group, total_found, len(valid_files))
 
             while threading.activeCount() > 100 and not self.shuttingDown():
-                log.debug('Too many threads active, waiting a few seconds')
+                self._log_diagnostic(log.debug, 'Too many threads active, waiting a few seconds')
                 time.sleep(10)
 
         if len(processed_movies) > 0:
-            log.info('Found %s movies in the folder %s', len(processed_movies), folder)
+            self._log_diagnostic(log.info, 'Found %s movies in the folder %s', len(processed_movies), folder)
         else:
-            log.debug('Found no movies in the folder %s', folder)
+            self._log_diagnostic(log.debug, 'Found no movies in the folder %s', folder)
 
         return processed_movies
 
@@ -376,7 +380,9 @@ class FolderScannerMixin:
                     file_path = sp(os.path.join(sp(root), sp(filename)))
 
                     if not self._isWithinFolder(file_path, real_folder):
-                        log.debug('Skipping file that resolves outside the scanned folder (symlink escape): %s', file_path)
+                        self._log_diagnostic(log.debug,
+                                             'Skipping file that resolves outside the scanned folder (symlink escape): %s',
+                                             file_path)
                         continue
 
                     found_files.append(file_path)
@@ -384,7 +390,8 @@ class FolderScannerMixin:
                 if self.shuttingDown():
                     break
         except Exception:
-            log.error('Failed getting files from %s: %s', folder, traceback.format_exc())
+            self._log_diagnostic(log.error, 'Failed getting files from %s: %s',
+                                 folder, traceback.format_exc())
 
         return found_files
 
@@ -396,6 +403,115 @@ class FolderScannerMixin:
         except ValueError:
             # e.g. paths on different drives on Windows
             return False
+
+    @staticmethod
+    def _log_diagnostic(logger, message, *args):
+        # A failed logger must not turn a directory scan into a partial result.
+        try:
+            logger(message, *args)
+        except Exception:
+            pass
+
+    def _imdb_from_cp_tag(self, group):
+        for cur_file in group['files']['movie']:
+            imdb_id = self.getCPImdb(cur_file)
+            if imdb_id:
+                group['identity_source'] = 'cp_tag'
+                self._log_diagnostic(log.debug, 'Found movie via CP tag: %s', cur_file)
+                return imdb_id
+        return None
+
+    def _imdb_from_nfo(self, group):
+        for nf in group['files'].get('nfo', ()):
+            try:
+                imdb_id = getImdb(nf, check_inside=True)
+            except Exception:
+                continue
+            if imdb_id:
+                group['identity_source'] = 'nfo'
+                self._log_diagnostic(log.debug, 'Found movie via nfo file: %s', nf)
+                return imdb_id
+        return None
+
+    def _imdb_from_filename(self, group):
+        # Stop at the first hit across all file types. A later file must not
+        # erase the ID or replace it with a different movie's ID.
+        for filetype in group['files']:
+            for filetype_file in group['files'][filetype]:
+                try:
+                    found = getImdb(filetype_file)
+                except Exception:
+                    continue
+                if found:
+                    group['identity_source'] = 'filename'
+                    self._log_diagnostic(log.debug,
+                                       'Found movie via imdb in filename: %s',
+                                       filetype_file)
+                    return found
+        return None
+
+    @staticmethod
+    def _search_year_candidates(name_year):
+        search_q = '%(name)s %(year)s' % name_year
+        movie = fireEvent('movie.search', q=search_q, merge=True,
+                          limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT,
+                          search_type='phrase')
+        parsed_year = name_year.get('year')
+
+        if len(movie) == 0:
+            other = name_year.get('other')
+            if other and other.get('name') and other.get('year'):
+                search_q2 = '%(name)s %(year)s' % other
+                if search_q2 != search_q:
+                    movie = fireEvent('movie.search', q=search_q2, merge=True,
+                                      limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT,
+                                      search_type='phrase')
+                    # The alternate parse can imply a different year.
+                    parsed_year = other.get('year')
+
+        return movie, parsed_year
+
+    def _search_identifier(self, identifier, group):
+        try:
+            filename = next(iter(group['files'].get('movie') or ()), None)
+        except Exception:
+            filename = None
+
+        name_year = self.getReleaseNameYear(
+            identifier, file_name=filename if not group['is_dvd'] else None,
+        )
+        if not name_year.get('name') or not name_year.get('year'):
+            return None
+
+        movie, parsed_year = self._search_year_candidates(name_year)
+        if len(movie) == 0:
+            return None
+
+        chosen = self.pickSearchYearMatch(movie, parsed_year, filename)
+        imdb_id = chosen.get('imdb')
+        # A searched identity is a guess, never authority to replace a file.
+        group['identity_source'] = 'search'
+        self._log_diagnostic(log.debug, 'Found movie via search: %s', identifier)
+        return imdb_id
+
+    def _imdb_from_search(self, group):
+        for identifier in group['identifiers']:
+            if len(identifier) > 2:
+                try:
+                    imdb_id = self._search_identifier(identifier, group)
+                    if imdb_id:
+                        return imdb_id
+                except Exception:
+                    # A provider failure must not abort the directory scan:
+                    # a partial scan can make library cleanup delete movies.
+                    self._log_diagnostic(log.debug,
+                                       'Search-based identification failed for %s: %s',
+                                       identifier, traceback.format_exc())
+            else:
+                self._log_diagnostic(log.debug,
+                                   'Identifier to short to use for search: %s',
+                                   identifier)
+        return None
 
     def determineMedia(self, group, release_download=None):
         """Identify the movie this group is, and record HOW it was identified.
@@ -416,151 +532,35 @@ class FolderScannerMixin:
         imdb_id = release_download and release_download.get('imdb_id')
         if imdb_id:
             group['identity_source'] = 'download_id'
-            log.debug('Found movie via imdb id from it\'s download id: %s', release_download.get('imdb_id'))
-
-        files = group['files']
-
-        if not imdb_id:
-            for cur_file in files['movie']:
-                imdb_id = self.getCPImdb(cur_file)
-                if imdb_id:
-                    group['identity_source'] = 'cp_tag'
-                    log.debug('Found movie via CP tag: %s', cur_file)
-                    break
+            self._log_diagnostic(log.debug, 'Found movie via imdb id from it\'s download id: %s',
+                               release_download.get('imdb_id'))
 
         if not imdb_id:
-            try:
-                for nf in files['nfo']:
-                    imdb_id = getImdb(nf, check_inside=True)
-                    if imdb_id:
-                        group['identity_source'] = 'nfo'
-                        log.debug('Found movie via nfo file: %s', nf)
-                        break
-            except Exception:
-                pass
+            imdb_id = self._imdb_from_cp_tag(group)
 
         if not imdb_id:
-            try:
-                # Two bugs lived here, and `identity_source` made the second
-                # one matter.
-                #
-                # `imdb_id` was assigned UNCONDITIONALLY each pass, and the
-                # `break` left only the INNER loop. So after finding an id in
-                # one file type the scan carried on through the rest -- and
-                # the next file without an id overwrote the answer with None,
-                # while a stray NFO or subtitle carrying a DIFFERENT id
-                # overwrote it with that. Whichever file type happened to be
-                # iterated last won.
-                #
-                # That was survivable while the id only decided where a
-                # download was filed. It is not now: `identity_source` is
-                # read as "we ASSERT which movie this is", and upgrade
-                # replacement uses that to authorise destroying the file at
-                # the destination. An id chosen by iteration order is not an
-                # assertion.
-                #
-                # Assign only on a hit, and leave both loops on the first one.
-                #
-                # The outer `break` is the load-bearing half: with it, the
-                # scan stops before a second file can be read at all. The
-                # conditional assignment is therefore redundant TODAY and
-                # mutation testing says so -- restoring the unconditional
-                # form kills no test while the break stands. It is kept
-                # anyway, because the break is the kind of line somebody
-                # tidies away, and without it the unconditional form silently
-                # restores the erasure.
-                for filetype in files:
-                    for filetype_file in files[filetype]:
-                        found = getImdb(filetype_file)
-                        if found:
-                            imdb_id = found
-                            group['identity_source'] = 'filename'
-                            # `filetype_file`, not `nfo_file` -- the old
-                            # message named a variable from the branch above,
-                            # so it logged None or an unrelated path.
-                            log.debug('Found movie via imdb in filename: %s',
-                                      filetype_file)
-                            break
-                    if imdb_id:
-                        break
-            except Exception:
-                pass
+            imdb_id = self._imdb_from_nfo(group)
 
         if not imdb_id:
-            for identifier in group['identifiers']:
-                if len(identifier) > 2:
-                    try:
-                        try:
-                            filename = next(iter(group['files'].get('movie') or ()), None)
-                        except Exception:
-                            filename = None
+            imdb_id = self._imdb_from_filename(group)
 
-                        name_year = self.getReleaseNameYear(identifier, file_name=filename if not group['is_dvd'] else None)
-                        if name_year.get('name') and name_year.get('year'):
-                            search_q = '%(name)s %(year)s' % name_year
-                            # `search_type` is pinned explicitly, not left to
-                            # follow `limit` -- see SEARCH_YEAR_DISAMBIGUATION_LIMIT's
-                            # comment (FIX 6, round-one review of 0dc9e9a78).
-                            movie = fireEvent('movie.search', q=search_q, merge=True,
-                                               limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT,
-                                               search_type='phrase')
-                            parsed_year = name_year.get('year')
-
-                            if len(movie) == 0 and name_year.get('other') and name_year['other'].get('name') and name_year['other'].get('year'):
-                                search_q2 = '%(name)s %(year)s' % name_year.get('other')
-                                if search_q2 != search_q:
-                                    movie = fireEvent('movie.search', q=search_q2, merge=True,
-                                                       limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT,
-                                                       search_type='phrase')
-                                    # The "other" query carries its own parsed
-                                    # year (a differently-parsed title can imply
-                                    # a different year) -- match against that,
-                                    # not the primary query's.
-                                    parsed_year = name_year['other'].get('year')
-
-                            if len(movie) > 0:
-                                chosen = self.pickSearchYearMatch(movie, parsed_year, filename)
-                                imdb_id = chosen.get('imdb')
-                                # A GUESS, not an assertion: the best match for a
-                                # parsed title and year. Recorded as such so the
-                                # destructive path can refuse it.
-                                group['identity_source'] = 'search'
-                                log.debug('Found movie via search: %s', identifier)
-                                if imdb_id:
-                                    break
-                    except Exception:
-                        # BUG-018 round-one review (FIX 2): this was the only
-                        # one of the five identification fallbacks with no
-                        # exception guard. `candidate.get('year')` and similar
-                        # dict access assume every search result is a dict --
-                        # true for the single shipped provider today, not
-                        # guaranteed the moment a second one is registered.
-                        # Left unguarded, that raises out of `determineMedia`,
-                        # out of `scan()`, mid-directory: `fireEvent` swallows
-                        # it, but `added_identifiers` is then left PARTIAL and
-                        # non-empty, so `manage.updateLibrary`'s cleanup runs
-                        # against a truncated scan and deletes every 'done'
-                        # movie the scan had not reached yet. Falling through
-                        # to the next identifier is always safe; letting this
-                        # propagate is not.
-                        log.debug('Search-based identification failed for %s: %s',
-                                  identifier, traceback.format_exc())
-                else:
-                    log.debug('Identifier to short to use for search: %s', identifier)
+        if not imdb_id:
+            imdb_id = self._imdb_from_search(group)
 
         if imdb_id:
             try:
                 db = get_db()
                 return db.get('media', 'imdb-%s' % imdb_id, with_doc=True)['doc']
             except Exception:
-                log.debug('Movie "%s" not in library, just getting info', imdb_id)
+                self._log_diagnostic(log.debug, 'Movie "%s" not in library, just getting info', imdb_id)
                 return {
                     'identifier': imdb_id,
                     'info': fireEvent('movie.info', identifier=imdb_id, merge=True, extended=False)
                 }
 
-        log.error('No imdb_id found for %s. Add a NFO file with IMDB id or add the year to the filename.',
-                  group['identifiers'])
+        self._log_diagnostic(log.error,
+                           'No imdb_id found for %s. Add a NFO file with IMDB id or add the year to the filename.',
+                           group['identifiers'])
         return {}
 
     def pickSearchYearMatch(self, candidates, parsed_year, filename):
@@ -669,7 +669,7 @@ class FolderScannerMixin:
             # type, never the raw value, to honour the basename-only
             # promise below.
             logged_filename = type(filename).__name__
-        log.warning(
+        self._log_diagnostic(log.warning,
             'No search result for "%s" matched the parsed year %s within '
             'tolerance (years offered: %s) -- taking the first result %s. '
             'This guess is not destructive on its own, but is worth '
@@ -783,7 +783,8 @@ class FolderScannerMixin:
                         'year': guessit.get('year'),
                     }
             except Exception:
-                log.debug('Could not detect via guessit "%s": %s', file_name, traceback.format_exc())
+                self._log_diagnostic(log.debug, 'Could not detect via guessit "%s": %s',
+                                     file_name, traceback.format_exc())
 
         release_name = os.path.basename(release_name.replace('\\', '/'))
         cleaned = ' '.join(re.split(r'\W+', simplifyString(release_name)))
