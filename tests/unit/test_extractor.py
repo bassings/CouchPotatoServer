@@ -233,8 +233,10 @@ class TestExtractArchive:
         handle.open.side_effect = rarfile.RarCannotExec('Cannot find working tool')
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extractor = _Extractor()
+            output_dir = str(tmp_path)
             with pytest.raises(rarfile.RarCannotExec):
-                _Extractor().extractArchive('archive.rar', str(tmp_path))
+                extractor.extractArchive('archive.rar', output_dir)
 
         assert list(tmp_path.iterdir()) == []
         handle.close.assert_called_once()
@@ -244,8 +246,10 @@ class TestExtractArchive:
             'couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
             side_effect=rarfile.BadRarFile('corrupt archive'),
         ):
+            extractor = _Extractor()
+            output_dir = str(tmp_path)
             with pytest.raises(rarfile.Error):
-                _Extractor().extractArchive('archive.rar', str(tmp_path))
+                extractor.extractArchive('archive.rar', output_dir)
 
     def test_custom_tool_path_sets_unrar_tool_and_forces_redetect(self, tmp_path):
         handle = _make_rar_handle([], {})
@@ -291,8 +295,10 @@ class TestExtractArchiveAtomicWrite:
         )
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extractor = _Extractor()
+            output_dir = str(tmp_path)
             with pytest.raises(OSError):
-                _Extractor().extractArchive('archive.rar', str(tmp_path))
+                extractor.extractArchive('archive.rar', output_dir)
 
         # No file at the real destination, and no leftover temp/part file.
         assert not (tmp_path / 'movie.mkv').exists()
@@ -1215,8 +1221,10 @@ class TestOneBadEntryDoesNotSinkTheArchive:
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
                    return_value=handle):
+            extractor = _Extractor()
+            output_dir = str(extr_path)
             with pytest.raises(OSError):
-                _Extractor().extractArchive('a.rar', str(extr_path))
+                extractor.extractArchive('a.rar', output_dir)
 
 
 class TestUnreadableEntryLoggingIsAlsoBounded:
@@ -1318,8 +1326,10 @@ class TestALongEntryNameDoesNotSinkTheArchive:
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
                    return_value=handle):
+            extractor = _Extractor()
+            output_dir = str(extr_path)
             with pytest.raises(OSError) as excinfo:
-                _Extractor().extractArchive('a.rar', str(extr_path))
+                extractor.extractArchive('a.rar', output_dir)
         assert excinfo.value.errno == errno.ENOSPC
 
 
@@ -1461,8 +1471,10 @@ class TestTheSummarySurvivesAnAbortedArchive:
                    return_value=handle), \
              caplog.at_level(logging.ERROR,
                              logger='couchpotato.core.plugins.renamer.extractor'):
+            extractor = _Extractor()
+            output_dir = str(extr_path)
             with pytest.raises(OSError):
-                _Extractor().extractArchive('a.rar', str(extr_path))
+                extractor.extractArchive('a.rar', output_dir)
 
         summary = [r.getMessage() for r in caplog.records
                    if 'refused in total' in r.getMessage()]

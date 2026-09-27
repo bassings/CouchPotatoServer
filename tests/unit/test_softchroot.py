@@ -83,7 +83,7 @@ class SoftChrootEnabledTest(TestCase):
 
     def test_is_root_abs_none(self):
         with self.assertRaises(ValueError):
-            self.assertFalse( self.b.is_root_abs(None) )
+            self.b.is_root_abs(None)
 
     def test_is_root_abs(self):
         self.assertFalse( self.b.is_root_abs('') )

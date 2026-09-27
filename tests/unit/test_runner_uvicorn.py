@@ -180,10 +180,9 @@ class TestStartUvicornOrExit:
 
         log = MagicMock()
         try:
+            config = self._config(port=taken)
             with pytest.raises(SystemExit) as exc_info:
-                _start_uvicorn_or_exit(
-                    app, self._config(port=taken), False, log,
-                )
+                _start_uvicorn_or_exit(app, config, False, log)
         finally:
             holder.close()
 
@@ -204,9 +203,11 @@ class TestStartUvicornOrExit:
             'couchpotato.runner._run_uvicorn', fake_run
         )
         log = MagicMock()
+        application = object()
+        config = self._config(port=6100)
 
         with pytest.raises(SystemExit) as exc_info:
-            _start_uvicorn_or_exit(object(), self._config(port=6100), False, log)
+            _start_uvicorn_or_exit(application, config, False, log)
 
         assert exc_info.value.code != 0
 
