@@ -875,7 +875,24 @@ class FolderScannerMixin:
 
     def getReleaseNameYear(self, release_name, file_name=None):
         release_name = release_name.strip(' .-_')
+        guess = self._guess_filename_name_year(file_name)
+        release_name = os.path.basename(release_name.replace('\\', '/'))
+        cleaned = ' '.join(re.split(r'\W+', simplifyString(release_name)))
+        cleaned = re.sub(self.clean, ' ', cleaned)
+        year = self._first_release_year(file_name, release_name, cleaned)
+        cp_guess = self._cleaned_name_year(cleaned, year)
 
+        if cp_guess.get('year') == guess.get('year') and len(cp_guess.get('name', '')) > len(guess.get('name', '')):
+            cp_guess['other'] = guess
+            return cp_guess
+        elif guess == {}:
+            cp_guess['other'] = guess
+            return cp_guess
+
+        guess['other'] = cp_guess
+        return guess
+
+    def _guess_filename_name_year(self, file_name):
         guess = {}
         if file_name:
             try:
@@ -888,21 +905,19 @@ class FolderScannerMixin:
             except Exception:
                 self._log_diagnostic(log.debug, 'Could not detect via guessit "%s": %s',
                                      file_name, traceback.format_exc())
+        return guess
 
-        release_name = os.path.basename(release_name.replace('\\', '/'))
-        cleaned = ' '.join(re.split(r'\W+', simplifyString(release_name)))
-        cleaned = re.sub(self.clean, ' ', cleaned)
-
-        year = None
+    def _first_release_year(self, file_name, release_name, cleaned):
         for year_str in [file_name, release_name, cleaned]:
             if not year_str:
                 continue
             year = self.findYear(year_str)
             if year:
-                break
+                return year
+        return None
 
+    def _cleaned_name_year(self, cleaned, year):
         cp_guess = {}
-
         if year:
             try:
                 movie_name = cleaned.rsplit(year, 1).pop(0).strip()
@@ -923,13 +938,4 @@ class FolderScannerMixin:
                 }
             except Exception:
                 pass
-
-        if cp_guess.get('year') == guess.get('year') and len(cp_guess.get('name', '')) > len(guess.get('name', '')):
-            cp_guess['other'] = guess
-            return cp_guess
-        elif guess == {}:
-            cp_guess['other'] = guess
-            return cp_guess
-
-        guess['other'] = cp_guess
-        return guess
+        return cp_guess
