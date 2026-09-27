@@ -88,10 +88,7 @@ class FolderScannerMixin:
             self._log_diagnostic(log.error, 'Folder doesn\'t exists: %s', folder)
             return None if require_complete else {}
 
-        movie_files = {}
-        leftovers = []
         gathering_complete = True
-        qualified_movie_files = set()
 
         if not files:
             files, gathering_complete = self._gatherFiles(folder)
@@ -101,9 +98,54 @@ class FolderScannerMixin:
             check_file_date = False
             files = [sp(x) for x in files]
 
+        movie_files, leftovers, qualified_movie_files, classification_complete = (
+            self._classify_scan_files(files, folder, require_complete)
+        )
+        gathering_complete = gathering_complete and classification_complete
+        del files
+
+        leftovers, ignored_identifiers = self._attach_matching_sidecars(movie_files, set(leftovers))
+        leftovers, path_identifiers = self._attach_leftovers_by_identifier(movie_files, leftovers, folder)
+        self._attach_leftovers_by_folder(movie_files, leftovers, path_identifiers, folder)
+
+        valid_files = self._filter_scan_groups(movie_files, check_file_date, newer_than)
+
+        total_found = len(valid_files)
+
+        if release_download and total_found == 0:
+            self._log_diagnostic(log.info,
+                                 'Download ID provided (%s), but no groups found! Make sure the download contains valid media files (fully extracted).',
+                                 release_download.get('imdb_id'))
+        elif release_download and total_found > 1:
+            self._log_diagnostic(log.info,
+                                 'Download ID provided (%s), but more than one group found (%s). Ignoring Download ID...',
+                                 release_download.get('imdb_id'), len(valid_files))
+            release_download = None
+
+        processed_movies, groups_complete = self._process_scan_groups(
+            valid_files, ignored_identifiers, folder, release_download, simple,
+            on_found, return_ignored, require_complete, qualified_movie_files,
+        )
+        gathering_complete = gathering_complete and groups_complete
+
+        if len(processed_movies) > 0:
+            self._log_diagnostic(log.info, 'Found %s movies in the folder %s', len(processed_movies), folder)
+        else:
+            self._log_diagnostic(log.debug, 'Found no movies in the folder %s', folder)
+
+        # A library scan must not infer absence from a partial walk.
+        # Keep callbacks for files already found, but withhold a success result.
+        return processed_movies if (gathering_complete and not self.shuttingDown()) or not require_complete else None
+
+    def _classify_scan_files(self, files, folder, require_complete):
+        """Separate movie candidates from sidecars without losing stat failures."""
+        movie_files = {}
+        leftovers = []
+        qualified_movie_files = set()
+        complete = True
         for file_path in files:
             if not os.path.exists(file_path):
-                gathering_complete = False
+                complete = False
                 continue
 
             if self.isSampleFile(file_path):
@@ -114,48 +156,60 @@ class FolderScannerMixin:
 
             is_dvd_file = self.isDVDFile(file_path)
             is_movie_extension = getExt(file_path.lower()) in self.extensions['movie']
-            if require_complete and is_movie_extension:
-                # Use the size we actually checked for classification. A
-                # second stat can fail after an earlier one succeeds on NFS.
-                file_size = self.getFileSize(file_path)
-                if file_size is None:
-                    gathering_complete = False
-                    continue
-                movie_size_ok = (self.file_sizes['movie'].get('min', 0) < file_size
-                                 < self.file_sizes['movie'].get('max', 100000))
-            else:
-                movie_size_ok = self.filesizeBetween(file_path, self.file_sizes['movie'])
+            movie_size_ok, size_failed = self._scan_movie_size(
+                file_path, require_complete, is_movie_extension,
+            )
+            if size_failed:
+                complete = False
+                continue
 
             if movie_size_ok or is_dvd_file:
-                if require_complete and is_movie_extension and movie_size_ok:
-                    qualified_movie_files.add(file_path)
-                identifier = self.createStringIdentifier(file_path, folder, exclude_filename=is_dvd_file)
-                identifiers = [identifier]
-
-                quality = fireEvent('quality.guess', files=[file_path], size=self.getFileSize(file_path), single=True) if not is_dvd_file else {'identifier': 'dvdr'}
-                if quality:
-                    identifier_with_quality = '%s %s' % (identifier, quality.get('identifier', ''))
-                    identifiers = [identifier_with_quality, identifier]
-
-                if not movie_files.get(identifier):
-                    movie_files[identifier] = {
-                        'unsorted_files': [],
-                        'identifiers': identifiers,
-                        'is_dvd': is_dvd_file,
-                    }
-
-                movie_files[identifier]['unsorted_files'].append(file_path)
+                self._add_movie_candidate(
+                    movie_files, qualified_movie_files, file_path, folder, is_dvd_file,
+                    require_complete and is_movie_extension and movie_size_ok,
+                )
             else:
                 leftovers.append(file_path)
 
             if self.shuttingDown():
                 break
+        return movie_files, leftovers, qualified_movie_files, complete
 
-        del files
+    def _scan_movie_size(self, file_path, require_complete, is_movie_extension):
+        """Return size eligibility and whether a required stat failed."""
+        if require_complete and is_movie_extension:
+            # Use the size we actually checked for classification. A second
+            # stat can fail after an earlier one succeeds on NFS.
+            file_size = self.getFileSize(file_path)
+            if file_size is None:
+                return False, True
+            return (self.file_sizes['movie'].get('min', 0) < file_size
+                    < self.file_sizes['movie'].get('max', 100000)), False
+        return self.filesizeBetween(file_path, self.file_sizes['movie']), False
 
-        leftovers = set(leftovers)
+    def _add_movie_candidate(self, movie_files, qualified_movie_files, file_path,
+                             folder, is_dvd_file, qualified):
+        """Add one candidate without changing its quality or identifier order."""
+        if qualified:
+            qualified_movie_files.add(file_path)
+        identifier = self.createStringIdentifier(file_path, folder, exclude_filename=is_dvd_file)
+        identifiers = [identifier]
 
-        # Group files minus extension
+        quality = fireEvent('quality.guess', files=[file_path], size=self.getFileSize(file_path), single=True) if not is_dvd_file else {'identifier': 'dvdr'}
+        if quality:
+            identifier_with_quality = '%s %s' % (identifier, quality.get('identifier', ''))
+            identifiers = [identifier_with_quality, identifier]
+
+        if not movie_files.get(identifier):
+            movie_files[identifier] = {
+                'unsorted_files': [],
+                'identifiers': identifiers,
+                'is_dvd': is_dvd_file,
+            }
+        movie_files[identifier]['unsorted_files'].append(file_path)
+
+    def _attach_matching_sidecars(self, movie_files, leftovers):
+        """Attach files sharing a movie basename and note ignored extensions."""
         ignored_identifiers = []
         for identifier, group in movie_files.items():
             if identifier not in group['identifiers'] and len(identifier) > 0:
@@ -182,8 +236,10 @@ class FolderScannerMixin:
 
             if self.shuttingDown():
                 break
+        return leftovers, ignored_identifiers
 
-        # Create identifiers for leftover files
+    def _attach_leftovers_by_identifier(self, movie_files, leftovers, folder):
+        """Attach remaining files whose derived identifier matches a movie."""
         path_identifiers = {}
         for file_path in leftovers:
             identifier = self.createStringIdentifier(file_path, folder)
@@ -191,7 +247,6 @@ class FolderScannerMixin:
                 path_identifiers[identifier] = []
             path_identifiers[identifier].append(file_path)
 
-        # Group files based on identifier
         delete_identifiers = []
         for identifier, found_files in path_identifiers.items():
             self._log_diagnostic(log.debug, 'Grouping files on identifier: %s', identifier)
@@ -206,9 +261,10 @@ class FolderScannerMixin:
         for identifier in delete_identifiers:
             if path_identifiers.get(identifier):
                 del path_identifiers[identifier]
-        del delete_identifiers
+        return leftovers, path_identifiers
 
-        # Group based on folder
+    def _attach_leftovers_by_folder(self, movie_files, leftovers, path_identifiers, folder):
+        """Preserve the legacy folder-name fallback for unmatched sidecars."""
         delete_identifiers = []
         for identifier, found_files in path_identifiers.items():
             self._log_diagnostic(log.debug, 'Grouping files on foldername: %s', identifier)
@@ -228,9 +284,101 @@ class FolderScannerMixin:
         for identifier in delete_identifiers:
             if path_identifiers.get(identifier):
                 del path_identifiers[identifier]
-        del delete_identifiers
 
-        # Filter out old/extracting files
+    def _process_scan_groups(self, valid_files, ignored_identifiers, folder,
+                             release_download, simple, on_found, return_ignored,
+                             require_complete, qualified_movie_files):
+        """Process groups in legacy pop order and retain callback counts."""
+        total_found = len(valid_files)
+        processed_movies = {}
+        complete = True
+        while not self.shuttingDown():
+            try:
+                identifier, group = valid_files.popitem()
+            except Exception:
+                break
+
+            if return_ignored is False and identifier in ignored_identifiers:
+                self._log_diagnostic(log.debug, 'Ignore file found, ignoring release: %s', identifier)
+                total_found -= 1
+                continue
+
+            if not self._categorise_scan_group(group, require_complete, qualified_movie_files):
+                complete = False
+
+            if len(group['files']['movie']) == 0:
+                complete = False
+                self._log_diagnostic(log.error, 'Couldn\'t find any movie files for %s', identifier)
+                total_found -= 1
+                continue
+
+            self._finish_scan_group(identifier, group, folder, release_download, simple)
+            processed_movies[identifier] = group
+
+            if on_found:
+                on_found(group, total_found, len(valid_files))
+
+            while threading.activeCount() > 100 and not self.shuttingDown():
+                self._log_diagnostic(log.debug, 'Too many threads active, waiting a few seconds')
+                time.sleep(10)
+        return processed_movies, complete
+
+    def _categorise_scan_group(self, group, require_complete, qualified_movie_files):
+        """Build file buckets and report a lost, previously qualified movie."""
+        group['files'] = {
+            'movie_extra': self.getMovieExtras(group['unsorted_files']),
+            'subtitle': self.getSubtitles(group['unsorted_files']),
+            'subtitle_extra': self.getSubtitlesExtras(group['unsorted_files']),
+            'nfo': self.getNfo(group['unsorted_files']),
+            'trailer': self.getTrailers(group['unsorted_files']),
+            'leftover': set(group['unsorted_files']),
+        }
+
+        if group['is_dvd']:
+            group['files']['movie'] = self.getDVDFiles(group['unsorted_files'])
+        else:
+            group['files']['movie'] = self.getMediaFiles(group['unsorted_files'])
+
+        # getMediaFiles performs another size check. If it lost a previously
+        # qualified movie, this is not absence evidence.
+        return not (require_complete and (qualified_movie_files & set(group['unsorted_files']))
+                    - set(group['files']['movie']))
+
+    def _finish_scan_group(self, identifier, group, folder, release_download, simple):
+        """Add metadata and an identity to a group with at least one movie."""
+        self._log_diagnostic(log.debug, 'Getting metadata for %s', identifier)
+        group['meta_data'] = self.getMetaData(group, folder=folder, release_download=release_download)
+        group['subtitle_language'] = self.getSubtitleLanguage(group) if not simple else {}
+
+        for movie_file in group['files']['movie']:
+            group['parentdir'] = os.path.dirname(movie_file)
+            group['dirname'] = None
+
+            folder_names = group['parentdir'].replace(folder, '').split(os.path.sep)
+            folder_names.reverse()
+
+            for folder_name in folder_names:
+                if folder_name.lower() not in self.ignore_names and len(folder_name) > 2:
+                    group['dirname'] = folder_name
+                    break
+            break
+
+        for file_type in group['files']:
+            if file_type != 'leftover':
+                group['files']['leftover'] -= set(group['files'][file_type])
+                group['files'][file_type] = list(group['files'][file_type])
+        group['files']['leftover'] = list(group['files']['leftover'])
+
+        del group['unsorted_files']
+
+        group['media'] = self.determineMedia(group, release_download=release_download)
+        if not group['media']:
+            self._log_diagnostic(log.error, 'Unable to determine media: %s', group['identifiers'])
+        else:
+            group['identifier'] = getIdentifier(group['media']) or group['media']['info'].get('imdb')
+
+    def _filter_scan_groups(self, movie_files, check_file_date, newer_than):
+        """Keep only groups ready for this scan, retaining pop order."""
         valid_files = {}
         while not self.shuttingDown():
             try:
@@ -262,109 +410,7 @@ class FolderScannerMixin:
                     continue
 
             valid_files[identifier] = group
-
-        del movie_files
-
-        total_found = len(valid_files)
-
-        if release_download and total_found == 0:
-            self._log_diagnostic(log.info,
-                                 'Download ID provided (%s), but no groups found! Make sure the download contains valid media files (fully extracted).',
-                                 release_download.get('imdb_id'))
-        elif release_download and total_found > 1:
-            self._log_diagnostic(log.info,
-                                 'Download ID provided (%s), but more than one group found (%s). Ignoring Download ID...',
-                                 release_download.get('imdb_id'), len(valid_files))
-            release_download = None
-
-        # Determine file types
-        processed_movies = {}
-        while not self.shuttingDown():
-            try:
-                identifier, group = valid_files.popitem()
-            except Exception:
-                break
-
-            if return_ignored is False and identifier in ignored_identifiers:
-                self._log_diagnostic(log.debug, 'Ignore file found, ignoring release: %s', identifier)
-                total_found -= 1
-                continue
-
-            group['files'] = {
-                'movie_extra': self.getMovieExtras(group['unsorted_files']),
-                'subtitle': self.getSubtitles(group['unsorted_files']),
-                'subtitle_extra': self.getSubtitlesExtras(group['unsorted_files']),
-                'nfo': self.getNfo(group['unsorted_files']),
-                'trailer': self.getTrailers(group['unsorted_files']),
-                'leftover': set(group['unsorted_files']),
-            }
-
-            if group['is_dvd']:
-                group['files']['movie'] = self.getDVDFiles(group['unsorted_files'])
-            else:
-                group['files']['movie'] = self.getMediaFiles(group['unsorted_files'])
-
-            if require_complete and (qualified_movie_files & set(group['unsorted_files'])) \
-                    - set(group['files']['movie']):
-                # getMediaFiles performs another size check. If it lost a
-                # previously qualified movie, this is not absence evidence.
-                gathering_complete = False
-
-            if len(group['files']['movie']) == 0:
-                gathering_complete = False
-                self._log_diagnostic(log.error, 'Couldn\'t find any movie files for %s', identifier)
-                total_found -= 1
-                continue
-
-            self._log_diagnostic(log.debug, 'Getting metadata for %s', identifier)
-            group['meta_data'] = self.getMetaData(group, folder=folder, release_download=release_download)
-
-            group['subtitle_language'] = self.getSubtitleLanguage(group) if not simple else {}
-
-            for movie_file in group['files']['movie']:
-                group['parentdir'] = os.path.dirname(movie_file)
-                group['dirname'] = None
-
-                folder_names = group['parentdir'].replace(folder, '').split(os.path.sep)
-                folder_names.reverse()
-
-                for folder_name in folder_names:
-                    if folder_name.lower() not in self.ignore_names and len(folder_name) > 2:
-                        group['dirname'] = folder_name
-                        break
-                break
-
-            for file_type in group['files']:
-                if file_type != 'leftover':
-                    group['files']['leftover'] -= set(group['files'][file_type])
-                    group['files'][file_type] = list(group['files'][file_type])
-            group['files']['leftover'] = list(group['files']['leftover'])
-
-            del group['unsorted_files']
-
-            group['media'] = self.determineMedia(group, release_download=release_download)
-            if not group['media']:
-                self._log_diagnostic(log.error, 'Unable to determine media: %s', group['identifiers'])
-            else:
-                group['identifier'] = getIdentifier(group['media']) or group['media']['info'].get('imdb')
-
-            processed_movies[identifier] = group
-
-            if on_found:
-                on_found(group, total_found, len(valid_files))
-
-            while threading.activeCount() > 100 and not self.shuttingDown():
-                self._log_diagnostic(log.debug, 'Too many threads active, waiting a few seconds')
-                time.sleep(10)
-
-        if len(processed_movies) > 0:
-            self._log_diagnostic(log.info, 'Found %s movies in the folder %s', len(processed_movies), folder)
-        else:
-            self._log_diagnostic(log.debug, 'Found no movies in the folder %s', folder)
-
-        # A library scan must not infer absence from a partial walk.
-        # Keep callbacks for files already found, but withhold a success result.
-        return processed_movies if (gathering_complete and not self.shuttingDown()) or not require_complete else None
+        return valid_files
 
     def _gatherFiles(self, folder):
         """Walk `folder` and return every file found inside it.
