@@ -885,3 +885,96 @@ class TestGetReleaseNameYear:
         result = scanner.getReleaseNameYear('SomeMovie')
         # Should still return something
         assert isinstance(result, dict)
+
+    def test_longer_cleaned_name_wins_when_guessit_year_matches(self, scanner, monkeypatch):
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.scanner.folder_scanner.guess_movie_info',
+            lambda _: {'title': 'Short', 'year': 2020},
+        )
+
+        assert scanner.getReleaseNameYear('Longer.Clean.Title.2020', 'file.2020.mkv') == {
+            'name': 'longer clean title',
+            'year': 2020,
+            'other': {'name': 'Short', 'year': 2020},
+        }
+
+    def test_guessit_wins_when_its_name_is_longer(self, scanner, monkeypatch):
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.scanner.folder_scanner.guess_movie_info',
+            lambda _: {'title': 'A Richer Guess Title', 'year': 2020},
+        )
+
+        assert scanner.getReleaseNameYear('Short.2020', 'file.2020.mkv') == {
+            'name': 'A Richer Guess Title',
+            'year': 2020,
+            'other': {'name': 'short', 'year': 2020},
+        }
+
+    def test_equal_length_names_leave_guessit_first(self, scanner, monkeypatch):
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.scanner.folder_scanner.guess_movie_info',
+            lambda _: {'title': 'Other', 'year': 2020},
+        )
+
+        assert scanner.getReleaseNameYear('Short.2020', 'file.2020.mkv') == {
+            'name': 'Other',
+            'year': 2020,
+            'other': {'name': 'short', 'year': 2020},
+        }
+
+    def test_incomplete_guessit_result_uses_cleaned_parse(self, scanner, monkeypatch):
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.scanner.folder_scanner.guess_movie_info',
+            lambda _: {'title': 'Incomplete'},
+        )
+
+        assert scanner.getReleaseNameYear('Film.2022', 'file.2022.mkv') == {
+            'name': 'film',
+            'year': 2022,
+            'other': {},
+        }
+
+    def test_filename_year_precedes_release_name_year(self, scanner, monkeypatch):
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.scanner.folder_scanner.guess_movie_info',
+            lambda _: {},
+        )
+
+        assert scanner.getReleaseNameYear('Film.2020', 'file.2019.mkv') == {
+            'name': 'film 2020',
+            'year': 2019,
+            'other': {},
+        }
+
+    def test_guessit_failure_keeps_release_name_fallback(self, scanner, monkeypatch):
+        def fail_guessit(_):
+            raise ValueError('bad provider data')
+
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.scanner.folder_scanner.guess_movie_info',
+            fail_guessit,
+        )
+
+        assert scanner.getReleaseNameYear('Film.2021', 'file.mkv') == {
+            'name': 'film',
+            'year': 2021,
+            'other': {},
+        }
+
+    def test_no_parsed_year_returns_empty_alternate(self, scanner):
+        assert scanner.getReleaseNameYear('SomeMovie') == {'other': {}}
+
+    def test_symbol_only_name_after_filename_check_keeps_zero_year(self, scanner, monkeypatch):
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.scanner.folder_scanner.guess_movie_info',
+            lambda _: {},
+        )
+
+        assert scanner.getReleaseNameYear('###', 'xyz.mkv') == {
+            'name': '',
+            'year': 0,
+            'other': {},
+        }
+
+    def test_empty_name_without_filename_has_no_year_candidate(self, scanner):
+        assert scanner.getReleaseNameYear('') == {'other': {}}
