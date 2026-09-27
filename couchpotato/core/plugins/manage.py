@@ -156,7 +156,25 @@ class Manage(Plugin):
 
                 before = len(added_identifiers)
                 onFound = self.createAddToLibrary(folder, added_identifiers)
-                fireEvent('scanner.scan', folder = folder, simple = True, newer_than = last_update if not full else 0, check_file_date = False, on_found = onFound, single = True)
+                scan_result = fireEvent('scanner.scan', folder = folder, simple = True,
+                                        newer_than = last_update if not full else 0,
+                                        check_file_date = False, on_found = onFound,
+                                        require_complete = True,
+                                        single = True)
+                if (not isinstance(scan_result, dict)
+                        or any(not isinstance(group, dict)
+                               or not group.get('media') or not group.get('identifier')
+                               for group in scan_result.values())):
+                    library_fully_scanned = False
+                    # A swallowed handler error can stop after an earlier
+                    # on_found callback left progress above zero.
+                    self.in_progress[folder]['to_go'] = 0
+                    if full:
+                        log.warning('Skipping library cleanup: a configured directory scan was incomplete '
+                                    'or contained an unidentified movie. Nothing was removed.')
+                    else:
+                        log.warning('Skipping library scan completion: a configured directory scan was incomplete '
+                                    'or contained an unidentified movie. It will be retried.')
 
                 # PER DIRECTORY, not across the library as a whole.
                 #
@@ -204,13 +222,8 @@ class Manage(Plugin):
             # because the cleanup deletes across the WHOLE library and cannot
             # tell which folder a missing movie belonged to.
             #
-            # KNOWN LIMIT, recorded rather than implied: this detects a
-            # directory that yielded NOTHING. It cannot see a PARTIAL scan --
-            # `scanner.scan` exceptions are swallowed by the event dispatcher,
-            # and an unreadable subtree or a nested unmounted sub-mount returns
-            # a truncated list that still looks like a successful scan. Closing
-            # that needs the scanner to report completeness, which is its own
-            # change.
+            # Completeness is checked above as well. This separate empty-folder
+            # guard handles an apparently successful but empty mountpoint.
             found_everywhere = not empty_directories
             if self.conf('cleanup') and full and not self.shuttingDown() \
                     and library_fully_scanned and not found_everywhere:
@@ -321,7 +334,8 @@ class Manage(Plugin):
             # recorded nothing, and the next scan repeated the entire library
             # walk. SQLite maintains its indexes itself; there was never any
             # work to do here.
-            Env.prop(last_update_key, time.time())
+            if library_fully_scanned:
+                Env.prop(last_update_key, time.time())
         except Exception:
             log.error('Failed updating library: %s', traceback.format_exc())
 
