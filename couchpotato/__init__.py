@@ -1216,7 +1216,12 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
 
     # CORS middleware — same-origin by default, configurable via settings
     cors_origins = Env.setting('cors_origins', default='')
-    allowed_origins = [o.strip() for o in cors_origins.split(',') if o.strip()] if cors_origins else []
+    # Credentialled CORS must never treat a wildcard as an allowed origin:
+    # Starlette reflects any Origin when both settings are enabled.
+    allowed_origins = [
+        origin for raw in cors_origins.split(',')
+        if (origin := raw.strip()) and origin != '*'
+    ] if cors_origins else []
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
