@@ -72,10 +72,14 @@ def _run_cleanup(directories=None, scanned=()):
             on_found = kwargs.get('on_found')
             folder = kwargs.get('folder')
             found = scanned.get(folder, []) if isinstance(scanned, dict) else scanned
+            groups = {}
             if on_found:
                 for n, identifier in enumerate(found):
-                    on_found({'media': {'_id': identifier}, 'identifier': identifier},
+                    group = {'media': {'_id': identifier}, 'identifier': identifier}
+                    groups[identifier] = group
+                    on_found(group,
                              len(found), len(found) - n - 1)
+            return groups
         return []
 
     plugin = Manage.__new__(Manage)

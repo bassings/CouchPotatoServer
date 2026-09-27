@@ -79,19 +79,22 @@ class FolderScannerMixin:
     cp_imdb = r'\.cp\((?P<id>tt[0-9]+),?\s?(?P<random>[A-Za-z0-9]+)?\)'
 
     def scan(self, folder=None, files=None, release_download=None, simple=False,
-             newer_than=0, return_ignored=True, check_file_date=True, on_found=None):
+             newer_than=0, return_ignored=True, check_file_date=True, on_found=None,
+             require_complete=False):
 
         folder = sp(folder)
 
         if not folder or not os.path.isdir(folder):
             self._log_diagnostic(log.error, 'Folder doesn\'t exists: %s', folder)
-            return {}
+            return None if require_complete else {}
 
         movie_files = {}
         leftovers = []
+        gathering_complete = True
+        qualified_movie_files = set()
 
         if not files:
-            files = self._gatherFiles(folder)
+            files, gathering_complete = self._gatherFiles(folder)
 
             self._log_diagnostic(log.debug, 'Found %s files to scan and group in %s', len(files), folder)
         else:
@@ -100,6 +103,7 @@ class FolderScannerMixin:
 
         for file_path in files:
             if not os.path.exists(file_path):
+                gathering_complete = False
                 continue
 
             if self.isSampleFile(file_path):
@@ -109,7 +113,22 @@ class FolderScannerMixin:
                 continue
 
             is_dvd_file = self.isDVDFile(file_path)
-            if self.filesizeBetween(file_path, self.file_sizes['movie']) or is_dvd_file:
+            is_movie_extension = getExt(file_path.lower()) in self.extensions['movie']
+            if require_complete and is_movie_extension:
+                # Use the size we actually checked for classification. A
+                # second stat can fail after an earlier one succeeds on NFS.
+                file_size = self.getFileSize(file_path)
+                if file_size is None:
+                    gathering_complete = False
+                    continue
+                movie_size_ok = (self.file_sizes['movie'].get('min', 0) < file_size
+                                 < self.file_sizes['movie'].get('max', 100000))
+            else:
+                movie_size_ok = self.filesizeBetween(file_path, self.file_sizes['movie'])
+
+            if movie_size_ok or is_dvd_file:
+                if require_complete and is_movie_extension and movie_size_ok:
+                    qualified_movie_files.add(file_path)
                 identifier = self.createStringIdentifier(file_path, folder, exclude_filename=is_dvd_file)
                 identifiers = [identifier]
 
@@ -285,7 +304,14 @@ class FolderScannerMixin:
             else:
                 group['files']['movie'] = self.getMediaFiles(group['unsorted_files'])
 
+            if require_complete and (qualified_movie_files & set(group['unsorted_files'])) \
+                    - set(group['files']['movie']):
+                # getMediaFiles performs another size check. If it lost a
+                # previously qualified movie, this is not absence evidence.
+                gathering_complete = False
+
             if len(group['files']['movie']) == 0:
+                gathering_complete = False
                 self._log_diagnostic(log.error, 'Couldn\'t find any movie files for %s', identifier)
                 total_found -= 1
                 continue
@@ -336,7 +362,9 @@ class FolderScannerMixin:
         else:
             self._log_diagnostic(log.debug, 'Found no movies in the folder %s', folder)
 
-        return processed_movies
+        # A library scan must not infer absence from a partial walk.
+        # Keep callbacks for files already found, but withhold a success result.
+        return processed_movies if (gathering_complete and not self.shuttingDown()) or not require_complete else None
 
     def _gatherFiles(self, folder):
         """Walk `folder` and return every file found inside it.
@@ -362,16 +390,26 @@ class FolderScannerMixin:
         into inner escaping symlinked dirs. The per-file check is retained as
         belt-and-braces for file symlinks. PR #151 review.
 
-        Best-effort: if the walk raises partway through (e.g. a permission
-        error deep in the tree), the files gathered before the error are
-        still returned rather than discarded, matching the pre-refactor
-        behaviour.
+        Return the files gathered and whether the walk completed. On an error,
+        keep files already found for normal scanner callers, but let a full
+        library scan refuse to use the partial result as cleanup evidence.
         """
         real_folder = os.path.realpath(folder)
 
         found_files = []
+        complete = True
+
+        def record_walk_error(error):
+            # Let os.walk continue into accessible siblings, while library
+            # scans still know the directory was not completely examined.
+            nonlocal complete
+            complete = False
+            self._log_diagnostic(log.error, 'Failed gathering files (%s); scan incomplete.',
+                                 type(error).__name__)
+
         try:
-            for root, dirs, walk_files in os.walk(folder, followlinks=True):
+            for root, dirs, walk_files in os.walk(folder, followlinks=True,
+                                                 onerror=record_walk_error):
                 # Prune escaping symlinked subdirs before descending into them.
                 dirs[:] = [d for d in dirs
                            if self._isWithinFolder(os.path.join(root, d), real_folder)]
@@ -389,11 +427,12 @@ class FolderScannerMixin:
 
                 if self.shuttingDown():
                     break
-        except Exception:
-            self._log_diagnostic(log.error, 'Failed getting files from %s: %s',
-                                 folder, traceback.format_exc())
+        except Exception as error:
+            complete = False
+            self._log_diagnostic(log.error, 'Failed gathering files (%s); scan incomplete.',
+                                 type(error).__name__)
 
-        return found_files
+        return found_files, complete
 
     @staticmethod
     def _isWithinFolder(file_path, real_folder):

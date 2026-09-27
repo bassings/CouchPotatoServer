@@ -495,7 +495,7 @@ class TestFolderScannerLeftoverSetContract:
         (library / 'escape.mkv').symlink_to(outside)
 
         monkeypatch.setattr(fs.os, 'walk',
-                            lambda folder, followlinks=False:
+                            lambda folder, followlinks=False, onerror=None:
                             iter([(str(library), [], ['First.2024.mkv', 'escape.mkv', 'Second.2024.mkv'])]))
         monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
         scanner = CharacterizationScanner()
@@ -511,8 +511,10 @@ class TestFolderScannerLeftoverSetContract:
         monkeypatch.setattr(fs.log, 'debug', debug)
         callbacks = []
 
-        assert scanner._gatherFiles(str(library)) == [
-            str(library / 'First.2024.mkv'), str(library / 'Second.2024.mkv')]
+        gathered, complete = scanner._gatherFiles(str(library))
+        assert complete
+        assert gathered == [str(library / 'First.2024.mkv'),
+                            str(library / 'Second.2024.mkv')]
 
         scanner.scan(folder=str(library), simple=True, check_file_date=False,
                      on_found=lambda group, total, remaining: callbacks.append(group))
@@ -610,8 +612,9 @@ class TestGatherFilesSymlinkContainment:
         link = scan_dir / 'link.mkv'
         link.symlink_to(outside_file)
 
-        files = scanner._gatherFiles(str(scan_dir))
+        files, complete = scanner._gatherFiles(str(scan_dir))
 
+        assert complete
         assert str(link) not in files
 
     def test_symlink_to_external_directory_is_excluded(self, tmp_path):
@@ -624,8 +627,9 @@ class TestGatherFilesSymlinkContainment:
         linked_dir = scan_dir / 'linked'
         linked_dir.symlink_to(outside_dir)
 
-        files = scanner._gatherFiles(str(scan_dir))
+        files, complete = scanner._gatherFiles(str(scan_dir))
 
+        assert complete
         assert not any('movie.mkv' in f for f in files)
 
     def test_regular_file_inside_scan_folder_is_included(self, tmp_path):
@@ -635,8 +639,9 @@ class TestGatherFilesSymlinkContainment:
         regular = scan_dir / 'movie.mkv'
         regular.write_bytes(b'\0' * 1024)
 
-        files = scanner._gatherFiles(str(scan_dir))
+        files, complete = scanner._gatherFiles(str(scan_dir))
 
+        assert complete
         assert str(regular) in files
 
     def test_partial_results_returned_on_midwalk_error(self, monkeypatch):
@@ -647,7 +652,7 @@ class TestGatherFilesSymlinkContainment:
 
         scanner = FakeScannerWithShutdown()
 
-        def exploding_walk(folder, followlinks=False):
+        def exploding_walk(folder, followlinks=False, onerror=None):
             yield ('/movies', [], ['first.mkv'])
             raise OSError('permission denied deep in the tree')
 
@@ -656,11 +661,31 @@ class TestGatherFilesSymlinkContainment:
         monkeypatch.setattr(fs.os, 'walk', exploding_walk)
         monkeypatch.setattr(scanner, '_isWithinFolder', lambda file_path, real_folder: True)
 
-        files = scanner._gatherFiles('/movies')
+        files, complete = scanner._gatherFiles('/movies')
 
+        assert not complete
         assert any('first.mkv' in f for f in files), (
             'partial results gathered before the error were discarded'
         )
+
+    def test_walk_error_keeps_accessible_later_siblings(self, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        scanner = FakeScannerWithShutdown()
+
+        def walk_with_unreadable_sibling(folder, followlinks=False, onerror=None):
+            yield '/movies', [], ['first.mkv']
+            onerror(PermissionError('private library subtree'))
+            yield '/movies', [], ['later.mkv']
+
+        monkeypatch.setattr(fs.os, 'walk', walk_with_unreadable_sibling)
+        monkeypatch.setattr(scanner, '_isWithinFolder', lambda file_path, real_folder: True)
+
+        files, complete = scanner._gatherFiles('/movies')
+
+        assert not complete
+        assert '/movies/first.mkv' in files
+        assert '/movies/later.mkv' in files
 
     def test_escaping_symlinked_dir_is_not_descended_into(self, tmp_path, monkeypatch):
         """PR #151 review (MEDIUM): a symlinked subdirectory that escapes the
@@ -692,8 +717,9 @@ class TestGatherFilesSymlinkContainment:
 
         monkeypatch.setattr(fs.os, 'walk', spying_walk)
 
-        files = scanner._gatherFiles(str(scan_dir))
+        files, complete = scanner._gatherFiles(str(scan_dir))
 
+        assert complete
         # The escaping symlinked dir must never be descended into...
         assert not any(os.path.realpath(r) == os.path.realpath(str(outside_dir))
                        for r in visited_roots), (
@@ -716,8 +742,9 @@ class TestGatherFilesSymlinkContainment:
         loop.symlink_to(scan_dir)
 
         # Must terminate (SYMLOOP_MAX bounds the OS symlink resolution).
-        files = scanner._gatherFiles(str(scan_dir))
+        files, complete = scanner._gatherFiles(str(scan_dir))
 
+        assert complete
         assert any('movie.mkv' in f for f in files)
 
 

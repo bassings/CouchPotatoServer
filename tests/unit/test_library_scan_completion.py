@@ -58,6 +58,8 @@ def _run_update_library(tmp_path):
     def fake_fire(event, *args, **kwargs):
         if event == 'media.list':
             return (len(MOVIES), MOVIES)
+        if event == 'scanner.scan':
+            return {}
         return None
 
     class FakeDB:

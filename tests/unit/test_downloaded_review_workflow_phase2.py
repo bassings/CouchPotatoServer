@@ -372,9 +372,10 @@ class TestManageCleanupExemptsDownloadedMovies:
                 # movies are still absent from it, which is the condition these
                 # tests are actually about.
                 on_found = kwargs.get('on_found')
+                visible_group = {'media': {'_id': 'some-other'}, 'identifier': 'tt-visible'}
                 if on_found:
-                    on_found({'media': {'_id': 'some-other'}, 'identifier': 'tt-visible'}, 1, 0)
-                return None
+                    on_found(visible_group, 1, 0)
+                return {'visible': visible_group}
             if event in ('release.add', 'movie.update'):
                 # Fired by `createAddToLibrary`'s callback for the movie the
                 # scan reports above. Not what this class measures, but the
