@@ -216,8 +216,8 @@ class TestHappyPaths:
 
 class TestFailedMoveRecovery:
 
-    def test_failed_move_with_equal_size_destination_unlinks_the_source(self, tmp_path, monkeypatch):
-        """A complete, matching copy permits recovery after the final unlink fails."""
+    def test_failed_move_with_equal_size_destination_keeps_the_source(self, tmp_path, monkeypatch):
+        """A complete copy is not proof the failed move may consume its source."""
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -225,7 +225,7 @@ class TestFailedMoveRecovery:
         def _fake_move(src, dst, **kwargs):
             assert 'copy_function' not in kwargs, (
                 'the default move branch deliberately keeps copy2 for mtime '
-                'preservation (AC-DATA-10b); it recovers on its own'
+                'preservation (AC-DATA-10b); failure is handled conservatively'
             )
             Path(dst).write_bytes(DOWNLOAD)
             raise OSError('simulated: failure after the copy phase completed')
@@ -233,10 +233,37 @@ class TestFailedMoveRecovery:
         monkeypatch.setattr(shutil, 'move', _fake_move)
         plugin = _mover(monkeypatch, file_action='move')
 
-        result = _move(plugin, tmp_path, str(old), str(dest))
+        with pytest.raises(OSError, match='simulated'):
+            _move(plugin, tmp_path, str(old), str(dest))
 
-        assert result is True
-        assert not os.path.exists(old), 'source may be unlinked once bytes match'
+        assert old.read_bytes() == DOWNLOAD
+        assert dest.read_bytes() == DOWNLOAD
+
+    def test_failed_move_never_unlinks_source_after_comparison(self, tmp_path, monkeypatch):
+        """Comparison cannot authorise a later pathname-based unlink."""
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        plugin = _mover(monkeypatch, file_action='move')
+
+        def _complete_then_fail(src, dst, **kwargs):
+            Path(dst).write_bytes(DOWNLOAD)
+            raise OSError('simulated transfer failure')
+
+        real_unlink = os.unlink
+
+        def _reject_source_unlink(path, *args, **kwargs):
+            if os.fspath(path) == os.fspath(old):
+                raise AssertionError('unsafe source unlink after comparison')
+            return real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(shutil, 'move', _complete_then_fail)
+        monkeypatch.setattr(os, 'unlink', _reject_source_unlink)
+
+        with pytest.raises(OSError, match='simulated transfer failure'):
+            _move(plugin, tmp_path, str(old), str(dest))
+
+        assert old.read_bytes() == DOWNLOAD
         assert dest.read_bytes() == DOWNLOAD
 
     @pytest.mark.parametrize(
@@ -264,8 +291,8 @@ class TestFailedMoveRecovery:
         assert old.read_bytes() == DOWNLOAD, 'the good source must survive'
         assert dest.read_bytes() == wrong_content, 'uncertain destination must survive'
 
-    def test_failed_move_with_unreadable_equal_size_destination_preserves_both(self, tmp_path, monkeypatch):
-        """A comparison read error is uncertainty, not evidence to unlink either file."""
+    def test_failed_move_with_equal_size_destination_preserves_both_without_reading_it(self, tmp_path, monkeypatch):
+        """An uncertain transfer must not require reading either copy to preserve it."""
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -276,17 +303,8 @@ class TestFailedMoveRecovery:
 
         monkeypatch.setattr(shutil, 'move', _fake_move)
         plugin = _mover(monkeypatch, file_action='move')
-        real_open = open
-
-        def _unreadable_destination(path, *args, **kwargs):
-            if os.fspath(path) == os.fspath(dest):
-                raise OSError('simulated comparison read failure')
-            return real_open(path, *args, **kwargs)
-
-        with monkeypatch.context() as comparison:
-            comparison.setattr(mover_module, 'open', _unreadable_destination, raising=False)
-            with pytest.raises(OSError, match='simulated transfer failure'):
-                _move(plugin, tmp_path, str(old), str(dest))
+        with pytest.raises(OSError, match='simulated transfer failure'):
+            _move(plugin, tmp_path, str(old), str(dest))
 
         assert old.read_bytes() == DOWNLOAD
         assert dest.read_bytes() == DOWNLOAD
@@ -517,7 +535,7 @@ class TestFailedMoveRecovery:
         def _fake_move(src, dst, **kwargs):
             assert 'copy_function' not in kwargs, (
                 'the default move branch deliberately keeps copy2 for mtime '
-                'preservation (AC-DATA-10b); it recovers on its own'
+                'preservation (AC-DATA-10b); failure is handled conservatively'
             )
             Path(dst).write_bytes(DOWNLOAD[:1024])  # a real, short/partial write
             raise OSError('simulated: interrupted copy (disk full / dropped mount)')
@@ -554,7 +572,7 @@ class TestFailedMoveRecovery:
         def _fake_move(src, dst, **kwargs):
             assert 'copy_function' not in kwargs, (
                 'the default move branch deliberately keeps copy2 for mtime '
-                'preservation (AC-DATA-10b); it recovers on its own'
+                'preservation (AC-DATA-10b); failure is handled conservatively'
             )
             Path(dst).write_bytes(DOWNLOAD)  # the copy phase really completes
             os.remove(src)  # a concurrent actor removes `old` first
@@ -1172,6 +1190,31 @@ class TestCallerLevelDataLossGuards:
         )
         plugin._moveRenamedFiles(rename_files, {'parentdir': source_folder})
         return deleted
+
+    def test_complete_copy_failure_preserves_download_and_does_not_log_private_paths(
+        self, tmp_path, monkeypatch, caplog,
+    ):
+        old = _write(tmp_path / 'downloads/Private Movie/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/Private Movie/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        def _complete_then_fail(src, dst, **kwargs):
+            Path(dst).write_bytes(DOWNLOAD)
+            raise OSError('simulated private detail: %s' % src)
+
+        monkeypatch.setattr(shutil, 'move', _complete_then_fail)
+        deleted = self._run(
+            monkeypatch, {'default_file_action': 'move', 'cleanup': True},
+            {str(old): str(dest)}, str(old.parent),
+        )
+
+        assert deleted == []
+        assert old.read_bytes() == DOWNLOAD
+        assert dest.read_bytes() == DOWNLOAD
+        error_messages = [record.getMessage() for record in caplog.records if record.levelname == 'ERROR']
+        assert error_messages, 'failure must remain visible to the operator'
+        assert all('Private Movie' not in message for message in error_messages)
+        assert all(str(old) not in message and str(dest) not in message for message in error_messages)
 
     def test_caller_refuses_any_pre_existing_destination_before_calling_movefile(self, tmp_path, monkeypatch):
         """Pins `Renamer._moveRenamedFiles`'s OWN guard, not mover.py's.

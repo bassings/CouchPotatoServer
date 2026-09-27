@@ -12,18 +12,6 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 
-def _same_file_contents(source, destination):
-    """Compare a failed move's two copies without loading a movie into memory."""
-    with open(source, 'rb') as source_file, open(destination, 'rb') as destination_file:
-        while True:
-            source_chunk = source_file.read(1024 * 1024)
-            destination_chunk = destination_file.read(1024 * 1024)
-            if source_chunk != destination_chunk:
-                return False
-            if not source_chunk:
-                return True
-
-
 def _recovery_copy_for(dest):
     """Return the stable local artefact path and opaque ID for a destination."""
     destination_id = hashlib.sha256(
@@ -147,18 +135,11 @@ class MoverMixin:
                         if dest_size < old_size:
                             _quarantine_partial_destination(dest)
                         raise
-                    try:
-                        same_contents = _same_file_contents(old, dest)
-                    except OSError:
-                        # Unreadable is not proof of an intact copy. Keep both.
-                        same_contents = False
-                    if not same_contents:
-                        # Equal sizes are insufficient: retain both files so
-                        # neither a good source nor an unrelated destination
-                        # is destroyed on this uncertain failure.
-                        raise
-                    log.error('Successfully moved file "%s", but something went wrong: %s', dest, traceback.format_exc())
-                    os.unlink(old)
+                    # Even identical bytes would not prove that `old` still
+                    # names the same file by the time an unlink runs. A
+                    # failed composite move is not success; keep both paths
+                    # for inspection.
+                    raise
             elif move_type == 'copy':
                 log.info('Copying "%s" to "%s"', old, dest)
                 try:
@@ -200,12 +181,11 @@ class MoverMixin:
                     # guard then blocks every retry for ever. Identical
                     # failure, identical door, third branch.
                     #
-                    # NOT applied to the default-move branch above: that one
-                    # already recovers (it verifies a complete destination
-                    # before unlinking the source), and forcing copyfile
-                    # there would drop mtime preservation on the most common
-                    # path for no benefit. Here mtime is already the accepted
-                    # trade, as it is in `copy`.
+                    # NOT applied to the default-move branch above: forcing
+                    # copyfile there would drop mtime preservation on the
+                    # most common path. That branch now fails closed if the
+                    # composite move raises. Here mtime is already the
+                    # accepted trade, as it is in `copy`.
                     shutil.move(old, dest, copy_function=shutil.copyfile)
                 except Exception:
                     _discard_partial_destination(old, dest)
@@ -272,8 +252,9 @@ class MoverMixin:
                     )
             except Exception:
                 log.debug('Failed setting permissions for file: %s, %s', dest, traceback.format_exc(1))
-        except Exception:
-            log.error('Couldn\'t move file "%s" to "%s": %s', old, dest, traceback.format_exc())
+        except Exception as error:
+            log.error('File transfer failed (%s, errno %s); inspect both paths before retry',
+                      type(error).__name__, getattr(error, 'errno', None))
             raise
 
         return True
