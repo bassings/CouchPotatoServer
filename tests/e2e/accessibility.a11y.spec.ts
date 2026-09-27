@@ -1646,6 +1646,7 @@ test.describe('Accessibility', () => {
   test('Color contrast should be sufficient', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#movie-count')).not.toBeEmpty();
+    await expectVisualTransitionsToSettle(page, 'Wanted page colour contrast');
 
     // Run axe specifically for color contrast
     const results = await new AxeBuilder({ page })
