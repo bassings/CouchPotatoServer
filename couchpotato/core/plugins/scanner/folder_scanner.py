@@ -908,13 +908,14 @@ class FolderScannerMixin:
         return guess
 
     def _first_release_year(self, file_name, release_name, cleaned):
+        year = None
         for year_str in [file_name, release_name, cleaned]:
             if not year_str:
                 continue
             year = self.findYear(year_str)
             if year:
                 return year
-        return None
+        return year
 
     def _cleaned_name_year(self, cleaned, year):
         cp_guess = {}

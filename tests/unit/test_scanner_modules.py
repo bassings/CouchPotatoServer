@@ -963,3 +963,18 @@ class TestGetReleaseNameYear:
 
     def test_no_parsed_year_returns_empty_alternate(self, scanner):
         assert scanner.getReleaseNameYear('SomeMovie') == {'other': {}}
+
+    def test_symbol_only_name_after_filename_check_keeps_zero_year(self, scanner, monkeypatch):
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.scanner.folder_scanner.guess_movie_info',
+            lambda _: {},
+        )
+
+        assert scanner.getReleaseNameYear('###', 'xyz.mkv') == {
+            'name': '',
+            'year': 0,
+            'other': {},
+        }
+
+    def test_empty_name_without_filename_has_no_year_candidate(self, scanner):
+        assert scanner.getReleaseNameYear('') == {'other': {}}
