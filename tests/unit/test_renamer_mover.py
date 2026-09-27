@@ -31,7 +31,9 @@ import hashlib
 import os
 import shutil
 import stat
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1041,24 +1043,86 @@ class TestCallerLevelDataLossGuards:
         assert not os.path.exists(dest), 'nothing reached the destination either'
 
 
-# ---------------------------------------------------------------------------
-# Platform gaps, deliberately left uncovered
-# ---------------------------------------------------------------------------
+class _PlatformOS:
+    """Change only the mover's platform flag, leaving real file operations."""
 
-@pytest.mark.skipif(
-    os.name != 'nt',
-    reason=(
-        "Windows-only branch (moveFile's os.name == 'nt' check): os.popen('icacls \"' + dest + "
-        '\'" * /reset /T\') builds a shell command by string concatenation '
-        'from `dest`, which can carry indexer-supplied release names -- a '
-        'real command-injection surface on Windows with ntfs_permission '
-        'enabled. Deferred to PR 3 (specs/REMEDIATION-2026-08.md T1.1, which '
-        'already edits renamer/); left explicitly uncovered here rather than '
-        'silently absent.'
-    ),
-)
-def test_ntfs_permission_reset_on_windows_is_not_covered_here():
-    """AC-DATA-15 / AC-QA-19. Placeholder: real coverage of the icacls branch
-    is deferred to PR 3 alongside the injection fix; this only exists so the
-    gap is a named, explicit skip rather than silent absence."""
-    pytest.skip('Windows-only branch; see the module-level skip reason above')
+    def __init__(self, name):
+        self.name = name
+
+    def __getattr__(self, name):
+        if name == 'popen':
+            raise AssertionError('the Windows ACL reset must not use a shell')
+        return getattr(os, name)
+
+
+def test_windows_acl_reset_passes_only_the_destination_as_one_argument(tmp_path, monkeypatch):
+    old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+    dest = tmp_path / 'library/Movie & echo unexpected.mkv'
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    plugin = _mover(monkeypatch, file_action='copy', ntfs_permission=True)
+    calls = []
+
+    def record_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(mover_module, 'os', _PlatformOS('nt'))
+    monkeypatch.setattr(mover_module, 'subprocess', SimpleNamespace(
+        run=record_run, DEVNULL=subprocess.DEVNULL,
+    ), raising=False)
+
+    assert _move(plugin, tmp_path, str(old), str(dest)) is True
+    assert calls == [(['icacls', str(dest), '/reset'], {
+        'check': True,
+        'shell': False,
+        'timeout': 30,
+        'stdout': subprocess.DEVNULL,
+        'stderr': subprocess.DEVNULL,
+    })]
+    assert old.read_bytes() == DOWNLOAD
+    assert dest.read_bytes() == DOWNLOAD
+
+
+@pytest.mark.parametrize(('platform', 'enabled'), [('posix', True), ('nt', False)])
+def test_acl_reset_requires_windows_and_opt_in(tmp_path, monkeypatch, platform, enabled):
+    old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+    dest = tmp_path / 'library/movie.mkv'
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    plugin = _mover(monkeypatch, file_action='copy', ntfs_permission=enabled)
+    calls = []
+    monkeypatch.setattr(mover_module, 'os', _PlatformOS(platform))
+    monkeypatch.setattr(mover_module, 'subprocess', SimpleNamespace(
+        run=lambda *args, **kwargs: calls.append((args, kwargs)),
+        DEVNULL=subprocess.DEVNULL,
+    ), raising=False)
+
+    assert _move(plugin, tmp_path, str(old), str(dest)) is True
+    assert calls == []
+    assert dest.read_bytes() == DOWNLOAD
+
+
+@pytest.mark.parametrize('failure', [
+    OSError('injected ACL reset failure'),
+    subprocess.CalledProcessError(1, ['icacls']),
+    subprocess.TimeoutExpired(['icacls'], 30),
+])
+def test_acl_reset_failure_does_not_undo_a_successful_move(tmp_path, monkeypatch, failure):
+    old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+    dest = tmp_path / 'library/movie.mkv'
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    plugin = _mover(monkeypatch, file_action='move', ntfs_permission=True)
+    attempts = []
+
+    def fail_run(*args, **kwargs):
+        attempts.append((args, kwargs))
+        raise failure
+
+    monkeypatch.setattr(mover_module, 'os', _PlatformOS('nt'))
+    monkeypatch.setattr(mover_module, 'subprocess', SimpleNamespace(
+        run=fail_run, DEVNULL=subprocess.DEVNULL,
+    ), raising=False)
+
+    assert _move(plugin, tmp_path, str(old), str(dest)) is True
+    assert len(attempts) == 1
+    assert not old.exists()
+    assert dest.read_bytes() == DOWNLOAD
