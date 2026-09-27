@@ -407,7 +407,6 @@ async function assertWizardStepShowing(page: any, headingText: string | RegExp, 
 test.describe('Accessibility', () => {
   test('Wanted page should be accessible', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
     // #movie-count starts empty and is only populated once the grid's htmx
     // load has swapped in and filterMovies() has run on it (wanted.html) --
     // real content-loaded signal rather than a guessed duration.
@@ -418,7 +417,6 @@ test.describe('Accessibility', () => {
 
   test('Available page should be accessible', async ({ page }) => {
     await page.goto('/available/');
-    await page.waitForLoadState('networkidle');
     // /available/ redirects to /wanted?filter=available and renders the
     // same wanted.html grid, so the same readiness signal applies.
     await expect(page.locator('#movie-count')).not.toBeEmpty();
@@ -436,7 +434,6 @@ test.describe('Accessibility', () => {
 
   test('Add Movie page should be accessible', async ({ page }) => {
     await page.goto('/add/');
-    await page.waitForLoadState('networkidle');
     // Nothing loads via htmx on this page until a search is typed, so the
     // real readiness signal is the search field the test's own scan
     // depends on being there.
@@ -682,7 +679,6 @@ test.describe('Accessibility', () => {
     }, 'dark');
 
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
     await expect(page.locator('#movie-count')).not.toBeEmpty();
 
     // Pin that dark theme really took effect -- load-bearing, not decorative:
@@ -756,7 +752,6 @@ test.describe('Accessibility', () => {
   // toggles this test cares about are actually present and visible.
   async function navigateWizardToProviders(page: any, searchType: 'Usenet' | 'Torrents' | 'Both' = 'Both') {
     await page.goto('/wizard/');
-    await page.waitForLoadState('networkidle');
     await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
 
     // Step 1: Welcome -> Continue
@@ -777,7 +772,6 @@ test.describe('Accessibility', () => {
   test('Setup Wizard page should be accessible', async ({ page }) => {
     await mockSettingsSave(page);
     await page.goto('/wizard/');
-    await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
 
     // Regression guard for UI-CONFORM-01: the wizard used to render its 8
@@ -1004,7 +998,6 @@ test.describe('Accessibility', () => {
 
   test('Navigation should have proper ARIA landmarks', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
     
     // Check for main navigation
     const nav = page.locator('nav[aria-label]');
@@ -1227,7 +1220,6 @@ test.describe('Accessibility', () => {
       }, theme);
 
       await page.goto('/wizard/');
-      await page.waitForLoadState('networkidle');
       await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
 
       // Pin the theme really took effect, same guard the toast contrast test
@@ -1380,7 +1372,6 @@ test.describe('Accessibility', () => {
 
   test('Images should have alt text', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
     // Poster <img>s only exist once the grid's htmx load has swapped in.
     await expect(page.locator('#movie-count')).not.toBeEmpty();
 
@@ -1635,7 +1626,6 @@ test.describe('Accessibility', () => {
       const markDone = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDone).toBeVisible({ timeout: 5000 });
       await markDone.click();
-      await page.waitForLoadState('networkidle');
       await expect(trigger).toBeVisible({ timeout: 10000 });
     }
 
@@ -1655,7 +1645,6 @@ test.describe('Accessibility', () => {
 
   test('Color contrast should be sufficient', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
     await expect(page.locator('#movie-count')).not.toBeEmpty();
 
     // Run axe specifically for color contrast

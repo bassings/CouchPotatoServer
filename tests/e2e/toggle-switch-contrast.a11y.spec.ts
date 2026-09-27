@@ -514,7 +514,6 @@ for (const theme of ['dark', 'light'] as const) {
     await mockSettingsSave(page);
     await page.addInitScript((t) => localStorage.setItem('cp-theme', t), theme);
     await page.goto('/wizard/');
-    await page.waitForLoadState('networkidle');
     await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
