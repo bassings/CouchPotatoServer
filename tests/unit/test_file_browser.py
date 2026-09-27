@@ -203,7 +203,8 @@ def test_view_refuses_to_list_outside_the_chroot(tmp_path):
         assert FileBrowser().view('/')['dirs'] == ['/movies/']
 
         for escape in ('/../outside_empty', '/../outside_full', '/../..'):
+            browser = FileBrowser()
             with pytest.raises(ValueError) as excinfo:
-                FileBrowser().view(escape)
+                browser.view(escape)
             assert 'Real Name Films' not in str(excinfo.value)
             assert chroot not in str(excinfo.value)

@@ -82,7 +82,6 @@ class TestTheSchemaItselfRefusesToStoreMalformedJson:
         with pytest.raises(sqlite3.Error, match='(?i)malformed|json'):
             conn.execute("UPDATE documents SET data = ? WHERE _id = ?",
                          ('{not json', rel['_id']))
-            conn.commit()
 
 
 class TestOneUnreadableDocumentIsIsolatedNotFatalToTheWholeSet:

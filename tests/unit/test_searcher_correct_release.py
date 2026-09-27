@@ -516,8 +516,17 @@ class TestMediaNoneIsPinnedNotFixed:
         :429/:433 is this task's scope (AC-SIMP-1); media=None crashes one
         line earlier, at :404, and is out of scope. Pinned so a future
         change to this line is a deliberate decision, not an accident."""
+        nzb = _nzb()
         with pytest.raises(AttributeError):
-            searcher.correctRelease(nzb=_nzb(), media=None, quality={'identifier': '1080p'})
+            searcher.correctRelease(nzb=nzb, media=None, quality={'identifier': '1080p'})
+
+    def test_fixture_failure_cannot_satisfy_media_none_assertion(self, searcher, monkeypatch):
+        def broken_nzb():
+            raise AttributeError('fixture construction failed')
+
+        monkeypatch.setitem(globals(), '_nzb', broken_nzb)
+        with pytest.raises(AttributeError, match='fixture construction failed'):
+            self.test_media_none_raises_attributeerror(searcher)
 
 
 # --- AC-SEC-13: gates that reject today still reject after the fix --------
