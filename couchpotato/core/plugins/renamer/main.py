@@ -875,7 +875,8 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 moved_any = True
                 outcomes.append((None, dst))
             except Exception as e:
-                log.error('Failed to move %s: %s', src, e)
+                log.error('File transfer failed (%s, errno %s); source folder retained',
+                          type(e).__name__, getattr(e, 'errno', None))
                 skipped = True
                 outcomes.append((None, dst))
 

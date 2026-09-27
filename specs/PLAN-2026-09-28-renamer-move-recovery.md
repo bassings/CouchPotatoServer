@@ -1,5 +1,12 @@
 # Renamer failed-move recovery must verify bytes before deleting the source
 
+> Superseded for complete-copy failures by
+> `specs/PLAN-2026-09-28-failed-move-fail-closed.md`. The byte comparison and
+> source-unlink recovery below described the earlier implementation, not the
+> current safety contract. A raised default move now propagates failure and
+> retains the source even when the destination has matching bytes. The
+> automatic retry gap remains open.
+
 ## Goal
 
 Close the strict expected-failure case in `test_renamer_mover.py`: a failed
@@ -12,16 +19,15 @@ This data-loss correction takes priority over the `moveFile` complexity smell.
 - [ ] AC-DATA-1: After a failed move, an equal-size destination with different
   content never causes source deletion; both files remain available and the
   move reports failure.
-- [ ] AC-DATA-2: A genuinely complete matching copy may still complete the
-  move recovery. A shorter partial destination is renamed to a unique,
-  non-media quarantine name, freeing the library path without deleting the
-  last remaining bytes. At most one recovery copy is retained per destination;
+- [ ] AC-DATA-2: A failed move never completes recovery by deleting the source,
+  even when the destination matches. A shorter partial destination is renamed
+  to a unique, non-media quarantine name, freeing the library path without
+  deleting the last remaining bytes. At most one recovery copy is retained per destination;
   while it exists, a later transfer is refused before writing any bytes.
   An operator can inspect and clear the artefact before retry. If the source
   vanishes or the destination is a symlink or hardlink to the source, recovery
   must not delete the source.
-- [ ] AC-REL-1: Verification reads files in bounded memory and treats a read
-  or comparison failure as uncertainty, never as proof that source deletion
+- [ ] AC-REL-1: A raised move is uncertainty, never proof that source deletion
   is safe. A quarantine failure retains the destination in place. Recovery
   warnings identify the artefact without logging media titles or file paths.
 - [ ] AC-QA-1: Convert the strict expected-failure test into a red regression;
@@ -35,6 +41,6 @@ This data-loss correction takes priority over the `moveFile` complexity smell.
 
 ## Boundary
 
-No test can make the comparison and the later unlink one atomic filesystem
-operation. The correction must fail closed when either file cannot be read;
-the residual concurrent-modification window remains an operational limit.
+No test can make a byte comparison and later pathname-based unlink one atomic
+filesystem operation. The current correction removes that unsafe unlink and
+fails closed on any raised default move.
