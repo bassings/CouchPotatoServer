@@ -668,6 +668,25 @@ class TestGatherFilesSymlinkContainment:
             'partial results gathered before the error were discarded'
         )
 
+    def test_walk_error_keeps_accessible_later_siblings(self, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        scanner = FakeScannerWithShutdown()
+
+        def walk_with_unreadable_sibling(folder, followlinks=False, onerror=None):
+            yield '/movies', [], ['first.mkv']
+            onerror(PermissionError('private library subtree'))
+            yield '/movies', [], ['later.mkv']
+
+        monkeypatch.setattr(fs.os, 'walk', walk_with_unreadable_sibling)
+        monkeypatch.setattr(scanner, '_isWithinFolder', lambda file_path, real_folder: True)
+
+        files, complete = scanner._gatherFiles('/movies')
+
+        assert not complete
+        assert '/movies/first.mkv' in files
+        assert '/movies/later.mkv' in files
+
     def test_escaping_symlinked_dir_is_not_descended_into(self, tmp_path, monkeypatch):
         """PR #151 review (MEDIUM): a symlinked subdirectory that escapes the
         scan folder must be pruned BEFORE os.walk recurses into it -- not just

@@ -399,13 +399,17 @@ class FolderScannerMixin:
         found_files = []
         complete = True
 
-        def fail_on_walk_error(error):
-            # os.walk otherwise ignores unreadable subdirectories silently.
-            raise error
+        def record_walk_error(error):
+            # Let os.walk continue into accessible siblings, while library
+            # scans still know the directory was not completely examined.
+            nonlocal complete
+            complete = False
+            self._log_diagnostic(log.error, 'Failed gathering files (%s); scan incomplete.',
+                                 type(error).__name__)
 
         try:
             for root, dirs, walk_files in os.walk(folder, followlinks=True,
-                                                 onerror=fail_on_walk_error):
+                                                 onerror=record_walk_error):
                 # Prune escaping symlinked subdirs before descending into them.
                 dirs[:] = [d for d in dirs
                            if self._isWithinFolder(os.path.join(root, d), real_folder)]
