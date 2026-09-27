@@ -190,7 +190,7 @@ class CoreNotifier(Notification):
 
         while len(self.listeners) > 0 and not self.shuttingDown():
             try:
-                listener, last_id = self.listeners.pop()
+                listener, _ = self.listeners.pop()
                 threading.Thread(
                     target=listener,
                     args=({'success': True, 'result': [notification]},),
@@ -225,7 +225,7 @@ class CoreNotifier(Notification):
         new_listeners = []
         for list_tuple in self.listeners:
             try:
-                listener, last_id = list_tuple
+                listener, _ = list_tuple
                 if listener != callback:
                     new_listeners.append(list_tuple)
             except Exception:

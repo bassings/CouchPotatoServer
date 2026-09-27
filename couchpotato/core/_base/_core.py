@@ -457,7 +457,6 @@ class Core(Plugin):
 
         import version as version_module
         ver_str = getattr(version_module, 'VERSION', None)
-        ver_branch = getattr(version_module, 'BRANCH', 'master')
         if ver_str:
             return '%s - v%s' % (platf, ver_str)
         return '%s - %s-%s - v2' % (platf, ver.get('version').get('type') or 'unknown', ver.get('version').get('hash') or 'unknown')

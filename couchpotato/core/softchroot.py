@@ -222,7 +222,6 @@ class SoftChroot:
         if path == self.chdir.rstrip(os.path.sep):
             return '/'
 
-        resulst = None
         if not path.startswith(self.chdir):
             if (force):
                 result = self.get_chroot()

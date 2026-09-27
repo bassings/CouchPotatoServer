@@ -476,7 +476,7 @@ class Database:
                 return
 
         # Check size and compact if needed
-        size = db.get_db_details().get('size')
+        db.get_db_details().get('size')
         prop_name = 'last_db_compact'
         last_check = int(Env.prop(prop_name, default = 0))
 

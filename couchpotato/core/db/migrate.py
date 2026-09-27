@@ -391,7 +391,7 @@ def main():
         sys.exit(0 if success else 1)
 
     start = time.time()
-    count, types = migrate(args.source, args.dest, verbose=verbose)
+    migrate(args.source, args.dest, verbose=verbose)
     elapsed = time.time() - start
 
     if verbose:

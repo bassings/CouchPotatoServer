@@ -119,7 +119,7 @@ def namePositionScore(nzb_name, movie_name):
 
         allowed = []
         for value in name_scores:
-            name, sc = value.split(':')
+            name, _ = value.split(':')
             allowed.append(name)
 
         inbetween = re.split(r'\W+', after_name.split(found_quality)[0].strip())

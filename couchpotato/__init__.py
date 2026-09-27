@@ -492,7 +492,7 @@ def session_rejection_reason(token, secret, now=None):
 
 def _log_session_rejection(reason: str):
     """Say why, once per class per suppression window, naming nothing secret."""
-    token, message = SESSION_REJECTIONS[reason]
+    _, message = SESSION_REJECTIONS[reason]
     log_suppressed(log.info, session_suppression_key(reason), message)
 
 
@@ -1241,8 +1241,6 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     @app.get(web_base + 'robots.txt')
     async def robots_txt():
         return Response(content='User-agent: * \nDisallow: /', media_type='text/plain')
-
-    api_base = '%sapi/%s' % (web_base, api_key)
 
     # Header-based API auth route (X-Api-Key header, preferred over URL-based)
     @app.get(web_base + 'api/{route:path}')
