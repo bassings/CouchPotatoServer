@@ -19,3 +19,7 @@ Reduce the cognitive complexity of `FolderScannerMixin.scan` without changing it
 ## TDD note
 
 The existing scan behaviour is the contract, so the Sonar complexity finding is the structural red. Characterisation tests should pass before refactoring; deliberate mutations, not an invented runtime defect, provide red evidence that they protect behaviour.
+
+## Post-merge measurement and follow-up
+
+The exact-master analysis of PR #472 at `e12028df` did not satisfy AC-REL-1. Sonar reports S3776 complexity 17 on `scan`, 22 on `_attach_matching_sidecars`, and 22 on `_filter_scan_groups`. The previous `scan` value was 154. A bounded follow-up must bring all three below the rule's limit of 15 without changing the tested scan contract. The server-side compute task and matching revision were verified; this is a measured structural failure, not a runtime regression.

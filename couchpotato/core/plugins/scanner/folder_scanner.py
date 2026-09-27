@@ -110,17 +110,7 @@ class FolderScannerMixin:
 
         valid_files = self._filter_scan_groups(movie_files, check_file_date, newer_than)
 
-        total_found = len(valid_files)
-
-        if release_download and total_found == 0:
-            self._log_diagnostic(log.info,
-                                 'Download ID provided (%s), but no groups found! Make sure the download contains valid media files (fully extracted).',
-                                 release_download.get('imdb_id'))
-        elif release_download and total_found > 1:
-            self._log_diagnostic(log.info,
-                                 'Download ID provided (%s), but more than one group found (%s). Ignoring Download ID...',
-                                 release_download.get('imdb_id'), len(valid_files))
-            release_download = None
+        release_download = self._scan_release_download(release_download, len(valid_files))
 
         processed_movies, groups_complete = self._process_scan_groups(
             valid_files, ignored_identifiers, folder, release_download, simple,
@@ -136,6 +126,19 @@ class FolderScannerMixin:
         # A library scan must not infer absence from a partial walk.
         # Keep callbacks for files already found, but withhold a success result.
         return processed_movies if (gathering_complete and not self.shuttingDown()) or not require_complete else None
+
+    def _scan_release_download(self, release_download, total_found):
+        """Retain a download identity only when it belongs to one group."""
+        if release_download and total_found == 0:
+            self._log_diagnostic(log.info,
+                                 'Download ID provided (%s), but no groups found! Make sure the download contains valid media files (fully extracted).',
+                                 release_download.get('imdb_id'))
+        elif release_download and total_found > 1:
+            self._log_diagnostic(log.info,
+                                 'Download ID provided (%s), but more than one group found (%s). Ignoring Download ID...',
+                                 release_download.get('imdb_id'), total_found)
+            return None
+        return release_download
 
     def _classify_scan_files(self, files, folder, require_complete):
         """Separate movie candidates from sidecars without losing stat failures."""
@@ -217,26 +220,36 @@ class FolderScannerMixin:
 
             self._log_diagnostic(log.debug, 'Grouping files: %s', identifier)
 
-            has_ignored = 0
-            for file_path in list(group['unsorted_files']):
-                ext = getExt(file_path)
-                wo_ext = file_path[:-(len(ext) + 1)]
-                found_files = set([i for i in leftovers if wo_ext in i])
-                group['unsorted_files'].extend(found_files)
-                leftovers = leftovers - found_files
-                has_ignored += 1 if ext in self.ignored_extensions else 0
+            leftovers, has_ignored = self._match_group_sidecars(group, leftovers)
+            if not has_ignored:
+                has_ignored = self._group_has_ignored_extension(group)
 
-            if has_ignored == 0:
-                for file_path in list(group['unsorted_files']):
-                    ext = getExt(file_path)
-                    has_ignored += 1 if ext in self.ignored_extensions else 0
-
-            if has_ignored > 0:
+            if has_ignored:
                 ignored_identifiers.append(identifier)
 
             if self.shuttingDown():
                 break
         return leftovers, ignored_identifiers
+
+    def _match_group_sidecars(self, group, leftovers):
+        """Attach basename matches using the original group-file snapshot."""
+        has_ignored = 0
+        for file_path in list(group['unsorted_files']):
+            ext = getExt(file_path)
+            wo_ext = file_path[:-(len(ext) + 1)]
+            found_files = set([item for item in leftovers if wo_ext in item])
+            group['unsorted_files'].extend(found_files)
+            leftovers = leftovers - found_files
+            has_ignored += 1 if ext in self.ignored_extensions else 0
+        return leftovers, has_ignored
+
+    def _group_has_ignored_extension(self, group):
+        """Check sidecars attached after the first extension pass."""
+        has_ignored = 0
+        for file_path in list(group['unsorted_files']):
+            ext = getExt(file_path)
+            has_ignored += 1 if ext in self.ignored_extensions else 0
+        return has_ignored
 
     def _attach_leftovers_by_identifier(self, movie_files, leftovers, folder):
         """Attach remaining files whose derived identifier matches a movie."""
@@ -386,31 +399,36 @@ class FolderScannerMixin:
             except Exception:
                 break
 
-            if check_file_date:
-                files_too_new, time_string = self.checkFilesChanged(group['unsorted_files'])
-                if files_too_new:
-                    self._log_diagnostic(log.info,
-                                         'Files seem to be still unpacking or just unpacked (created on %s), ignoring for now: %s',
-                                         time_string, identifier)
-                    del group['unsorted_files']
-                    continue
-
-            if newer_than and newer_than > 0:
-                has_new_files = False
-                for cur_file in group['unsorted_files']:
-                    file_time = self.getFileTimes(cur_file)
-                    if file_time[0] > newer_than or file_time[1] > newer_than:
-                        has_new_files = True
-                        break
-                if not has_new_files:
-                    self._log_diagnostic(log.debug,
-                                         'None of the files have changed since %s for %s, skipping.',
-                                         time.ctime(newer_than), identifier)
-                    del group['unsorted_files']
-                    continue
+            if not self._scan_group_is_current(identifier, group, check_file_date, newer_than):
+                del group['unsorted_files']
+                continue
 
             valid_files[identifier] = group
         return valid_files
+
+    def _scan_group_is_current(self, identifier, group, check_file_date, newer_than):
+        """Apply unpacking and incremental filters in their original order."""
+        if check_file_date:
+            files_too_new, time_string = self.checkFilesChanged(group['unsorted_files'])
+            if files_too_new:
+                self._log_diagnostic(log.info,
+                                     'Files seem to be still unpacking or just unpacked (created on %s), ignoring for now: %s',
+                                     time_string, identifier)
+                return False
+
+        if newer_than and newer_than > 0 and not self._group_has_new_files(group, newer_than):
+            self._log_diagnostic(log.debug,
+                                 'None of the files have changed since %s for %s, skipping.',
+                                 time.ctime(newer_than), identifier)
+            return False
+        return True
+
+    def _group_has_new_files(self, group, newer_than):
+        for cur_file in group['unsorted_files']:
+            file_time = self.getFileTimes(cur_file)
+            if file_time[0] > newer_than or file_time[1] > newer_than:
+                return True
+        return False
 
     def _gatherFiles(self, folder):
         """Walk `folder` and return every file found inside it.
