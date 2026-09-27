@@ -471,6 +471,133 @@ class CharacterizationScanner(FileDetectorMixin, FolderScannerMixin):
         return {'_id': 'movie-1', 'info': {'imdb': 'tt1234567'}}
 
 
+class TestScanPipelineContract:
+    def test_callbacks_follow_input_group_order_and_report_remaining_count(
+            self, tmp_path, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        paths = [tmp_path / name for name in ('First.2024.mkv', 'Second.2024.mkv')]
+        for path in paths:
+            path.write_bytes(b'movie')
+        scanner = CharacterizationScanner()
+        monkeypatch.setattr(scanner, 'filesizeBetween',
+                            lambda path, size=None: str(path).endswith('.mkv'))
+        monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
+        callbacks = []
+
+        result = scanner.scan(
+            folder=str(tmp_path), files=[str(path) for path in paths], simple=True,
+            on_found=lambda group, total, remaining: callbacks.append(
+                (group['files']['movie'][0], total, remaining)),
+        )
+
+        assert callbacks == [(str(paths[0]), 2, 1), (str(paths[1]), 2, 0)]
+        assert len(result) == 2
+
+    def test_incremental_filter_is_strictly_newer_than_last_scan(
+            self, tmp_path, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        paths = [tmp_path / name for name in ('Old.2024.mkv', 'New.2024.mkv')]
+        for path in paths:
+            path.write_bytes(b'movie')
+        scanner = CharacterizationScanner()
+        monkeypatch.setattr(scanner, 'filesizeBetween',
+                            lambda path, size=None: str(path).endswith('.mkv'))
+        monkeypatch.setattr(scanner, 'getFileTimes',
+                            lambda path: [100 if 'Old' in path else 101, 0], raising=False)
+        monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
+        found = []
+
+        result = scanner.scan(
+            folder=str(tmp_path), files=[str(path) for path in paths], simple=True,
+            newer_than=100,
+            on_found=lambda group, total, remaining: found.extend(group['files']['movie']),
+        )
+
+        assert found == [str(paths[1])]
+        assert len(result) == 1
+
+    def test_download_identity_is_withheld_when_more_than_one_group_is_found(
+            self, tmp_path, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        paths = [tmp_path / name for name in ('First.2024.mkv', 'Second.2024.mkv')]
+        for path in paths:
+            path.write_bytes(b'movie')
+        scanner = CharacterizationScanner()
+        monkeypatch.setattr(scanner, 'filesizeBetween',
+                            lambda path, size=None: str(path).endswith('.mkv'))
+        monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
+        seen = []
+
+        def determine_media(group, release_download=None):
+            seen.append(release_download)
+            return {'_id': 'movie-1', 'info': {'imdb': 'tt1234567'}}
+
+        monkeypatch.setattr(scanner, 'determineMedia', determine_media)
+        download = {'imdb_id': 'tt1234567'}
+
+        scanner.scan(folder=str(tmp_path), files=[str(path) for path in paths],
+                     release_download=download, simple=True)
+        assert seen == [None, None]
+
+        seen.clear()
+        scanner.scan(folder=str(tmp_path), files=[str(paths[0])],
+                     release_download=download, simple=True)
+        assert seen == [download]
+
+    def test_ignored_sidecar_skips_group_only_when_requested(self, tmp_path, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        movie = tmp_path / 'Feature.2024.mkv'
+        ignored = tmp_path / 'Feature.2024.ignore'
+        movie.write_bytes(b'movie')
+        ignored.write_bytes(b'ignore')
+        scanner = CharacterizationScanner()
+        monkeypatch.setattr(scanner, 'filesizeBetween',
+                            lambda path, size=None: str(path).endswith('.mkv'))
+        monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
+        callbacks = []
+
+        skipped = scanner.scan(folder=str(tmp_path), files=[str(movie), str(ignored)],
+                               simple=True, return_ignored=False,
+                               on_found=lambda *args: callbacks.append(args))
+        included = scanner.scan(folder=str(tmp_path), files=[str(movie), str(ignored)],
+                                simple=True, return_ignored=True,
+                                on_found=lambda *args: callbacks.append(args))
+
+        assert skipped == {}
+        assert len(included) == 1
+        assert len(callbacks) == 1
+
+    def test_explicit_files_disable_unpacking_age_check(self, tmp_path, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        movie = tmp_path / 'Feature.2024.mkv'
+        movie.write_bytes(b'movie')
+        scanner = CharacterizationScanner()
+        monkeypatch.setattr(scanner, 'filesizeBetween',
+                            lambda path, size=None: str(path).endswith('.mkv'))
+        monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
+        age_checks = []
+
+        def check_age(files):
+            age_checks.append(files)
+            return True, 'too recent'
+
+        monkeypatch.setattr(scanner, 'checkFilesChanged', check_age, raising=False)
+
+        explicit = scanner.scan(folder=str(tmp_path), files=[str(movie)], simple=True,
+                                check_file_date=True)
+        gathered = scanner.scan(folder=str(tmp_path), simple=True,
+                                check_file_date=True)
+
+        assert len(explicit) == 1
+        assert gathered == {}
+        assert len(age_checks) == 1
+
+
 def _normalized_scan_groups(groups):
     return {
         identifier: {
