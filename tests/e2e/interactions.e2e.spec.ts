@@ -336,6 +336,11 @@ test.describe('Suggestions Page', () => {
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
     await mockSuggestionsCharts(page);
+    await page.route('**/partial/suggestions', route => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<div data-testid="personal-tab-content">For You Movie</div>',
+    }));
     await page.goto('/suggestions/');
     await waitForPageReady(page);
 
@@ -359,6 +364,9 @@ test.describe('Suggestions Page', () => {
       // Each panel shows its htmx target only after its own load completes.
       // Selection alone changes before the deferred For You request settles.
       await expect(panel.locator('[x-ref="fetchTarget"]')).toBeVisible({ timeout: 10000 });
+      if (panelId === 'suggestions-grid') {
+        await expect(panel.getByTestId('personal-tab-content')).toBeVisible();
+      }
     }
 
     checkNoErrors(page, errors);
