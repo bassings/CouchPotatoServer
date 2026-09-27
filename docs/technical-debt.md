@@ -521,12 +521,12 @@ download still on disk:          False
 The user's film is replaced by whatever bytes happened to be at the
 destination, and the only other copy is deleted. The constraints:
 
-1. **The end-state test must verify CONTENT, not size.** This file already
-   knows that: `tests/unit/test_renamer_mover.py` carries an
-   `xfail(strict=True)` for exactly this
-   (`test_failed_move_with_equal_size_but_different_content_should_not_be_accepted`,
-   AC-DATA-4), which XPASSes and reds the suite the day a checksum is added.
-   A remedy that reintroduces size-as-proof walks straight into it.
+1. **The end-state test must verify CONTENT, not size.** The original
+   `tests/unit/test_renamer_mover.py` carried an `xfail(strict=True)` for
+   exactly this (`test_failed_move_with_equal_size_but_different_content_should_not_be_accepted`,
+   AC-DATA-4). It became an ordinary passing regression in
+   `specs/PLAN-2026-09-28-renamer-move-recovery.md`. A remedy that
+   reintroduces size-as-proof walks straight into it.
 2. **An end-state "success" must NOT authorise cleanup.** At most it should
    unblock the RETRY. Returning True hands `_moveRenamedFiles` permission to
    delete the source folder, which is the whole mechanism T1.8 exists to

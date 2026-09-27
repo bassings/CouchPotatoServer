@@ -1,8 +1,8 @@
 """File moving/linking operations for the renamer."""
+import hashlib
 import os
 import shutil
 import subprocess
-import tempfile
 import traceback
 
 from couchpotato.core.helpers.variable import link, symlink, sp
@@ -24,34 +24,44 @@ def _same_file_contents(source, destination):
                 return True
 
 
+def _recovery_copy_for(dest):
+    """Return the stable local artefact path and opaque ID for a destination."""
+    destination_id = hashlib.sha256(
+        os.fsencode(os.path.normcase(os.path.abspath(dest)))
+    ).hexdigest()[:24]
+    quarantine = os.path.join(os.path.dirname(dest) or '.', '.cps-partial-' + destination_id)
+    return quarantine, destination_id
+
+
 def _quarantine_partial_destination(dest):
-    """Free the library filename without destroying a possibly sole copy."""
+    """Keep one recovery copy per destination, without deleting any bytes."""
+    quarantine, destination_id = _recovery_copy_for(dest)
     try:
-        # Keep a recognisable prefix, but bound it so a valid near-NAME_MAX
-        # movie filename still leaves room for mkstemp's random suffix.
-        fd, quarantine = tempfile.mkstemp(
-            prefix='.cps-partial-' + os.path.basename(dest)[:24] + '-',
-            dir=os.path.dirname(dest) or '.',
-        )
+        fd = os.open(quarantine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)
-    except OSError:
-        log.warning('Could not reserve a quarantine name for the partial destination "%s": %s',
-                    dest, traceback.format_exc(1))
+    except FileExistsError:
+        # Another failed attempt already left recoverable bytes here. Keeping
+        # the new destination at its normal name stops repeated retries from
+        # consuming the library disk with hidden partial copies.
+        log.warning('Recovery copy .cps-partial-%s already exists; retaining failed destination', destination_id)
+        return
+    except OSError as error:
+        log.warning('Could not reserve recovery copy .cps-partial-%s (%s, errno %s); retaining failed destination',
+                    destination_id, type(error).__name__, error.errno)
         return
 
     try:
         os.replace(dest, quarantine)
-    except OSError:
-        failure = traceback.format_exc(1)
+    except OSError as error:
         try:
             os.unlink(quarantine)
         except OSError:
             pass  # An empty reservation is safer than masking the transfer error.
-        log.warning('Could not quarantine the partial destination "%s": %s',
-                    dest, failure)
+        log.warning('Could not populate recovery copy .cps-partial-%s (%s, errno %s); retaining failed destination',
+                    destination_id, type(error).__name__, error.errno)
     else:
-        log.warning('Preserved a partial transfer from "%s" as "%s"; inspect it before removal',
-                    dest, quarantine)
+        log.warning('Preserved partial transfer as recovery copy .cps-partial-%s; inspect it before removal',
+                    destination_id)
 
 
 def _discard_partial_destination(old, dest):
@@ -86,10 +96,9 @@ def _discard_partial_destination(old, dest):
             return
         dest_size = os.path.getsize(dest)
         old_size = os.path.getsize(old)
-    except OSError:
-        log.warning('Could not compare "%s" with "%s" after a failed transfer, '
-                    'leaving the destination in place: %s',
-                    old, dest, traceback.format_exc(1))
+    except OSError as error:
+        log.warning('Could not compare files after a failed transfer (%s, errno %s); '
+                    'retaining destination', type(error).__name__, error.errno)
         return
 
     if dest_size >= old_size:
@@ -106,6 +115,9 @@ class MoverMixin:
     def moveFile(self, old, dest, use_default=False):
         dest = sp(dest)
         try:
+            recovery_copy, recovery_id = _recovery_copy_for(dest)
+            if os.path.lexists(recovery_copy):
+                raise FileExistsError('Recovery copy .cps-partial-%s requires inspection before retry' % recovery_id)
             if os.path.lexists(dest):
                 raise FileExistsError('Destination "%s" already exists' % dest)
 
@@ -124,6 +136,10 @@ class MoverMixin:
                     if os.path.islink(dest):
                         # A link back to `old` can compare byte-identical yet
                         # become dangling the moment the source is removed.
+                        raise
+                    if os.path.samefile(old, dest):
+                        # A hardlink also compares equal without an independent
+                        # transfer. Removing `old` would not be recovery.
                         raise
                     old_size = os.path.getsize(old)
                     dest_size = os.path.getsize(dest)

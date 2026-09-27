@@ -311,6 +311,26 @@ class TestFailedMoveRecovery:
         assert os.path.islink(dest)
         assert dest.read_bytes() == DOWNLOAD
 
+    def test_failed_move_with_hardlink_destination_preserves_the_source(self, tmp_path, monkeypatch):
+        """Comparing a hardlink to itself does not prove a transfer completed."""
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        def _fake_move(src, dst, **kwargs):
+            os.link(src, dst)
+            raise OSError('simulated transfer failure')
+
+        monkeypatch.setattr(shutil, 'move', _fake_move)
+        plugin = _mover(monkeypatch, file_action='move')
+
+        with pytest.raises(OSError, match='simulated transfer failure'):
+            _move(plugin, tmp_path, str(old), str(dest))
+
+        assert old.read_bytes() == DOWNLOAD
+        assert dest.read_bytes() == DOWNLOAD
+        assert os.path.samefile(old, dest)
+
     def test_partial_destination_survives_if_source_vanishes_during_cleanup(
         self, tmp_path, monkeypatch,
     ):
@@ -355,15 +375,20 @@ class TestFailedMoveRecovery:
             Path(dst).write_bytes(partial)
             raise OSError('simulated transfer failure')
 
-        def _no_quarantine(*args, **kwargs):
-            raise OSError('simulated quarantine failure')
+        real_open = os.open
+
+        def _no_quarantine(path, flags, mode=0o777):
+            if '.cps-partial-' in os.fspath(path):
+                raise OSError('simulated quarantine failure')
+            return real_open(path, flags, mode)
 
         monkeypatch.setattr(shutil, 'move', _fake_move)
-        monkeypatch.setattr(mover_module.tempfile, 'mkstemp', _no_quarantine)
         plugin = _mover(monkeypatch, file_action='move')
 
-        with pytest.raises(OSError, match='simulated transfer failure'):
-            _move(plugin, tmp_path, str(old), str(dest))
+        with monkeypatch.context() as quarantine_failure:
+            quarantine_failure.setattr(mover_module.os, 'open', _no_quarantine)
+            with pytest.raises(OSError, match='simulated transfer failure'):
+                _move(plugin, tmp_path, str(old), str(dest))
 
         assert old.read_bytes() == DOWNLOAD
         assert dest.read_bytes() == partial
@@ -390,6 +415,72 @@ class TestFailedMoveRecovery:
         quarantined = list(dest.parent.glob('.cps-partial-*'))
         assert len(quarantined) == 1
         assert quarantined[0].read_bytes() == partial
+
+    def test_repeated_partial_failures_keep_one_recovery_copy_and_stop_retry(
+        self, tmp_path, monkeypatch,
+    ):
+        """A failing mount cannot accumulate a new hidden file each attempt."""
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        partial = DOWNLOAD[:1024]
+        attempts = []
+
+        def _fake_move(src, dst, **kwargs):
+            attempts.append(dst)
+            Path(dst).write_bytes(partial)
+            raise OSError('simulated transfer failure')
+
+        monkeypatch.setattr(shutil, 'move', _fake_move)
+        plugin = _mover(monkeypatch, file_action='move')
+
+        with pytest.raises(OSError, match='simulated transfer failure'):
+            _move(plugin, tmp_path, str(old), str(dest))
+
+        quarantined = list(dest.parent.glob('.cps-partial-*'))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_bytes() == partial
+        assert not dest.exists()
+        with pytest.raises(FileExistsError, match='Recovery copy'):
+            _move(plugin, tmp_path, str(old), str(dest))
+        assert len(attempts) == 1
+        assert not dest.exists()
+
+    def test_quarantine_warning_uses_opaque_id_not_private_paths(self, tmp_path, caplog):
+        """Library names and mount layout must not enter production warnings."""
+        dest = _write(tmp_path / 'library/Private Film.mkv', DOWNLOAD[:1024])
+
+        with caplog.at_level('WARNING', logger='couchpotato.core.plugins.renamer.mover'):
+            mover_module._quarantine_partial_destination(str(dest))
+
+        warning_text = '\n'.join(record.getMessage() for record in caplog.records)
+        assert warning_text
+        assert str(tmp_path) not in warning_text
+        assert 'Private Film' not in warning_text
+        assert '.cps-partial-' in warning_text
+
+    @pytest.mark.parametrize('failure_point', ['reserve', 'populate'])
+    def test_quarantine_failure_warnings_hide_private_paths(
+        self, tmp_path, monkeypatch, caplog, failure_point,
+    ):
+        """Even an OSError containing a path must not expose it in warnings."""
+        dest = _write(tmp_path / 'library/Private Film.mkv', DOWNLOAD[:1024])
+
+        def _fail(*args, **kwargs):
+            raise OSError(5, 'failed at ' + str(dest), str(dest))
+
+        with caplog.at_level('WARNING', logger='couchpotato.core.plugins.renamer.mover'):
+            with monkeypatch.context() as failure:
+                operation = 'open' if failure_point == 'reserve' else 'replace'
+                failure.setattr(mover_module.os, operation, _fail)
+                mover_module._quarantine_partial_destination(str(dest))
+
+        warning_text = '\n'.join(record.getMessage() for record in caplog.records)
+        assert warning_text
+        assert str(tmp_path) not in warning_text
+        assert 'Private Film' not in warning_text
+        assert dest.read_bytes() == DOWNLOAD[:1024]
+        assert list(dest.parent.glob('.cps-partial-*')) == []
 
     @pytest.mark.parametrize('action', ['move', 'copy'])
     def test_larger_destination_is_retained_as_uncertain(self, tmp_path, monkeypatch, action):
@@ -535,8 +626,9 @@ class TestLinkFallback:
         """AC-DATA-10, INVERTED at review 2026-08-06.
 
         When BOTH the hardlink attempt and the subsequent copy fail partway,
-        `old` survives -- and the partial `dest` is now removed rather than
-        left behind.
+        `old` survives -- and the partial `dest` is moved to a recovery file
+        rather than left at the movie filename. An operator checks and clears
+        that artefact before an automatic retry is allowed.
 
         This test previously ASSERTED the truncated file must stay, as
         documented known behaviour. That stopped being defensible once the
@@ -582,9 +674,18 @@ class TestLinkFallback:
             'makes every retry fail forever'
         )
 
-        # And the point of removing it: the retry is now possible. Restore a
-        # working copy and drive it again.
+        # A recovery copy remains available for inspection. The renamer must
+        # not create another partial file or silently discard that evidence.
         monkeypatch.setattr(shutil, 'copyfile', _real_copy)
+        with pytest.raises(FileExistsError, match='Recovery copy'):
+            _move(plugin, tmp_path, str(old), str(dest))
+        quarantined = list(dest.parent.glob('.cps-partial-*'))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_bytes() == DOWNLOAD[:1024]
+
+        # After the operator checks the good source and removes the recovery
+        # artefact, the ordinary retry succeeds.
+        quarantined[0].unlink()
         assert _move(plugin, tmp_path, str(old), str(dest)) is True
         assert dest.read_bytes() == DOWNLOAD
 

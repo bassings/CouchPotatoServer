@@ -14,16 +14,20 @@ This data-loss correction takes priority over the `moveFile` complexity smell.
   move reports failure.
 - [ ] AC-DATA-2: A genuinely complete matching copy may still complete the
   move recovery. A shorter partial destination is renamed to a unique,
-  non-media quarantine name, freeing the library path for retry without
-  deleting the last remaining bytes. If the source vanishes or the
-  destination is a symlink, recovery must not delete the source.
+  non-media quarantine name, freeing the library path without deleting the
+  last remaining bytes. At most one recovery copy is retained per destination;
+  while it exists, a later transfer is refused before writing any bytes.
+  An operator can inspect and clear the artefact before retry. If the source
+  vanishes or the destination is a symlink or hardlink to the source, recovery
+  must not delete the source.
 - [ ] AC-REL-1: Verification reads files in bounded memory and treats a read
   or comparison failure as uncertainty, never as proof that source deletion
-  is safe. A quarantine failure retains the destination in place.
+  is safe. A quarantine failure retains the destination in place. Recovery
+  warnings identify the artefact without logging media titles or file paths.
 - [ ] AC-QA-1: Convert the strict expected-failure test into a red regression;
-  cover matching, mismatching, read-error and source-disappearance cases with
-  real files, and prove the guards are load-bearing with deliberate failing
-  mutations.
+  cover matching, mismatching, read-error, shared-inode, source-disappearance,
+  repeated-failure and warning-privacy cases with real files, and prove the
+  guards are load-bearing with deliberate failing mutations.
 - [ ] AC-SIMP-1: Preserve transfer-mode selection, public signatures and
   permission handling. Do not add a dependency or refactor unrelated branches.
 - [ ] AC-DELIVERY-1: Focused tests, the full gate, two fresh independent clean
