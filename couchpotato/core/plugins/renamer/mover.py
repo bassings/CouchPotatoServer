@@ -1,4 +1,5 @@
 """File moving/linking operations for the renamer."""
+import hashlib
 import os
 import shutil
 import subprocess
@@ -11,8 +12,60 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 
+def _same_file_contents(source, destination):
+    """Compare a failed move's two copies without loading a movie into memory."""
+    with open(source, 'rb') as source_file, open(destination, 'rb') as destination_file:
+        while True:
+            source_chunk = source_file.read(1024 * 1024)
+            destination_chunk = destination_file.read(1024 * 1024)
+            if source_chunk != destination_chunk:
+                return False
+            if not source_chunk:
+                return True
+
+
+def _recovery_copy_for(dest):
+    """Return the stable local artefact path and opaque ID for a destination."""
+    destination_id = hashlib.sha256(
+        os.fsencode(os.path.normcase(os.path.abspath(dest)))
+    ).hexdigest()[:24]
+    quarantine = os.path.join(os.path.dirname(dest) or '.', '.cps-partial-' + destination_id)
+    return quarantine, destination_id
+
+
+def _quarantine_partial_destination(dest):
+    """Keep one recovery copy per destination, without deleting any bytes."""
+    quarantine, destination_id = _recovery_copy_for(dest)
+    try:
+        fd = os.open(quarantine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(fd)
+    except FileExistsError:
+        # Another failed attempt already left recoverable bytes here. Keeping
+        # the new destination at its normal name stops repeated retries from
+        # consuming the library disk with hidden partial copies.
+        log.warning('Recovery copy .cps-partial-%s already exists; retaining failed destination', destination_id)
+        return
+    except OSError as error:
+        log.warning('Could not reserve recovery copy .cps-partial-%s (%s, errno %s); retaining failed destination',
+                    destination_id, type(error).__name__, error.errno)
+        return
+
+    try:
+        os.replace(dest, quarantine)
+    except OSError as error:
+        try:
+            os.unlink(quarantine)
+        except OSError:
+            pass  # An empty reservation is safer than masking the transfer error.
+        log.warning('Could not populate recovery copy .cps-partial-%s (%s, errno %s); retaining failed destination',
+                    destination_id, type(error).__name__, error.errno)
+    else:
+        log.warning('Preserved partial transfer as recovery copy .cps-partial-%s; inspect it before removal',
+                    destination_id)
+
+
 def _discard_partial_destination(old, dest):
-    """Remove `dest` when a transfer failed part-way through writing it.
+    """Move `dest` aside when a transfer failed part-way through writing it.
 
     `shutil.move` falls back to `copy2`, which on a full disk or a dropped
     mount writes part of the file and then raises. T1.8 made that failure
@@ -26,9 +79,9 @@ def _discard_partial_destination(old, dest):
     and `symlink_reversed` branches did not, which is the same "fix the
     instance, miss the class" shape this area keeps producing.
 
-    Deleting here cannot lose data: `old` is intact in every one of these
-    cases, so the only copy being removed is one that is already wrong. The
-    two ways that could stop being true are both refused:
+    Quarantine, rather than delete: `old` can vanish after its size check,
+    leaving even an incomplete `dest` as the only remaining bytes. The two
+    conditions that make cleanup uncertain are still refused:
 
     - the destination is the same size as the source, so the bytes did land
       and the failure came afterwards (`shutil.move`'s own final unlink of the
@@ -43,21 +96,17 @@ def _discard_partial_destination(old, dest):
             return
         dest_size = os.path.getsize(dest)
         old_size = os.path.getsize(old)
-    except OSError:
-        log.warning('Could not compare "%s" with "%s" after a failed transfer, '
-                    'leaving the destination in place: %s',
-                    old, dest, traceback.format_exc(1))
+    except OSError as error:
+        log.warning('Could not compare files after a failed transfer (%s, errno %s); '
+                    'retaining destination', type(error).__name__, error.errno)
         return
 
-    if dest_size == old_size:
+    if dest_size >= old_size:
+        # A larger destination may be the complete library copy after the
+        # source changed. Only a shorter file is known to be incomplete.
         return
 
-    try:
-        os.unlink(dest)
-    except OSError:
-        log.warning('Failed removing the partial destination "%s" (%s of %s '
-                    'bytes); it will block every retry until removed by hand: %s',
-                    dest, dest_size, old_size, traceback.format_exc(1))
+    _quarantine_partial_destination(dest)
 
 
 class MoverMixin:
@@ -66,6 +115,9 @@ class MoverMixin:
     def moveFile(self, old, dest, use_default=False):
         dest = sp(dest)
         try:
+            recovery_copy, recovery_id = _recovery_copy_for(dest)
+            if os.path.lexists(recovery_copy):
+                raise FileExistsError('Recovery copy .cps-partial-%s requires inspection before retry' % recovery_id)
             if os.path.lexists(dest):
                 raise FileExistsError('Destination "%s" already exists' % dest)
 
@@ -79,13 +131,34 @@ class MoverMixin:
                     shutil.move(old, dest)
                 except Exception:
                     exists = os.path.exists(dest)
-                    if exists and os.path.getsize(old) == os.path.getsize(dest):
-                        log.error('Successfully moved file "%s", but something went wrong: %s', dest, traceback.format_exc())
-                        os.unlink(old)
-                    else:
-                        if exists:
-                            os.unlink(dest)
+                    if not exists:
                         raise
+                    if os.path.islink(dest):
+                        # A link back to `old` can compare byte-identical yet
+                        # become dangling the moment the source is removed.
+                        raise
+                    if os.path.samefile(old, dest):
+                        # A hardlink also compares equal without an independent
+                        # transfer. Removing `old` would not be recovery.
+                        raise
+                    old_size = os.path.getsize(old)
+                    dest_size = os.path.getsize(dest)
+                    if old_size != dest_size:
+                        if dest_size < old_size:
+                            _quarantine_partial_destination(dest)
+                        raise
+                    try:
+                        same_contents = _same_file_contents(old, dest)
+                    except OSError:
+                        # Unreadable is not proof of an intact copy. Keep both.
+                        same_contents = False
+                    if not same_contents:
+                        # Equal sizes are insufficient: retain both files so
+                        # neither a good source nor an unrelated destination
+                        # is destroyed on this uncertain failure.
+                        raise
+                    log.error('Successfully moved file "%s", but something went wrong: %s', dest, traceback.format_exc())
+                    os.unlink(old)
             elif move_type == 'copy':
                 log.info('Copying "%s" to "%s"', old, dest)
                 try:
@@ -128,8 +201,8 @@ class MoverMixin:
                     # failure, identical door, third branch.
                     #
                     # NOT applied to the default-move branch above: that one
-                    # already recovers (it unlinks the source on an equal-size
-                    # destination and returns True), and forcing copyfile
+                    # already recovers (it verifies a complete destination
+                    # before unlinking the source), and forcing copyfile
                     # there would drop mtime preservation on the most common
                     # path for no benefit. Here mtime is already the accepted
                     # trade, as it is in `copy`.
