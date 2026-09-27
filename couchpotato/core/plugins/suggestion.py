@@ -135,7 +135,7 @@ class Suggestion(Plugin):
                 return []
             # media.list returns (total_count, movies_list) tuple
             if isinstance(result, (list, tuple)) and len(result) == 2:
-                total, movies = result
+                _, movies = result
                 return movies if isinstance(movies, list) else []
             if isinstance(result, dict):
                 return result.get('movies', [])
@@ -232,7 +232,6 @@ class Suggestion(Plugin):
         if not library_movies:
             return []
 
-        library_imdb_ids = self._getLibraryImdbIds(library_movies)
         library_tmdb_ids = self._getLibraryTmdbIds(library_movies)
 
         # Pick up to 5 random movies that have TMDB IDs

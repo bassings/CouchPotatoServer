@@ -428,7 +428,6 @@ class FolderScannerMixin:
                     log.debug('Found movie via CP tag: %s', cur_file)
                     break
 
-        nfo_file = None
         if not imdb_id:
             try:
                 for nf in files['nfo']:
@@ -436,7 +435,6 @@ class FolderScannerMixin:
                     if imdb_id:
                         group['identity_source'] = 'nfo'
                         log.debug('Found movie via nfo file: %s', nf)
-                        nfo_file = nf
                         break
             except Exception:
                 pass

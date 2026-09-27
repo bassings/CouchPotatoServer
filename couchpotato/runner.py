@@ -490,7 +490,7 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
 
     # Check available space
     try:
-        total_space, available_space = getFreeSpace(data_dir)
+        _, available_space = getFreeSpace(data_dir)
         if available_space < 100:
             log.error('Shutting down as CP needs some space to work. Only %sMB left', available_space)
             return

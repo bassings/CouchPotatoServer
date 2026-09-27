@@ -237,7 +237,7 @@ class Manage(Plugin):
                     and library_fully_scanned and found_everywhere:
 
                 # Get movies with done status
-                total_movies, done_movies = fireEvent('media.list', types = 'movie', status = 'done', release_status = 'done', status_or = True, single = True)
+                _, done_movies = fireEvent('media.list', types = 'movie', status = 'done', release_status = 'done', status_or = True, single = True)
 
                 deleted_releases = []
                 for done_movie in done_movies:

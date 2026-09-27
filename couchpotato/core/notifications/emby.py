@@ -27,11 +27,11 @@ class Emby(Notification):
             req.add_header('X-MediaBrowser-Token', apikey)
 
             response = urllib.request.urlopen(req)
-            result = response.read()
+            response.read()
             response.close()
             return True
 
-        except (OSError, urllib.error.URLError) as e:
+        except (OSError, urllib.error.URLError):
             return False
 
     def test(self, **kwargs):
@@ -50,13 +50,13 @@ class Emby(Notification):
             req.add_header('Content-Type', 'application/json')
 
             response = urllib.request.urlopen(req)
-            result = response.read()
+            response.read()
             response.close()
             return {
                 'success': True
             }
 
-        except (OSError, urllib.error.URLError) as e:
+        except (OSError, urllib.error.URLError):
             return False
 
 
