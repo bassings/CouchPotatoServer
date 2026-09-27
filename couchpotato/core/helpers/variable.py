@@ -70,17 +70,21 @@ def mergeDicts(a, b, prepend_list = False):
     while stack:
         current_dst, current_src = stack.pop()
         for key in current_src:
-            if key not in current_dst:
-                current_dst[key] = current_src[key]
-            else:
-                if isDict(current_src[key]) and isDict(current_dst[key]):
-                    stack.append((current_dst[key], current_src[key]))
-                elif isinstance(current_src[key], list) and isinstance(current_dst[key], list):
-                    current_dst[key] = current_src[key] + current_dst[key] if prepend_list else current_dst[key] + current_src[key]
-                    current_dst[key] = removeListDuplicates(current_dst[key])
-                else:
-                    current_dst[key] = current_src[key]
+            _merge_dict_entry(current_dst, current_src, key, prepend_list, stack)
     return dst
+
+
+def _merge_dict_entry(current_dst, current_src, key, prepend_list, stack):
+    """Merge one key while preserving the iterative nested-dict worklist."""
+    if key not in current_dst:
+        current_dst[key] = current_src[key]
+    elif isDict(current_src[key]) and isDict(current_dst[key]):
+        stack.append((current_dst[key], current_src[key]))
+    elif isinstance(current_src[key], list) and isinstance(current_dst[key], list):
+        current_dst[key] = current_src[key] + current_dst[key] if prepend_list else current_dst[key] + current_src[key]
+        current_dst[key] = removeListDuplicates(current_dst[key])
+    else:
+        current_dst[key] = current_src[key]
 
 
 def removeListDuplicates(seq):
@@ -758,36 +762,44 @@ def removePyc(folder, only_excess = True, show_logs = True):
     folder = sp(folder)
 
     for root, dirs, files in os.walk(folder):
+        _remove_pyc_files(root, _excess_pyc_files(files, only_excess), show_logs)
+        _prune_empty_dirs(root, dirs)
 
-        pyc_files = list(filter(lambda filename: filename.endswith('.pyc'), files))
-        py_files = set(filter(lambda filename: filename.endswith('.py'), files))
-        excess_pyc_files = list(filter(lambda pyc_filename: pyc_filename[:-1] not in py_files, pyc_files)) if only_excess else pyc_files
 
-        for excess_pyc_file in excess_pyc_files:
-            full_path = os.path.join(root, excess_pyc_file)
-            if show_logs: log.debug('Removing old PYC file: %s', full_path)
+def _excess_pyc_files(files, only_excess):
+    pyc_files = list(filter(lambda filename: filename.endswith('.pyc'), files))
+    py_files = set(filter(lambda filename: filename.endswith('.py'), files))
+    return list(filter(lambda pyc_filename: pyc_filename[:-1] not in py_files, pyc_files)) if only_excess else pyc_files
+
+
+def _remove_pyc_files(root, excess_pyc_files, show_logs):
+    for excess_pyc_file in excess_pyc_files:
+        full_path = os.path.join(root, excess_pyc_file)
+        if show_logs: log.debug('Removing old PYC file: %s', full_path)
+        try:
+            os.remove(full_path)
+        except Exception:
+            log.error('Couldn\'t remove %s: %s', full_path, traceback.format_exc())
+
+
+def _prune_empty_dirs(root, dirs):
+    for dir_name in dirs:
+        full_path = os.path.join(root, dir_name)
+        try:
+            is_empty = len(os.listdir(full_path)) == 0
+        except FileNotFoundError:
+            # T1.7: multiple CouchPotato.py processes (one per E2E
+            # worker) can walk and clean this exact tree concurrently.
+            # A directory os.walk() already yielded can be removed by
+            # ANOTHER process's os.rmdir() (below) between that yield
+            # and this listdir() -- not a real error, just this
+            # process losing the race to empty the same directory.
+            continue
+        if is_empty:
             try:
-                os.remove(full_path)
+                os.rmdir(full_path)
             except Exception:
-                log.error('Couldn\'t remove %s: %s', full_path, traceback.format_exc())
-
-        for dir_name in dirs:
-            full_path = os.path.join(root, dir_name)
-            try:
-                is_empty = len(os.listdir(full_path)) == 0
-            except FileNotFoundError:
-                # T1.7: multiple CouchPotato.py processes (one per E2E
-                # worker) can walk and clean this exact tree concurrently.
-                # A directory os.walk() already yielded can be removed by
-                # ANOTHER process's os.rmdir() (below) between that yield
-                # and this listdir() -- not a real error, just this
-                # process losing the race to empty the same directory.
-                continue
-            if is_empty:
-                try:
-                    os.rmdir(full_path)
-                except Exception:
-                    log.error('Couldn\'t remove empty directory %s: %s', full_path, traceback.format_exc())
+                log.error('Couldn\'t remove empty directory %s: %s', full_path, traceback.format_exc())
 
 
 def getFreeSpace(directories):
