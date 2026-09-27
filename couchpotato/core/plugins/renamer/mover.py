@@ -1,6 +1,7 @@
 """File moving/linking operations for the renamer."""
 import os
 import shutil
+import subprocess
 import traceback
 
 from couchpotato.core.helpers.variable import link, symlink, sp
@@ -191,7 +192,11 @@ class MoverMixin:
             try:
                 os.chmod(dest, Env.getPermission('file'))
                 if os.name == 'nt' and self.conf('ntfs_permission'):
-                    os.popen('icacls "' + dest + '"* /reset /T')
+                    subprocess.run(
+                        ['icacls', dest, '/reset'],
+                        check=True, shell=False, timeout=30,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
             except Exception:
                 log.debug('Failed setting permissions for file: %s, %s', dest, traceback.format_exc(1))
         except Exception:

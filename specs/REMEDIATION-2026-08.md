@@ -4986,12 +4986,11 @@ pass a content test.
   "raises, and the source is intact": **not the errno**. Measured
   `PermissionError` on macOS, `IsADirectoryError` on Linux; an errno assertion
   is green-on-macOS, red-on-Alpine.
-- **AC-DATA-15 / AC-QA-19** The `os.name == 'nt'` branch carries an explicit
-  `skipif` whose reason **cites the `os.popen` string-concatenation at
-  `moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)**, so the gap is knowingly uncovered rather than silently
-  absent. (`lens-security` flagged that line as command injection reachable
-  from indexer-supplied release names on Windows with `ntfs_permission`. Not
-  PR 1's to fix: filed to PR 3, which already edits `renamer/`.)
+- **AC-DATA-15 / AC-QA-19** This tranche explicitly skipped the Windows
+  `os.popen`/`icacls` branch after `lens-security` flagged command construction
+  from indexer-supplied release names. The skip and shell call were replaced
+  by executable non-Windows-CI coverage and argument-list execution in
+  `specs/PLAN-2026-09-28-renamer-icacls-safety.md`.
 - **AC-DATA-16** Hermetic: every path derives from `tmp_path`; the suite passes
   twice consecutively; `git status --porcelain --ignored` unchanged; `.config/`,
   `test_data/` and `.e2e-data*` mtimes unchanged.
@@ -5677,7 +5676,7 @@ the diff, not by an agent.
 | Wire `tests/integration/` into CI | simplicity, QA, data | **Accepted, conditioned** | Measured 38 tests / 2.4 s, no fixing required, but 7 tests skip permanently in CI. Conditioned on AC-QA-35 |
 | Merge state-mutating specs into one serial file (the S-effort alternative to T1.7) | simplicity | **Rejected with evidence** | The mutating set is larger than three files: `movie-detail.spec.ts` and `small-screen.mobile.spec.ts` also mutate. Merging three leaves the coupling. Recorded so it is not re-proposed |
 | mypy gate (T6.7, PR 6) | simplicity | **Veto overridden** (Scott, 2026-08-03) | Simplicity's objection stands on its own terms: no defect has been identified that mypy would have caught. Kept anyway, scoped to `core/db/*`, as a **preventive** gate: that package is the highest-consequence code in the repo and already typed, so the gate starts green and ratchets rather than migrating. Recorded as a deliberate override, not an unanswered veto |
-| Fix `os.popen` injection at `moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`) | security | **Deferred to PR 3** | Windows-only, gated on `ntfs_permission`. PR 3 already edits `renamer/`. Recorded in the T1.1 skip reason so it is not silently uncovered |
+| Fix `os.popen` injection at `moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`) | security | **Deferred at this planning point; subsequently resolved** | Windows-only and gated on `ntfs_permission`. The later fix and executable coverage are in `specs/PLAN-2026-09-28-renamer-icacls-safety.md`. |
 | Fix `extractor.py:174` (`cleanup` passed into the `use_default` slot) | QA | **Deferred to PR 3** | Real argument-position bug coupling two unrelated settings, but not on PR 1's path |
 | Move the renamer re-entrancy lock (T5.4) ahead of PR 4 | data | **Accepted** | Two concurrent moves to one destination destroy a file and both return `True`. PR 4 adds a delete to that path: shipping the delete before the lock turns "one download lost" into "the library copy lost too" |
 
@@ -6425,8 +6424,8 @@ pending a decision.
 
 ### T6.5: Remaining low-severity security · S
 
-`tarfile.extractall(filter='data')` (`_base/updater/main.py:373`); list-args
-`subprocess.run` instead of `os.popen` (`moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)); strip `/`, `\`
+`tarfile.extractall(filter='data')` (`_base/updater/main.py:373`); ~~list-args
+`subprocess.run` instead of `os.popen` (`moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)~~ (resolved in `specs/PLAN-2026-09-28-renamer-icacls-safety.md`); strip `/`, `\`
 and `..` in `renamer/namer.py:63`; validate `cors_origins` against `*` with
 credentials (`__init__.py:109-118`); self-host the Google Fonts references
 (`templates/login.html:25-26`, `ui/templates/base.html:53-54`); double
