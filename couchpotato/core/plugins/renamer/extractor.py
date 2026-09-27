@@ -338,23 +338,24 @@ class ExtractorMixin:
                 files.remove(filename)
 
         if extr_files and folder != from_folder:
+            failed_leftover = False
             for leftoverfile in list(files):
                 move_to = os.path.join(from_folder, os.path.relpath(leftoverfile, folder))
                 try:
                     self.makeDir(os.path.dirname(move_to))
                     self.moveFile(leftoverfile, move_to, cleanup)
                 except Exception as e:
-                    log.error('Failed moving left over file %s to %s: %s %s', leftoverfile, move_to, e, traceback.format_exc())
-                    if os.path.isfile(move_to) and os.path.getsize(leftoverfile) == os.path.getsize(move_to):
-                        if cleanup:
-                            log.info('Deleting left over file %s instead...', leftoverfile)
-                            os.unlink(leftoverfile)
-                    else:
-                        continue
+                    # Equal sizes do not prove that the destination is this
+                    # file's complete copy. A failed move must not authorise
+                    # deleting the leftover or its parent folder.
+                    log.error('Failed moving extracted leftover (%s, errno %s); inspect both paths',
+                              type(e).__name__, getattr(e, 'errno', None))
+                    failed_leftover = True
+                    continue
                 files.remove(leftoverfile)
                 extr_files.append(move_to)
 
-            if cleanup:
+            if cleanup and not failed_leftover:
                 log.debug('Removing old movie folder %s...', media_folder)
                 self.deleteEmptyFolder(media_folder)
 

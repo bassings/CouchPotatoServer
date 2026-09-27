@@ -4904,8 +4904,11 @@ pass a content test.
   observing the filesystem, not a mock's call args. *Break:* delete the
   `if use_default:` block at `:23-24`.
 - **AC-DATA-3 / AC-QA-7** Failed move, **equal-size and byte-identical**
-  destination: the source is unlinked and the recovery returns `True`.
-  *Break:* `os.unlink(old)` at `:34` → `pass`.
+  destination: the transfer error propagates and the source is retained.
+  The previous source-unlink recovery was superseded by
+  `specs/PLAN-2026-09-28-failed-move-fail-closed.md`: comparing bytes cannot
+  make a later pathname-based unlink safe. *Break:* restore `os.unlink(old)`
+  after the failed move; the source-unlink regression fails.
 - **AC-DATA-4 / AC-QA-8** Failed move, **equal size, different content**:
   both files survive and the original transfer error propagates. This was a
   strict expected failure until the data-loss fix in
@@ -4949,9 +4952,10 @@ pass a content test.
     `_discard_partial_destination`. *Break:* remove any one call; a distinct
     named test reds for each.
   - the default `move` branch implements the property **inline**, with
-    different edge semantics (`os.path.exists` rather than `lexists`, and on
-    an equal-size, byte-identical destination it unlinks the SOURCE and
-    returns True). Pinned by the failed-move recovery tests.
+    different edge semantics (`os.path.exists` rather than `lexists`). On
+    a failed equal-size transfer it retains both paths and propagates the
+    error, regardless of byte equality. Pinned by the failed-move tests and
+    `specs/PLAN-2026-09-28-failed-move-fail-closed.md`.
 
   **SUPERSEDED at the fifth review round: the clause below is not achievable
   as written, and the sixth round found that its recorded remedy DELETES THE

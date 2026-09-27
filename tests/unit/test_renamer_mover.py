@@ -435,7 +435,7 @@ class TestFailedMoveRecovery:
         assert quarantined[0].read_bytes() == partial
 
     def test_repeated_partial_failures_keep_one_recovery_copy_and_stop_retry(
-        self, tmp_path, monkeypatch,
+        self, tmp_path, monkeypatch, caplog,
     ):
         """A failing mount cannot accumulate a new hidden file each attempt."""
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
@@ -459,8 +459,12 @@ class TestFailedMoveRecovery:
         assert len(quarantined) == 1
         assert quarantined[0].read_bytes() == partial
         assert not dest.exists()
+        caplog.clear()
         with pytest.raises(FileExistsError, match='Recovery copy'):
             _move(plugin, tmp_path, str(old), str(dest))
+        error_text = '\n'.join(record.getMessage() for record in caplog.records if record.levelname == 'ERROR')
+        assert quarantined[0].name in error_text, 'operator must be able to find the safe recovery ID'
+        assert str(tmp_path) not in error_text
         assert len(attempts) == 1
         assert not dest.exists()
 
@@ -1215,6 +1219,49 @@ class TestCallerLevelDataLossGuards:
         assert error_messages, 'failure must remain visible to the operator'
         assert all('Private Movie' not in message for message in error_messages)
         assert all(str(old) not in message and str(dest) not in message for message in error_messages)
+
+    def test_extractor_leftover_failed_move_keeps_source_and_private_paths_out_of_errors(
+        self, tmp_path, monkeypatch, caplog,
+    ):
+        """The archive caller must not undo moveFile's fail-closed guarantee."""
+        source_folder = tmp_path / 'incoming/Private Movie'
+        from_folder = tmp_path / 'downloads'
+        from_folder.mkdir()
+        archive = _write(source_folder / 'part.rar', b'archive')
+        leftover = _write(source_folder / 'movie.nfo', DOWNLOAD)
+        plugin = _mover(monkeypatch, default_file_action='move', **{'from': str(from_folder)})
+        monkeypatch.setattr(type(plugin), 'hastagRelease', lambda *_a, **_kw: False)
+        monkeypatch.setattr(type(plugin), 'checkFilesChanged', lambda *_a, **_kw: (False, None))
+        monkeypatch.setattr(type(plugin), 'makeDir', lambda _self, path: os.makedirs(path, exist_ok=True))
+        removed_folders = []
+        monkeypatch.setattr(type(plugin), 'deleteEmptyFolder',
+                            lambda _self, path, **_kw: removed_folders.append(path))
+
+        def _extract(_archive, output, **_kwargs):
+            extracted = _write(Path(output) / 'extracted.mkv', b'extracted bytes')
+            return [str(extracted)]
+
+        def _complete_then_fail(src, dst, **_kwargs):
+            Path(dst).write_bytes(DOWNLOAD)
+            raise OSError('simulated private detail: %s' % src)
+
+        monkeypatch.setattr(type(plugin), 'extractArchive', lambda _self, *a, **kw: _extract(*a, **kw))
+        monkeypatch.setattr(shutil, 'move', _complete_then_fail)
+
+        _folder, _media_folder, remaining, extracted = plugin.extractFiles(
+            folder=str(source_folder), media_folder=str(source_folder),
+            files=[str(archive), str(leftover)], cleanup=True,
+        )
+
+        destination = from_folder / 'movie.nfo'
+        assert leftover.read_bytes() == DOWNLOAD
+        assert destination.read_bytes() == DOWNLOAD
+        assert str(leftover) in remaining
+        assert str(destination) not in extracted
+        assert removed_folders == [], 'the failed transfer cannot authorise folder cleanup'
+        errors = [record.getMessage() for record in caplog.records if record.levelname == 'ERROR']
+        assert errors
+        assert all('Private Movie' not in message and str(tmp_path) not in message for message in errors)
 
     def test_caller_refuses_any_pre_existing_destination_before_calling_movefile(self, tmp_path, monkeypatch):
         """Pins `Renamer._moveRenamedFiles`'s OWN guard, not mover.py's.

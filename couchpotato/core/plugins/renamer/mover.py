@@ -12,6 +12,14 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 
+class RecoveryCopyExistsError(FileExistsError):
+    """A blocked retry with a safe, opaque recovery artefact identifier."""
+
+    def __init__(self, recovery_id):
+        self.recovery_id = recovery_id
+        super().__init__('Recovery copy .cps-partial-%s requires inspection before retry' % recovery_id)
+
+
 def _recovery_copy_for(dest):
     """Return the stable local artefact path and opaque ID for a destination."""
     destination_id = hashlib.sha256(
@@ -105,7 +113,7 @@ class MoverMixin:
         try:
             recovery_copy, recovery_id = _recovery_copy_for(dest)
             if os.path.lexists(recovery_copy):
-                raise FileExistsError('Recovery copy .cps-partial-%s requires inspection before retry' % recovery_id)
+                raise RecoveryCopyExistsError(recovery_id)
             if os.path.lexists(dest):
                 raise FileExistsError('Destination "%s" already exists' % dest)
 
@@ -253,8 +261,11 @@ class MoverMixin:
             except Exception:
                 log.debug('Failed setting permissions for file: %s, %s', dest, traceback.format_exc(1))
         except Exception as error:
-            log.error('File transfer failed (%s, errno %s); inspect both paths before retry',
-                      type(error).__name__, getattr(error, 'errno', None))
+            if isinstance(error, RecoveryCopyExistsError):
+                log.error('Recovery copy .cps-partial-%s blocks retry; inspect it before removal', error.recovery_id)
+            else:
+                log.error('File transfer failed (%s, errno %s); inspect both paths before retry',
+                          type(error).__name__, getattr(error, 'errno', None))
             raise
 
         return True
