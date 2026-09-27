@@ -476,10 +476,8 @@ test.describe('Movie Detail', () => {
       const markDoneBtn = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDoneBtn).toBeVisible({ timeout: 5000 });
       await markDoneBtn.click();
-      // media.done's success path is a full page reload (pre-existing
-      // behaviour, out of FEAT-008's scope) -- wait for it to land, then for
-      // the restore control that only renders for a 'done' movie.
-      await page.waitForLoadState('networkidle');
+      // The success path reloads; the restore control itself is the readiness
+      // signal, and only renders for a 'done' movie.
       await expect(restoreBtn).toBeVisible({ timeout: 10000 });
     }
 
@@ -590,7 +588,6 @@ test.describe('Movie Detail', () => {
       const markDoneBtn = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDoneBtn).toBeVisible({ timeout: 5000 });
       await markDoneBtn.click();
-      await page.waitForLoadState('networkidle');
       await expect(trigger).toBeVisible({ timeout: 10000 });
     }
 
@@ -643,7 +640,6 @@ test.describe('Movie Detail', () => {
       const markDoneBtn = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDoneBtn).toBeVisible({ timeout: 5000 });
       await markDoneBtn.click();
-      await page.waitForLoadState('networkidle');
       await expect(trigger).toBeVisible({ timeout: 10000 });
     }
     await trigger.click();
@@ -685,7 +681,6 @@ test.describe('Movie Detail', () => {
       const markDoneBtn = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDoneBtn).toBeVisible({ timeout: 5000 });
       await markDoneBtn.click();
-      await page.waitForLoadState('networkidle');
       await expect(trigger).toBeVisible({ timeout: 10000 });
     }
     await trigger.click();
@@ -730,7 +725,6 @@ test.describe('Movie Detail', () => {
       const markDone = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDone).toBeVisible({ timeout: 5000 });
       await markDone.click();
-      await page.waitForLoadState('networkidle');
       await expect(trigger).toBeVisible({ timeout: 10000 });
     }
     await trigger.click();

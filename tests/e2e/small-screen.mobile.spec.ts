@@ -90,7 +90,6 @@ test.describe('Small-screen layout', () => {
       const markDone = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDone).toBeVisible({ timeout: 5000 });
       await markDone.click();
-      await page.waitForLoadState('networkidle');
       await expect(trigger).toBeVisible({ timeout: 10000 });
     }
     await trigger.click();
