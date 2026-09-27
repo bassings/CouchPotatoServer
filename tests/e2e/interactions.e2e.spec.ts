@@ -496,9 +496,6 @@ test.describe('Settings Page', () => {
     for (let i = 0; i < tabCount; i++) {
       const tab = tabs.nth(i);
       const tabId = await tab.getAttribute('id');
-      const logsResponse = tabId === 'tab-logs'
-        ? page.waitForResponse(/logging\.partial/)
-        : null;
       await tab.click();
       await expect(tab).toHaveAttribute('aria-selected', 'true');
       if (tabId === 'tab-profiles') {
@@ -508,8 +505,9 @@ test.describe('Settings Page', () => {
         await expect(page.locator('#categories-panel').getByRole('button', { name: 'New Category' }))
           .toBeVisible({ timeout: 10000 });
       } else if (tabId === 'tab-logs') {
-        await logsResponse;
-        await expect(page.locator('#panel-logs [role="status"]')).toBeHidden();
+        const logsPanel = page.locator('#panel-logs');
+        await expect(logsPanel).toBeVisible();
+        await expect(logsPanel.locator('#settings-log-level')).toBeVisible();
       } else {
         await expect(page.locator('[x-show="!customPanelTabs.includes(activeTab)"]')).toBeVisible();
       }
