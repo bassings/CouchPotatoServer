@@ -109,6 +109,61 @@ class TestAPIKeyInURL:
         assert r.status_code == 200
 
 
+class TestCredentialledCorsOrigins:
+    def test_unset_list_keeps_same_origin_default(self, client):
+        response = client.get('/api/test.echo', headers={
+            'Origin': 'https://untrusted.example',
+            'X-Api-Key': API_KEY,
+        })
+        assert 'access-control-allow-origin' not in response.headers
+
+    @pytest.mark.parametrize('configured', ['*', '*, https://trusted.example'])
+    def test_wildcard_does_not_authorise_unlisted_origin(self, setup_env, configured):
+        from couchpotato import create_app
+
+        setup_env['cors_origins'] = configured
+        app = create_app(api_key=API_KEY, web_base='/')
+        client = TestClient(app, raise_server_exceptions=False)
+        untrusted = 'https://untrusted.example'
+
+        response = client.get('/api/test.echo', headers={
+            'Origin': untrusted,
+            'X-Api-Key': API_KEY,
+            'Cookie': 'couchpotato_session=dummy',
+        })
+        assert response.headers.get('access-control-allow-origin') != untrusted
+
+        preflight = client.options('/api/test.echo', headers={
+            'Origin': untrusted,
+            'Access-Control-Request-Method': 'GET',
+            'Access-Control-Request-Headers': 'x-api-key',
+        })
+        assert preflight.headers.get('access-control-allow-origin') != untrusted
+
+    def test_explicit_origin_still_works_in_mixed_list(self, setup_env):
+        from couchpotato import create_app
+
+        trusted = 'https://trusted.example'
+        setup_env['cors_origins'] = f'*, {trusted}'
+        app = create_app(api_key=API_KEY, web_base='/')
+        client = TestClient(app, raise_server_exceptions=False)
+
+        response = client.get('/api/test.echo', headers={
+            'Origin': trusted,
+            'X-Api-Key': API_KEY,
+            'Cookie': 'couchpotato_session=dummy',
+        })
+        assert response.headers['access-control-allow-origin'] == trusted
+        assert response.headers['access-control-allow-credentials'] == 'true'
+
+        preflight = client.options('/api/test.echo', headers={
+            'Origin': trusted,
+            'Access-Control-Request-Method': 'GET',
+            'Access-Control-Request-Headers': 'x-api-key',
+        })
+        assert preflight.status_code == 200
+        assert preflight.headers['access-control-allow-origin'] == trusted
+
 class TestAPIKeyInHeader:
     """Valid API key via X-Api-Key header."""
 
