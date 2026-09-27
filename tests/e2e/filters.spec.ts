@@ -76,9 +76,6 @@ test.describe('Filters', () => {
     // Button should be highlighted
     await expect(wantedButton).toHaveClass(/text-cp-accent/);
     
-    // Wait for filter to apply
-    await page.waitForTimeout(300);
-    
     // Assert on `data-has-releases`, NOT `data-status`.
     //
     // The first repair of this test checked that every visible card was
@@ -96,8 +93,13 @@ test.describe('Filters', () => {
     // repair) is kept: it closes the zero-iteration hole.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
     await expect
-      .poll(() => visibleCards.count(), { timeout: 5000 })
-      .toBeGreaterThan(0);
+      .poll(async () => {
+        const flags = await visibleCards.evaluateAll((cards) =>
+          cards.map((card) => card.getAttribute('data-has-releases')),
+        );
+        return flags.length > 0 && flags.every((flag) => flag === 'false');
+      }, { timeout: 5000 })
+      .toBe(true);
 
     const flags = await visibleCards.evaluateAll((cards) =>
       cards.map((c) => c.getAttribute('data-has-releases')),
@@ -113,9 +115,6 @@ test.describe('Filters', () => {
     // Button should be highlighted with accent colour
     await expect(availableButton).toHaveClass(/text-cp-accent/);
     
-    // Wait for filter to apply
-    await page.waitForTimeout(300);
-    
     // Same shape, same fix as the Wanted case above.
     //
     // Available is non-empty because MOVIE_ID and DESTRUCTIVE_MOVIE_ID carry
@@ -126,8 +125,13 @@ test.describe('Filters', () => {
     // someone trimming the seed removes the wrong document.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
     await expect
-      .poll(() => visibleCards.count(), { timeout: 5000 })
-      .toBeGreaterThan(0);
+      .poll(async () => {
+        const flags = await visibleCards.evaluateAll((cards) =>
+          cards.map((card) => card.getAttribute('data-has-releases')),
+        );
+        return flags.length > 0 && flags.every((flag) => flag === 'true');
+      }, { timeout: 5000 })
+      .toBe(true);
 
     const flags = await visibleCards.evaluateAll((cards) =>
       cards.map((c) => c.getAttribute('data-has-releases')),
@@ -138,10 +142,13 @@ test.describe('Filters', () => {
   });
 
   test('clicking All should show all movies', async ({ page }) => {
+    const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
     // First apply a filter
     const wantedButton = page.getByRole('button', { name: /wanted/i });
     await wantedButton.click();
-    await page.waitForTimeout(300);
+    await expect(wantedButton).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => visibleCards.count()).toBeGreaterThan(0);
+    const wantedCount = await visibleCards.count();
     
     // Then click All
     const allButton = page.getByRole('button', { name: /^all$/i });
@@ -149,14 +156,10 @@ test.describe('Filters', () => {
     
     // Button should be highlighted
     await expect(allButton).toHaveClass(/text-cp-accent/);
-    
-    // Wait for filter to apply
-    await page.waitForTimeout(300);
-    
-    // More movies should be visible (or same if all were wanted)
-    const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
-    const count = await visibleCards.count();
-    expect(count).toBeGreaterThanOrEqual(0);
+    await expect(allButton).toHaveAttribute('aria-pressed', 'true');
+    // The seed has both wanted and available films, so All must reveal more
+    // than Wanted. A non-negative count passed even if the All click did nothing.
+    await expect.poll(() => visibleCards.count()).toBeGreaterThan(wantedCount);
   });
 
   test('should show movie count', async ({ page }) => {
@@ -587,6 +590,7 @@ test.describe('Review card actions (FEAT-010)', () => {
 
     const { destructiveCard } = await gotoWantedWithReviewCards(page);
     const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+    const doneResponse = page.waitForResponse(/media\.done/);
 
     // force:true: the control uses aria-disabled (not the disabled
     // attribute, per the project's a11y rule for a control that may hold
@@ -597,7 +601,7 @@ test.describe('Review card actions (FEAT-010)', () => {
       markDoneBtn.click({ force: true }),
       markDoneBtn.click({ force: true }),
     ]);
-    await page.waitForTimeout(700);
+    await doneResponse;
 
     expect(doneRequests).toBe(1);
   });
@@ -620,10 +624,11 @@ test.describe('Review card actions (FEAT-010)', () => {
     const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
     await markDoneBtn.focus();
     await expect(markDoneBtn).toBeFocused();
+    const doneResponse = page.waitForResponse(/media\.done/);
 
     await page.keyboard.press('Enter');
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(700);
+    await doneResponse;
 
     expect(doneRequests).toBe(1);
   });
