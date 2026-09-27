@@ -1021,24 +1021,8 @@ WAIT_EXEMPTION_RE = re.compile(
 # different timing guess, even within the same test.
 LEGACY_WAIT_IDENTITIES = {
     "tests/e2e/filters.spec.ts": {
-        ("clicking Wanted filter should filter movies", "300", "42bb5bcce6a85db7"): 1,
-        ("clicking Available filter should filter movies", "300", "b1eb4d6065727fa3"): 1,
-        ("clicking All should show all movies", "300", "a0f390fa596e3032"): 1,
-        ("clicking All should show all movies", "300", "b1400d759beddf8e"): 1,
         ("dismissing the card Mark Failed confirmation issues zero requests (AC-QA-12)", "500", "f9c493fe85b317b8"): 1,
-        ("two rapid clicks on Mark Done produce exactly one media.done request (AC-QA-16, pointer)", "700", "ae34b3f2eed922a9"): 1,
-        ("two rapid Enter presses on a focused Mark Done produce exactly one media.done request (AC-QA-16, keyboard)", "700", "afd6900e55262500"): 1,
         ("Select All on a grid containing review-gated films states the skip count before acting, never requests their deletion, and they survive end-to-end (AC-QA-20, AC-SEC-2)", "800", "31f3893ae895c5ac"): 1,
-    },
-    "tests/e2e/interactions.e2e.spec.ts": {
-        ("theme toggle switches modes", "300", "9ed7004d6543b085"): 1,
-        ("filter buttons work", "300", "1814811e929ba34b"): 1,
-        ("text filter input works", "500", "71d5f5a72570ae5a"): 1,
-        ("text filter input works", "500", "2d27ad0678435195"): 1,
-        ("tabs switch content", "500", "bbfd78e136d338df"): 1,
-        ("all tabs are clickable", "500", "bbfd78e136d338df"): 1,
-        ("log filter dropdown works", "500", "dfbea4ff84ce3a66"): 1,
-        ("can tab through interactive elements", "100", "b1d4372dca85329d"): 1,
     },
     "tests/e2e/operator-replace-modal.a11y.spec.ts": {
         ("the confirm control clears the contrast floor ON HOVER, not just at rest (dark theme, AC-A11Y-10)", "400", "4ada735ad20ca0e9"): 1,
@@ -1052,11 +1036,6 @@ LEGACY_WAIT_IDENTITIES = {
         ("Mark Done on a card with others remaining: defined focus, a real Library-naming announcement, and a confined grid update (AC-A11Y-9/10/11, others-remain case, REAL backend)", "1000", "e50c7f5123a38f65"): 1,
     },
     "tests/e2e/settings.spec.ts": {
-        ("should be able to switch tabs", "1000", "5ae224a2452b3030"): 1,
-        ("should show Advanced toggle", "1000", "d109bd3a375919ad"): 1,
-        ("Jackett sync button should have description (DEF-003)", "1000", "5ae224a2452b3030"): 1,
-        ("Jackett sync button should have description (DEF-003)", "500", "11e2f5d2ef0b67ff"): 1,
-        ('the "Require login" toggle renders and reflects the stored value', "1000", "2c91b0ed9608d2e5"): 1,
         ("focus then blur WITHOUT typing saves nothing", "1500", "fc7de2fd80a333f8"): 1,
     },
     "tests/e2e/trakt-device-auth.spec.ts": {

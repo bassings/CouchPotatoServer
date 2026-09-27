@@ -84,11 +84,10 @@ test.describe('Navigation', () => {
 
     const initialText = await themeBtn.textContent();
     await themeBtn.click();
-    await page.waitForTimeout(300);
-    const newText = await themeBtn.textContent();
-    expect(newText).not.toBe(initialText);
+    await expect.poll(() => themeBtn.textContent()).not.toBe(initialText);
     // Toggle back
     await themeBtn.click();
+    await expect.poll(() => themeBtn.textContent()).toBe(initialText);
   });
 
   test('mobile menu works on small viewport', async ({ page }) => {
@@ -118,16 +117,16 @@ test.describe('Wanted Page', () => {
     await waitForPageReady(page);
 
     // Click each filter button
-    const filterBtns = page.locator('button:has-text("All"), button:has-text("Wanted"), button:has-text("Available")');
+    const filterBtns = page.getByRole('button', { name: /^(All|Wanted|Available)$/ });
     const count = await filterBtns.count();
     expect(
       count,
-      'at 0 the clicks below never happen, so checkNoErrors passes on a page that never rendered the control -- green having exercised nothing',
-    ).toBeGreaterThan(0);
+      'all three filter chips must render before the interaction walk',
+    ).toBe(3);
     
     for (let i = 0; i < count; i++) {
       await filterBtns.nth(i).click();
-      await page.waitForTimeout(300);
+      await expect(filterBtns.nth(i)).toHaveAttribute('aria-pressed', 'true');
     }
 
     checkNoErrors(page, errors);
@@ -173,11 +172,9 @@ test.describe('Wanted Page', () => {
 
     // No seeded title contains this, so this must hide every card.
     await filterInput.fill('zzz-does-not-match-any-seeded-title');
-    await page.waitForTimeout(500);
     await expect(visibleCards).toHaveCount(0);
 
     await filterInput.fill('');
-    await page.waitForTimeout(500);
     await expect(visibleCards).toHaveCount(baseline);
   });
 
@@ -339,6 +336,11 @@ test.describe('Suggestions Page', () => {
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
     await mockSuggestionsCharts(page);
+    await page.route('**/partial/suggestions', route => route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<div data-testid="personal-tab-content">For You Movie</div>',
+    }));
     await page.goto('/suggestions/');
     await waitForPageReady(page);
 
@@ -352,8 +354,19 @@ test.describe('Suggestions Page', () => {
     const tabCount = await tabs.count();
 
     for (let i = 0; i < tabCount; i++) {
-      await tabs.nth(i).click();
-      await page.waitForTimeout(500);
+      const tab = tabs.nth(i);
+      const panelId = await tab.getAttribute('aria-controls');
+      expect(panelId, 'a Suggestions tab must name its panel').toBeTruthy();
+      await tab.click();
+      await expect(tab).toHaveAttribute('aria-selected', 'true');
+      const panel = page.locator(`#${panelId}`);
+      await expect(panel).toBeVisible();
+      // Each panel shows its htmx target only after its own load completes.
+      // Selection alone changes before the deferred For You request settles.
+      await expect(panel.locator('[x-ref="fetchTarget"]')).toBeVisible({ timeout: 10000 });
+      if (panelId === 'suggestions-grid') {
+        await expect(panel.getByTestId('personal-tab-content')).toBeVisible();
+      }
     }
 
     checkNoErrors(page, errors);
@@ -481,8 +494,23 @@ test.describe('Settings Page', () => {
     const tabCount = await tabs.count();
 
     for (let i = 0; i < tabCount; i++) {
-      await tabs.nth(i).click();
-      await page.waitForTimeout(500);
+      const tab = tabs.nth(i);
+      const tabId = await tab.getAttribute('id');
+      await tab.click();
+      await expect(tab).toHaveAttribute('aria-selected', 'true');
+      if (tabId === 'tab-profiles') {
+        await expect(page.locator('#profiles-panel').getByRole('button', { name: 'New Profile' }))
+          .toBeVisible({ timeout: 10000 });
+      } else if (tabId === 'tab-categories') {
+        await expect(page.locator('#categories-panel').getByRole('button', { name: 'New Category' }))
+          .toBeVisible({ timeout: 10000 });
+      } else if (tabId === 'tab-logs') {
+        const logsPanel = page.locator('#panel-logs');
+        await expect(logsPanel).toBeVisible();
+        await expect(logsPanel.locator('#settings-log-level')).toBeVisible();
+      } else {
+        await expect(page.locator('[x-show="!customPanelTabs.includes(activeTab)"]')).toBeVisible();
+      }
     }
 
     checkNoErrors(page, errors);
@@ -586,7 +614,7 @@ test.describe('Logs Page', () => {
     const logsTab = page.locator('[role="tab"]:has-text("Logs")');
     await expect(logsTab).toBeVisible();
     await logsTab.click();
-    await page.waitForTimeout(500);
+    await expect(logsTab).toHaveAttribute('aria-selected', 'true');
 
     // #settings-log-level, not `select` .first(): Alpine's x-show hides
     // inactive tabs without removing them from the DOM, so "the first
@@ -649,7 +677,6 @@ test.describe('Keyboard Navigation', () => {
     // Tab through first 10 elements
     for (let i = 0; i < 10; i++) {
       await page.keyboard.press('Tab');
-      await page.waitForTimeout(100);
     }
 
     // Something should be focused

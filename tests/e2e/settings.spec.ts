@@ -68,9 +68,6 @@ test.describe('Settings', () => {
   });
 
   test('should be able to switch tabs', async ({ page }) => {
-    // Wait for settings to load
-    await page.waitForTimeout(1000);
-
     // Both tabs are among the always-present default set this file's own
     // "should show settings tabs" test pins -- the old
     // `if (await X.isVisible())` guards could never be false, and neither
@@ -89,9 +86,6 @@ test.describe('Settings', () => {
   });
 
   test('should show Advanced toggle', async ({ page }) => {
-    // Wait for settings to load
-    await page.waitForTimeout(1000);
-    
     // Should have Advanced toggle
     const advancedToggle = page.getByText(/advanced/i);
     await expect(advancedToggle.first()).toBeVisible({ timeout: 5000 });
@@ -139,16 +133,13 @@ test.describe('Settings', () => {
   });
 
   test('Jackett sync button should have description (DEF-003)', async ({ page }) => {
-    // Wait for settings to load
-    await page.waitForTimeout(1000);
-
     // Searchers is one of the always-present default tabs (see "should show
     // settings tabs" above) -- the old `if (await searcherTab.isVisible())`
     // guard could never be false.
     const searcherTab = page.getByRole('tab', { name: /searcher/i });
     await expect(searcherTab).toBeVisible();
     await searcherTab.click();
-    await page.waitForTimeout(500);
+    await expect(searcherTab).toHaveAttribute('aria-selected', 'true');
 
     // Measured: the sync button is an `advanced`-flagged field
     // (provider_card.html: `x-show="... (showAdvanced || !opt.advanced) &&
@@ -213,8 +204,6 @@ test.describe('Settings', () => {
     // in this file. A flaky guard is worse than an absent one. Making this
     // strong properly means seeding a password-protected instance, which is its
     // own fixture change.
-    await page.waitForTimeout(1000);
-
     const toggle = page.getByRole('checkbox', { name: 'Require login' });
     await expect(toggle).toBeVisible({ timeout: 5000 });
 
