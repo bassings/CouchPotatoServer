@@ -4903,17 +4903,18 @@ pass a content test.
   `file_action`. Set the two to **different** branches and assert which ran by
   observing the filesystem, not a mock's call args. *Break:* delete the
   `if use_default:` block at `:23-24`.
-- **AC-DATA-3 / AC-QA-7** Failed move, **equal-size** destination: the source
-  **is** unlinked, returns `True`. Docstring states the check is size-only.
+- **AC-DATA-3 / AC-QA-7** Failed move, **equal-size and byte-identical**
+  destination: the source is unlinked and the recovery returns `True`.
   *Break:* `os.unlink(old)` at `:34` → `pass`.
-- **AC-DATA-4 / AC-QA-8** Failed move, **equal size, different content**: the
-  source is destroyed and the corrupt destination kept. `xfail(strict=True)`
-  with reason "recovery verifies size, not content": the day a checksum is
-  added this XPASSes and the suite reds, forcing acknowledgement.
+- **AC-DATA-4 / AC-QA-8** Failed move, **equal size, different content**:
+  both files survive and the original transfer error propagates. This was a
+  strict expected failure until the data-loss fix in
+  `specs/PLAN-2026-09-28-renamer-move-recovery.md`.
 - **AC-DATA-5 / AC-QA-9** Failed move, **short** destination: source survives
-  byte-identical, partial destination removed, **exception propagates**.
-  *Break, two directions:* `os.unlink(dest)` at `:37` → `pass`; delete `raise`
-  at `:38`.
+  byte-identical, partial destination is moved aside under a unique
+  `.cps-partial-` suffix, and the **exception propagates**. The quarantine
+  replacement of deletion is recorded in
+  `specs/PLAN-2026-09-28-renamer-move-recovery.md`.
 - **AC-DATA-6** Failed move where the **source no longer exists**:
   `os.unlink(dest)` is never reached and the destination keeps full content.
   This is the regression pin against "hardening" `os.path.getsize(old)` at
@@ -4941,7 +4942,7 @@ pass a content test.
   fix-the-instance-miss-the-class history this PR keeps hitting.
 - **AC-DATA-10b** *(added at the second review round; corrected at the
   fourth, which found it mis-enumerated)* **Every branch of `moveFile` that
-  writes bytes to `dest` removes a SHORT destination on failure, and never
+  writes bytes to `dest` moves a SHORT destination aside on failure, and never
   removes an equal-size one.** Four byte-writing branches, **three** helper
   call sites plus one inline equivalent:
   - `copy`, `symlink_reversed` and the `link` fallback each call
@@ -4949,8 +4950,8 @@ pass a content test.
     named test reds for each.
   - the default `move` branch implements the property **inline**, with
     different edge semantics (`os.path.exists` rather than `lexists`, and on
-    an equal-size destination it unlinks the SOURCE and returns True). Pinned
-    by `test_failed_move_with_a_short_destination_...`.
+    an equal-size, byte-identical destination it unlinks the SOURCE and
+    returns True). Pinned by the failed-move recovery tests.
 
   **SUPERSEDED at the fifth review round: the clause below is not achievable
   as written, and the sixth round found that its recorded remedy DELETES THE
