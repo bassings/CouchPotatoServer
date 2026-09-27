@@ -18,11 +18,46 @@ from couchpotato.core.helpers.variable import (
     getImdb,
     isLocalIP,
     longestBracketedName,
+    mergeDicts,
     removePyc,
     tryInt,
 )
 
 pytestmark = pytest.mark.unit
+
+
+class TestMergeDicts:
+    def test_preserves_outer_copy_and_nested_update_semantics(self):
+        original = {'settings': {'quality': 'old'}, 'untouched': 1}
+        merged = mergeDicts(original, {'settings': {'quality': 'new', 'enabled': True},
+                                       'added': 2})
+
+        assert merged == {'settings': {'quality': 'new', 'enabled': True},
+                          'untouched': 1, 'added': 2}
+        assert merged is not original
+        assert merged['settings'] is original['settings']
+
+    @pytest.mark.parametrize(('prepend', 'expected'), [
+        (False, [1, {'id': 2}, 3]),
+        (True, [3, {'id': 2}, 1]),
+    ])
+    def test_list_merge_preserves_order_and_deduplicates_unhashable_items(self,
+                                                                           prepend, expected):
+        result = mergeDicts({'values': [1, {'id': 2}]},
+                            {'values': [3, {'id': 2}]}, prepend_list=prepend)
+        assert result['values'] == expected
+
+    def test_deep_merge_is_iterative(self):
+        original = {'leaf': 'old'}
+        update = {'leaf': 'new'}
+        for _ in range(1100):
+            original = {'child': original}
+            update = {'child': update}
+
+        merged = mergeDicts(original, update)
+        for _ in range(1100):
+            merged = merged['child']
+        assert merged == {'leaf': 'new'}
 
 
 class TestEncodingHelpers:
@@ -184,6 +219,58 @@ class TestRemovePyc:
     pins for os.listdir/os.rmdir) -- this is completing a pattern already
     established in the function, not introducing a new one.
     """
+
+    def test_only_excess_preserves_matching_source_and_non_pyc_files(self, tmp_path):
+        (tmp_path / 'kept.py').write_text('source')
+        kept = tmp_path / 'kept.pyc'
+        kept.write_text('bytecode')
+        stale = tmp_path / 'stale.pyc'
+        stale.write_text('old bytecode')
+        other = tmp_path / 'notes.txt'
+        other.write_text('keep')
+
+        removePyc(str(tmp_path), show_logs=False)
+
+        assert kept.exists()
+        assert not stale.exists()
+        assert other.exists()
+
+    def test_only_excess_false_removes_all_pyc_files(self, tmp_path):
+        (tmp_path / 'kept.py').write_text('source')
+        bytecode = tmp_path / 'kept.pyc'
+        bytecode.write_text('bytecode')
+
+        removePyc(str(tmp_path), only_excess=False, show_logs=False)
+
+        assert not bytecode.exists()
+        assert (tmp_path / 'kept.py').exists()
+
+    def test_failed_file_removal_does_not_stop_later_candidates(self, tmp_path, monkeypatch):
+        blocked = tmp_path / 'blocked.pyc'
+        blocked.write_text('bytecode')
+        removable = tmp_path / 'removable.pyc'
+        removable.write_text('bytecode')
+        real_remove = os.remove
+        attempted = []
+
+        def fail_one_file(path):
+            attempted.append(path)
+            if path == str(blocked):
+                raise PermissionError('injected removal failure')
+            real_remove(path)
+
+        monkeypatch.setattr(os, 'remove', fail_one_file)
+        # os.walk does not promise filename order. Feed two real files in a
+        # known order so stopping after the first failure cannot false-pass.
+        with patch('couchpotato.core.helpers.variable.os.walk',
+                   return_value=[(str(tmp_path), [], ['blocked.pyc', 'removable.pyc'])]), \
+                patch('couchpotato.core.helpers.variable.log.error') as log_error:
+            removePyc(str(tmp_path), show_logs=False)
+
+        assert attempted == [str(blocked), str(removable)]
+        assert blocked.exists()
+        assert not removable.exists()
+        log_error.assert_called_once()
 
     def test_tolerates_a_directory_vanishing_between_walk_and_listdir(self, tmp_path, monkeypatch):
         # Simulate the race directly: os.walk() has already yielded this
