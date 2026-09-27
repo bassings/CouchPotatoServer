@@ -20,6 +20,23 @@ test.describe('Visual transition settling', () => {
     expect(renderedColor).toBe('rgb(255, 0, 0)');
   });
 
+  test('waits for colour to settle before checking contrast', async ({ page }) => {
+    await page.setContent('<main style="background: white"><button id="subject" style="color: #111; background: white">Readable control</button></main>');
+    await page.locator('#subject').evaluate((element) => {
+      element.animate(
+        [{ color: 'rgb(238, 238, 238)' }, { color: 'rgb(17, 17, 17)' }],
+        { duration: 1500, fill: 'forwards' },
+      );
+    });
+
+    await expectVisualTransitionsToSettle(page, 'animated colour contrast');
+    const results = await new AxeBuilder({ page })
+      .include('#subject')
+      .withRules(['color-contrast'])
+      .analyze();
+    expect(results.violations.map((violation) => violation.id)).not.toContain('color-contrast');
+  });
+
   test('does not mask a genuine settled contrast violation', async ({ page }) => {
     await page.setContent(`
       <main style="background: rgb(255, 255, 255)">
