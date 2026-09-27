@@ -1,5 +1,7 @@
 """Tests for the split scanner module components."""
 
+import ast
+import inspect
 import os
 import pytest
 import tempfile
@@ -9,6 +11,17 @@ from types import SimpleNamespace
 from couchpotato.core.plugins.scanner.file_detector import FileDetectorMixin
 from couchpotato.core.plugins.scanner.media_parser import MediaParserMixin
 from couchpotato.core.plugins.scanner.folder_scanner import FolderScannerMixin
+
+
+def test_folder_scanner_diagnostics_use_the_non_fatal_guard():
+    """A new bare log call can silently turn a partial scan into cleanup evidence."""
+    tree = ast.parse(inspect.getsource(FolderScannerMixin))
+    bare_calls = [node.lineno for node in ast.walk(tree)
+                  if isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Attribute)
+                  and isinstance(node.func.value, ast.Name)
+                  and node.func.value.id == 'log']
+    assert bare_calls == [], 'unguarded scanner diagnostics at class lines %s' % bare_calls
 
 
 # ---------- FileDetectorMixin ----------
@@ -469,6 +482,82 @@ def _normalized_scan_groups(groups):
 
 
 class TestFolderScannerLeftoverSetContract:
+    def test_symlink_log_error_preserves_later_movie(
+            self, tmp_path, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        library = tmp_path / 'library'
+        library.mkdir()
+        outside = tmp_path / 'outside.mkv'
+        outside.write_bytes(b'outside')
+        for name in ('First.2024.mkv', 'Second.2024.mkv'):
+            (library / name).write_bytes(b'movie')
+        (library / 'escape.mkv').symlink_to(outside)
+
+        monkeypatch.setattr(fs.os, 'walk',
+                            lambda folder, followlinks=False:
+                            iter([(str(library), [], ['First.2024.mkv', 'escape.mkv', 'Second.2024.mkv'])]))
+        monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
+        scanner = CharacterizationScanner()
+        monkeypatch.setattr(scanner, 'filesizeBetween',
+                            lambda file_path, file_size=None: str(file_path).endswith('.mkv'))
+        original_debug = fs.log.debug
+
+        def debug(message, *args, **kwargs):
+            if message.startswith('Skipping file that resolves outside'):
+                raise OSError('logging failed')
+            return original_debug(message, *args, **kwargs)
+
+        monkeypatch.setattr(fs.log, 'debug', debug)
+        callbacks = []
+
+        assert scanner._gatherFiles(str(library)) == [
+            str(library / 'First.2024.mkv'), str(library / 'Second.2024.mkv')]
+
+        scanner.scan(folder=str(library), simple=True, check_file_date=False,
+                     on_found=lambda group, total, remaining: callbacks.append(group))
+
+        assert len(callbacks) == 2
+        assert all(str(library / 'escape.mkv') not in group['files']['movie']
+                   for group in callbacks)
+
+    def test_diagnostic_failure_does_not_stop_a_partial_two_movie_scan(
+            self, tmp_path, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        paths = [tmp_path / 'First.2024.mkv', tmp_path / 'Second.2024.mkv']
+        for file_path in paths:
+            file_path.write_bytes(b'movie')
+
+        scanner = CharacterizationScanner()
+        monkeypatch.setattr(scanner, 'filesizeBetween',
+                            lambda file_path, file_size=None: str(file_path).endswith('.mkv'))
+        identifications = []
+
+        def determine_media(group, release_download=None):
+            identifications.append(group)
+            return {'_id': 'movie-1', 'info': {'imdb': 'tt1234567'}} if len(identifications) == 1 else {}
+
+        monkeypatch.setattr(scanner, 'determineMedia', determine_media)
+        monkeypatch.setattr(fs, 'fireEvent', lambda *args, **kwargs: None)
+        original_error = fs.log.error
+
+        def error(message, *args, **kwargs):
+            if message.startswith('Unable to determine media'):
+                raise OSError('logging failed')
+            return original_error(message, *args, **kwargs)
+
+        monkeypatch.setattr(fs.log, 'error', error)
+        callbacks = []
+
+        result = scanner.scan(folder=str(tmp_path), files=[str(path) for path in paths],
+                              simple=True, check_file_date=False,
+                              on_found=lambda group, total, remaining: callbacks.append(group))
+
+        assert len(callbacks) == len(paths)
+        assert len(result) == len(paths)
+        assert any(not group['media'] for group in callbacks)
+
     def test_group_membership_is_independent_of_input_order_and_duplicate_sidecars(
             self, tmp_path, monkeypatch):
         import couchpotato.core.plugins.scanner.folder_scanner as fs

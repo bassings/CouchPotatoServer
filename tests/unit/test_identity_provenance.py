@@ -126,6 +126,116 @@ class TestTheFieldIsAlwaysPresent:
 
 
 class TestIdentitySourcePrecedence:
+    def test_year_mismatch_warning_failure_keeps_search_identity(self, scanner, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as module
+
+        monkeypatch.setattr(type(scanner), 'getCPImdb', lambda _s, _f: None, raising=False)
+        monkeypatch.setattr(module, 'getImdb', lambda path, check_inside=False: None)
+        monkeypatch.setattr(type(scanner), 'getReleaseNameYear',
+                            lambda _s, identifier, file_name=None: {'name': 'Some Movie', 'year': '2001'},
+                            raising=False)
+        monkeypatch.setattr(module, 'fireEvent',
+                            lambda *a, **k: [{'imdb': 'tt5555555', 'year': 1990}]
+                            if a and a[0] == 'movie.search' else None)
+        monkeypatch.setattr(module.log, 'warning',
+                            lambda *a, **k: (_ for _ in ()).throw(OSError('logging failed')))
+        group = _group()
+
+        result = scanner.determineMedia(group)
+
+        assert result['identifier'] == 'tt5555555'
+        assert group['identity_source'] == 'search'
+
+    def test_guessit_error_log_failure_keeps_search_fallback(self, scanner, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as module
+
+        monkeypatch.setattr(type(scanner), 'getCPImdb', lambda _s, _f: None, raising=False)
+        monkeypatch.setattr(module, 'getImdb', lambda path, check_inside=False: None)
+        monkeypatch.setattr(module, 'guess_movie_info',
+                            lambda filename: (_ for _ in ()).throw(ValueError('bad guess')))
+        monkeypatch.setattr(module, 'fireEvent',
+                            lambda *a, **k: [{'imdb': 'tt6666666', 'year': 2001}]
+                            if a and a[0] == 'movie.search' else None)
+        original_debug = module.log.debug
+
+        def debug(message, *args, **kwargs):
+            if message.startswith('Could not detect via guessit'):
+                raise OSError('logging failed')
+            return original_debug(message, *args, **kwargs)
+
+        monkeypatch.setattr(module.log, 'debug', debug)
+        group = _group()
+
+        result = scanner.determineMedia(group)
+
+        assert result['identifier'] == 'tt6666666'
+        assert group['identity_source'] == 'search'
+
+    def test_download_id_survives_diagnostic_log_failure(self, scanner, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as module
+
+        monkeypatch.setattr(module.log, 'debug', lambda *a, **k: (_ for _ in ()).throw(OSError('log failed')))
+        group = _group()
+
+        result = scanner.determineMedia(group, release_download={'imdb_id': 'tt1111111'})
+
+        assert result['identifier'] == 'tt1111111'
+        assert group['identity_source'] == 'download_id'
+
+    def test_filename_id_survives_diagnostic_log_failure(self, scanner, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as module
+
+        monkeypatch.setattr(type(scanner), 'getCPImdb', lambda _s, _f: None, raising=False)
+        monkeypatch.setattr(module, 'getImdb',
+                            lambda path, check_inside=False: None if check_inside else 'tt4444444')
+        original_debug = module.log.debug
+
+        def debug(message, *args, **kwargs):
+            if message.startswith('Found movie via imdb in filename'):
+                raise OSError('logging failed')
+            return original_debug(message, *args, **kwargs)
+
+        monkeypatch.setattr(module.log, 'debug', debug)
+        group = _group()
+
+        result = scanner.determineMedia(group)
+
+        assert result['identifier'] == 'tt4444444'
+        assert group['identity_source'] == 'filename'
+
+    def test_unidentified_group_survives_error_log_failure(self, scanner, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as module
+
+        monkeypatch.setattr(type(scanner), 'getCPImdb', lambda _s, _f: None, raising=False)
+        monkeypatch.setattr(module, 'getImdb', lambda path, check_inside=False: None)
+        monkeypatch.setattr(type(scanner), 'getReleaseNameYear',
+                            lambda _s, identifier, file_name=None: {}, raising=False)
+        monkeypatch.setattr(module.log, 'error', lambda *a, **k: (_ for _ in ()).throw(OSError('log failed')))
+        group = _group()
+
+        assert scanner.determineMedia(group) == {}
+        assert group['identity_source'] is None
+
+    def test_cp_tag_id_survives_diagnostic_log_failure(self, scanner, monkeypatch):
+        import couchpotato.core.plugins.scanner.folder_scanner as module
+
+        monkeypatch.setattr(type(scanner), 'getCPImdb',
+                            lambda _s, _f: 'tt2222222', raising=False)
+        original_debug = module.log.debug
+
+        def debug(message, *args, **kwargs):
+            if message.startswith('Found movie via CP tag'):
+                raise OSError('logging failed')
+            return original_debug(message, *args, **kwargs)
+
+        monkeypatch.setattr(module.log, 'debug', debug)
+        group = _group()
+
+        result = scanner.determineMedia(group)
+
+        assert result['identifier'] == 'tt2222222'
+        assert group['identity_source'] == 'cp_tag'
+
     def test_nfo_id_survives_diagnostic_log_failure(self, scanner, monkeypatch):
         import couchpotato.core.plugins.scanner.folder_scanner as module
 

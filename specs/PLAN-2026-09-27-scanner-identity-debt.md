@@ -11,6 +11,8 @@ Reduce the cognitive complexity of `FolderScannerMixin.determineMedia` while pre
 - [x] AC-QA-1: A malformed NFO, filename or search provider response cannot abort identification of later candidates or leave a partial library scan that enables cleanup.
 - [x] AC-QA-2: The first movie filename, DVD suppression, primary/alternate query order, search limit/type, and first in-tolerance year choice remain unchanged.
 - [x] AC-QA-3: New or existing focused tests cover source precedence, failure fallthrough and the search boundary; deliberate mutations demonstrate new tests are load-bearing.
+- [x] AC-QA-4: Scanner diagnostic logging failures cannot truncate an otherwise continuing multi-movie scan or discard an identified fallback. Real two-movie, symlink-gather, search-warning and parser-error tests must fail when their guards are removed.
+- [x] AC-QA-5: A static scanner guard rejects any new direct logger call that bypasses the non-fatal diagnostic helper.
 - [x] AC-SIMP-1: Helpers stay private, small and purpose-specific. No public scanner signature, event contract, dependency, or database schema changes.
 - [ ] AC-REL-1: The original `python:S3776` finding on `determineMedia` closes on a fresh-clone exact-master Sonar scan without creating a replacement S3776 finding in an extracted helper.
 - [ ] AC-REL-2: The full local gate, two independent clean-agent reviews and hosted checks pass before merge.
