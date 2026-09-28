@@ -23,6 +23,11 @@ remediation T21 without changing the existing no-auth/no-secret behaviour.
 - Two concurrent password saves cannot interleave their commit, rotation and
   marker-clear steps. An older callback must never clear a newer committed
   password's revocation intent.
+- Runtime settings writers that share the parser cannot persist or modify a
+  half-prepared password change. Their setter and file save use the same
+  transaction lock, including the direct `Env.setting(..., value=...)` path.
+  A direct `auth_required` save shares the same lock through its guard and
+  file write, so it cannot enable login after a concurrent password clear.
 - If the process stops after the settings save but before rotation, startup
   sees the persisted marker and rotates before serving authenticated requests.
   Failure to rotate leaves the marker for a later retry, logs an actionable,
@@ -31,6 +36,21 @@ remediation T21 without changing the existing no-auth/no-secret behaviour.
   marker blocks verification of old cookies and prevents a new cookie being
   signed with the old secret. Login remains unavailable until revocation is
   completed; the operator receives an actionable, path-free error.
+- Cookie verification serialises its auth gate, pending-marker read, secret
+  lookup and signature check with password commits. A password cannot commit
+  halfway through verification and leave an old cookie accepted afterwards.
+  Secret creation uses the same lock; login rechecks both username and password
+  and the current auth-required gate under that lock before reading or
+  creating a secret and issuing a cookie. Async routes run their blocking
+  lock work in the thread pool so a contended password save cannot stall
+  unrelated HTTP requests.
+  Logout rechecks the current auth gate and presented cookie under that same
+  lock through secret rotation. A request admitted before auth was enabled,
+  or before a password changed, cannot revoke the newer session.
+  Both login and `/getkey/` verify
+  credentials and upgrade legacy hashes under the transaction lock, so an old
+  credential cannot overwrite a newly committed password or obtain the API
+  key after its revocation.
 - A stop after rotation but before clearing the marker may cause one extra
   revocation on restart, never reuse the old secret. Clearing the marker is
   persisted, even when UI metadata marks the internal option read-only, so
@@ -38,6 +58,10 @@ remediation T21 without changing the existing no-auth/no-secret behaviour.
   unpersisted clear is reported as a failure.
 - Password clearing, first boot without authentication, and unrelated
   settings writes do not create or rotate a session secret.
+- If a password-clear save raises and its on-disk outcome cannot be read back,
+  the running process retains its previous protected state rather than
+  becoming public on an unconfirmed clear. The same fail-closed handling
+  applies to a direct `auth_required=0` save that fails or cannot be read back.
 - Tests execute the real settings-file and SQLite-property boundaries,
   including the crash window and failure paths. A deliberate removal of
   startup reconciliation makes the crash test fail, then restoration passes.

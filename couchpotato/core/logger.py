@@ -343,7 +343,7 @@ class PrivacyFilter(logging.Filter):
             # is its META-option warning, which `api_key` is not; the absent
             # path raises out of `self.p.get` into `except Exception: return
             # default` and logs nothing. The DEBUG line that does exist,
-            # 'Property "%s" not yet stored', is in `getProperty`, reached by
+            # 'Property not yet stored', is in `getProperty`, reached by
             # `Env.prop` and not by this call. The "124 nested lookups" that
             # justified the guard were measured against a test fake written to
             # log -- the recursion was manufactured by the fixture that then

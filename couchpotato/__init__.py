@@ -19,6 +19,7 @@ from couchpotato.api import api_nonblock, callApiHandler
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt
 from couchpotato.core.logger import CPLog, log_suppressed
+from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
 from couchpotato.environment import Env
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
@@ -620,44 +621,45 @@ def ensure_session_secret(db=None) -> str:
     case this probe existed to catch.) The real protection was always this
     function's propagation, not the probe.
     """
-    if str(Env.setting('session_rotation_pending')) == '1':
-        raise RuntimeError('password-change session revocation is pending')
+    with _PASSWORD_SAVE_LOCK:
+        if str(Env.setting('session_rotation_pending')) == '1':
+            raise RuntimeError('password-change session revocation is pending')
 
-    db = get_db() if db is None else db
+        db = get_db() if db is None else db
 
-    with _SESSION_SECRET_WRITE_LOCK:
-        existing = _session_secret_row(db)
-        if existing is not None and existing.get('value'):
+        with _SESSION_SECRET_WRITE_LOCK:
+            existing = _session_secret_row(db)
+            if existing is not None and existing.get('value'):
+                _remember_a_secret_exists()
+                return existing['value']
+
+            # Read BEFORE the create marks it seen.
+            regenerating = _session_secret_seen
+
+            secret = generate_session_secret()
+            _write_session_secret(secret, db=db)
             _remember_a_secret_exists()
-            return existing['value']
 
-        # Read BEFORE the create marks it seen.
-        regenerating = _session_secret_seen
-
-        secret = generate_session_secret()
-        _write_session_secret(secret, db=db)
-        _remember_a_secret_exists()
-
-        if regenerating:
-            # WARNING, not INFO. This process held a secret and now the row is
-            # gone: nothing about the database distinguishes that from a fresh
-            # install, but the consequences are opposite. Every browser on
-            # every device was just signed out, and the operator did not ask
-            # for it -- so the log has to say what happened rather than
-            # repeating the first-boot line.
-            log.warning('The session signing secret is NO LONGER IN THE '
-                        'DATABASE, so a replacement has been created. Every '
-                        'browser session on every device has been signed out '
-                        'and must log in again. Something removed the stored '
-                        'property row -- a restored backup, a manual delete, '
-                        'or database corruption. The api_key is unchanged, so '
-                        'scripts and downloaders are unaffected.')
-        else:
-            log.info('Created a session signing secret. Browser logins are now '
-                     'signed sessions rather than the api_key, so any existing '
-                     'login is invalidated and must sign in again. The api_key '
-                     'itself is unchanged and every script keeps working.')
-        return secret
+            if regenerating:
+                # WARNING, not INFO. This process held a secret and now the row
+                # is gone: nothing about the database distinguishes that from
+                # a fresh install, but the consequences are opposite. Every
+                # browser on every device was just signed out, and the
+                # operator did not ask for it -- so the log has to say what
+                # happened rather than repeating the first-boot line.
+                log.warning('The session signing secret is NO LONGER IN THE '
+                            'DATABASE, so a replacement has been created. Every '
+                            'browser session on every device has been signed out '
+                            'and must log in again. Something removed the stored '
+                            'property row -- a restored backup, a manual delete, '
+                            'or database corruption. The api_key is unchanged, so '
+                            'scripts and downloaders are unaffected.')
+            else:
+                log.info('Created a session signing secret. Browser logins are now '
+                         'signed sessions rather than the api_key, so any existing '
+                         'login is invalidated and must sign in again. The api_key '
+                         'itself is unchanged and every script keeps working.')
+            return secret
 
 
 def rotate_session_secret(db=None) -> str:
@@ -966,7 +968,17 @@ def session_cookie_attributes() -> dict:
 
 
 def get_current_user(request: Request):
-    """FastAPI dependency for cookie-based auth."""
+    """FastAPI dependency for cookie-based auth.
+
+    Keep the auth gate, pending marker, secret lookup and signature check in
+    one password-transaction read. An old cookie must not pass after a new
+    password has committed, even if rotation has not succeeded yet.
+    """
+    with _PASSWORD_SAVE_LOCK:
+        return _get_current_user_locked(request)
+
+
+def _get_current_user_locked(request: Request):
     if not auth_is_required():
         return True
 
@@ -1406,10 +1418,8 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
 
     @app.get(web_base + 'getkey/')
     @app.get(web_base + 'getkey')
-    async def get_key(request: Request):
+    def get_key(request: Request):
         try:
-            username = Env.setting('username')
-            password = Env.setting('password')
             u_param = request.query_params.get('u', '')
             p_param = request.query_params.get('p', '')
 
@@ -1424,11 +1434,17 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             # history, and an unauthenticated caller received the key outright.
             # The `u` parameter is no protection: it is the md5 of the
             # username, which is not a secret.
-            if password and (u_param == md5(username) or not username) \
-                    and check_password(p_param, password):
-                api_key_val = Env.setting('api_key')
-                if password and is_legacy_md5_hash(password):
-                    Env.setting('password', value=hash_password(p_param))
+            # The key read and any legacy-hash upgrade are one credential
+            # transaction. An old password cannot overwrite a new one, nor
+            # obtain the key after the new password commits.
+            with _PASSWORD_SAVE_LOCK:
+                username = Env.setting('username')
+                password = Env.setting('password')
+                if password and (u_param == md5(username) or not username) \
+                        and check_password(p_param, password):
+                    api_key_val = Env.setting('api_key')
+                    if is_legacy_md5_hash(password):
+                        Env.setting('password', value=hash_password(p_param))
 
             return {'success': api_key_val is not None, 'api_key': api_key_val}
         except Exception:
@@ -1437,7 +1453,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
 
     @app.get(web_base + 'login/')
     @app.get(web_base + 'login')
-    async def login_get(request: Request):
+    def login_get(request: Request):
         user = get_current_user(request)
         if user:
             return RedirectResponse(url=web_base)
@@ -1452,12 +1468,9 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     @app.post(web_base + 'login')
     async def login_post(request: Request):
         form = await request.form()
-        username = Env.setting('username')
-        password = Env.setting('password')
         form_password = form.get('password', '')
         form_password_md5 = md5(form_password)
 
-        authenticated = False
         # `password and ...`, NOT `... or not password`.
         #
         # The old spelling short-circuited the entire credential check to True
@@ -1474,11 +1487,20 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         # it asks for credentials, it refuses nothing -- and admits everyone.
         # A door locked in appearance only is worse than an open one, because
         # it stops the operator looking for the lock.
-        if password and (form.get('username') == username or not username) \
-                and check_password(form_password_md5, password):
-            authenticated = True
-            if password and is_legacy_md5_hash(password):
-                Env.setting('password', value=hash_password(form_password_md5))
+        def verify_credentials():
+            with _PASSWORD_SAVE_LOCK:
+                username = Env.setting('username')
+                password = Env.setting('password')
+                authenticated = bool(
+                    password and (form.get('username') == username or not username)
+                    and check_password(form_password_md5, password)
+                )
+                if authenticated and is_legacy_md5_hash(password):
+                    Env.setting('password', value=hash_password(form_password_md5))
+                    password = Env.setting('password')
+                return username, password, authenticated
+
+        username, password, authenticated = await run_in_threadpool(verify_credentials)
 
         if not authenticated:
             # Back to the FORM, carrying the failure -- not a redirect to the
@@ -1497,75 +1519,6 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             )
 
         response = RedirectResponse(url=web_base, status_code=302)
-        # The cookie is a signed token, NOT the api_key. `get_session_secret`
-        # only reads -- if the secret is unreadable no cookie is issued at
-        # all, because signing with '' or a constant would hand every reader
-        # of this source a valid session on every install.
-        secret = get_session_secret()
-
-        if not secret:
-            # D14. THE ONLY REQUEST PATH THAT MAY CREATE A SECRET, and it is
-            # reached only here: after `check_password` has accepted the
-            # submitted password.
-            #
-            # `ensure_session_secret` is both the create-if-absent call AND the
-            # AC-SEC-33 enforcement point (see its docstring): a store that
-            # simply has no secret returns normally with a fresh one, while a
-            # store that cannot be READ raises out of `_session_secret_row`
-            # before any write is attempted, straight into the `except` below.
-            # There is deliberately no separate readability check here -- T13
-            # removed `session_secret_store_is_readable()`, which read via the
-            # same `Env.prop` / `Settings.getProperty` path as `get_session_secret`
-            # above and inherited its blanket `except Exception: return None`,
-            # so it answered "readable" for a store that was, measured, on
-            # fire. It was never load-bearing: this `try/except` was.
-            #
-            # D2 said "never on a request path" for two measured reasons, and
-            # neither survives the move: `Settings.setProperty`'s unguarded
-            # get-then-act race is not what runs (the write goes through the
-            # one compare-and-swap writer), and the per-request property read
-            # that would take the adapter's process-wide RLock is not what this
-            # is -- a login is a ceremony that has just spent ~166 ms in bcrypt.
-            # D2's wording is amended to "never on an unauthenticated request
-            # path, and never before a credential has been verified".
-            #
-            # What it buys: a property row that is deleted, lost or restored
-            # away no longer means locked out until somebody restarts the
-            # container. That is the same lockout shape this whole change
-            # exists to avoid, arriving through a different door.
-            #
-            # AC-QA-21 is untouched. With authentication off there is no stored
-            # password, so `check_password` above cannot succeed, so this is
-            # unreachable and an install that never enabled authentication
-            # never grows the row.
-            try:
-                secret = ensure_session_secret()
-            except Exception:
-                # AC-SEC-33's fail-closed branch. Redirecting with no cookie
-                # sends the operator back to the login page, which is honest:
-                # they are not signed in. Signing with '' or a constant to
-                # avoid the loop would hand a valid session to every reader of
-                # this file.
-                log.error('A correct password was accepted but the session '
-                          'signing secret could not be created, so no session '
-                          'was issued and the login cannot complete. Check '
-                          'that the database is readable and writable. %s',
-                          traceback.format_exc())
-                secret = None
-
-        if not secret:
-            # Render, do not redirect. Falling through to the 302 sent the user
-            # to the app root with no cookie, which bounced them straight back
-            # to a blank login form: they typed the right password and the page
-            # told them nothing. That is the unexplained loop the rejected
-            # branch above was changed to remove, surviving one branch further
-            # down. Failing closed is unchanged -- still no cookie.
-            return render_login_page(reason='session_not_created', status_code=503)
-
-        # Reached only when `secret` is truthy: the `if not secret:` above
-        # already returned. A second `if secret:` guard here always evaluated
-        # the same and was dead weight -- exactly the shape D17 argues should
-        # be deleted rather than repaired (T13 follow-up).
         remember_me = tryInt(form.get('remember_me', 0)) > 0
         lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME
         # `max_age` is UNCHANGED from before this PR: 30 days when
@@ -1579,15 +1532,43 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         #
         # Every other attribute comes from `session_cookie_attributes`,
         # which the logout deletion uses too so the two cannot drift.
-        response.set_cookie(
-            SESSION_COOKIE_NAME,
-            mint_session_token(secret, lifetime),
-            max_age=lifetime if remember_me else None,
-            **session_cookie_attributes(),
-        )
-        _expire_legacy_root_cookie(response)
+        # A password or username may have changed after the initial check.
+        # Recheck both, then read/create the secret and sign under the same
+        # transaction lock as the settings writer. A stale login cannot write
+        # a new secret on an install whose authentication was just disabled.
+        def issue_cookie():
+            with _PASSWORD_SAVE_LOCK:
+                if (not auth_is_required()
+                        or password != Env.setting('password')
+                        or username != Env.setting('username')):
+                    return render_login_page(reason='rejected')
+                secret = get_session_secret()
+                if not secret:
+                    # This is the only request path allowed to create a secret.
+                    # ensure_session_secret reads the adapter before writing,
+                    # so an unreadable store fails closed rather than minting.
+                    try:
+                        secret = ensure_session_secret()
+                    except Exception:
+                        log.error('A correct password was accepted but the session '
+                                  'signing secret could not be created, so no session '
+                                  'was issued and the login cannot complete. Check '
+                                  'that the database is readable and writable. %s',
+                                  traceback.format_exc())
+                        secret = None
+                if not secret:
+                    return render_login_page(
+                        reason='session_not_created', status_code=503)
+                response.set_cookie(
+                    SESSION_COOKIE_NAME,
+                    mint_session_token(secret, lifetime),
+                    max_age=lifetime if remember_me else None,
+                    **session_cookie_attributes(),
+                )
+                _expire_legacy_root_cookie(response)
+                return response
 
-        return response
+        return await run_in_threadpool(issue_cookie)
 
     # POST, and authenticated. Both are required, and neither is ceremony.
     #
@@ -1612,7 +1593,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     # the assertion standing between this change and a lockout.
     @app.post(web_base + 'logout/')
     @app.post(web_base + 'logout')
-    async def logout(request: Request, user=Depends(require_auth)):
+    def logout(request: Request, user=Depends(require_auth)):
         if _cross_origin_post(request):
             # A same-site sibling app (another port on this host) can make the
             # browser send this POST WITH the session cookie, because SameSite
@@ -1659,7 +1640,32 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         # rotation would make the password-change revocation silently depend on
         # that ordering, and reordering those two lines -- which this branch has
         # already done once -- would turn D6 off with nothing failing.
-        if not auth_is_required():
+        def revoke_if_authorised():
+            with _PASSWORD_SAVE_LOCK:
+                if not auth_is_required():
+                    return False
+                # The dependency ran before this handler. Settings or the
+                # signing secret may have changed in between, so repeat the
+                # check in the same transaction as the rotation.
+                require_auth(request)
+                rotate_session_secret()
+                return True
+
+        try:
+            revoked = revoke_if_authorised()
+        except HTTPException:
+            raise
+        except Exception:
+            # A failed rotation must not look like a successful sign-out.
+            log.error('Sign-out FAILED: the session signing secret could not '
+                      'be rotated, so every existing session is STILL VALID on '
+                      'every device. Nothing has been signed out. Check that '
+                      'the database is readable and writable and try again. %s',
+                      traceback.format_exc())
+            return render_login_page(
+                reason='sign_out_failed', status_code=500, mode='signout_failed')
+
+        if not revoked:
             # Straight to the app, carrying no `?reason=signed_out`: that
             # renders "You have been signed out on every device", which would
             # be false in both halves. The cookie is dropped because a stale
@@ -1668,32 +1674,6 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             response = RedirectResponse(url=web_base, status_code=303)
             response.delete_cookie(SESSION_COOKIE_NAME, **session_cookie_attributes())
             return response
-
-        try:
-            rotate_session_secret()
-        except Exception:
-            # Do NOT clear the cookie and redirect to the login page here.
-            #
-            # That is what a successful sign-out looks like, and nothing was
-            # revoked: the token in somebody else's hands is still valid, and
-            # the one person who could act on that has just been shown the
-            # screen that says it is handled. Reporting the failure is worse UX
-            # and the only honest option -- and it costs nobody access, because
-            # the session that could not be revoked still works.
-            log.error('Sign-out FAILED: the session signing secret could not '
-                      'be rotated, so every existing session is STILL VALID on '
-                      'every device. Nothing has been signed out. Check that '
-                      'the database is readable and writable and try again. %s',
-                      traceback.format_exc())
-            # A real page rather than the plain-text 500 this used to be
-            # (spec gap 7). The BEHAVIOUR is unchanged and deliberately so --
-            # still 500, still no `Set-Cookie` -- but this is the one screen
-            # where the operator most needs to be told plainly that nothing
-            # was revoked, and a bare stack-trace-coloured 500 does not do
-            # that. It renders the same card, the same status region and the
-            # same tokens as the login page: no new component, no new colour.
-            return render_login_page(
-                reason='sign_out_failed', status_code=500, mode='signout_failed')
 
         # 303, not 302: this is the response to a POST, and 303 is the status
         # that tells the browser to fetch the login page with GET.
