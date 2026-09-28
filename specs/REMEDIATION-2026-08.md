@@ -874,7 +874,9 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       failure still restores the old in-memory settings. Password transactions
       are serialised so an older callback cannot clear a newer change's
       marker; internal marker clearing bypasses UI writeability metadata and
-      verifies that the clear reached the settings file.
+      verifies that the clear reached the settings file. Runtime settings
+      writes share the lock so they cannot persist or modify the parser while
+      a password change is only partly prepared.
 
 - [x] T22: `Database.deleteCorrupted` cannot delete anything on the SQLite adapter — state: **fixed** (2026-08-12), report-only (owner decision, not the "implement the delete" option below)
 

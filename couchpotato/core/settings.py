@@ -22,8 +22,9 @@ _type_adapters = {
 }
 
 # Keep the password, durable rotation intent, secret rotation and marker clear
-# as one process-local transaction. A second password save must not commit
-# while the first callback is still able to clear that marker.
+# as one process-local transaction. Runtime parser mutations and file saves
+# share this lock, so another settings write cannot persist half-prepared auth
+# state, and a later password save cannot lose its marker to an older callback.
 _PASSWORD_SAVE_LOCK = threading.RLock()
 
 
@@ -223,6 +224,10 @@ class Settings:
             self.save()
 
     def set(self, section, option, value):
+        with _PASSWORD_SAVE_LOCK:
+            return self._set(section, option, value)
+
+    def _set(self, section, option, value):
         if not self.isOptionWritable(section, option):
             self.log.warning('set::option "%s.%s" isn\'t writable', section, option)
             return None
@@ -238,6 +243,10 @@ class Settings:
         set blocks login, so both the post-commit hook and startup recovery
         must use this checked internal operation rather than trusting `set()`.
         """
+        with _PASSWORD_SAVE_LOCK:
+            return self._clearSessionRotationPending()
+
+    def _clearSessionRotationPending(self):
         self.p.set('core', 'session_rotation_pending', '0')
         self.save()
         persisted = ConfigParser.RawConfigParser()
@@ -273,6 +282,10 @@ class Settings:
             return default
 
     def delete(self, option='', section='core'):
+        with _PASSWORD_SAVE_LOCK:
+            return self._delete(option, section)
+
+    def _delete(self, option, section):
         if not self.isOptionWritable(section, option):
             self.log.warning('delete::option "%s.%s" isn\'t writable', section, option)
             return None
@@ -377,6 +390,13 @@ class Settings:
         return values
 
     def save(self):
+        # A runtime Env.setting() writer shares this parser with saveView.
+        # Without the same lock it can persist auth_required and rotation
+        # intent while a password save has not yet stored its hash.
+        with _PASSWORD_SAVE_LOCK:
+            return self._save()
+
+    def _save(self):
         """Write the settings file atomically: temp file, fsync, rename.
 
         The previous implementation was `open(self.file, 'w')`, which
@@ -501,12 +521,14 @@ class Settings:
             os.close(dir_fd)
 
     def addSection(self, section):
-        if self.p and not self.p.has_section(section):
-            self.p.add_section(section)
+        with _PASSWORD_SAVE_LOCK:
+            if self.p and not self.p.has_section(section):
+                self.p.add_section(section)
 
     def setDefault(self, section, option, value):
-        if self.p and not self.p.has_option(section, option):
-            self.p.set(section, option, value)
+        with _PASSWORD_SAVE_LOCK:
+            if self.p and not self.p.has_option(section, option):
+                self.p.set(section, option, value)
 
     def setType(self, section, option, type):
         if not self.types.get(section):
@@ -587,7 +609,8 @@ class Settings:
         return self.directories_delimiter.join(map(soft_chroot.chroot2abs, value))
 
     def saveView(self, **kwargs):
-        if kwargs.get('section') == 'core' and kwargs.get('name') == 'password':
+        if (kwargs.get('section') == 'core'
+                and kwargs.get('name') in ('password', 'auth_required')):
             with _PASSWORD_SAVE_LOCK:
                 return self._saveView(**kwargs)
         return self._saveView(**kwargs)
@@ -695,6 +718,7 @@ class Settings:
         # fails, restore all three in memory: a later unrelated settings
         # save must not silently commit the failed password attempt.
         password_snapshot = None
+        auth_snapshot = None
         if section == 'core' and option == 'password':
             password_snapshot = {
                 name: self.p.get('core', name) if self.p.has_option('core', name) else None
@@ -705,6 +729,10 @@ class Settings:
                 # earlier attempt must not mask a refused auth or marker write.
                 self.p.remove_option('core', 'auth_required')
                 self.p.remove_option('core', 'session_rotation_pending')
+        elif (section == 'core' and option == 'auth_required'
+              and getattr(self, 'p', None) is not None):
+            auth_snapshot = (self.p.get('core', 'auth_required')
+                             if self.p.has_option('core', 'auth_required') else None,)
 
         def restore_password_snapshot():
             if password_snapshot is None:
@@ -761,13 +789,39 @@ class Settings:
                     # old cookie for a password that may have committed.
                     landed = None
 
-                if landed is False:
+                if landed is False or (landed is None and not value):
+                    # An uncertain password clear must not make this running
+                    # process public while the old protected config may still
+                    # be on disk. If the clear did land, keeping auth on until
+                    # restart is conservative; the disk remains authoritative.
                     restore_password_snapshot()
                 elif value:
                     self.p.set('core', 'session_rotation_pending', 1)
                     self.log.error('Password settings may have committed, but '
                                    'session revocation did not run. Browser '
                                    'sessions are blocked until restart.')
+            elif auth_snapshot is not None:
+                try:
+                    persisted = ConfigParser.RawConfigParser()
+                    with open(os.path.realpath(self.file), encoding='utf-8') as configfile:
+                        persisted.read_file(configfile)
+                    landed = (persisted.get('core', 'auth_required', fallback=None)
+                              == str(stored))
+                except FileNotFoundError:
+                    landed = False
+                except Exception:
+                    landed = None
+
+                disabling = str(stored).strip().lower() in ('', '0', 'false', 'no', 'off')
+                if landed is False or (landed is None and disabling):
+                    # A failed or uncertain disable must not make this process
+                    # public while the previous protected config may still be
+                    # authoritative. A confirmed commit keeps the new value.
+                    if auth_snapshot[0] is None:
+                        if self.p.has_section('core'):
+                            self.p.remove_option('core', 'auth_required')
+                    else:
+                        self.p.set('core', 'auth_required', auth_snapshot[0])
             raise
 
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)
@@ -927,7 +981,9 @@ class Settings:
             propert = db.get('property', identifier)
             fireEvent('database.corrupted_document', propert.get('_id'))
         except Exception:
-            self.log.debug('Property "%s" not yet stored, will use default' % identifier)
+            # Identifiers come from callers and may themselves contain
+            # sensitive text. A miss does not need the name in the log.
+            self.log.debug('Property not yet stored, will use default')
 
         return prop
 

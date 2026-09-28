@@ -51,6 +51,7 @@ is the guard against a regression back to that shape.
 """
 import sys
 import ast
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -337,6 +338,136 @@ class TestAFailedSaveDoesNotRotate:
 
 
 class TestConcurrentPasswordCommits:
+    def test_auth_gate_save_cannot_outlive_password_clear(
+            self, env, monkeypatch):
+        import threading
+
+        env.settings.saveView(
+            section='core', name='password', value='old-password')
+        before_auth_set = threading.Event()
+        release_auth = threading.Event()
+        clear_done = threading.Event()
+        failures = []
+        real_set = env.settings.set
+
+        def pause_auth_set(section, option, value):
+            if (threading.current_thread().name == 'auth-gate'
+                    and section == 'core' and option == 'auth_required'):
+                before_auth_set.set()
+                if not release_auth.wait(5):
+                    raise AssertionError('auth gate save was not released')
+            return real_set(section, option, value)
+
+        monkeypatch.setattr(env.settings, 'set', pause_auth_set)
+
+        def enable_auth():
+            try:
+                result = env.settings.saveView(
+                    section='core', name='auth_required', value=1)
+                if result.get('success') is False:
+                    failures.append(('auth', result))
+            except BaseException as exc:
+                failures.append(('auth', exc))
+
+        def clear_password():
+            try:
+                result = env.settings.saveView(
+                    section='core', name='password', value='')
+                if result.get('success') is False:
+                    failures.append(('password', result))
+            except BaseException as exc:
+                failures.append(('password', exc))
+            finally:
+                clear_done.set()
+
+        auth = threading.Thread(target=enable_auth, name='auth-gate')
+        clear = threading.Thread(target=clear_password, name='password-clear')
+        auth.start()
+        try:
+            assert before_auth_set.wait(5), 'auth save never passed its guard'
+            clear.start()
+            assert not clear_done.wait(2), (
+                'password clearing committed between auth guard and save')
+        finally:
+            release_auth.set()
+            auth.join(5)
+            if clear.ident is not None:
+                clear.join(5)
+
+        assert not auth.is_alive() and not clear.is_alive()
+        assert not failures, failures
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('password') == ''
+        assert str(on_disk.get('auth_required')) == '0'
+
+    def test_cookie_verification_cannot_outlive_password_commit(
+            self, env, monkeypatch):
+        import threading
+
+        env.settings.saveView(
+            section='core', name='password', value='old-password')
+        cookie = mint_session_token(
+            env.settings.getProperty(SESSION_SECRET_PROPERTY), SESSION_LIFETIME)
+        marker_read = threading.Event()
+        release_reader = threading.Event()
+        writer_done = threading.Event()
+        failures = []
+        results = []
+        real_setting = Env.setting
+
+        def pause_after_marker_read(option, *args, **kwargs):
+            value = real_setting(option, *args, **kwargs)
+            if (option == 'session_rotation_pending'
+                    and threading.current_thread().name == 'cookie-reader'):
+                marker_read.set()
+                if not release_reader.wait(5):
+                    raise AssertionError('cookie reader was not released')
+            return value
+
+        monkeypatch.setattr(Env, 'setting', pause_after_marker_read)
+        monkeypatch.setattr('couchpotato.rotate_session_secret',
+                            lambda *args, **kwargs: (_ for _ in ()).throw(
+                                OSError('forced rotation failure')))
+
+        def read_cookie():
+            try:
+                results.append(get_current_user(
+                    SimpleNamespace(cookies={SESSION_COOKIE_NAME: cookie})))
+            except BaseException as exc:
+                failures.append(('reader', exc))
+
+        def save_password():
+            try:
+                env.settings.saveView(
+                    section='core', name='password', value='new-password')
+            except BaseException as exc:
+                failures.append(('writer', exc))
+            finally:
+                writer_done.set()
+
+        reader = threading.Thread(target=read_cookie, name='cookie-reader')
+        writer = threading.Thread(target=save_password, name='password-writer')
+        reader.start()
+        try:
+            assert marker_read.wait(5), 'reader never reached the marker read'
+            writer.start()
+            assert not writer_done.wait(2), (
+                'password committed between the cookie marker read and '
+                'the signature verification')
+        finally:
+            release_reader.set()
+            reader.join(5)
+            if writer.ident is not None:
+                writer.join(5)
+
+        assert not reader.is_alive() and not writer.is_alive()
+        assert not failures, failures
+        assert results == [True]
+        assert str(env.settings.get('session_rotation_pending')) == '1'
+        assert get_current_user(
+            SimpleNamespace(cookies={SESSION_COOKIE_NAME: cookie})) is None
+
     def test_older_callback_cannot_clear_newer_rotation_intent(
             self, env, monkeypatch):
         import threading
@@ -414,6 +545,69 @@ class TestConcurrentPasswordCommits:
         assert get_current_user(
             SimpleNamespace(cookies={SESSION_COOKIE_NAME: cookie})) is None
 
+    def test_runtime_settings_write_cannot_persist_partial_password_state(
+            self, env, monkeypatch):
+        import threading
+
+        before_password_set = threading.Event()
+        release_password_set = threading.Event()
+        runtime_started = threading.Event()
+        runtime_saved = threading.Event()
+        failures = []
+        real_set = env.settings.set
+
+        def controlled_set(section, option, value):
+            if (threading.current_thread().name == 'password-save'
+                    and section == 'core' and option == 'password'):
+                before_password_set.set()
+                if not release_password_set.wait(5):
+                    raise AssertionError('password save was not released')
+            return real_set(section, option, value)
+
+        monkeypatch.setattr(env.settings, 'set', controlled_set)
+
+        def password_save():
+            try:
+                env.settings.saveView(
+                    section='core', name='password', value='new-password')
+            except BaseException as exc:
+                failures.append(('password', exc))
+
+        def runtime_save():
+            runtime_started.set()
+            try:
+                Env.setting('api_key', value='fictional-runtime-api-key')
+                runtime_saved.set()
+            except BaseException as exc:
+                failures.append(('runtime', exc))
+
+        password = threading.Thread(target=password_save, name='password-save')
+        runtime = threading.Thread(target=runtime_save, name='runtime-save')
+        password.start()
+        try:
+            assert before_password_set.wait(5), 'password save never paused'
+            runtime.start()
+            assert runtime_started.wait(5), 'runtime write never started'
+            assert not runtime_saved.wait(2), (
+                'a runtime settings write persisted auth_required=1 and '
+                'the pending marker before the password hash was stored')
+            assert env.settings.get('api_key') is None, (
+                'a runtime setter changed the shared parser during the '
+                'password transaction; its value could enter the password save')
+        finally:
+            release_password_set.set()
+            password.join(5)
+            if runtime.ident is not None:
+                runtime.join(5)
+
+        assert not password.is_alive() and not runtime.is_alive()
+        assert not failures, failures
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert check_password(md5('new-password'), on_disk.get('password'))
+        assert on_disk.get('auth_required') == '1'
+        assert on_disk.get('api_key') == 'fictional-runtime-api-key'
+
 
 class TestInternalMarkerClear:
     def test_marker_clear_reports_a_save_that_did_not_persist(self, env, monkeypatch):
@@ -444,6 +638,7 @@ class TestInternalMarkerClear:
         on_disk.setFile(str(env.settings.file))
         assert on_disk.get('session_rotation_pending') == '0'
 
+
     def test_startup_reconciles_even_if_ui_metadata_is_read_only(self, env):
         env.settings.addSection('core')
         env.settings.p.set('core', 'session_rotation_pending', '1')
@@ -458,6 +653,16 @@ class TestInternalMarkerClear:
         on_disk = Settings()
         on_disk.setFile(str(env.settings.file))
         assert on_disk.get('session_rotation_pending') == '0'
+
+
+class TestPropertyLookupPrivacy:
+    def test_missing_property_does_not_log_its_identifier(self, env, caplog):
+        identifier = 'fictional-sensitive-property-id-canary'
+
+        with caplog.at_level(logging.DEBUG):
+            assert env.settings.getProperty(identifier) is None
+
+        assert identifier not in caplog.text
 
 
 class TestARotationFailureDoesNotEscapeTheHook:
@@ -584,6 +789,61 @@ class TestClearingNeverRotates:
             'clearing the password rotated the session secret, which the '
             'field only promises for SETTING one'
         )
+
+    def test_uncertain_clear_save_keeps_authentication_enabled(
+            self, env, monkeypatch):
+        from couchpotato import auth_is_required
+        from couchpotato.core import settings as settings_module
+
+        env.settings.saveView(
+            section='core', name='password', value='old-password')
+        old_password = env.settings.get('password')
+
+        def save_failed():
+            raise OSError('settings write failed')
+
+        def readback_failed(*args, **kwargs):
+            raise PermissionError('settings readback failed')
+
+        monkeypatch.setattr(env.settings, 'save', save_failed)
+        monkeypatch.setattr(settings_module, 'open', readback_failed, raising=False)
+
+        with pytest.raises(OSError, match='settings write failed'):
+            env.settings.saveView(
+                section='core', name='password', value='')
+
+        assert auth_is_required(), (
+            'a failed clear with unreadable commit status made the running '
+            'server public while the old password remained on disk')
+        assert env.settings.get('password') == old_password
+
+    @pytest.mark.parametrize('readback_fails', [False, True])
+    def test_failed_auth_disable_keeps_authentication_enabled(
+            self, env, monkeypatch, readback_fails):
+        from couchpotato import auth_is_required
+        from couchpotato.core import settings as settings_module
+
+        env.settings.saveView(
+            section='core', name='password', value='old-password')
+
+        def save_failed():
+            raise OSError('settings write failed')
+
+        monkeypatch.setattr(env.settings, 'save', save_failed)
+        if readback_fails:
+            def readback_failed(*args, **kwargs):
+                raise PermissionError('settings readback failed')
+
+            monkeypatch.setattr(
+                settings_module, 'open', readback_failed, raising=False)
+
+        with pytest.raises(OSError, match='settings write failed'):
+            env.settings.saveView(
+                section='core', name='auth_required', value=0)
+
+        assert auth_is_required(), (
+            'a failed auth disable made the running server public while '
+            'the protected config remained on disk')
 
     def test_clearing_creates_no_secret_row_on_an_install_that_never_had_one(self, fresh_env):
         assert _secret_rows(fresh_env.db) == [], 'fixture is not actually fresh'

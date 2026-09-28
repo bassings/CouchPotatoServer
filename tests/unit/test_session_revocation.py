@@ -24,6 +24,7 @@ Everything here is driven through the real routes against a real
 import os
 import socket
 import sys
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -202,6 +203,11 @@ def open_env(tmp_path):
     )
 
 
+@pytest.fixture
+def protected_without_secret(tmp_path):
+    yield from _build_env(tmp_path, bootstrap_secret=False)
+
+
 def client(env):
     return TestClient(env.app, follow_redirects=False)
 
@@ -215,6 +221,174 @@ def log_in(env) -> tuple:
     token = session.cookies.get(SESSION_COOKIE_NAME)
     assert token, 'login issued no session cookie: %r' % response.headers.get('set-cookie')
     return session, token
+
+
+@pytest.mark.parametrize('changed_field', ['password', 'username'])
+def test_login_does_not_issue_cookie_after_credentials_change(
+        env, monkeypatch, changed_field):
+    import couchpotato
+
+    before_final_check = threading.Event()
+    release_login = threading.Event()
+    failures = []
+    responses = []
+    real_try_int = couchpotato.tryInt
+
+    def pause_before_final_check(value, *args, **kwargs):
+        result = real_try_int(value, *args, **kwargs)
+        if not before_final_check.is_set():
+            before_final_check.set()
+            if not release_login.wait(5):
+                raise AssertionError('login was not released')
+        return result
+
+    monkeypatch.setattr(couchpotato, 'tryInt', pause_before_final_check)
+
+    def login():
+        try:
+            responses.append(client(env).post(
+                '/login/', data={'username': '', 'password': PASSWORD}))
+        except BaseException as exc:
+            failures.append(exc)
+
+    worker = threading.Thread(target=login, name='old-password-login')
+    worker.start()
+    try:
+        assert before_final_check.wait(5), 'login never reached final check'
+        Env.setting(changed_field, value='new-' + changed_field)
+    finally:
+        release_login.set()
+        worker.join(5)
+
+    assert not worker.is_alive()
+    assert not failures, failures
+    assert responses[0].status_code != 302
+    assert SESSION_COOKIE_NAME not in responses[0].cookies
+
+
+def test_stale_login_cannot_create_secret_after_auth_is_disabled(
+        protected_without_secret, monkeypatch):
+    import couchpotato
+    from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
+
+    env = protected_without_secret
+    first_missing_read = threading.Event()
+    release_login = threading.Event()
+    auth_disabled = threading.Event()
+    failures = []
+    responses = []
+    real_get_secret = couchpotato.get_session_secret
+
+    def pause_after_missing_read():
+        secret = real_get_secret()
+        if not first_missing_read.is_set():
+            assert secret is None
+            first_missing_read.set()
+            if not release_login.wait(5):
+                raise AssertionError('stale login was not released')
+        return secret
+
+    monkeypatch.setattr(couchpotato, 'get_session_secret', pause_after_missing_read)
+
+    def login():
+        try:
+            responses.append(client(env).post(
+                '/login/', data={'username': '', 'password': PASSWORD}))
+        except BaseException as exc:
+            failures.append(exc)
+
+    def disable_auth():
+        try:
+            with _PASSWORD_SAVE_LOCK:
+                Env.setting('password', value='')
+                Env.setting('auth_required', value=0)
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            auth_disabled.set()
+
+    worker = threading.Thread(target=login, name='stale-login')
+    disabler = threading.Thread(target=disable_auth, name='disable-auth')
+    worker.start()
+    try:
+        assert first_missing_read.wait(5), 'login never saw the missing secret'
+        disabler.start()
+        assert not auth_disabled.wait(2), (
+            'authentication was disabled between the login secret lookup '
+            'and secret creation')
+    finally:
+        release_login.set()
+        worker.join(5)
+        if disabler.ident is not None:
+            disabler.join(5)
+
+    assert not worker.is_alive() and not disabler.is_alive()
+    assert not failures, failures
+    assert responses[0].status_code == 302
+    assert SESSION_COOKIE_NAME in responses[0].cookies
+    assert Env.setting('auth_required') == 0
+
+
+@pytest.mark.parametrize('route', ['login', 'getkey'])
+def test_legacy_credential_route_cannot_overwrite_new_password(
+        env, monkeypatch, route):
+    import couchpotato
+    from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
+
+    Env.setting('password', value=md5(PASSWORD))
+    credential_checked = threading.Event()
+    release_login = threading.Event()
+    writer_done = threading.Event()
+    failures = []
+    real_check = couchpotato.check_password
+
+    def pause_after_check(candidate, stored):
+        result = real_check(candidate, stored)
+        credential_checked.set()
+        if not release_login.wait(5):
+            raise AssertionError('legacy login was not released')
+        return result
+
+    monkeypatch.setattr(couchpotato, 'check_password', pause_after_check)
+
+    def authenticate():
+        try:
+            if route == 'login':
+                client(env).post(
+                    '/login/', data={'username': '', 'password': PASSWORD})
+            else:
+                client(env).get(
+                    '/getkey/', params={'u': '', 'p': md5(PASSWORD)})
+        except BaseException as exc:
+            failures.append((route, exc))
+
+    def change_password():
+        try:
+            with _PASSWORD_SAVE_LOCK:
+                Env.setting('password', value='new-password-hash')
+        except BaseException as exc:
+            failures.append(('writer', exc))
+        finally:
+            writer_done.set()
+
+    reader = threading.Thread(target=authenticate, name='legacy-auth')
+    writer = threading.Thread(target=change_password, name='new-password')
+    reader.start()
+    try:
+        assert credential_checked.wait(5), 'legacy check never ran'
+        writer.start()
+        assert not writer_done.wait(2), (
+            'password writer ran between the legacy credential check and '
+            'the legacy hash upgrade')
+    finally:
+        release_login.set()
+        reader.join(5)
+        if writer.ident is not None:
+            writer.join(5)
+
+    assert not reader.is_alive() and not writer.is_alive()
+    assert not failures, failures
+    assert Env.setting('password') == 'new-password-hash'
 
 
 def replay(env, token):
