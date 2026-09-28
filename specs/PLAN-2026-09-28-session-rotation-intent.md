@@ -40,7 +40,13 @@ remediation T21 without changing the existing no-auth/no-secret behaviour.
   lookup and signature check with password commits. A password cannot commit
   halfway through verification and leave an old cookie accepted afterwards.
   Secret creation uses the same lock; login rechecks both username and password
-  under that lock before reading or creating a secret and issuing a cookie.
+  and the current auth-required gate under that lock before reading or
+  creating a secret and issuing a cookie. Async routes run their blocking
+  lock work in the thread pool so a contended password save cannot stall
+  unrelated HTTP requests.
+  Logout rechecks the current auth gate and presented cookie under that same
+  lock through secret rotation. A request admitted before auth was enabled,
+  or before a password changed, cannot revoke the newer session.
   Both login and `/getkey/` verify
   credentials and upgrade legacy hashes under the transaction lock, so an old
   credential cannot overwrite a newly committed password or obtain the API

@@ -223,7 +223,9 @@ def log_in(env) -> tuple:
     return session, token
 
 
-@pytest.mark.parametrize('changed_field', ['password', 'username'])
+@pytest.mark.parametrize('changed_field', [
+    'password', 'username', 'auth_required',
+])
 def test_login_does_not_issue_cookie_after_credentials_change(
         env, monkeypatch, changed_field):
     import couchpotato
@@ -255,7 +257,8 @@ def test_login_does_not_issue_cookie_after_credentials_change(
     worker.start()
     try:
         assert before_final_check.wait(5), 'login never reached final check'
-        Env.setting(changed_field, value='new-' + changed_field)
+        changed_value = 0 if changed_field == 'auth_required' else 'new-' + changed_field
+        Env.setting(changed_field, value=changed_value)
     finally:
         release_login.set()
         worker.join(5)
@@ -327,6 +330,61 @@ def test_stale_login_cannot_create_secret_after_auth_is_disabled(
     assert responses[0].status_code == 302
     assert SESSION_COOKIE_NAME in responses[0].cookies
     assert Env.setting('auth_required') == 0
+
+
+@pytest.mark.parametrize('route', ['login_get', 'login_post', 'getkey'])
+def test_auth_lock_wait_does_not_block_unrelated_requests(env, route):
+    import asyncio
+    import time
+
+    import httpx
+    from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
+
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold_password_transaction():
+        with _PASSWORD_SAVE_LOCK:
+            held.set()
+            release.wait(0.7)
+
+    holder = threading.Thread(target=hold_password_transaction)
+    holder.start()
+    try:
+        assert held.wait(5), 'the password transaction lock was not held'
+
+        async def drive():
+            transport = httpx.ASGITransport(app=env.app)
+            async with httpx.AsyncClient(
+                    transport=transport, base_url='http://testserver',
+                    follow_redirects=False) as session:
+                async def contending_request():
+                    if route == 'login_post':
+                        return await session.post(
+                            '/login/', data={'username': '', 'password': PASSWORD})
+                    if route == 'getkey':
+                        return await session.get('/getkey/', params={'u': '', 'p': 'wrong'})
+                    return await session.get('/login/')
+
+                start = time.monotonic()
+                pending = asyncio.create_task(contending_request())
+                await asyncio.sleep(0.05)
+                unrelated = await session.get('/robots.txt')
+                elapsed = time.monotonic() - start
+                release.set()
+                await pending
+                return unrelated.status_code, elapsed
+
+        status, elapsed = asyncio.run(drive())
+    finally:
+        release.set()
+        holder.join(5)
+
+    assert not holder.is_alive()
+    assert status == 200
+    assert elapsed < 0.4, (
+        'a contended auth lock froze the event loop and delayed robots.txt '
+        'for %.3f seconds' % elapsed)
 
 
 @pytest.mark.parametrize('route', ['login', 'getkey'])
@@ -770,6 +828,89 @@ class TestLogoutWritesNothingWhenAuthenticationIsOff:
 
         assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != before
         assert not is_signed_in(replay(env, token))
+
+    def test_logout_authorised_before_auth_enabled_cannot_revoke_new_secret(
+            self, open_env, monkeypatch):
+        import couchpotato
+        from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
+
+        entered = threading.Event()
+        release = threading.Event()
+        responses = []
+        failures = []
+        original = couchpotato._cross_origin_post
+
+        def pause_after_dependency(request):
+            entered.set()
+            assert release.wait(5), 'logout handler was not released'
+            return original(request)
+
+        monkeypatch.setattr(couchpotato, '_cross_origin_post', pause_after_dependency)
+
+        def logout():
+            try:
+                responses.append(client(open_env).post('/logout/'))
+            except BaseException as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=logout, name='stale-logout')
+        worker.start()
+        try:
+            assert entered.wait(5), 'logout did not pass the auth dependency'
+            with _PASSWORD_SAVE_LOCK:
+                Env.setting('password', value=STORED_PASSWORD)
+                Env.setting('auth_required', value=1)
+                secret = ensure_session_secret(open_env.db)
+        finally:
+            release.set()
+            worker.join(5)
+
+        assert not worker.is_alive()
+        assert not failures, failures
+        assert responses[0].status_code == 302
+        assert open_env.settings.getProperty(SESSION_SECRET_PROPERTY) == secret
+
+    def test_stale_logout_cannot_revoke_session_created_after_rotation(
+            self, env, monkeypatch):
+        import couchpotato
+        from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
+
+        owner, _ = log_in(env)
+        entered = threading.Event()
+        release = threading.Event()
+        responses = []
+        failures = []
+        original = couchpotato._cross_origin_post
+
+        def pause_after_dependency(request):
+            entered.set()
+            assert release.wait(5), 'logout handler was not released'
+            return original(request)
+
+        monkeypatch.setattr(couchpotato, '_cross_origin_post', pause_after_dependency)
+
+        def logout():
+            try:
+                responses.append(owner.post('/logout/'))
+            except BaseException as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=logout, name='old-cookie-logout')
+        worker.start()
+        try:
+            assert entered.wait(5), 'logout did not pass the auth dependency'
+            with _PASSWORD_SAVE_LOCK:
+                new_secret = rotate_session_secret()
+                new_token = mint_session_token(new_secret, SESSION_LIFETIME)
+        finally:
+            release.set()
+            worker.join(5)
+
+        assert not worker.is_alive()
+        assert not failures, failures
+        assert responses[0].status_code == 302
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == new_secret
+        assert verify_session_token(new_token, new_secret)
 
 
 class TestChangingThePasswordEndsEverySession:
