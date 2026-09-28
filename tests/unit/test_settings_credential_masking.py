@@ -299,33 +299,6 @@ class TestSavingTheMaskBackDoesNotDestroyTheCredential:
 
         assert settings.get('token', 'slack') == ''
 
-    def test_core_password_with_an_asterisk_still_saves(self, tmp_path):
-        """The regression the first version of this guard caused, pinned so it
-        cannot come back.
-
-        `core.password` is the LOGIN password and is password-typed. A guard
-        refusing any value containing `*` refused it -- and `wizard.html` calls
-        `saveSetting` without reading the response, so a first-run operator
-        picking a generated password with an asterisk was told authentication
-        was on while `Core.md5Password` never fired, `auth_required` was never
-        set, and the instance stayed public.
-
-        This is the highest-severity thing this branch touched, and it was
-        introduced BY the fix, not found by it."""
-        cfg = tmp_path / 'config.ini'
-        cfg.write_text('[core]\npassword = old_hash\n', encoding='utf-8')
-        settings = Settings()
-        settings.setFile(str(cfg))
-        settings.registerDefaults(
-            'core', {'password': {'default': '', 'type': 'password'}}, save=False)
-
-        settings.saveView(section='core', name='password', value='Tr0ub4dor&3*x')
-
-        assert settings.get('password', 'core') == 'Tr0ub4dor&3*x', (
-            'a routine generated password was refused -- see the wizard path, '
-            'this silently leaves the server unauthenticated'
-        )
-
     def test_a_downloader_password_with_an_asterisk_still_saves(self, tmp_path):
         """Same shape, second surface: 19 pre-existing password options hold
         human-chosen passwords, not issued tokens. One example is asserted so

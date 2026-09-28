@@ -278,8 +278,13 @@ class TestSaveViewReportsWhatItActuallyStored:
         import couchpotato.core.settings as settings_module
         from couchpotato.core.settings import Settings
 
+        # This stub does not run Core's password hook or model its atomic
+        # auth/rotation-intent writes. Exercise the generic response mask on
+        # another section; real core password saves have integration coverage
+        # in test_password_rotation_after_commit.py.
+        section = 'mask_test' if option == 'password' else 'core'
         s = Settings.__new__(Settings)
-        s.types = {'core': {option: opt_type}} if opt_type else {}
+        s.types = {section: {option: opt_type}} if opt_type else {}
         s.options = {}
         s.directories_delimiter = '::'
         s.log = types.SimpleNamespace(warning=lambda *a, **k: None,
@@ -308,7 +313,7 @@ class TestSaveViewReportsWhatItActuallyStored:
                 lambda k, d=None: types.SimpleNamespace(
                     chroot2abs=lambda p: p) if k == 'softchroot' else original_get(k, d))
             try:
-                result = s.saveView(section='core', name=option, value=submitted)
+                result = s.saveView(section=section, name=option, value=submitted)
             finally:
                 env_module.Env.get = original_get
         finally:

@@ -1,6 +1,7 @@
 import configparser as ConfigParser
 import os
 import tempfile
+import threading
 import traceback
 from hashlib import md5
 from typing import Any, Optional
@@ -19,6 +20,11 @@ _type_adapters = {
     'int': TypeAdapter(int),
     'float': TypeAdapter(float),
 }
+
+# Keep the password, durable rotation intent, secret rotation and marker clear
+# as one process-local transaction. A second password save must not commit
+# while the first callback is still able to clear that marker.
+_PASSWORD_SAVE_LOCK = threading.RLock()
 
 
 def _strip_bytes_literal(value: str) -> str:
@@ -224,6 +230,21 @@ class Settings:
             self.log.warning('set::option "%s.%s" cancelled (META option)', section, option)
             return None
         return self.p.set(section, option, value)
+
+    def clearSessionRotationPending(self):
+        """Persist an internal revocation marker without UI writeability rules.
+
+        `set()` may silently refuse a read-only option. A marker that remains
+        set blocks login, so both the post-commit hook and startup recovery
+        must use this checked internal operation rather than trusting `set()`.
+        """
+        self.p.set('core', 'session_rotation_pending', '0')
+        self.save()
+        persisted = ConfigParser.RawConfigParser()
+        with open(os.path.realpath(self.file), encoding='utf-8') as configfile:
+            persisted.read_file(configfile)
+        if persisted.get('core', 'session_rotation_pending', fallback=None) != '0':
+            raise RuntimeError('session revocation marker was not cleared')
 
     def get(self, option='', section='core', default=None, type=None):
         if self.isOptionMeta(section, option):
@@ -566,6 +587,12 @@ class Settings:
         return self.directories_delimiter.join(map(soft_chroot.chroot2abs, value))
 
     def saveView(self, **kwargs):
+        if kwargs.get('section') == 'core' and kwargs.get('name') == 'password':
+            with _PASSWORD_SAVE_LOCK:
+                return self._saveView(**kwargs)
+        return self._saveView(**kwargs)
+
+    def _saveView(self, **kwargs):
         section = kwargs.get('section')
         option = kwargs.get('name')
         value = kwargs.get('value')
@@ -663,12 +690,85 @@ class Settings:
                              'configured soft chroot', section, option)
             return {'success': False}
 
+        # A password value hook also changes auth_required and the durable
+        # session-rotation marker in this parser. If the atomic file save
+        # fails, restore all three in memory: a later unrelated settings
+        # save must not silently commit the failed password attempt.
+        password_snapshot = None
+        if section == 'core' and option == 'password':
+            password_snapshot = {
+                name: self.p.get('core', name) if self.p.has_option('core', name) else None
+                for name in ('password', 'auth_required', 'session_rotation_pending')
+            }
+            if self.p.has_section('core'):
+                # Demand fresh writes by the value hook. Stale values from an
+                # earlier attempt must not mask a refused auth or marker write.
+                self.p.remove_option('core', 'auth_required')
+                self.p.remove_option('core', 'session_rotation_pending')
+
+        def restore_password_snapshot():
+            if password_snapshot is None:
+                return
+            for name, previous in password_snapshot.items():
+                if previous is None:
+                    if self.p.has_section('core'):
+                        self.p.remove_option('core', name)
+                else:
+                    self.p.set('core', name, previous)
+
         new_value = fireEvent('setting.save.%s.%s' % (section, option), value, single=True)
+        if password_snapshot is not None:
+            auth_required = (self.p.get('core', 'auth_required')
+                             if self.p.has_option('core', 'auth_required') else None)
+            marker = (self.p.get('core', 'session_rotation_pending')
+                      if self.p.has_option('core', 'session_rotation_pending') else None)
+            auth_ready = str(auth_required) == ('1' if value else '0')
+            marker_ready = str(marker) == ('1' if value else '0')
+            hash_ready = (new_value == '' if not value else
+                          isinstance(new_value, str)
+                          and len(new_value) == 60
+                          and new_value.startswith(('$2a$', '$2b$', '$2y$')))
+            if not (auth_ready and marker_ready and hash_ready):
+                restore_password_snapshot()
+                self.log.error('Refused password save: hashing, authentication '
+                               'state or durable session revocation intent '
+                               'was not prepared')
+                return {'success': False, 'error': 'Password could not be saved safely. Try again.'}
         # Use plain string — .encode('unicode_escape') produces bytes which ConfigParser
         # serialises as b'...' literals (Python 3 bug)
         stored = _resolve_saved_value(new_value, value)
         self.set(section, option, stored)
-        self.save()
+        try:
+            self.save()
+        except Exception:
+            if password_snapshot is not None:
+                # save() can raise AFTER os.replace committed config.ini (for
+                # example while closing its directory fd). Decide from the
+                # actual file, not the exception: restoring the old marker in
+                # that case would make old cookies valid in this process.
+                try:
+                    persisted = ConfigParser.RawConfigParser()
+                    with open(os.path.realpath(self.file), encoding='utf-8') as configfile:
+                        persisted.read_file(configfile)
+                    landed = (persisted.get('core', 'password', fallback=None) == stored
+                              and persisted.get('core', 'session_rotation_pending',
+                                                fallback=None) == str(marker))
+                except FileNotFoundError:
+                    landed = False
+                except Exception:
+                    # If readback itself fails, the outcome is uncertain.
+                    # Keeping the pending marker is safer than verifying an
+                    # old cookie for a password that may have committed.
+                    landed = None
+
+                if landed is False:
+                    restore_password_snapshot()
+                elif value:
+                    self.p.set('core', 'session_rotation_pending', 1)
+                    self.log.error('Password settings may have committed, but '
+                                   'session revocation did not run. Browser '
+                                   'sessions are blocked until restart.')
+            raise
 
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)
         fireEvent('setting.save.%s.*.after' % section, single=True)

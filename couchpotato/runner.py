@@ -149,6 +149,43 @@ def resolve_auth_required_setting():
     return resolved
 
 
+def reconcile_session_rotation_pending(settings=None, db=None):
+    """Finish a password-change revocation interrupted after config.ini commit.
+
+    The pending bit is written with the password in one atomic settings save.
+    Run this after the database is ready but before the first request is served.
+    If the secret cannot be rotated, startup stops rather than accepting a
+    captured cookie issued under the old password.
+    """
+    from couchpotato import rotate_session_secret
+    from couchpotato.core.logger import CPLog
+    from couchpotato.environment import Env
+
+    settings = Env.get('settings') if settings is None else settings
+    if settings.get('session_rotation_pending') != '1':
+        return False
+
+    log = CPLog(__name__)
+    try:
+        rotate_session_secret(db=db)
+    except Exception as exc:
+        log.error('A committed password change still requires session '
+                  'revocation, but the signing secret could not be rotated. '
+                  'The server will not start until the database is writable '
+                  'and this operation succeeds. Failure: %s, errno %s',
+                  type(exc).__name__, getattr(exc, 'errno', None))
+        raise SystemExit(1) from None
+
+    try:
+        settings.clearSessionRotationPending()
+    except Exception as exc:
+        log.error('The session secret was rotated, but the pending marker '
+                  'could not be cleared. A restart may revoke sessions again. '
+                  'Check that config.ini is writable. Failure: %s, errno %s',
+                  type(exc).__name__, getattr(exc, 'errno', None))
+    return True
+
+
 def _port_argument(value):
     """argparse `type=` for `--port`: an int in the valid TCP port range.
 
@@ -601,6 +638,12 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
             log.info('Reordered %d of %d quality profiles best-first.', n_fixed, n_checked)
     except Exception as e:
         log.warning('Profile quality order fix skipped: %s', e)
+
+    # A password and its rotation intent commit together in config.ini. If a
+    # previous process stopped before updating SQLite, finish the revocation
+    # before accepting any request signed with the old secret. Failure here
+    # stops startup; serving would silently undo the password change's promise.
+    reconcile_session_rotation_pending(db=db)
 
     # Create the session signing secret ONCE, here, before the first request is
     # served (D2). Not on a request path: the property store has no uniqueness
