@@ -200,6 +200,39 @@ class TestASuccessfulSaveActuallyRotates:
         assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != env.secret_before
 
 
+def test_password_hook_failure_preserves_pending_revocation(env, monkeypatch):
+    import couchpotato.core.settings as settings_module
+
+    baseline = env.settings.saveView(
+        section='core', name='password', value='original-password')
+    assert baseline.get('success') is not False, baseline
+    env.settings.set('core', 'session_rotation_pending', '1')
+    env.settings.save()
+    old_cookie = mint_session_token(
+        env.settings.getProperty(SESSION_SECRET_PROPERTY), SESSION_LIFETIME)
+    request = SimpleNamespace(cookies={SESSION_COOKIE_NAME: old_cookie})
+    assert get_current_user(request) is None
+
+    original = settings_module.fireEvent
+
+    def fail_password_hook(name, *args, **kwargs):
+        if name == 'setting.save.core.password':
+            raise RuntimeError('password hook unavailable')
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(settings_module, 'fireEvent', fail_password_hook)
+    with pytest.raises(RuntimeError, match='password hook unavailable'):
+        env.settings.saveView(section='core', name='password', value='replacement')
+
+    assert str(env.settings.get('session_rotation_pending')) == '1'
+    assert get_current_user(request) is None
+    monkeypatch.setattr(settings_module, 'fireEvent', original)
+    env.settings.save()
+    on_disk = Settings()
+    on_disk.setFile(str(env.settings.file))
+    assert on_disk.get('session_rotation_pending') == '1'
+
+
 class TestARealSaveFiresTheRotationExactlyOnce:
     """Regression guard for the specific way the FIRST version of this file
     passed for the wrong reason -- and, per review (M1, 2026-08-11), the

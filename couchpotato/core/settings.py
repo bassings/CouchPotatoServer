@@ -615,6 +615,140 @@ class Settings:
                 return self._saveView(**kwargs)
         return self._saveView(**kwargs)
 
+    def _password_save_snapshot(self):
+        """Keep the gate and revocation marker until a new hook prepares both."""
+        snapshot = {
+            name: self.p.get('core', name) if self.p.has_option('core', name) else None
+            for name in ('password', 'auth_required', 'session_rotation_pending')
+        }
+        if self.p.has_section('core'):
+            self.p.remove_option('core', 'auth_required')
+            self.p.remove_option('core', 'session_rotation_pending')
+        return snapshot
+
+    def _restore_password_save_snapshot(self, snapshot):
+        if snapshot is None:
+            return
+        for name, previous in snapshot.items():
+            if previous is None:
+                if self.p.has_section('core'):
+                    self.p.remove_option('core', name)
+            else:
+                self.p.set('core', name, previous)
+
+    def _password_hook_prepared(self, submitted, new_value):
+        auth_required = (self.p.get('core', 'auth_required')
+                         if self.p.has_option('core', 'auth_required') else None)
+        marker = (self.p.get('core', 'session_rotation_pending')
+                  if self.p.has_option('core', 'session_rotation_pending') else None)
+        expected = '1' if submitted else '0'
+        hash_ready = (new_value == '' if not submitted else
+                      isinstance(new_value, str)
+                      and len(new_value) == 60
+                      and new_value.startswith(('$2a$', '$2b$', '$2y$')))
+        return (str(auth_required) == expected
+                and str(marker) == expected and hash_ready), marker
+
+    def _saved_option_landed(self, option, expected, marker=None):
+        """Read the actual config after a save that may have raised post-commit."""
+        try:
+            persisted = ConfigParser.RawConfigParser()
+            with open(os.path.realpath(self.file), encoding='utf-8') as configfile:
+                persisted.read_file(configfile)
+            landed = persisted.get('core', option, fallback=None) == str(expected)
+            if marker is not None:
+                landed = (landed and persisted.get(
+                    'core', 'session_rotation_pending', fallback=None) == str(marker))
+            return landed
+        except FileNotFoundError:
+            return False
+        except Exception:
+            # The on-disk outcome is unknown; callers must fail closed.
+            return None
+
+    def _recover_failed_password_save(self, snapshot, stored, marker, submitted):
+        landed = self._saved_option_landed(
+            'password', stored, marker=marker)
+        if landed is False or (landed is None and not submitted):
+            self._restore_password_save_snapshot(snapshot)
+        elif submitted:
+            self.p.set('core', 'session_rotation_pending', 1)
+            self.log.error('Password settings may have committed, but '
+                           'session revocation did not run. Browser '
+                           'sessions are blocked until restart.')
+
+    def _recover_failed_auth_save(self, previous, stored):
+        landed = self._saved_option_landed('auth_required', stored)
+        disabling = str(stored).strip().lower() in ('', '0', 'false', 'no', 'off')
+        if landed is False or (landed is None and disabling):
+            if previous is None:
+                if self.p.has_section('core'):
+                    self.p.remove_option('core', 'auth_required')
+            else:
+                self.p.set('core', 'auth_required', previous)
+
+    def _masked_credential_response(self, section, option, value):
+        current = self.get(option, section) if value else None
+        if (value and current
+                and self.getType(section, option) == 'password'
+                and str(value) == len(str(current)) * '*'):
+            self.log.warning(
+                'Refused to save "%s.%s": the value is the displayed mask, not '
+                'a credential. Clear the field and paste the real value to '
+                'change it.', section, option)
+            return {
+                'success': False,
+                'error': 'That is the masked placeholder, not the real value. '
+                         'Clear the field and paste the credential to change it.',
+            }
+        return None
+
+    def _normalise_saved_path(self, section, option, value):
+        from couchpotato.environment import Env
+        soft_chroot = Env.get('softchroot')
+        try:
+            option_type = self.getType(section, option)
+            if option_type == 'directory':
+                value = soft_chroot.chroot2abs(value)
+            elif option_type == 'directories':
+                value = self._parse_directories(value, soft_chroot)
+        except ValueError:
+            self.log.warning('Refused "%s.%s": the path resolves outside the '
+                             'configured soft chroot', section, option)
+            return value, {'success': False}
+        return value, None
+
+    def _prepare_saved_value(self, section, option, value):
+        """Run a value hook without exposing a half-prepared auth transaction."""
+        password_snapshot = None
+        auth_snapshot = None
+        if section == 'core' and option == 'password':
+            password_snapshot = self._password_save_snapshot()
+        elif (section == 'core' and option == 'auth_required'
+              and getattr(self, 'p', None) is not None):
+            auth_snapshot = (self.p.get('core', 'auth_required')
+                             if self.p.has_option('core', 'auth_required') else None,)
+
+        try:
+            new_value = fireEvent('setting.save.%s.%s' % (section, option), value, single=True)
+        except Exception:
+            self._restore_password_save_snapshot(password_snapshot)
+            raise
+
+        marker = None
+        if password_snapshot is not None:
+            prepared, marker = self._password_hook_prepared(value, new_value)
+            if not prepared:
+                self._restore_password_save_snapshot(password_snapshot)
+                self.log.error('Refused password save: hashing, authentication '
+                               'state or durable session revocation intent '
+                               'was not prepared')
+                return None, None, None, None, {
+                    'success': False,
+                    'error': 'Password could not be saved safely. Try again.',
+                }
+        return new_value, password_snapshot, auth_snapshot, marker, None
+
     def _saveView(self, **kwargs):
         section = kwargs.get('section')
         option = kwargs.get('name')
@@ -678,22 +812,9 @@ class Settings:
         # from the settings page, which only renders registered options, but it
         # is reachable through the API. Deliberately not widened here: an
         # orphan's value belongs to a plugin that no longer exists.
-        current = self.get(option, section) if value else None
-        if (value and current
-                and self.getType(section, option) == 'password'
-                and str(value) == len(str(current)) * '*'):
-            self.log.warning(
-                'Refused to save "%s.%s": the value is the displayed mask, not '
-                'a credential. Clear the field and paste the real value to '
-                'change it.', section, option)
-            return {
-                'success': False,
-                'error': 'That is the masked placeholder, not the real value. '
-                         'Clear the field and paste the credential to change it.',
-            }
-
-        from couchpotato.environment import Env
-        soft_chroot = Env.get('softchroot')
+        masked = self._masked_credential_response(section, option, value)
+        if masked is not None:
+            return masked
 
         # chroot2abs now refuses a value that resolves outside the soft
         # chroot instead of concatenating it through. That closes a second
@@ -702,66 +823,18 @@ class Settings:
         # and the scanner operated outside the chroot entirely -- but it
         # means these two calls can raise, so they are handled here rather
         # than surfacing as a 500 with the path in a logged traceback.
-        try:
-            if self.getType(section, option) == 'directory':
-                value = soft_chroot.chroot2abs(value)
-
-            if self.getType(section, option) == 'directories':
-                value = self._parse_directories(value, soft_chroot)
-        except ValueError:
-            self.log.warning('Refused "%s.%s": the path resolves outside the '
-                             'configured soft chroot', section, option)
-            return {'success': False}
+        value, path_error = self._normalise_saved_path(section, option, value)
+        if path_error is not None:
+            return path_error
 
         # A password value hook also changes auth_required and the durable
         # session-rotation marker in this parser. If the atomic file save
         # fails, restore all three in memory: a later unrelated settings
         # save must not silently commit the failed password attempt.
-        password_snapshot = None
-        auth_snapshot = None
-        if section == 'core' and option == 'password':
-            password_snapshot = {
-                name: self.p.get('core', name) if self.p.has_option('core', name) else None
-                for name in ('password', 'auth_required', 'session_rotation_pending')
-            }
-            if self.p.has_section('core'):
-                # Demand fresh writes by the value hook. Stale values from an
-                # earlier attempt must not mask a refused auth or marker write.
-                self.p.remove_option('core', 'auth_required')
-                self.p.remove_option('core', 'session_rotation_pending')
-        elif (section == 'core' and option == 'auth_required'
-              and getattr(self, 'p', None) is not None):
-            auth_snapshot = (self.p.get('core', 'auth_required')
-                             if self.p.has_option('core', 'auth_required') else None,)
-
-        def restore_password_snapshot():
-            if password_snapshot is None:
-                return
-            for name, previous in password_snapshot.items():
-                if previous is None:
-                    if self.p.has_section('core'):
-                        self.p.remove_option('core', name)
-                else:
-                    self.p.set('core', name, previous)
-
-        new_value = fireEvent('setting.save.%s.%s' % (section, option), value, single=True)
-        if password_snapshot is not None:
-            auth_required = (self.p.get('core', 'auth_required')
-                             if self.p.has_option('core', 'auth_required') else None)
-            marker = (self.p.get('core', 'session_rotation_pending')
-                      if self.p.has_option('core', 'session_rotation_pending') else None)
-            auth_ready = str(auth_required) == ('1' if value else '0')
-            marker_ready = str(marker) == ('1' if value else '0')
-            hash_ready = (new_value == '' if not value else
-                          isinstance(new_value, str)
-                          and len(new_value) == 60
-                          and new_value.startswith(('$2a$', '$2b$', '$2y$')))
-            if not (auth_ready and marker_ready and hash_ready):
-                restore_password_snapshot()
-                self.log.error('Refused password save: hashing, authentication '
-                               'state or durable session revocation intent '
-                               'was not prepared')
-                return {'success': False, 'error': 'Password could not be saved safely. Try again.'}
+        (new_value, password_snapshot, auth_snapshot, marker,
+         refusal) = self._prepare_saved_value(section, option, value)
+        if refusal is not None:
+            return refusal
         # Use plain string — .encode('unicode_escape') produces bytes which ConfigParser
         # serialises as b'...' literals (Python 3 bug)
         stored = _resolve_saved_value(new_value, value)
@@ -770,58 +843,10 @@ class Settings:
             self.save()
         except Exception:
             if password_snapshot is not None:
-                # save() can raise AFTER os.replace committed config.ini (for
-                # example while closing its directory fd). Decide from the
-                # actual file, not the exception: restoring the old marker in
-                # that case would make old cookies valid in this process.
-                try:
-                    persisted = ConfigParser.RawConfigParser()
-                    with open(os.path.realpath(self.file), encoding='utf-8') as configfile:
-                        persisted.read_file(configfile)
-                    landed = (persisted.get('core', 'password', fallback=None) == stored
-                              and persisted.get('core', 'session_rotation_pending',
-                                                fallback=None) == str(marker))
-                except FileNotFoundError:
-                    landed = False
-                except Exception:
-                    # If readback itself fails, the outcome is uncertain.
-                    # Keeping the pending marker is safer than verifying an
-                    # old cookie for a password that may have committed.
-                    landed = None
-
-                if landed is False or (landed is None and not value):
-                    # An uncertain password clear must not make this running
-                    # process public while the old protected config may still
-                    # be on disk. If the clear did land, keeping auth on until
-                    # restart is conservative; the disk remains authoritative.
-                    restore_password_snapshot()
-                elif value:
-                    self.p.set('core', 'session_rotation_pending', 1)
-                    self.log.error('Password settings may have committed, but '
-                                   'session revocation did not run. Browser '
-                                   'sessions are blocked until restart.')
+                self._recover_failed_password_save(
+                    password_snapshot, stored, marker, value)
             elif auth_snapshot is not None:
-                try:
-                    persisted = ConfigParser.RawConfigParser()
-                    with open(os.path.realpath(self.file), encoding='utf-8') as configfile:
-                        persisted.read_file(configfile)
-                    landed = (persisted.get('core', 'auth_required', fallback=None)
-                              == str(stored))
-                except FileNotFoundError:
-                    landed = False
-                except Exception:
-                    landed = None
-
-                disabling = str(stored).strip().lower() in ('', '0', 'false', 'no', 'off')
-                if landed is False or (landed is None and disabling):
-                    # A failed or uncertain disable must not make this process
-                    # public while the previous protected config may still be
-                    # authoritative. A confirmed commit keeps the new value.
-                    if auth_snapshot[0] is None:
-                        if self.p.has_section('core'):
-                            self.p.remove_option('core', 'auth_required')
-                    else:
-                        self.p.set('core', 'auth_required', auth_snapshot[0])
+                self._recover_failed_auth_save(auth_snapshot[0], stored)
             raise
 
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)
