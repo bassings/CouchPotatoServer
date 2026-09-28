@@ -620,6 +620,9 @@ def ensure_session_secret(db=None) -> str:
     case this probe existed to catch.) The real protection was always this
     function's propagation, not the probe.
     """
+    if str(Env.setting('session_rotation_pending')) == '1':
+        raise RuntimeError('password-change session revocation is pending')
+
     db = get_db() if db is None else db
 
     with _SESSION_SECRET_WRITE_LOCK:
@@ -702,6 +705,15 @@ def get_session_secret():
     caller write to the database, and would quietly mint a NEW secret whenever
     the store hiccupped, invalidating every live session at random.
     """
+    if str(Env.setting('session_rotation_pending')) == '1':
+        # The password has committed but rotating the signing secret failed.
+        # Do not accept an old cookie in this process while startup recovery
+        # still owes the revocation.
+        log_suppressed(log.error, 'session_rotation_pending',
+                       'A password change has not finished revoking browser '
+                       'sessions. Check database write access and restart.')
+        return None
+
     try:
         secret = Env.prop(SESSION_SECRET_PROPERTY)
     except Exception:

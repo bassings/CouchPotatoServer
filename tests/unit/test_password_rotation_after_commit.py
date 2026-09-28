@@ -50,16 +50,22 @@ coverage and isn't" failure mode this task exists to avoid; `TestARealSaveFiresT
 is the guard against a regression back to that shape.
 """
 import sys
+import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from couchpotato import SESSION_SECRET_PROPERTY, ensure_session_secret  # noqa: E402
+from couchpotato import (  # noqa: E402
+    SESSION_COOKIE_NAME, SESSION_SECRET_PROPERTY, SESSION_LIFETIME,
+    ensure_session_secret, get_current_user, mint_session_token,
+)
 from couchpotato.api import api, api_docs, api_docs_missing, api_locks, api_nonblock  # noqa: E402
 from couchpotato.core import event as event_module  # noqa: E402
 from couchpotato.core.db.sqlite_adapter import SQLiteAdapter  # noqa: E402
+from couchpotato.core.helpers.variable import check_password, md5  # noqa: E402
 from couchpotato.core.settings import Settings  # noqa: E402
 from couchpotato.environment import Env  # noqa: E402
 from env_helper import env_restored  # noqa: E402
@@ -175,6 +181,23 @@ class TestASuccessfulSaveActuallyRotates:
         rows = _secret_rows(env.db)
         assert len(rows) == 1, 'password changes accumulated %d secret rows' % len(rows)
 
+    def test_a_generated_password_with_an_asterisk_saves_and_authenticates(self, env):
+        """The mask guard must accept ordinary generated symbols through the
+        real hash, marker and secret-rotation chain. The old isolated test in
+        test_settings_credential_masking supplied no Core hook, so it could
+        only assert plaintext storage, which production must refuse now.
+        """
+        password = 'Tr0ub4dor&3*x'
+        result = env.settings.saveView(
+            section='core', name='password', value=password)
+
+        assert result.get('success') is not False, result
+        stored = env.settings.get('password')
+        assert stored != password
+        assert check_password(md5(password), stored)
+        assert str(env.settings.get('auth_required')) == '1'
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != env.secret_before
+
 
 class TestARealSaveFiresTheRotationExactlyOnce:
     """Regression guard for the specific way the FIRST version of this file
@@ -212,7 +235,7 @@ class TestARealSaveFiresTheRotationExactlyOnce:
         real_rotate = couchpotato.rotate_session_secret
 
         def spy_save():
-            sequence.append('save')
+            sequence.append(('save', env.settings.get('session_rotation_pending')))
             return real_save()
 
         def spy_rotate(*args, **kwargs):
@@ -224,12 +247,12 @@ class TestARealSaveFiresTheRotationExactlyOnce:
 
         env.settings.saveView(section='core', name='password', value='hunter3')
 
-        assert sequence == ['save', 'rotate'], (
-            'config.ini was written and the secret was rotated in the order '
-            '%r, not save-then-rotate. Rotating before (or without) the save '
-            'that actually commits is the exact defect this task fixes -- a '
-            'save that then failed would already have signed every device '
-            'out for a password change that was never persisted.' % sequence
+        assert sequence == [('save', 1), 'rotate', ('save', '0')], (
+            'the password and pending marker must commit first, then the '
+            'secret rotate, then the marker clear; observed %r. Rotating '
+            'before the first save signs users out for a password that may '
+            'never commit, while clearing the marker before rotation loses '
+            'crash recovery.' % sequence
         )
 
 
@@ -284,6 +307,158 @@ class TestAFailedSaveDoesNotRotate:
             'the failure was not actually happening at the commit point'
         )
 
+    def test_error_after_replace_keeps_old_cookies_blocked(self, env, monkeypatch):
+        original = env.settings.saveView(
+            section='core', name='password', value='original-password')
+        assert original.get('success') is not False, original
+        original_hash = env.settings.get('password')
+        old_cookie = mint_session_token(
+            env.settings.getProperty(SESSION_SECRET_PROPERTY), SESSION_LIFETIME)
+        request = SimpleNamespace(cookies={SESSION_COOKIE_NAME: old_cookie})
+        assert get_current_user(request) is True
+
+        save = env.settings.save
+
+        def raise_after_replace():
+            save()
+            raise OSError('directory close failed after replace')
+
+        monkeypatch.setattr(env.settings, 'save', raise_after_replace)
+        with pytest.raises(OSError, match='after replace'):
+            env.settings.saveView(
+                section='core', name='password', value='new-password')
+
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('password') != original_hash
+        assert on_disk.get('session_rotation_pending') == '1'
+        assert str(env.settings.get('session_rotation_pending')) == '1'
+        assert get_current_user(request) is None
+
+
+class TestConcurrentPasswordCommits:
+    def test_older_callback_cannot_clear_newer_rotation_intent(
+            self, env, monkeypatch):
+        import threading
+
+        baseline = env.settings.saveView(
+            section='core', name='password', value='original-password')
+        assert baseline.get('success') is not False, baseline
+
+        at_a_marker_clear = threading.Event()
+        release_a = threading.Event()
+        b_started = threading.Event()
+        b_at_rotation = threading.Event()
+        failures = []
+        real_clear = env.settings.clearSessionRotationPending
+        real_rotate = __import__('couchpotato').rotate_session_secret
+
+        def controlled_clear():
+            if threading.current_thread().name == 'password-A':
+                at_a_marker_clear.set()
+                if not release_a.wait(5):
+                    raise AssertionError('A was not released')
+            return real_clear()
+
+        def controlled_rotate(*args, **kwargs):
+            if threading.current_thread().name == 'password-B':
+                b_at_rotation.set()
+                raise SystemExit('stop B after password commit')
+            return real_rotate(*args, **kwargs)
+
+        monkeypatch.setattr(env.settings, 'clearSessionRotationPending', controlled_clear)
+        monkeypatch.setattr('couchpotato.rotate_session_secret', controlled_rotate)
+
+        def save_a():
+            try:
+                env.settings.saveView(
+                    section='core', name='password', value='password-A')
+            except BaseException as exc:
+                failures.append(('A', exc))
+
+        def save_b():
+            b_started.set()
+            try:
+                env.settings.saveView(
+                    section='core', name='password', value='password-B')
+            except SystemExit:
+                pass
+            except BaseException as exc:
+                failures.append(('B', exc))
+
+        a = threading.Thread(target=save_a, name='password-A')
+        b = threading.Thread(target=save_b, name='password-B')
+        a.start()
+        try:
+            assert at_a_marker_clear.wait(5), 'A never reached marker clearing'
+            secret_after_a = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+            cookie = mint_session_token(secret_after_a, SESSION_LIFETIME)
+            b.start()
+            assert b_started.wait(5), 'B did not start'
+            assert not b_at_rotation.wait(2), (
+                'B committed while A still owned the password-change '
+                'transaction, so A can clear B\'s pending marker')
+        finally:
+            release_a.set()
+            a.join(5)
+            if b.ident is not None:
+                b.join(5)
+
+        assert not a.is_alive() and not b.is_alive()
+        assert not failures, failures
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert check_password(md5('password-B'), on_disk.get('password'))
+        assert on_disk.get('session_rotation_pending') == '1'
+        assert on_disk.getProperty(SESSION_SECRET_PROPERTY) == secret_after_a
+        assert get_current_user(
+            SimpleNamespace(cookies={SESSION_COOKIE_NAME: cookie})) is None
+
+
+class TestInternalMarkerClear:
+    def test_marker_clear_reports_a_save_that_did_not_persist(self, env, monkeypatch):
+        env.settings.addSection('core')
+        env.settings.p.set('core', 'session_rotation_pending', '1')
+        env.settings.save()
+        monkeypatch.setattr(env.settings, 'save', lambda: None)
+
+        with pytest.raises(RuntimeError, match='marker was not cleared'):
+            env.settings.clearSessionRotationPending()
+
+    def test_committed_rotation_clears_marker_even_if_ui_metadata_is_read_only(
+            self, env, monkeypatch):
+        rotate = __import__('couchpotato').rotate_session_secret
+
+        def mark_read_only_after_rotation(*args, **kwargs):
+            secret = rotate(*args, **kwargs)
+            env.settings.p.set('core', 'session_rotation_pending_internal_meta', 'ro')
+            return secret
+
+        monkeypatch.setattr('couchpotato.rotate_session_secret',
+                            mark_read_only_after_rotation)
+        result = env.settings.saveView(
+            section='core', name='password', value='new-password')
+        assert result.get('success') is not False, result
+
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('session_rotation_pending') == '0'
+
+    def test_startup_reconciles_even_if_ui_metadata_is_read_only(self, env):
+        env.settings.addSection('core')
+        env.settings.p.set('core', 'session_rotation_pending', '1')
+        env.settings.p.set('core', 'session_rotation_pending_internal_meta', 'ro')
+        env.settings.save()
+
+        restarted = Settings()
+        restarted.setFile(str(env.settings.file))
+        from couchpotato.runner import reconcile_session_rotation_pending
+        assert reconcile_session_rotation_pending(settings=restarted, db=env.db)
+
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('session_rotation_pending') == '0'
+
 
 class TestARotationFailureDoesNotEscapeTheHook:
     """M2 (review): the `try/except` inside `rotateSessionSecretAfterSave`,
@@ -321,7 +496,7 @@ class TestARotationFailureDoesNotEscapeTheHook:
         core.md5Password('a-new-password')  # records intent on the real thread-local
 
         def explode():
-            raise RuntimeError('store down')
+            raise RuntimeError('store down near /sensitive/library')
 
         monkeypatch.setattr('couchpotato.rotate_session_secret', explode)
 
@@ -332,6 +507,7 @@ class TestARotationFailureDoesNotEscapeTheHook:
             'a rotation failure was swallowed with no trace -- nothing tells '
             'the operator they are still signed in under the OLD secret'
         )
+        assert '/sensitive/library' not in caplog.text
 
 
 class TestThePendingFlagCannotLeakAcrossAttempts:
@@ -427,25 +603,11 @@ class TestThePendingRotationFlagIsPerThreadNotShared:
     testable -- and qualified, because review measurement showed the claim
     was overstated as first written.
 
-    `_pending_rotation` is `threading.local()` specifically so two threads
-    handling DIFFERENT password saves at once cannot read or clear each
-    other's intent. **Through the real HTTP path today, that interleaving is
-    NOT reachable**: `callApiHandler` (`couchpotato/api.py`) holds
-    `api_locks['settings.save']` -- a single lock keyed by ROUTE name, shared
-    by every settings save regardless of section/option -- across the WHOLE
-    handler call, and `saveView` is registered and reached nowhere else in
-    this tree (`grep -rn "saveView(" couchpotato/` outside `tests/` returns
-    only its own definition). So two `settings.save` requests cannot execute
-    `saveView` concurrently at all right now; the lock already serialises
-    them before the thread-local would ever matter.
-
-    Kept anyway, deliberately claiming less than "this closes a live
-    production race": it is free, correct regardless, and does not depend on
-    `api_locks` staying exactly as it is -- a future per-section lock (rather
-    than per-route), or any code that reaches `saveView` other than through
-    `callApiHandler` (a migration script, a different dispatch mechanism),
-    would silently reopen this exact interleaving with nothing here to catch
-    it if the flag were shared state instead.
+    `_pending_rotation` is `threading.local()` so direct callback use on two
+    threads cannot read or clear another thread's intent. Production
+    `saveView` serialises password transactions itself, and `callApiHandler`
+    also holds `api_locks['settings.save']` across the HTTP handler. Neither
+    lock applies to this direct-callback test.
 
     This test bypasses `api_locks` entirely -- it calls `md5Password` /
     `rotateSessionSecretAfterSave` directly on two real OS threads with no
@@ -508,3 +670,288 @@ class TestThePendingRotationFlagIsPerThreadNotShared:
             'password changed but no session was revoked, which is exactly '
             'the interleaving `threading.local()` exists to prevent' % calls
         )
+
+
+class TestRotationIntentSurvivesAProcessStop:
+    def test_silently_refused_auth_required_update_refuses_password_save(
+            self, env, monkeypatch):
+        env.settings.saveView(section='core', name='password', value='original-pw')
+        env.settings.set('core', 'auth_required', 0)
+        env.settings.save()
+        persisted = Settings()
+        persisted.setFile(str(env.settings.file))
+        old_password = persisted.get('password')
+        old_secret = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        real_set = env.settings.set
+
+        def refuse_auth_required(section, option, value):
+            if option == 'auth_required':
+                return None  # Settings.set's actual refusal convention.
+            return real_set(section, option, value)
+
+        monkeypatch.setattr(env.settings, 'set', refuse_auth_required)
+        result = env.settings.saveView(
+            section='core', name='password', value='new-password')
+
+        assert result.get('success') is False
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('password') == old_password
+        assert on_disk.get('auth_required') == '0'
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == old_secret
+
+    def test_missing_password_hook_refuses_even_without_a_core_section(self, env):
+        event_module.events.pop('setting.save.core.password', None)
+        env.settings.p.remove_section('core')
+
+        result = env.settings.saveView(
+            section='core', name='password', value='new-password')
+
+        assert result.get('success') is False
+        assert not env.settings.p.has_option('core', 'password')
+        assert _secret_rows(env.db)[0]['value'] == env.secret_before
+
+    @pytest.mark.parametrize('stale_marker', [0, 1])
+    def test_marker_write_failure_refuses_password_save(
+            self, env, monkeypatch, caplog, stale_marker):
+        env.settings.saveView(section='core', name='password', value='original-pw')
+        env.settings.set('core', 'session_rotation_pending', stale_marker)
+        env.settings.save()
+        persisted = Settings()
+        persisted.setFile(str(env.settings.file))
+        old_password = persisted.get('password')
+        old_secret = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        real_set = env.settings.set
+
+        def fail_marker_write(section, option, value):
+            if option == 'session_rotation_pending':
+                raise OSError('marker write refused near /sensitive/library')
+            return real_set(section, option, value)
+
+        monkeypatch.setattr(env.settings, 'set', fail_marker_write)
+        result = env.settings.saveView(
+            section='core', name='password', value='new-password')
+
+        assert result.get('success') is False
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('password') == old_password
+        assert on_disk.get('session_rotation_pending') == str(stale_marker)
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == old_secret
+        assert '/sensitive/library' not in caplog.text
+
+    def test_hash_hook_failure_cannot_store_the_plaintext_password(
+            self, env, monkeypatch):
+        env.settings.saveView(section='core', name='password', value='original-pw')
+        persisted = Settings()
+        persisted.setFile(str(env.settings.file))
+        old_password = persisted.get('password')
+
+        def hash_failed(_value):
+            raise OSError('hashing failed')
+
+        monkeypatch.setattr('couchpotato.core._base._core.hash_password', hash_failed)
+        result = env.settings.saveView(
+            section='core', name='password', value='new-plaintext-secret')
+
+        assert result.get('success') is False
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('password') == old_password
+        assert on_disk.get('session_rotation_pending') == '0'
+
+    def test_failed_password_save_cannot_leak_into_a_later_settings_save(
+            self, env, monkeypatch):
+        env.settings.saveView(section='core', name='password', value='original-pw')
+        persisted = Settings()
+        persisted.setFile(str(env.settings.file))
+        original_password = persisted.get('password')
+        assert persisted.get('session_rotation_pending') == '0'
+
+        def disk_full():
+            raise OSError('disk full')
+
+        monkeypatch.setattr(env.settings, 'save', disk_full)
+        with pytest.raises(OSError, match='disk full'):
+            env.settings.saveView(section='core', name='password', value='new-pw')
+        monkeypatch.undo()
+
+        # A later unrelated save serialises the in-memory parser. It must not
+        # turn the failed password attempt into a delayed, unacknowledged
+        # password change or persist a marker for a change that never landed.
+        env.settings.set('core', 'port', 5051)
+        env.settings.save()
+        after = Settings()
+        after.setFile(str(env.settings.file))
+        assert after.get('password') == original_password
+        assert after.get('session_rotation_pending') == '0'
+
+    def test_startup_reconciles_before_any_request_can_be_served(self):
+        runner_path = Path(__file__).resolve().parents[2] / 'couchpotato/runner.py'
+        module = ast.parse(runner_path.read_text(encoding='utf-8'))
+        startup = next(node for node in module.body
+                       if isinstance(node, ast.FunctionDef)
+                       and node.name == 'runCouchPotato')
+        calls = {
+            node.func.id: node.lineno
+            for node in ast.walk(startup)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in {
+                'reconcile_session_rotation_pending',
+                'ensure_session_secret', '_start_uvicorn_or_exit',
+            }
+        }
+        assert set(calls) == {
+            'reconcile_session_rotation_pending',
+            'ensure_session_secret', '_start_uvicorn_or_exit',
+        }, calls
+        assert (calls['reconcile_session_rotation_pending']
+                < calls['ensure_session_secret']
+                < calls['_start_uvicorn_or_exit']), calls
+
+    def test_completed_password_change_clears_durable_rotation_intent(self, env):
+        result = env.settings.saveView(
+            section='core', name='password', value='new-password')
+        assert result.get('success') is not False, result
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != env.secret_before
+
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('session_rotation_pending') == '0', (
+            'the successful rotation left the durable intent set; every '
+            'ordinary restart would needlessly sign all browsers out again'
+        )
+
+    def test_password_commit_persists_rotation_intent_before_the_secret_changes(
+            self, env, monkeypatch):
+        def stop_between_writes():
+            raise SystemExit('simulated process stop before secret rotation')
+
+        monkeypatch.setattr('couchpotato.rotate_session_secret', stop_between_writes)
+
+        with pytest.raises(SystemExit, match='simulated process stop'):
+            env.settings.saveView(section='core', name='password', value='new-password')
+
+        on_disk = Settings()
+        on_disk.setFile(str(env.settings.file))
+        assert on_disk.get('password'), 'the password did not commit before the stop'
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == env.secret_before
+        assert on_disk.get('session_rotation_pending') == '1', (
+            'the password committed but no durable rotation intent did; '
+            'a restart would accept cookies signed under the old password'
+        )
+
+    def test_restart_reconciles_the_committed_password_before_serving(self, env, monkeypatch):
+        def stop_between_writes():
+            raise SystemExit('simulated process stop before secret rotation')
+
+        monkeypatch.setattr('couchpotato.rotate_session_secret', stop_between_writes)
+        with pytest.raises(SystemExit, match='simulated process stop'):
+            env.settings.saveView(section='core', name='password', value='new-password')
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == env.secret_before
+
+        # A new Settings instance reads only durable config.ini, like a new
+        # process. The old Core thread-local flag cannot help this call.
+        restarted = Settings()
+        restarted.setFile(str(env.settings.file))
+        assert restarted.get('session_rotation_pending') == '1'
+        Env.set('settings', restarted)
+        monkeypatch.undo()
+
+        from couchpotato.runner import reconcile_session_rotation_pending
+        reconcile_session_rotation_pending(settings=restarted, db=env.db)
+
+        recovered_secret = restarted.getProperty(SESSION_SECRET_PROPERTY)
+        assert recovered_secret != env.secret_before
+        on_disk = Settings()
+        on_disk.setFile(str(restarted.file))
+        assert on_disk.get('session_rotation_pending') == '0'
+        assert not reconcile_session_rotation_pending(settings=on_disk, db=env.db)
+        assert on_disk.getProperty(SESSION_SECRET_PROPERTY) == recovered_secret
+
+    def test_restart_refuses_old_sessions_when_rotation_fails(
+            self, env, monkeypatch, caplog):
+        def stop_between_writes():
+            raise SystemExit('simulated process stop before secret rotation')
+
+        monkeypatch.setattr('couchpotato.rotate_session_secret', stop_between_writes)
+        with pytest.raises(SystemExit, match='simulated process stop'):
+            env.settings.saveView(section='core', name='password', value='new-password')
+        monkeypatch.undo()
+
+        restarted = Settings()
+        restarted.setFile(str(env.settings.file))
+        assert restarted.get('session_rotation_pending') == '1'
+
+        def unreadable_store(db=None):
+            raise OSError('private path /sensitive/library must stay out of logs')
+
+        monkeypatch.setattr('couchpotato.rotate_session_secret', unreadable_store)
+        from couchpotato.runner import reconcile_session_rotation_pending
+
+        caplog.clear()
+        with pytest.raises(SystemExit) as stopped:
+            reconcile_session_rotation_pending(settings=restarted, db=env.db)
+
+        assert stopped.value.code == 1
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == env.secret_before
+        on_disk = Settings()
+        on_disk.setFile(str(restarted.file))
+        assert on_disk.get('session_rotation_pending') == '1'
+        assert 'could not be rotated' in caplog.text
+        assert '/sensitive/library' not in caplog.text
+
+    def test_current_process_refuses_old_cookie_while_rotation_is_pending(
+            self, env, monkeypatch):
+        old_cookie = mint_session_token(env.secret_before, SESSION_LIFETIME)
+        request = SimpleNamespace(cookies={SESSION_COOKIE_NAME: old_cookie})
+
+        def failed_rotation():
+            raise OSError('signing store unavailable')
+
+        monkeypatch.setattr('couchpotato.rotate_session_secret', failed_rotation)
+        result = env.settings.saveView(
+            section='core', name='password', value='new-password')
+
+        assert result.get('success') is not False, result
+        assert str(env.settings.get('session_rotation_pending')) == '1'
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == env.secret_before
+        assert get_current_user(request) is None
+        with pytest.raises(RuntimeError, match='revocation is pending'):
+            ensure_session_secret(env.db)
+
+    def test_no_pending_change_does_not_create_a_secret(self, fresh_env):
+        from couchpotato.runner import reconcile_session_rotation_pending
+
+        assert not reconcile_session_rotation_pending(
+            settings=fresh_env.settings, db=fresh_env.db)
+        assert _secret_rows(fresh_env.db) == []
+
+    def test_failed_marker_clear_retries_safely_on_restart(self, env, monkeypatch):
+        real_save = env.settings.save
+        saves = 0
+
+        def fail_second_save():
+            nonlocal saves
+            saves += 1
+            if saves == 2:
+                raise OSError('config not writable after rotation')
+            return real_save()
+
+        monkeypatch.setattr(env.settings, 'save', fail_second_save)
+        result = env.settings.saveView(
+            section='core', name='password', value='new-password')
+        assert result.get('success') is not False, result
+        first_rotation = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        assert first_rotation != env.secret_before
+
+        restarted = Settings()
+        restarted.setFile(str(env.settings.file))
+        assert restarted.get('session_rotation_pending') == '1'
+
+        from couchpotato.runner import reconcile_session_rotation_pending
+        assert reconcile_session_rotation_pending(settings=restarted, db=env.db)
+        assert restarted.getProperty(SESSION_SECRET_PROPERTY) != first_rotation
+        after = Settings()
+        after.setFile(str(restarted.file))
+        assert after.get('session_rotation_pending') == '0'

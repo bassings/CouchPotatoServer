@@ -32,19 +32,10 @@ class Core(Plugin):
     # Set by `md5Password`, consumed by `rotateSessionSecretAfterSave`. A
     # CLASS attribute, not one assigned in `__init__`, for two reasons:
     #
-    # 1. Thread-local, not instance state -- defence-in-depth, NOT closing a
-    #    reachable race today. `Settings.saveView` runs value-hook -> write ->
-    #    `.committed` on one thread per call, and TWO calls cannot interleave
-    #    through the shipped HTTP path: `callApiHandler` (`couchpotato/api.py`)
-    #    holds `api_locks['settings.save']` -- one lock per ROUTE, shared by
-    #    every settings save -- across the whole handler, and `saveView` is
-    #    reached nowhere else in this tree. So plain instance state would be
-    #    safe under the current wiring; it is thread-local anyway because that
-    #    safety depends entirely on the lock staying exactly as it is, and on
-    #    nothing ever calling `saveView` a second way. `threading.local()`
-    #    removes the interleaving unconditionally rather than via that lock,
-    #    at no cost. Proven with a real two-thread probe (bypassing the lock
-    #    entirely, since the lock is what makes the race unreachable via HTTP):
+    # 1. Thread-local, not instance state. `Settings.saveView` serialises
+    #    password commits through `_PASSWORD_SAVE_LOCK`, and the HTTP route has
+    #    its own lock too, but direct callback use must not let one thread
+    #    consume another's intent. Proven with a two-thread callback probe:
     #    `test_password_rotation_after_commit.py::TestThePendingRotationFlagIsPerThreadNotShared`.
     # 2. Declared at class scope so it exists without `__init__` running.
     #    Plenty of this project's own tests build a bare `Core.__new__(Core)`
@@ -195,18 +186,22 @@ class Core(Plugin):
         # `save()` persist both -- and that save is atomic (T2.0), so the pair
         # lands together or not at all.
         #
-        # Guarded, and NOT silently: hashing must not fail because a secondary
-        # write did, but a swallowed failure here restores the very state this
-        # prevents, so it is logged at ERROR naming the consequence.
+        # The value hook's exception is caught by the event dispatcher, so
+        # Settings.saveView checks that a fresh marker and valid bcrypt hash
+        # were actually prepared before writing either. A failure is logged
+        # without its exception text and the password save is refused.
         try:
             settings = Env.get('settings')
             settings.addSection('core')
             settings.set('core', 'auth_required', 1 if value else 0)
-        except Exception:
-            log.error('Password saved but could not update "auth_required" -- '
-                      'authentication may not match the password you just set. '
-                      'Check Settings > Server > Require login. %s',
-                      traceback.format_exc())
+            # This shares the password's atomic config.ini write. A process
+            # stopped after that write still owes a session-secret rotation.
+            settings.set('core', 'session_rotation_pending', 1 if value else 0)
+        except Exception as exc:
+            log.error('Could not prepare auth_required or session revocation '
+                      'intent for this password change; the settings save '
+                      'must be refused. Failure: %s, errno %s',
+                      type(exc).__name__, getattr(exc, 'errno', None))
 
         # End every existing session (D6/AC-SEC-38) -- but only once the new
         # password has actually COMMITTED, not merely been submitted.
@@ -283,9 +278,8 @@ class Core(Plugin):
         Guarded, and the guard direction is now the OPPOSITE of what it was
         when rotation lived in the value hook: this runs entirely after the
         password write has already succeeded, so nothing here can abort that
-        save. A rotation failure here only leaves the OLD signing secret live
-        -- recoverable by signing out (which itself rotates) or a restart --
-        never "authentication on, no password stored".
+        save. A rotation failure leaves the durable marker set; startup must
+        retry before serving requests, and stops if the store is still broken.
         """
         pending = getattr(self._pending_rotation, 'rotate', False)
         self._pending_rotation.rotate = False
@@ -295,11 +289,25 @@ class Core(Plugin):
         try:
             from couchpotato import rotate_session_secret
             rotate_session_secret()
-        except Exception:
+        except Exception as exc:
             log.error('Password saved, but the session signing secret '
-                      'could not be rotated -- sessions opened with the '
-                      'OLD password are still valid. Sign out to force a '
-                      'rotation, or restart. %s', traceback.format_exc())
+                      'could not be rotated. Browser sessions are blocked '
+                      'until startup can finish revocation; check database '
+                      'write access and restart. Failure: %s, errno %s',
+                      type(exc).__name__, getattr(exc, 'errno', None))
+            return
+
+        # Only clear the durable intent after the secret write succeeds. If
+        # this second config save fails, the next startup may rotate once more
+        # but cannot resurrect a session signed with the old secret.
+        try:
+            settings = Env.get('settings')
+            settings.clearSessionRotationPending()
+        except Exception as exc:
+            log.error('Session secret rotated, but its pending marker could '
+                      'not be cleared; startup will retry the rotation. '
+                      'Failure: %s, errno %s', type(exc).__name__,
+                      getattr(exc, 'errno', None))
 
     def guardAuthRequired(self, value):
         """Refuse to turn "Require login" on while no password is stored.
