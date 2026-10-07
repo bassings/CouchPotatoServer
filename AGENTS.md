@@ -29,6 +29,19 @@ state, and an Alpine-based Docker image. The application entry point is
 | `./scripts/test-local.sh` | Run Python unit tests in a clean Alpine container. |
 | `./scripts/backup.sh` | Snapshot production SQLite state and settings before a promotion when the documented policy requires it. |
 
+## Finding Delivery Authority
+
+When Scott asks to resolve a set of repository or SonarQube findings, carry
+each finding through triage, a focused fix or evidence-backed disposition,
+verification, independent local review, a pull request, CI and cloud-review
+follow-up, merge, and post-merge confirmation. An instruction to resolve and
+merge findings authorises the necessary code pushes, pull requests and merges;
+do not stop after a local commit to request approval for those steps.
+
+Ask Scott for approval before deliberately creating a release or deploying to
+production. Keep release and deployment decisions separate from code merge.
+The release channel rules in `docs/development-process.md` still apply.
+
 ## Review Guidelines
 
 When reviewing pull requests, prioritise issues that can cause real defects, security exposure, accessibility regressions, privacy leaks, data loss, broken mobile workflows, or operational failures. Keep minor style preferences out of review comments unless they contribute to one of those risks.

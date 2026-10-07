@@ -17,4 +17,5 @@ findings that can cause order-dependent results.
 - The focused tests and repository lint pass. Existing shared-checkout changes
   remain untouched.
 
-No code is pushed or released as part of this slice.
+Delivery continues through a reviewed pull request, CI, merge and a
+post-merge SonarQube analysis. A stable release needs Scott's approval.
