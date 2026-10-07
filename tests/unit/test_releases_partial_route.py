@@ -191,7 +191,7 @@ class TestReleasesPartialRoute:
         for key in ('name', 'quality', 'score', 'size', 'seeders', 'source', 'status', 'age'):
             assert 'id="sort-%s"' % key in resp.text
 
-    def test_an_unauthenticated_request_is_redirected_to_login(self, media_get):
+    def test_an_unauthenticated_request_is_redirected_to_login(self, media_get, monkeypatch):
         """B7: the route must be behind the same guard as its siblings.
 
         Asserting that the name `require_auth` is importable from
@@ -207,7 +207,6 @@ class TestReleasesPartialRoute:
             'api_key': 'testkey123',
             'dark_theme': False,
         }
-        original_setting = Env.setting
 
         def mock_setting(key = None, *args, **kwargs):
             if 'value' in kwargs:
@@ -217,13 +216,10 @@ class TestReleasesPartialRoute:
                 return settings_data[key]
             return kwargs.get('default', '')
 
-        Env.setting = staticmethod(mock_setting)
-        try:
-            from couchpotato import create_app
-            guarded = TestClient(create_app('testkey123', '/'), follow_redirects = False)
-            resp = guarded.get('/partial/movie/movie-1/releases')
-        finally:
-            Env.setting = original_setting
+        monkeypatch.setattr(Env, 'setting', staticmethod(mock_setting))
+        from couchpotato import create_app
+        guarded = TestClient(create_app('testkey123', '/'), follow_redirects = False)
+        resp = guarded.get('/partial/movie/movie-1/releases')
 
         assert resp.status_code == 302
         assert resp.headers.get('location', '').endswith('/login/')

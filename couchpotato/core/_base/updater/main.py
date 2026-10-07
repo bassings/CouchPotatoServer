@@ -22,6 +22,7 @@ import version
 
 
 log = CPLog(__name__)
+UPDATE_CHECK_JOB = 'updater.check'
 
 
 class Updater(Plugin):
@@ -69,10 +70,10 @@ class Updater(Plugin):
 
     def setCrons(self):
 
-        fireEvent('schedule.remove', 'updater.check', single = True)
+        fireEvent('schedule.remove', UPDATE_CHECK_JOB, single = True)
         if self.isEnabled():
             interval = tryInt(self.conf('check_interval', default=24)) or 24
-            fireEvent('schedule.interval', 'updater.check', self.autoUpdate, hours = interval)
+            fireEvent('schedule.interval', UPDATE_CHECK_JOB, self.autoUpdate, hours = interval)
             self.autoUpdate()  # Check after enabling
 
     def autoUpdate(self):
