@@ -50,19 +50,7 @@ class NZBGet(DownloaderBase):
 
         rpc = self.getRPC()
 
-        try:
-            if rpc.writelog('INFO', 'CouchPotato connected to drop off %s.' % nzb_name):
-                log.debug('Successfully connected to NZBGet')
-            else:
-                log.info('Successfully connected to NZBGet, but unable to send a message')
-        except OSError:
-            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
-            return False
-        except xmlrpclib.ProtocolError as e:
-            if e.errcode == 401:
-                log.error('Password is incorrect.')
-            else:
-                log.error('Protocol Error: %s', e)
+        if not self._connect_rpc(rpc, 'INFO', 'CouchPotato connected to drop off %s.' % nzb_name):
             return False
 
         if re.search(r"^0", rpc.version()):
@@ -91,19 +79,7 @@ class NZBGet(DownloaderBase):
 
         rpc = self.getRPC()
 
-        try:
-            if rpc.writelog('INFO', 'CouchPotato connected to test connection'):
-                log.debug('Successfully connected to NZBGet')
-            else:
-                log.info('Successfully connected to NZBGet, but unable to send a message')
-        except OSError:
-            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
-            return False
-        except xmlrpclib.ProtocolError as e:
-            if e.errcode == 401:
-                log.error('Password is incorrect.')
-            else:
-                log.error('Protocol Error: %s', e)
+        if not self._connect_rpc(rpc, 'INFO', 'CouchPotato connected to test connection'):
             return False
 
         return True
@@ -121,19 +97,7 @@ class NZBGet(DownloaderBase):
 
         rpc = self.getRPC()
 
-        try:
-            if rpc.writelog('DETAIL', 'CouchPotato connected to check status'):
-                log.debug('Successfully connected to NZBGet')
-            else:
-                log.info('Successfully connected to NZBGet, but unable to send a message')
-        except OSError:
-            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
-            return []
-        except xmlrpclib.ProtocolError as e:
-            if e.errcode == 401:
-                log.error('Password is incorrect.')
-            else:
-                log.error('Protocol Error: %s', e)
+        if not self._connect_rpc(rpc, 'DETAIL', 'CouchPotato connected to check status'):
             return []
 
         # Get NZBGet data
@@ -206,19 +170,7 @@ class NZBGet(DownloaderBase):
 
         rpc = self.getRPC()
 
-        try:
-            if rpc.writelog('INFO', 'CouchPotato connected to delete some history'):
-                log.debug('Successfully connected to NZBGet')
-            else:
-                log.info('Successfully connected to NZBGet, but unable to send a message')
-        except OSError:
-            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
-            return False
-        except xmlrpclib.ProtocolError as e:
-            if e.errcode == 401:
-                log.error('Password is incorrect.')
-            else:
-                log.error('Protocol Error: %s', e)
+        if not self._connect_rpc(rpc, 'INFO', 'CouchPotato connected to delete some history'):
             return False
 
         try:
@@ -236,6 +188,24 @@ class NZBGet(DownloaderBase):
                 shutil.rmtree(path, True)
         except Exception:
             log.error('Failed deleting: %s', traceback.format_exc(0))
+            return False
+
+        return True
+
+    def _connect_rpc(self, rpc, level, message):
+        try:
+            if rpc.writelog(level, message):
+                log.debug('Successfully connected to NZBGet')
+            else:
+                log.info('Successfully connected to NZBGet, but unable to send a message')
+        except OSError:
+            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
+            return False
+        except xmlrpclib.ProtocolError as e:
+            if e.errcode == 401:
+                log.error('Password is incorrect.')
+            else:
+                log.error('NZBGet protocol error (HTTP %s)', e.errcode)
             return False
 
         return True
