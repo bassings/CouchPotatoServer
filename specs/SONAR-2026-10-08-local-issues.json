@@ -1,0 +1,829 @@
+{
+  "revision": "775c6b05114820b7496965a988ddffacf99f6a1a",
+  "issues": [
+    {
+      "key": "38621f0e-a929-461a-97b8-7f81d0360679",
+      "rule": "javascript:S1871",
+      "path": "couchpotato/ui/templates/base.html",
+      "line": 404,
+      "source": "} else if (window.matchMedia('(prefers-color-scheme: light)').matches) {",
+      "message": "This branch's code block is the same as the block for the branch on line 398."
+    },
+    {
+      "key": "6d516b4a-cd3f-4370-afb2-1c8cc8a34bed",
+      "rule": "javascript:S1871",
+      "path": "couchpotato/ui/templates/partials/settings/scripts.html",
+      "line": 316,
+      "source": "else if (this.isEnabled(group)) this.openGroups[key] = true;",
+      "message": "This branch's code block is the same as the block for the branch on line 315."
+    },
+    {
+      "key": "aed8c80d-3967-415f-a90e-5985f350358d",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/category-editor.js",
+      "line": 15,
+      "source": "const o = (category || {}).order;",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "b50c8c58-f652-47b6-9c1b-85669aab131d",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/category-editor.js",
+      "line": 60,
+      "source": "label:       trim(formState && formState.label),",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "c6621192-6b67-4c15-b80d-d118c28764d1",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/category-editor.js",
+      "line": 61,
+      "source": "ignored:     trim(formState && formState.ignored),",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "f6f8fba8-a3a7-4791-8eff-0aa711d0d554",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/category-editor.js",
+      "line": 62,
+      "source": "preferred:   trim(formState && formState.preferred),",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "8df96e0d-4e29-4d7e-b110-c6464f9ba6a8",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/category-editor.js",
+      "line": 63,
+      "source": "required:    trim(formState && formState.required),",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "c5ef13cf-7053-4c9e-ae85-a9680dfb940b",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/category-editor.js",
+      "line": 64,
+      "source": "destination: trim(formState && formState.destination),",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "846d1320-8f29-446b-a18c-42bb902b626a",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/category-editor.js",
+      "line": 71,
+      "source": "if (formState && formState.id != null && formState.id !== '') {",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "b5500ab7-0fb0-41e4-a718-c14b5515c3e0",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/category-editor.js",
+      "line": 92,
+      "source": "const label = (formState && formState.label != null) ? String(formState.label).trim() : '';",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "01bc9d71-5a9b-4255-9ee4-6f7a0bef624b",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/profile-editor.js",
+      "line": 182,
+      "source": "const label = (formState && formState.label != null) ? String(formState.label).trim() : '';",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "3e882afd-9cd4-40df-9693-7be562647f87",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/profile-editor.js",
+      "line": 187,
+      "source": "const types = (formState && formState.types) ? formState.types : [];",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "bc1fa4db-e2a3-42dd-a0c8-0081c744cb6f",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/profile-editor.js",
+      "line": 194,
+      "source": "const score = formState && formState.minimumScore;",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "6fc5cee7-124b-450e-85b1-26e5b1a7e9dd",
+      "rule": "javascript:S6582",
+      "path": "couchpotato/static/scripts/ui/profile-editor.js",
+      "line": 199,
+      "source": "const v = formState && formState[key];",
+      "message": "Prefer using an optional chain expression instead, as it's more concise and easier to read."
+    },
+    {
+      "key": "b3be9669-a0bd-41f5-8656-bf2933c3d3aa",
+      "rule": "javascript:S7750",
+      "path": "scripts/check_e2e_test_traps.mjs",
+      "line": 421,
+      "source": "testids = candidates.filter(binding => binding.line <= lineOf(node)).at(-1)?.testids;",
+      "message": "Prefer `.findLast(…)` over `.filter(…).at(-1)`."
+    },
+    {
+      "key": "5c08974d-b322-49cb-881c-45e6356d7ca2",
+      "rule": "javascript:S7760",
+      "path": "couchpotato/static/scripts/ui/settings-help.js",
+      "line": 20,
+      "source": "apiDesc = apiDesc || '';",
+      "message": "Prefer default parameters over reassignment."
+    },
+    {
+      "key": "59adde2e-3cba-4817-a43e-3d865d4cefec",
+      "rule": "javascript:S7765",
+      "path": "couchpotato/static/scripts/ui/log-parser.js",
+      "line": 21,
+      "source": "return LINE_TERMINATORS.some(character => value.indexOf(character, start) >= 0);",
+      "message": "Use `.includes()`, rather than `.indexOf()`, when checking for existence."
+    },
+    {
+      "key": "351e510a-ce8b-43a9-93b9-edd03d9c4d7f",
+      "rule": "javascript:S7770",
+      "path": "couchpotato/ui/templates/wizard.html",
+      "line": 1204,
+      "source": "const hosts = this.formData.newznab.entries.map(e => e.host).filter(h => h).join(',');",
+      "message": "arrow function is equivalent to `Boolean`. Use `Boolean` directly."
+    },
+    {
+      "key": "c836483e-7817-4e49-b435-86a635792ced",
+      "rule": "javascript:S7770",
+      "path": "couchpotato/ui/templates/wizard.html",
+      "line": 1205,
+      "source": "const keys = this.formData.newznab.entries.map(e => e.api_key).filter(k => k).join(',');",
+      "message": "arrow function is equivalent to `Boolean`. Use `Boolean` directly."
+    },
+    {
+      "key": "ff3445b3-2ffa-43ea-a435-df97358f75f7",
+      "rule": "javascript:S7778",
+      "path": "couchpotato/ui/templates/wizard.html",
+      "line": 1208,
+      "source": "saves.push(this.saveSetting('newznab', 'api_key', keys));",
+      "message": "Do not call `Array#push()` multiple times."
+    },
+    {
+      "key": "d673a1f7-e2ef-49bf-9ba5-c35201421b87",
+      "rule": "javascript:S7778",
+      "path": "couchpotato/ui/templates/wizard.html",
+      "line": 1209,
+      "source": "saves.push(this.saveSetting('newznab', 'use', use));",
+      "message": "Do not call `Array#push()` multiple times."
+    },
+    {
+      "key": "a3a20f6d-107f-41c8-af38-487e502847ae",
+      "rule": "javascript:S7778",
+      "path": "couchpotato/ui/templates/wizard.html",
+      "line": 1218,
+      "source": "saves.push(this.saveSetting('yts', 'enabled', this.formData.yts.enabled ? '1' : '0'));",
+      "message": "Do not call `Array#push()` multiple times."
+    },
+    {
+      "key": "6ca84370-4846-46ed-b9a7-34dbf6a3a24e",
+      "rule": "javascript:S7778",
+      "path": "couchpotato/ui/templates/wizard.html",
+      "line": 1219,
+      "source": "saves.push(this.saveSetting('torrentpotato', 'enabled', this.formData.torrentpotato.enabled ? '1' : '0'));",
+      "message": "Do not call `Array#push()` multiple times."
+    },
+    {
+      "key": "76dd774e-2edd-4ceb-8673-f29be8d014b1",
+      "rule": "javascript:S7778",
+      "path": "couchpotato/ui/templates/wizard.html",
+      "line": 1222,
+      "source": "saves.push(this.saveSetting('torrentpotato', 'jackett_api_key', this.formData.torrentpotato.jackett_api_key));",
+      "message": "Do not call `Array#push()` multiple times."
+    },
+    {
+      "key": "02ddd55e-3354-4f88-bae7-35b8f44344b6",
+      "rule": "javascript:S7786",
+      "path": "scripts/lighthouse-policy.mjs",
+      "line": 37,
+      "source": "throw new Error(`Lighthouse result is missing ${label}`);",
+      "message": "`new Error()` is too unspecific for a type check. Use `new TypeError()` instead."
+    },
+    {
+      "key": "6b88630d-2016-4a4b-8493-a5f5fb9c9bbf",
+      "rule": "javascript:S7786",
+      "path": "scripts/lighthouse-policy.mjs",
+      "line": 110,
+      "source": "throw new Error('Lighthouse returned malformed HTML or JSON report data');",
+      "message": "`new Error()` is too unspecific for a type check. Use `new TypeError()` instead."
+    },
+    {
+      "key": "2ff00e8b-b886-41a3-acd7-dba0b8a9e3c4",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/downloaders/deluge.py",
+      "line": 150,
+      "source": "if not 'hash' in torrent:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "61ae71eb-cb23-4ec0-b9bd-a3edbafa73b3",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/downloaders/transmission.py",
+      "line": 163,
+      "source": "if torrent.get('isStalled') and not torrent['percentDone'] == 1 and self.conf('stalled_as_failed'):",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "851cb272-64d7-404b-a274-89a7423e7993",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/downloaders/utorrent.py",
+      "line": 223,
+      "source": "if not status == 'busy':",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "f1b65a1e-a3c3-4714-bf46-c19ea1854407",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/downloaders/utorrent.py",
+      "line": 369,
+      "source": "settings_dict[setting[0]] = int(setting[2] if not setting[2].strip() == '' else '0')",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "59d26ab1-fa0d-41bd-b5c8-beff3658c570",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/helpers/variable.py",
+      "line": 322,
+      "source": "if not '://' in host and protocol:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "4f579f55-c069-4a97-8b98-5000658a1245",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/_base/providers/torrent/passthepopcorn.py",
+      "line": 45,
+      "source": "if not 'Movies' in res:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "8f44dc74-5c8f-4a43-bb96-f7753a54da92",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/_base/providers/torrent/passthepopcorn.py",
+      "line": 52,
+      "source": "if not 'Torrents' in ptpmovie:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "d8ce87bc-f6fd-480b-a0d9-4c36f0971dea",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/_base/providers/torrent/passthepopcorn.py",
+      "line": 105,
+      "source": "if not quality in self.post_search_filters:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "77daec18-ef9b-40e4-b790-a4ee72233b30",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/_base/providers/torrent/passthepopcorn.py",
+      "line": 118,
+      "source": "if not field in torrent:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "db8ef468-1091-4be4-a017-a49a3e8dbf6f",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/movie/providers/automation/bluray.py",
+      "line": 63,
+      "source": "if not name.find('/') == -1:  # make sure it is not a double movie release",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "2a6229c9-288b-4af2-b65c-3f36e81ab2bc",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/movie/providers/automation/bluray.py",
+      "line": 94,
+      "source": "if not name.find('/') == -1:  # make sure it is not a double movie release",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "bfdcfd91-35fd-48fc-954a-a9edd46787b3",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/movie/providers/automation/bluray.py",
+      "line": 126,
+      "source": "if not name.find('/') == -1: # make sure it is not a double movie release",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "4b10be03-f674-434e-81c4-f7dc2c5075a6",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/movie/providers/trailer/hdtrailers.py",
+      "line": 125,
+      "source": "if 'trailer' in trtext and not 'clip' in trtext and provider in trtext and not '3d' in trtext:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "b2dc367a-8039-4444-b812-489786839ee1",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/movie/providers/trailer/hdtrailers.py",
+      "line": 125,
+      "source": "if 'trailer' in trtext and not 'clip' in trtext and provider in trtext and not '3d' in trtext:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "ee498592-b441-4f50-9260-ff5f61edc850",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/media/movie/providers/userscript/allocine.py",
+      "line": 18,
+      "source": "if not 'fichefilm_gen_cfilm' in url:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "b152dd84-3e3d-4aeb-871c-4f636780e0b3",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/notifications/base.py",
+      "line": 32,
+      "source": "if not listener in self.dont_listen_to:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "fd9fa7a7-c53b-41b8-ae3a-0478f56e0cfb",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/notifications/telegrambot.py",
+      "line": 50,
+      "source": "if not response.status_code == 200:",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "9d246645-e0a2-4746-8f96-596f9d8336cf",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/plugins/base.py",
+      "line": 237,
+      "source": "use_cache = not len(kwargs.get('data', {})) > 0 and not kwargs.get('files')",
+      "message": "Use the opposite operator (\"<=\") instead."
+    },
+    {
+      "key": "9b1af628-79d2-4de7-8a09-f5302b674def",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/plugins/renamer/cleanup.py",
+      "line": 64,
+      "source": "tag_files.extend([sp(os.path.join(root, name)) for name in names if not os.path.splitext(name)[1] == '.ignore'])",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "420417dd-ae17-416f-8df6-aa21987d9e2f",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/plugins/renamer/cleanup.py",
+      "line": 96,
+      "source": "tag_files.extend([sp(os.path.join(root, name)) for name in names if not os.path.splitext(name)[1] == '.ignore'])",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "c069a673-7c32-4b65-a3e1-cd5ce63751e2",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/plugins/renamer/scanner.py",
+      "line": 130,
+      "source": "if self.conf('file_action') != 'move' and not rel.get('status') == 'seeding' and self.statusInfoComplete(release_download):",
+      "message": "Use the opposite operator (\"!=\") instead."
+    },
+    {
+      "key": "72b7b10f-48dc-41fc-8a9e-d7f370caed6a",
+      "rule": "python:S1940",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 839,
+      "source": "if not word in out:",
+      "message": "Use the opposite operator (\"not in\") instead."
+    },
+    {
+      "key": "fa246006-d49c-478b-ad9d-9b1077d1a9e7",
+      "rule": "python:S3626",
+      "path": "couchpotato/core/_base/downloader/main.py",
+      "line": 102,
+      "source": "return",
+      "message": "Remove this redundant return."
+    },
+    {
+      "key": "c9dd4dd9-7502-4add-b1bb-d81148439cae",
+      "rule": "python:S3626",
+      "path": "couchpotato/core/_base/downloader/main.py",
+      "line": 116,
+      "source": "return",
+      "message": "Remove this redundant return."
+    },
+    {
+      "key": "14d6ec6c-a76a-4d98-be8a-f8059b5293ae",
+      "rule": "python:S3626",
+      "path": "couchpotato/core/media/_base/providers/base.py",
+      "line": 270,
+      "source": "return",
+      "message": "Remove this redundant return."
+    },
+    {
+      "key": "3ec539e6-6483-44ec-b599-c3d85aaed0a2",
+      "rule": "python:S3626",
+      "path": "couchpotato/core/media/_base/providers/nzb/newznab.py",
+      "line": 74,
+      "source": "continue",
+      "message": "Remove this redundant continue."
+    },
+    {
+      "key": "fee67ded-da6e-4024-a2b8-05ac583d6f3e",
+      "rule": "python:S3626",
+      "path": "couchpotato/core/media/_base/providers/torrent/yts.py",
+      "line": 61,
+      "source": "return",
+      "message": "Remove this redundant return."
+    },
+    {
+      "key": "695b2e19-4a30-4847-a01b-0f9ebeec5f50",
+      "rule": "python:S3626",
+      "path": "couchpotato/core/media/_base/providers/userscript/base.py",
+      "line": 50,
+      "source": "return",
+      "message": "Remove this redundant return."
+    },
+    {
+      "key": "8fb522e9-6015-4015-afd0-6fd9e04b8b06",
+      "rule": "python:S3626",
+      "path": "couchpotato/core/plugins/renamer/main.py",
+      "line": 1390,
+      "source": "return",
+      "message": "Remove this redundant return."
+    },
+    {
+      "key": "1446a02c-12e0-43fc-a0fc-27b27fbdb352",
+      "rule": "python:S5713",
+      "path": "couchpotato/core/cache.py",
+      "line": 160,
+      "source": "except (TypeError, ValueError, binascii.Error):",
+      "message": "Remove this redundant Exception class; it derives from another which is already caught."
+    },
+    {
+      "key": "3b2eb2e0-a932-418c-b6f0-8e7105ba766b",
+      "rule": "python:S5713",
+      "path": "couchpotato/core/database.py",
+      "line": 245,
+      "source": "except (json.JSONDecodeError, ValueError):",
+      "message": "Remove this redundant Exception class; it derives from another which is already caught."
+    },
+    {
+      "key": "2c1df597-5974-4225-93fe-6fcf307b7a67",
+      "rule": "python:S5713",
+      "path": "couchpotato/core/notifications/emby.py",
+      "line": 34,
+      "source": "except (OSError, urllib.error.URLError):",
+      "message": "Remove this redundant Exception class; it derives from another which is already caught."
+    },
+    {
+      "key": "f301326d-2607-4201-a5c0-695f8a023082",
+      "rule": "python:S5713",
+      "path": "couchpotato/core/notifications/emby.py",
+      "line": 59,
+      "source": "except (OSError, urllib.error.URLError):",
+      "message": "Remove this redundant Exception class; it derives from another which is already caught."
+    },
+    {
+      "key": "7e2e8531-600d-4a71-91bf-74ea5de4b01a",
+      "rule": "python:S5713",
+      "path": "couchpotato/core/settings.py",
+      "line": 601,
+      "source": "except (json.JSONDecodeError, ValueError):",
+      "message": "Remove this redundant Exception class; it derives from another which is already caught."
+    },
+    {
+      "key": "24b04335-17f2-466f-8205-e101a855e7aa",
+      "rule": "python:S5713",
+      "path": "scripts/sonar_scan.py",
+      "line": 370,
+      "source": "except (URLError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:",
+      "message": "Remove this redundant Exception class; it derives from another which is already caught."
+    },
+    {
+      "key": "ffb995b1-3924-4b64-addb-fb4286a2434e",
+      "rule": "python:S5713",
+      "path": "scripts/sonar_scan.py",
+      "line": 370,
+      "source": "except (URLError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:",
+      "message": "Remove this redundant Exception class; it derives from another which is already caught."
+    },
+    {
+      "key": "98c2e908-b93a-4cc8-aced-9e8cd8b6b23c",
+      "rule": "python:S5843",
+      "path": "scripts/check_test_traps.py",
+      "line": 1526,
+      "source": "r\"\"\"(?:^|\\s)([A-Za-z_:][-A-Za-z0-9_:.]*)(?:\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s\"'=<>`]+))?\"\"\"",
+      "message": "Simplify this regular expression to reduce its complexity from 24 to the 20 allowed."
+    },
+    {
+      "key": "19a5edd4-cab0-4204-8d30-2fa38bcf2f82",
+      "rule": "python:S6353",
+      "path": "couchpotato/core/helpers/request.py",
+      "line": 58,
+      "source": "alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]",
+      "message": "Use concise character class syntax '\\d' instead of '[0-9]'."
+    },
+    {
+      "key": "0f67c1e1-2624-420c-952d-512323e39248",
+      "rule": "python:S6353",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 867,
+      "source": "matches = re.findall(r'(\\(|\\[)(?P<year>19[0-9]{2}|20[0-9]{2})(\\]|\\))', text)",
+      "message": "Use concise character class syntax '\\d' instead of '[0-9]'."
+    },
+    {
+      "key": "db9c4da2-def6-448c-bf58-d15fa8f3c432",
+      "rule": "python:S6353",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 867,
+      "source": "matches = re.findall(r'(\\(|\\[)(?P<year>19[0-9]{2}|20[0-9]{2})(\\]|\\))', text)",
+      "message": "Use concise character class syntax '\\d' instead of '[0-9]'."
+    },
+    {
+      "key": "dbb24ca1-d583-4187-a1b5-d5e9673ffe92",
+      "rule": "python:S6353",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 871,
+      "source": "matches = re.findall('(?P<year>19[0-9]{2}|20[0-9]{2})', text)",
+      "message": "Use concise character class syntax '\\d' instead of '[0-9]'."
+    },
+    {
+      "key": "f6f6a2a0-f589-4c95-8a85-f27b531fffa9",
+      "rule": "python:S6353",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 871,
+      "source": "matches = re.findall('(?P<year>19[0-9]{2}|20[0-9]{2})', text)",
+      "message": "Use concise character class syntax '\\d' instead of '[0-9]'."
+    },
+    {
+      "key": "702538a7-1213-4dce-a42d-bff87409678b",
+      "rule": "python:S6353",
+      "path": "couchpotato/core/plugins/score/scores.py",
+      "line": 219,
+      "source": "year = re.findall('(?P<year>19[0-9]{2}|20[0-9]{2})', name)",
+      "message": "Use concise character class syntax '\\d' instead of '[0-9]'."
+    },
+    {
+      "key": "d70ea6e0-d71f-4f09-864b-6eb43eb06902",
+      "rule": "python:S6353",
+      "path": "couchpotato/core/plugins/score/scores.py",
+      "line": 219,
+      "source": "year = re.findall('(?P<year>19[0-9]{2}|20[0-9]{2})', name)",
+      "message": "Use concise character class syntax '\\d' instead of '[0-9]'."
+    },
+    {
+      "key": "0ee5c2f7-3f29-4c59-a2ec-24f51a2120f0",
+      "rule": "python:S6353",
+      "path": "scripts/e2e_worker_data.py",
+      "line": 132,
+      "source": "if not re.fullmatch(r'[0-9]+', str(worker_index)):",
+      "message": "Use concise character class syntax '\\d' instead of '[0-9]'."
+    },
+    {
+      "key": "12daa82f-ffdc-4bb7-a9db-885e10b2cb37",
+      "rule": "python:S6659",
+      "path": "couchpotato/__init__.py",
+      "line": 1709,
+      "source": "if url[:3] != 'api':",
+      "message": "Use `not` and `startswith` here."
+    },
+    {
+      "key": "e325dfca-2007-4523-99ca-b2e72794cd49",
+      "rule": "python:S6659",
+      "path": "couchpotato/core/loader.py",
+      "line": 53,
+      "source": "if plugin.get('name', '')[:2] == '__':",
+      "message": "Use `startswith` here."
+    },
+    {
+      "key": "4d9b65d3-5053-4e7d-83c5-418b7c1245cb",
+      "rule": "python:S6659",
+      "path": "couchpotato/core/media/_base/providers/torrent/base.py",
+      "line": 24,
+      "source": "if url[:4] == 'http':",
+      "message": "Use `startswith` here."
+    },
+    {
+      "key": "a97af5bc-9d1d-4c84-aecf-cadee2f8ecc3",
+      "rule": "python:S6659",
+      "path": "couchpotato/core/media/_base/providers/torrent/passthepopcorn.py",
+      "line": 144,
+      "source": "if txt[:2] == \"&#\":",
+      "message": "Use `startswith` here."
+    },
+    {
+      "key": "b2a7f9ee-a8ce-43c8-a3af-caeca11b0c84",
+      "rule": "python:S6659",
+      "path": "couchpotato/core/media/_base/providers/torrent/passthepopcorn.py",
+      "line": 147,
+      "source": "if txt[:3] == \"&#x\":",
+      "message": "Use `startswith` here."
+    },
+    {
+      "key": "9b668e1c-5b2f-42a0-b698-a15df5397fce",
+      "rule": "python:S6659",
+      "path": "couchpotato/core/plugins/browser.py",
+      "line": 119,
+      "source": "elif parent != '/' and parent[-2:] != ':\\\\':",
+      "message": "Use `not` and `endswith` here."
+    },
+    {
+      "key": "dd808c46-ccb6-4ba6-b3ef-602528ffb793",
+      "rule": "python:S7492",
+      "path": "couchpotato/core/helpers/variable.py",
+      "line": 455,
+      "source": "return all([k in b and b[k] == v for k, v in a.items()])",
+      "message": "Unpack this comprehension expression"
+    },
+    {
+      "key": "b87cce84-aab7-46a8-8162-699be0440213",
+      "rule": "python:S7494",
+      "path": "couchpotato/core/media/movie/providers/info/themoviedb.py",
+      "line": 312,
+      "source": "movie_data = dict((k, v) for k, v in movie_data.items() if v)",
+      "message": "Replace dict constructor call with a dictionary comprehension."
+    },
+    {
+      "key": "5a70d989-dd40-4973-9cd2-0e90a14e86fe",
+      "rule": "python:S7494",
+      "path": "couchpotato/core/media/movie/providers/info/themoviedb.py",
+      "line": 355,
+      "source": "params = dict((k, v) for k, v in params.items() if v)",
+      "message": "Replace dict constructor call with a dictionary comprehension."
+    },
+    {
+      "key": "463ea0e9-afd2-48df-a220-3aa8bbd6fba6",
+      "rule": "python:S7494",
+      "path": "couchpotato/core/plugins/release/main.py",
+      "line": 358,
+      "source": "release['files'] = dict((k, [toUnicode(x) for x in v]) for k, v in group['files'].items() if v)",
+      "message": "Replace dict constructor call with a dictionary comprehension."
+    },
+    {
+      "key": "c92a4759-852c-4426-a17c-31e74d41b945",
+      "rule": "python:S7494",
+      "path": "scripts/sonar_scan.py",
+      "line": 327,
+      "source": "fields = dict(",
+      "message": "Replace dict constructor call with a dictionary comprehension."
+    },
+    {
+      "key": "6abe0fd1-df69-4f5f-8687-284a01c5c3e9",
+      "rule": "python:S7496",
+      "path": "couchpotato/core/media/_base/media/main.py",
+      "line": 319,
+      "source": "all_media_ids = all_media_ids.union(set([x['_id'] for x in db.get_many('media_by_type', media_type)]))",
+      "message": "Replace this set constructor call by a set literal."
+    },
+    {
+      "key": "ae026640-b811-4984-9993-8194005f2f4a",
+      "rule": "python:S7496",
+      "path": "couchpotato/core/media/_base/media/main.py",
+      "line": 321,
+      "source": "all_media_ids = set([x['_id'] for x in db.all('media')])",
+      "message": "Replace this set constructor call by a set literal."
+    },
+    {
+      "key": "d1ed6a10-bd86-4134-b3bf-9d572c8589ca",
+      "rule": "python:S7496",
+      "path": "couchpotato/core/media/_base/media/main.py",
+      "line": 494,
+      "source": "all_media_ids = all_media_ids.union(set([x['_id'] for x in db.get_many('media_by_type', media_type)]))",
+      "message": "Replace this set constructor call by a set literal."
+    },
+    {
+      "key": "be6d0ad9-dc4f-4a60-af13-e174bf777f95",
+      "rule": "python:S7496",
+      "path": "couchpotato/core/media/_base/media/main.py",
+      "line": 496,
+      "source": "all_media_ids = set([x['_id'] for x in db.all('media')])",
+      "message": "Replace this set constructor call by a set literal."
+    },
+    {
+      "key": "75491346-410d-4c84-bce0-9913fdea0342",
+      "rule": "python:S7496",
+      "path": "couchpotato/core/plugins/scanner/file_detector.py",
+      "line": 72,
+      "source": "if list(set(file_name.lower().split(os.path.sep)) & set(['video_ts', 'audio_ts'])):",
+      "message": "Replace this set constructor call by a set literal."
+    },
+    {
+      "key": "ad4e7f2d-ce30-47cd-aafa-44353d50683f",
+      "rule": "python:S7496",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 240,
+      "source": "found_files = set([item for item in leftovers if wo_ext in item])",
+      "message": "Replace this set constructor call by a set literal."
+    },
+    {
+      "key": "391b9fa8-9464-4355-a837-95a47e8cd3f1",
+      "rule": "python:S7496",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 290,
+      "source": "leftovers -= leftovers - set([ff])",
+      "message": "Replace this set constructor call by a set literal."
+    },
+    {
+      "key": "0b893ace-f7b9-4123-9068-57cc5a139c9d",
+      "rule": "python:S7498",
+      "path": "couchpotato/core/notifications/discord.py",
+      "line": 35,
+      "source": "r = requests.post(self.conf('webhook_url'), data=json.dumps(dict(content=message, username=self.conf('bot_name'), avatar_url=self.conf('avatar_url'), tts=self.conf('discord_tts'))), headers=headers, timeout=_REQUEST_TIMEOUT)",
+      "message": "Replace this constructor call with a literal."
+    },
+    {
+      "key": "509bf59c-361e-4287-bd0b-3c48a9c9a24c",
+      "rule": "python:S7498",
+      "path": "scripts/migrate_codernity_to_sqlite.py",
+      "line": 187,
+      "source": "props = dict(",
+      "message": "Replace this constructor call with a literal."
+    },
+    {
+      "key": "0dfb75c4-b058-4a9a-a73e-6a035a104342",
+      "rule": "python:S7500",
+      "path": "couchpotato/core/http_client.py",
+      "line": 287,
+      "source": "data_keys = [x for x in data.keys()] if isinstance(data, dict) else 'with data'",
+      "message": "Replace this comprehension with passing the iterable to the collection constructor call"
+    },
+    {
+      "key": "dd8caa14-0708-499d-be43-52e9bedc3386",
+      "rule": "python:S7500",
+      "path": "couchpotato/core/media/movie/searcher.py",
+      "line": 436,
+      "source": "log.info2('Wrong: %s, looking for %s, found %s', nzb['name'], quality['label'], [x for x in contains_other] if contains_other else 'no quality')",
+      "message": "Replace this comprehension with passing the iterable to the collection constructor call"
+    },
+    {
+      "key": "c6a721bb-126d-410a-8c00-04a31bb2a28d",
+      "rule": "python:S7504",
+      "path": "couchpotato/core/media/_base/searcher/main.py",
+      "line": 80,
+      "source": "for useless_provider in list(set(provider_protocols) - set(download_protocols)):",
+      "message": "Remove this unnecessary `list()` call on an already iterable object."
+    },
+    {
+      "key": "d06f82ca-7224-401d-a26c-a324de58d723",
+      "rule": "python:S7504",
+      "path": "couchpotato/core/plugins/renamer/extractor.py",
+      "line": 342,
+      "source": "for leftoverfile in list(files):",
+      "message": "Remove this unnecessary `list()` call on an already iterable object."
+    },
+    {
+      "key": "b1e40ed2-fe02-4fce-b344-b268c46ed902",
+      "rule": "python:S7504",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 237,
+      "source": "for file_path in list(group['unsorted_files']):",
+      "message": "Remove this unnecessary `list()` call on an already iterable object."
+    },
+    {
+      "key": "d5e4c6d5-fb37-4fda-aeea-919db5d2b66a",
+      "rule": "python:S7504",
+      "path": "couchpotato/core/plugins/scanner/folder_scanner.py",
+      "line": 249,
+      "source": "for file_path in list(group['unsorted_files']):",
+      "message": "Remove this unnecessary `list()` call on an already iterable object."
+    },
+    {
+      "key": "02471170-ab03-4157-ba7d-8dcce54490a8",
+      "rule": "python:S7504",
+      "path": "scripts/git_env.py",
+      "line": 68,
+      "source": "for key in list(env):",
+      "message": "Remove this unnecessary `list()` call on an already iterable object."
+    },
+    {
+      "key": "0eb6c891-1b01-4e61-890e-c028a3b8c57f",
+      "rule": "python:S7504",
+      "path": "scripts/sonar_scan.py",
+      "line": 93,
+      "source": "for name in list(env):",
+      "message": "Remove this unnecessary `list()` call on an already iterable object."
+    },
+    {
+      "key": "45a28d11-148a-4f64-9bef-70a2b2848f84",
+      "rule": "python:S7508",
+      "path": "couchpotato/core/media/movie/providers/info/themoviedb.py",
+      "line": 318,
+      "source": "all_titles = sorted(list(itertools.chain.from_iterable(movie_titles)))",
+      "message": "Remove this redundant call."
+    },
+    {
+      "key": "d91b1886-3064-4d5c-97ed-4157931206d0",
+      "rule": "python:S7508",
+      "path": "couchpotato/core/plugins/renamer/cleanup.py",
+      "line": 29,
+      "source": "tag_files = [sorted(list(group['files']['movie']))[0]]",
+      "message": "Remove this redundant call."
+    },
+    {
+      "key": "7c7968bd-80e6-4c33-b8a4-e325207b1bd0",
+      "rule": "python:S7508",
+      "path": "couchpotato/core/plugins/renamer/cleanup.py",
+      "line": 52,
+      "source": "tag_files = [sorted(list(group['files']['movie']))[0]]",
+      "message": "Remove this redundant call."
+    },
+    {
+      "key": "4e938c86-f797-4566-ba51-eb346131361d",
+      "rule": "python:S7632",
+      "path": "scripts/seed_e2e_data.py",
+      "line": 862,
+      "source": "except Exception as exc:  # noqa: BLE001 -- report and exit non-zero, don't traceback-spam CI",
+      "message": "Fix the syntax of this issue suppression comment."
+    }
+  ]
+}
