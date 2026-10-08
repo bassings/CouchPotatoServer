@@ -673,7 +673,7 @@ class TestLongestBracketedNameEquivalence:
         if not old_raised:
             pytest.skip('old expression succeeds for %r, covered separately' % name)
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             longestBracketedName(name)
 
     def test_picks_the_longest_group_not_the_first_or_last(self):

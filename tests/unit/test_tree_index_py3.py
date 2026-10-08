@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'libs'))
 
-from CodernityDB.database import Database
+from CodernityDB.database import Database, RecordDeleted
 from CodernityDB.tree_index import TreeBasedIndex, MultiTreeBasedIndex
 
 
@@ -142,7 +142,7 @@ class TestTreeIndexBasicOps:
         doc = db.get('id', result['_id'])
         db.delete(doc)
         # Document should be gone from id index
-        with pytest.raises(Exception):
+        with pytest.raises(RecordDeleted):
             db.get('id', result['_id'])
 
     def test_all_on_tree_index(self, db_with_tree_index):
