@@ -36,4 +36,5 @@ def test_every_local_issue_has_its_own_disposition():
         assert site == f"`{issue['path']}:{issue['line']}`"
         assert html.unescape(source.removeprefix("<code>").removesuffix("</code>")) == issue["source"]
         assert html.unescape(message) == issue["message"]
-        assert decision.startswith("Hold: ") and len(decision) > len("Hold: ")
+        assert decision.startswith("Hold: ")
+        assert len(decision) > len("Hold: ")
