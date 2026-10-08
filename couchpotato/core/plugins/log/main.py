@@ -1,7 +1,6 @@
 import os
 import re
 import stat
-import traceback
 
 from couchpotato.api import addApiView
 from couchpotato.core.helpers.encoding import toUnicode
