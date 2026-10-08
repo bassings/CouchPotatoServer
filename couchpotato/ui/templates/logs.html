@@ -6,7 +6,7 @@
     <h1 class="text-xl font-semibold tracking-tight">Logs</h1>
     <div class="flex items-center gap-3">
       <label for="log-level-filter" class="sr-only">Filter by log level</label>
-      <select id="log-level-filter" x-model="logType" @change="refresh()"
+      <select id="log-level-filter" x-model="logType" @change="refresh(true)"
               class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
         <option value="all">All</option>
         <option value="error">Errors</option>
@@ -19,14 +19,16 @@
                class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
         <span>Auto-refresh</span>
       </label>
-      <button @click="refresh()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">
+      <button @click="refresh(true)" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">
         Refresh
       </button>
-      <button @click="clearLogs()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors">
+      <button @click="clearLogs()" :aria-disabled="clearingLogs.toString()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors">
         Clear
       </button>
     </div>
   </div>
+
+  <p x-show="clearError" x-text="clearError" role="alert" class="mb-4 text-xs text-cp-danger"></p>
 
   <!-- Loading -->
   <div x-show="loading && logs.length === 0" class="flex items-center justify-center py-20" role="status" aria-live="polite">
@@ -72,6 +74,9 @@ function logsPanel() {
   return {
     logs: [],
     loading: true,
+    clearError: '',
+    clearingLogs: false,
+    logEpoch: 0,
     logType: 'all',
     autoRefresh: true,
     refreshTimer: null,
@@ -81,24 +86,29 @@ function logsPanel() {
       if (this.autoRefresh) this.startAutoRefresh();
     },
 
-    async refresh() {
+    async refresh(force = false) {
+      if (this.clearingLogs || (this.clearError && !force)) return;
+      const epoch = this.logEpoch;
       this.loading = true;
       try {
         const typeParam = this.logType !== 'all' ? '&type=' + this.logType : '';
         const resp = await fetch(CP.apiBase + '/logging.partial/?limit=500' + typeParam);
         const data = await resp.json();
-        if (data.success !== false) {
+        if (epoch === this.logEpoch && !this.clearingLogs && resp.ok && data.success !== false) {
           this.logs = this.parseLogs(data.log || data.lines || []);
+          if (force) this.clearError = '';
         }
       } catch (e) {
-        console.error('Failed to load logs', e);
+        console.error('Failed to load logs');
       }
-      this.loading = false;
-      // Scroll to bottom
-      this.$nextTick(() => {
-        const el = document.getElementById('log-container');
-        if (el) el.scrollTop = el.scrollHeight;
-      });
+      if (epoch === this.logEpoch) {
+        this.loading = false;
+        // Scroll to bottom
+        this.$nextTick(() => {
+          const el = document.getElementById('log-container');
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
     },
 
     parseLogs(lines) {
@@ -106,11 +116,20 @@ function logsPanel() {
     },
 
     async clearLogs() {
+      if (this.clearingLogs) return;
+      this.clearingLogs = true;
+      this.logEpoch++;
+      this.loading = false;
+      this.clearError = '';
       try {
-        await fetch(CP.apiBase + '/logging.clear/');
+        const resp = await fetch(CP.apiBase + '/logging.clear/');
+        const data = await resp.json();
+        if (!resp.ok || !data || data.success !== true) throw new Error('Log clear failed');
         this.logs = [];
       } catch (e) {
-        console.error('Failed to clear logs');
+        this.clearError = 'Unable to clear all logs. Some entries may remain. Refresh to check.';
+      } finally {
+        this.clearingLogs = false;
       }
     },
 

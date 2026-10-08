@@ -1,6 +1,6 @@
 import os
 import re
-import traceback
+import stat
 
 from couchpotato.api import addApiView
 from couchpotato.core.helpers.encoding import toUnicode
@@ -207,27 +207,38 @@ class Logging(Plugin):
         return logs
 
     def clear(self, **kwargs):
-
+        failed = False
         for x in range(0, 50):
             path = '%s%s' % (Env.get('log_path'), '.%s' % x if x > 0 else '')
 
-            if not os.path.isfile(path):
+            try:
+                file_stat = os.stat(path)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                failed = True
+                log.error('Unable to inspect log file slot %s (%s)', x, type(exc).__name__)
+                continue
+
+            if not stat.S_ISREG(file_stat.st_mode):
+                failed = True
+                log.error('Unable to clear log file slot %s (not a regular file)', x)
                 continue
 
             try:
-
-                # Create empty file for current logging
+                # Keep the active file in place for existing logging handlers.
                 if x == 0:
-                    self.createFile(path, '')
+                    with open(path, 'w'):
+                        pass
                 else:
                     os.remove(path)
+            except Exception as exc:
+                failed = True
+                log.error('Unable to clear log file slot %s (%s)', x, type(exc).__name__)
 
-            except Exception:
-                log.error('Couldn\'t delete file "%s": %s', path, traceback.format_exc())
-
-        return {
-            'success': True
-        }
+        if failed:
+            return {'success': False, 'error': 'Unable to clear all logs'}
+        return {'success': True}
 
     def log(self, type = 'error', **kwargs):
 
