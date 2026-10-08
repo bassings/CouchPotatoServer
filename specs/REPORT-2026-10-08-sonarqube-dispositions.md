@@ -10,10 +10,10 @@ The baseline was 685 code smells at `2b7ed668`; the final analysis is
 tool for this repository, not a CI or merge gate. An open issue remains open
 when the suggested edit has no demonstrated benefit or would add risk.
 
-The earlier per-site investigations in
+The earlier investigations in
 [the assessed-slices plan](PLAN-2026-09-07-sonarqube-slices.md) and
-[its follow-up](PLAN-2026-09-07-post-sonarqube-followups.md) remain the detailed
-evidence for inherited findings. This report records what the October pass
+[its follow-up](PLAN-2026-09-07-post-sonarqube-followups.md) remain detailed
+evidence for the rule families they cover. This report records what the October pass
 actually changed and where its remaining rule families stand. No issue was
 resolved or suppressed in SonarQube merely to lower a number.
 
@@ -93,10 +93,10 @@ production edit.
 
 The remaining `javascript:S2486` catches were checked against their caller
 flows. The new setup picker catch displays `browserError`, announces it and
-blocks selection; its phone-width tests exercise HTTP and malformed-response
-failures. The log screens show a warning and retain entries, and the inspected
-movie-detail and profile paths notify the operator or roll back optimistic
-state. The Settings restart catch now retains its reminder and reports that
+blocks selection; its phone-width test exercises an HTTP failure and retry.
+A separate settings-picker stale-response test injects malformed JSON. The
+log screens show a warning and retain entries, and the inspected movie-detail
+and profile paths notify the operator or roll back optimistic state. The Settings restart catch now retains its reminder and reports that
 restart could not be confirmed when HTTP, API or network results fail or a
 request stalls past its deadline. Its pending guard prevents conflicting
 requests. The empty catch around
@@ -122,10 +122,15 @@ moving its declaration into the shared unit `conftest.py` changes common
 test setup without fixing a measured failure. Revisit these tests when their
 behaviour is edited, and require mutation proof for any new guard.
 
-The two informational `python:S1135` comments ask for Windows path checks in
-the directory browser. The documented production image is Alpine; keep those
-questions visible until Windows support is tested, rather than deleting the
-comments to clear a scanner count.
+The two informational `python:S1135` comments concern different questions in
+`couchpotato/core/plugins/browser.py`. Line 122 asks whether a root-path check
+works on Windows. The documented production image is Alpine, so keep that
+question open until Windows behaviour is tested. Line 30 asks whether missing
+plugin dependencies should use an `ImportError` subtype distinct from broken
+plugins. `core/loader.py` catches `ImportError` and currently distinguishes
+missing dependencies by message text; changing that contract needs a loader
+test and an operability review. Keep that question open rather than deleting
+the comment to clear a scanner count.
 
 ### Local idioms
 
@@ -134,10 +139,62 @@ constructor and syntax suggestions. They are left open because a standalone
 edit would touch working production or guard code without a demonstrated
 failure. In particular, replacing `[0-9]` with `\d` under `python:S6353`
 would widen matching to Unicode digits, so that is not an equivalent edit.
-The September plans record the prior per-site assessments of these families.
+The September plans assess some of these families. The site register below
+records the other 22 rule families against every currently open issue site.
 Change one in the course of related work when its behaviour and callers can
 be verified; do not run a mechanical sweep through scanner, renamer, database
 or test-guard code.
+
+## October site register for local rules absent from the September plans
+
+These 103 issue records are listed by exact scanner location. The stated
+decision applies to each listed site; repeated line numbers mean separate
+scanner records on that line. This register records why no standalone edit was
+made, rather than asserting that the scanner suggestion is always wrong.
+
+- **`javascript:S1871` (2 records).** Two UI branches set the same state, but the surrounding theme and settings conditions remain separate. Consolidate with browser coverage when those flows change. Sites: `couchpotato/ui/templates/base.html:404`; `couchpotato/ui/templates/partials/settings/scripts.html:316`.
+
+- **`javascript:S6582` (12 records).** The guarded property reads in the category and profile editors can return falsy values; replacing `&&` with optional chaining can change those values. Verify each caller contract before a rewrite. Sites: `couchpotato/static/scripts/ui/category-editor.js:15,60,61,62,63,64,71,92`; `couchpotato/static/scripts/ui/profile-editor.js:182,187,194,199`.
+
+- **`javascript:S7750` (1 record).** The E2E trap guard uses the last filtered match. `findLast` changes traversal and needs guard mutation proof and a Node compatibility check before substitution. Sites: `scripts/check_e2e_test_traps.mjs:421`.
+
+- **`javascript:S7760` (1 record).** The settings-help fallback assigns a default after entry. A default parameter applies only to `undefined`; verify other caller values before changing it. Sites: `couchpotato/static/scripts/ui/settings-help.js:20`.
+
+- **`javascript:S7765` (1 record).** The log parser tests membership via `indexOf`. `includes` offers no measured behaviour or reliability gain; keep the parser stable until its contract changes. Sites: `couchpotato/static/scripts/ui/log-parser.js:21`.
+
+- **`javascript:S7770` (2 records).** Both wizard predicate wrappers are equivalent to `Boolean` for their present inputs. Keep this cosmetic rewrite with the next wizard edit and browser verification. Sites: `couchpotato/ui/templates/wizard.html:1204,1205`.
+
+- **`javascript:S7778` (5 records).** The wizard appends multiple result groups in separate `push` calls. Combining them gives no measured gain and should travel with a tested wizard change. Sites: `couchpotato/ui/templates/wizard.html:1208,1209,1218,1219,1222`.
+
+- **`javascript:S7786` (2 records).** The Lighthouse policy script raises `Error` on invalid policy input. Changing to `TypeError` changes the class seen by callers; check that contract with policy tests first. Sites: `scripts/lighthouse-policy.mjs:37,110`.
+
+- **`python:S1940` (22 records).** These negated comparisons span downloader, provider, notification, plugin and renamer flows. Operator inversion has no measured fix here; change individual expressions only with their enclosing flow tests. Sites: `couchpotato/core/downloaders/deluge.py:150`; `couchpotato/core/downloaders/transmission.py:163`; `couchpotato/core/downloaders/utorrent.py:223,369`; `couchpotato/core/helpers/variable.py:322`; `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:45,52,105,118`; `couchpotato/core/media/movie/providers/automation/bluray.py:63,94,126`; `couchpotato/core/media/movie/providers/trailer/hdtrailers.py:125,125`; `couchpotato/core/media/movie/providers/userscript/allocine.py:18`; `couchpotato/core/notifications/base.py:32`; `couchpotato/core/notifications/telegrambot.py:50`; `couchpotato/core/plugins/base.py:237`; `couchpotato/core/plugins/renamer/cleanup.py:64,96`; `couchpotato/core/plugins/renamer/scanner.py:130`; `couchpotato/core/plugins/scanner/folder_scanner.py:839`.
+
+- **`python:S3626` (7 records).** The flagged returns terminate downloader, provider and renamer functions. Removing them has no measured fix and should be checked against each function’s return contract during a related edit. Sites: `couchpotato/core/_base/downloader/main.py:102,116`; `couchpotato/core/media/_base/providers/base.py:270`; `couchpotato/core/media/_base/providers/nzb/newznab.py:74`; `couchpotato/core/media/_base/providers/torrent/yts.py:61`; `couchpotato/core/media/_base/providers/userscript/base.py:50`; `couchpotato/core/plugins/renamer/main.py:1390`.
+
+- **`python:S5713` (7 records).** These handlers name a subclass alongside a caught parent. Removing a name may simplify syntax but also removes intent from cache, database, notification, settings and scanner operations; retain until that handler is tested or edited. Sites: `couchpotato/core/cache.py:160`; `couchpotato/core/database.py:245`; `couchpotato/core/notifications/emby.py:34,59`; `couchpotato/core/settings.py:601`; `scripts/sonar_scan.py:370,370`.
+
+- **`python:S5843` (1 record).** This expression is in the test-trap guard. A shorter regex needs mutation proof that the guard still rejects its protected patterns; no standalone change is justified. Sites: `scripts/check_test_traps.py:1526`.
+
+- **`python:S6353` (8 records).** All eight sites currently use ASCII `[0-9]`. Replacing it with Unicode-aware `\d` can widen matching in request, scanner, score and test-data paths, so the suggested substitution is not equivalent. Sites: `couchpotato/core/helpers/request.py:58`; `couchpotato/core/plugins/scanner/folder_scanner.py:867,867,871,871`; `couchpotato/core/plugins/score/scores.py:219,219`; `scripts/e2e_worker_data.py:132`.
+
+- **`python:S6659` (6 records).** The prefix checks in app startup, loader, providers and browser use slicing or explicit comparisons. `startswith` may read better, but no failure is measured; check type and empty-prefix behaviour at each caller when touched. Sites: `couchpotato/__init__.py:1709`; `couchpotato/core/loader.py:53`; `couchpotato/core/media/_base/providers/torrent/base.py:24`; `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:144,147`; `couchpotato/core/plugins/browser.py:119`.
+
+- **`python:S7492` (1 record).** The helper comprehension feeds `all`. Unpacking is a syntax change with no measured caller benefit; keep until the helper’s input contract is tested. Sites: `couchpotato/core/helpers/variable.py:455`.
+
+- **`python:S7494` (4 records).** Dict constructors consume comprehensions in metadata, release and Sonar code. A literal comprehension offers no measured fix; cover the resulting keys and values when those functions change. Sites: `couchpotato/core/media/movie/providers/info/themoviedb.py:312,355`; `couchpotato/core/plugins/release/main.py:358`; `scripts/sonar_scan.py:327`.
+
+- **`python:S7496` (7 records).** Set constructors appear in media registration and scanner detection. A literal would be a local rewrite only; preserve these paths until their registration or matching tests warrant an edit. Sites: `couchpotato/core/media/_base/media/main.py:319,321,494,496`; `couchpotato/core/plugins/scanner/file_detector.py:72`; `couchpotato/core/plugins/scanner/folder_scanner.py:240,290`.
+
+- **`python:S7498` (2 records).** The Discord payload and migration script use collection constructors. Literal syntax gives no measured benefit; migration output and notification formatting need focused verification for any rewrite. Sites: `couchpotato/core/notifications/discord.py:35`; `scripts/migrate_codernity_to_sqlite.py:187`.
+
+- **`python:S7500` (2 records).** The HTTP client and movie searcher build lists from comprehensions. Passing the iterable to `list` has no measured improvement; retain the current request/log and search behaviour. Sites: `couchpotato/core/http_client.py:287`; `couchpotato/core/media/movie/searcher.py:436`.
+
+- **`python:S7504` (6 records).** Several `list(...)` calls snapshot collections before mutation in scanner, renamer and environment-cleanup loops; removing those copies can change iteration. The remaining searcher copy has no measured cost. Evaluate each site separately when touched. Sites: `couchpotato/core/media/_base/searcher/main.py:80`; `couchpotato/core/plugins/renamer/extractor.py:342`; `couchpotato/core/plugins/scanner/folder_scanner.py:237,249`; `scripts/git_env.py:68`; `scripts/sonar_scan.py:93`.
+
+- **`python:S7508` (3 records).** The renamer cleanup and movie-info code nests a collection conversion inside sorting. A shorter expression offers no measured gain; verify input type and ordering first. Sites: `couchpotato/core/media/movie/providers/info/themoviedb.py:318`; `couchpotato/core/plugins/renamer/cleanup.py:29,52`.
+
+- **`python:S7632` (1 record).** Ruff accepts this `noqa` comment in the E2E seeder. Changing the scanner-specific syntax should be done with the guard and lint checks, rather than risking a false-green suppression edit. Sites: `scripts/seed_e2e_data.py:862`.
 
 ## Final measured state
 
@@ -188,7 +245,7 @@ so its counts reconcile with that revision rather than an earlier snapshot.
 | `python:S108` | major | 1 | Complexity or intentional construct |
 | `python:S1110` | major | 12 | Local idiom, next related edit |
 | `python:S112` | major | 2 | Local idiom, next related edit |
-| `python:S1135` | info | 2 | Platform TODO |
+| `python:S1135` | info | 2 | Platform or loader TODO |
 | `python:S117` | minor | 22 | Compatibility or public naming |
 | `python:S1172` | major | 9 | Compatibility or public naming |
 | `python:S1186` | critical | 6 | Complexity or intentional construct |
