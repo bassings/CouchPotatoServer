@@ -657,7 +657,7 @@ class TestLongestBracketedNameEquivalence:
     def test_matches_old_expression_when_old_expression_succeeds(self, name):
         try:
             expected = _old_bracketed_name_expression(name)
-        except Exception:
+        except ValueError:
             pytest.skip('old expression raises for %r, covered separately' % name)
 
         assert longestBracketedName(name) == expected
@@ -667,7 +667,7 @@ class TestLongestBracketedNameEquivalence:
         old_raised = False
         try:
             _old_bracketed_name_expression(name)
-        except Exception:
+        except ValueError:
             old_raised = True
 
         if not old_raised:

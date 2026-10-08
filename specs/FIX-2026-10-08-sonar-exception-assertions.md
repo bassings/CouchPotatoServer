@@ -12,4 +12,6 @@ used by migration tests; the third guards release-name parsing.
 2. The release-name equivalence test requires `ValueError` when no bracketed
    group exists.
 3. Each narrower assertion is shown to fail when its call raises an unrelated
-   exception. Focused and repository checks remain green.
+   exception. The reference-expression comparison also propagates unrelated
+   exceptions rather than skipping the affected case. Focused and repository
+   checks remain green.
