@@ -896,7 +896,8 @@
         <div class="px-4 py-2 border-b border-white/[0.04] bg-white/[0.02]">
           <div class="flex items-center gap-2 text-xs">
             <button @click="if (!browserLoading && browserValid && !browserIsRoot) loadDirectories(browserParent)" :aria-disabled="(browserIsRoot || browserLoading || !browserValid).toString()"
-                    class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] disabled:opacity-30 disabled:cursor-not-allowed">
+                    :class="browserIsRoot || browserLoading || !browserValid ? 'opacity-30 cursor-not-allowed' : ''"
+                    class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06]">
               ↑ Up
             </button>
             <span class="text-cp-muted font-mono truncate" x-text="browserPath"></span>

@@ -60,6 +60,7 @@ test('setup picker keeps its form value on HTTP failure and selects after retry 
   const browser = page.locator('[x-show="browserOpen"]').filter({ hasText: 'Browse Folders' });
   await expect(browser.getByRole('alert')).toContainText('Unable to list directory');
   await expect(browser.getByText('Empty folder')).toBeHidden();
+  await expect(browser.getByRole('button', { name: 'Up' })).toHaveCSS('opacity', '0.3');
   await browser.getByRole('button', { name: 'Select This Folder' }).focus();
   await page.keyboard.press('Enter');
   await expect(browser).toBeVisible();
