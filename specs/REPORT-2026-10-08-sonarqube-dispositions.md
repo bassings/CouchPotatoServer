@@ -178,7 +178,7 @@ made, rather than asserting that the scanner suggestion is always wrong.
 
 - **`python:S6353` (8 records).** All eight sites currently use ASCII `[0-9]`. Replacing it with Unicode-aware `\d` can widen matching in request, scanner, score and test-data paths, so the suggested substitution is not equivalent. Sites: `couchpotato/core/helpers/request.py:58`; `couchpotato/core/plugins/scanner/folder_scanner.py:867,867,871,871`; `couchpotato/core/plugins/score/scores.py:219,219`; `scripts/e2e_worker_data.py:132`.
 
-- **`python:S6659` (6 records).** The prefix checks in app startup, loader, providers and browser use slicing or explicit comparisons. `startswith` may read better, but no failure is measured; check type and empty-prefix behaviour at each caller when touched. Sites: `couchpotato/__init__.py:1709`; `couchpotato/core/loader.py:53`; `couchpotato/core/media/_base/providers/torrent/base.py:24`; `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:144,147`; `couchpotato/core/plugins/browser.py:119`.
+- **`python:S6659` (6 records).** The five prefix checks and one browser suffix check use slices or explicit comparisons. No failure is measured; check type and boundary behaviour at each caller before applying the site-specific `startswith` or `endswith` suggestion below. Sites: `couchpotato/__init__.py:1709`; `couchpotato/core/loader.py:53`; `couchpotato/core/media/_base/providers/torrent/base.py:24`; `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:144,147`; `couchpotato/core/plugins/browser.py:119`.
 
 - **`python:S7492` (1 record).** The helper comprehension feeds `all`. Unpacking is a syntax change with no measured caller benefit; keep until the helper’s input contract is tested. Sites: `couchpotato/core/helpers/variable.py:455`.
 
@@ -195,6 +195,120 @@ made, rather than asserting that the scanner suggestion is always wrong.
 - **`python:S7508` (3 records).** The renamer cleanup and movie-info code nests a collection conversion inside sorting. A shorter expression offers no measured gain; verify input type and ordering first. Sites: `couchpotato/core/media/movie/providers/info/themoviedb.py:318`; `couchpotato/core/plugins/renamer/cleanup.py:29,52`.
 
 - **`python:S7632` (1 record).** Ruff accepts this `noqa` comment in the E2E seeder. Changing the scanner-specific syntax should be done with the guard and lint checks, rather than risking a false-green suppression edit. Sites: `scripts/seed_e2e_data.py:862`.
+
+### Site-specific scanner suggestions
+
+This generated register preserves the scanner message for each of the 103
+records above, including the `endswith` suggestion at `browser.py:119`. A
+suggestion is evidence to assess at that site, not an instruction to apply it
+mechanically. Rows come from the same exact-master issue response as the
+inventory; duplicate locations remain separate records.
+
+| Rule | Site | Scanner message |
+| --- | --- | --- |
+| `javascript:S1871` | `couchpotato/ui/templates/base.html:404` | This branch's code block is the same as the block for the branch on line 398. |
+| `javascript:S1871` | `couchpotato/ui/templates/partials/settings/scripts.html:316` | This branch's code block is the same as the block for the branch on line 315. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/category-editor.js:15` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/category-editor.js:60` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/category-editor.js:61` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/category-editor.js:62` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/category-editor.js:63` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/category-editor.js:64` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/category-editor.js:71` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/category-editor.js:92` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/profile-editor.js:182` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/profile-editor.js:187` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/profile-editor.js:194` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S6582` | `couchpotato/static/scripts/ui/profile-editor.js:199` | Prefer using an optional chain expression instead, as it's more concise and easier to read. |
+| `javascript:S7750` | `scripts/check_e2e_test_traps.mjs:421` | Prefer `.findLast(…)` over `.filter(…).at(-1)`. |
+| `javascript:S7760` | `couchpotato/static/scripts/ui/settings-help.js:20` | Prefer default parameters over reassignment. |
+| `javascript:S7765` | `couchpotato/static/scripts/ui/log-parser.js:21` | Use `.includes()`, rather than `.indexOf()`, when checking for existence. |
+| `javascript:S7770` | `couchpotato/ui/templates/wizard.html:1204` | arrow function is equivalent to `Boolean`. Use `Boolean` directly. |
+| `javascript:S7770` | `couchpotato/ui/templates/wizard.html:1205` | arrow function is equivalent to `Boolean`. Use `Boolean` directly. |
+| `javascript:S7778` | `couchpotato/ui/templates/wizard.html:1208` | Do not call `Array#push()` multiple times. |
+| `javascript:S7778` | `couchpotato/ui/templates/wizard.html:1209` | Do not call `Array#push()` multiple times. |
+| `javascript:S7778` | `couchpotato/ui/templates/wizard.html:1218` | Do not call `Array#push()` multiple times. |
+| `javascript:S7778` | `couchpotato/ui/templates/wizard.html:1219` | Do not call `Array#push()` multiple times. |
+| `javascript:S7778` | `couchpotato/ui/templates/wizard.html:1222` | Do not call `Array#push()` multiple times. |
+| `javascript:S7786` | `scripts/lighthouse-policy.mjs:37` | `new Error()` is too unspecific for a type check. Use `new TypeError()` instead. |
+| `javascript:S7786` | `scripts/lighthouse-policy.mjs:110` | `new Error()` is too unspecific for a type check. Use `new TypeError()` instead. |
+| `python:S1940` | `couchpotato/core/downloaders/deluge.py:150` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/downloaders/transmission.py:163` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/downloaders/utorrent.py:223` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/downloaders/utorrent.py:369` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/helpers/variable.py:322` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:45` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:52` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:105` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:118` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/media/movie/providers/automation/bluray.py:63` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/media/movie/providers/automation/bluray.py:94` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/media/movie/providers/automation/bluray.py:126` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/media/movie/providers/trailer/hdtrailers.py:125` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/media/movie/providers/trailer/hdtrailers.py:125` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/media/movie/providers/userscript/allocine.py:18` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/notifications/base.py:32` | Use the opposite operator ("not in") instead. |
+| `python:S1940` | `couchpotato/core/notifications/telegrambot.py:50` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/plugins/base.py:237` | Use the opposite operator ("<=") instead. |
+| `python:S1940` | `couchpotato/core/plugins/renamer/cleanup.py:64` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/plugins/renamer/cleanup.py:96` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/plugins/renamer/scanner.py:130` | Use the opposite operator ("!=") instead. |
+| `python:S1940` | `couchpotato/core/plugins/scanner/folder_scanner.py:839` | Use the opposite operator ("not in") instead. |
+| `python:S3626` | `couchpotato/core/_base/downloader/main.py:102` | Remove this redundant return. |
+| `python:S3626` | `couchpotato/core/_base/downloader/main.py:116` | Remove this redundant return. |
+| `python:S3626` | `couchpotato/core/media/_base/providers/base.py:270` | Remove this redundant return. |
+| `python:S3626` | `couchpotato/core/media/_base/providers/nzb/newznab.py:74` | Remove this redundant continue. |
+| `python:S3626` | `couchpotato/core/media/_base/providers/torrent/yts.py:61` | Remove this redundant return. |
+| `python:S3626` | `couchpotato/core/media/_base/providers/userscript/base.py:50` | Remove this redundant return. |
+| `python:S3626` | `couchpotato/core/plugins/renamer/main.py:1390` | Remove this redundant return. |
+| `python:S5713` | `couchpotato/core/cache.py:160` | Remove this redundant Exception class; it derives from another which is already caught. |
+| `python:S5713` | `couchpotato/core/database.py:245` | Remove this redundant Exception class; it derives from another which is already caught. |
+| `python:S5713` | `couchpotato/core/notifications/emby.py:34` | Remove this redundant Exception class; it derives from another which is already caught. |
+| `python:S5713` | `couchpotato/core/notifications/emby.py:59` | Remove this redundant Exception class; it derives from another which is already caught. |
+| `python:S5713` | `couchpotato/core/settings.py:601` | Remove this redundant Exception class; it derives from another which is already caught. |
+| `python:S5713` | `scripts/sonar_scan.py:370` | Remove this redundant Exception class; it derives from another which is already caught. |
+| `python:S5713` | `scripts/sonar_scan.py:370` | Remove this redundant Exception class; it derives from another which is already caught. |
+| `python:S5843` | `scripts/check_test_traps.py:1526` | Simplify this regular expression to reduce its complexity from 24 to the 20 allowed. |
+| `python:S6353` | `couchpotato/core/helpers/request.py:58` | Use concise character class syntax '\d' instead of '[0-9]'. |
+| `python:S6353` | `couchpotato/core/plugins/scanner/folder_scanner.py:867` | Use concise character class syntax '\d' instead of '[0-9]'. |
+| `python:S6353` | `couchpotato/core/plugins/scanner/folder_scanner.py:867` | Use concise character class syntax '\d' instead of '[0-9]'. |
+| `python:S6353` | `couchpotato/core/plugins/scanner/folder_scanner.py:871` | Use concise character class syntax '\d' instead of '[0-9]'. |
+| `python:S6353` | `couchpotato/core/plugins/scanner/folder_scanner.py:871` | Use concise character class syntax '\d' instead of '[0-9]'. |
+| `python:S6353` | `couchpotato/core/plugins/score/scores.py:219` | Use concise character class syntax '\d' instead of '[0-9]'. |
+| `python:S6353` | `couchpotato/core/plugins/score/scores.py:219` | Use concise character class syntax '\d' instead of '[0-9]'. |
+| `python:S6353` | `scripts/e2e_worker_data.py:132` | Use concise character class syntax '\d' instead of '[0-9]'. |
+| `python:S6659` | `couchpotato/__init__.py:1709` | Use `not` and `startswith` here. |
+| `python:S6659` | `couchpotato/core/loader.py:53` | Use `startswith` here. |
+| `python:S6659` | `couchpotato/core/media/_base/providers/torrent/base.py:24` | Use `startswith` here. |
+| `python:S6659` | `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:144` | Use `startswith` here. |
+| `python:S6659` | `couchpotato/core/media/_base/providers/torrent/passthepopcorn.py:147` | Use `startswith` here. |
+| `python:S6659` | `couchpotato/core/plugins/browser.py:119` | Use `not` and `endswith` here. |
+| `python:S7492` | `couchpotato/core/helpers/variable.py:455` | Unpack this comprehension expression |
+| `python:S7494` | `couchpotato/core/media/movie/providers/info/themoviedb.py:312` | Replace dict constructor call with a dictionary comprehension. |
+| `python:S7494` | `couchpotato/core/media/movie/providers/info/themoviedb.py:355` | Replace dict constructor call with a dictionary comprehension. |
+| `python:S7494` | `couchpotato/core/plugins/release/main.py:358` | Replace dict constructor call with a dictionary comprehension. |
+| `python:S7494` | `scripts/sonar_scan.py:327` | Replace dict constructor call with a dictionary comprehension. |
+| `python:S7496` | `couchpotato/core/media/_base/media/main.py:319` | Replace this set constructor call by a set literal. |
+| `python:S7496` | `couchpotato/core/media/_base/media/main.py:321` | Replace this set constructor call by a set literal. |
+| `python:S7496` | `couchpotato/core/media/_base/media/main.py:494` | Replace this set constructor call by a set literal. |
+| `python:S7496` | `couchpotato/core/media/_base/media/main.py:496` | Replace this set constructor call by a set literal. |
+| `python:S7496` | `couchpotato/core/plugins/scanner/file_detector.py:72` | Replace this set constructor call by a set literal. |
+| `python:S7496` | `couchpotato/core/plugins/scanner/folder_scanner.py:240` | Replace this set constructor call by a set literal. |
+| `python:S7496` | `couchpotato/core/plugins/scanner/folder_scanner.py:290` | Replace this set constructor call by a set literal. |
+| `python:S7498` | `couchpotato/core/notifications/discord.py:35` | Replace this constructor call with a literal. |
+| `python:S7498` | `scripts/migrate_codernity_to_sqlite.py:187` | Replace this constructor call with a literal. |
+| `python:S7500` | `couchpotato/core/http_client.py:287` | Replace this comprehension with passing the iterable to the collection constructor call |
+| `python:S7500` | `couchpotato/core/media/movie/searcher.py:436` | Replace this comprehension with passing the iterable to the collection constructor call |
+| `python:S7504` | `couchpotato/core/media/_base/searcher/main.py:80` | Remove this unnecessary `list()` call on an already iterable object. |
+| `python:S7504` | `couchpotato/core/plugins/renamer/extractor.py:342` | Remove this unnecessary `list()` call on an already iterable object. |
+| `python:S7504` | `couchpotato/core/plugins/scanner/folder_scanner.py:237` | Remove this unnecessary `list()` call on an already iterable object. |
+| `python:S7504` | `couchpotato/core/plugins/scanner/folder_scanner.py:249` | Remove this unnecessary `list()` call on an already iterable object. |
+| `python:S7504` | `scripts/git_env.py:68` | Remove this unnecessary `list()` call on an already iterable object. |
+| `python:S7504` | `scripts/sonar_scan.py:93` | Remove this unnecessary `list()` call on an already iterable object. |
+| `python:S7508` | `couchpotato/core/media/movie/providers/info/themoviedb.py:318` | Remove this redundant call. |
+| `python:S7508` | `couchpotato/core/plugins/renamer/cleanup.py:29` | Remove this redundant call. |
+| `python:S7508` | `couchpotato/core/plugins/renamer/cleanup.py:52` | Remove this redundant call. |
+| `python:S7632` | `scripts/seed_e2e_data.py:862` | Fix the syntax of this issue suppression comment. |
 
 ## Final measured state
 
