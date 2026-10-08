@@ -97,3 +97,29 @@ test('a second keyboard activation cannot start a conflicting restart request', 
   await expect(page.getByTestId('settings-announcer-polite')).toContainText('Restarting');
   expect(await page.evaluate(() => (window as any).__restartReloads)).toBe(1);
 });
+
+test('a stalled restart request releases the busy control and permits retry', async ({ page }) => {
+  await page.clock.install();
+  let requests = 0;
+  let firstStarted!: () => void;
+  const started = new Promise<void>(resolve => { firstStarted = resolve; });
+  await page.route('**/app.restart/**', async route => {
+    requests += 1;
+    if (requests === 1) {
+      firstStarted();
+      await new Promise<void>(() => {});
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify('restarting') });
+  });
+  const banner = await openRestartBanner(page);
+  await pressRestart(page);
+  await started;
+  await expect(banner.locator('button')).toHaveAttribute('aria-busy', 'true');
+  await page.clock.runFor(10001);
+  await expect(page.getByTestId('settings-announcer-assertive')).toContainText('Could not confirm restart');
+  await expect(banner.locator('button')).toHaveAttribute('aria-busy', 'false');
+  await expect(banner).toBeVisible();
+  await pressRestart(page);
+  await expect(banner).toBeHidden();
+  expect(requests).toBe(2);
+});

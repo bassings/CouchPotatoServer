@@ -16,7 +16,8 @@ under way.
    restart result.
 2. An HTTP error, API refusal, malformed or unexpected response, or network
    failure leaves the reminder visible, shows an announced failure and does not
-   schedule reload. The message is fixed and does not expose a response body.
+   schedule reload. A request that stalls past a bounded deadline does the same
+   and allows retry. The message is fixed and does not expose a response body.
 3. Phone-width browser tests exercise the real Settings control and the
    production response shapes, including keyboard activation and retry. A
    second activation while a request is pending sends no second request and
