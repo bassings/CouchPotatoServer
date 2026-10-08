@@ -18,6 +18,8 @@ function logsPanel() {
   return {
     logs: [],
     logLoading: false,
+    clearError: '',
+    clearingLogs: false,
     logType: 'all',
     autoRefresh: true,
     refreshTimer: null,
@@ -51,11 +53,18 @@ function logsPanel() {
     },
 
     async clearLogs() {
+      if (this.clearingLogs) return;
+      this.clearingLogs = true;
+      this.clearError = '';
       try {
-        await fetch(CP.apiBase + '/logging.clear/');
+        const resp = await fetch(CP.apiBase + '/logging.clear/');
+        const data = await resp.json();
+        if (!resp.ok || !data || data.success !== true) throw new Error('Log clear failed');
         this.logs = [];
       } catch (e) {
-        console.error('Failed to clear logs');
+        this.clearError = 'Unable to clear logs. Please try again.';
+      } finally {
+        this.clearingLogs = false;
       }
     },
 

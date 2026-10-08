@@ -207,7 +207,7 @@ class Logging(Plugin):
         return logs
 
     def clear(self, **kwargs):
-
+        failed = False
         for x in range(0, 50):
             path = '%s%s' % (Env.get('log_path'), '.%s' % x if x > 0 else '')
 
@@ -215,19 +215,19 @@ class Logging(Plugin):
                 continue
 
             try:
-
-                # Create empty file for current logging
+                # Keep the active file in place for existing logging handlers.
                 if x == 0:
-                    self.createFile(path, '')
+                    with open(path, 'w'):
+                        pass
                 else:
                     os.remove(path)
+            except Exception as exc:
+                failed = True
+                log.error('Unable to clear log file slot %s (%s)', x, type(exc).__name__)
 
-            except Exception:
-                log.error('Couldn\'t delete file "%s": %s', path, traceback.format_exc())
-
-        return {
-            'success': True
-        }
+        if failed:
+            return {'success': False, 'error': 'Unable to clear all logs'}
+        return {'success': True}
 
     def log(self, type = 'error', **kwargs):
 

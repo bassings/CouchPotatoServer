@@ -28,12 +28,14 @@
             aria-label="Refresh logs">
       Refresh
     </button>
-    <button @click="clearLogs()" 
+    <button @click="clearLogs()" :aria-disabled="clearingLogs.toString()"
             class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors" 
             aria-label="Clear all logs">
       Clear
     </button>
   </div>
+
+  <p x-show="clearError" x-text="clearError" role="alert" class="mb-4 text-xs text-cp-danger"></p>
 
   <!-- Loading state -->
   <div x-show="logLoading && logs.length === 0" class="flex items-center justify-center py-20" role="status" aria-live="polite">
