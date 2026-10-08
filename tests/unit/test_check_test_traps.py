@@ -3925,7 +3925,7 @@ class TestGitEnvIsScrubbedInTheScriptPath:
 
         assert check_test_traps._GIT_IDENTITY_PREFIXES == GIT_IDENTITY_ENV_PREFIXES
 
-    def test_an_unknown_git_variable_does_not_survive_the_scrub(self):
+    def test_an_unknown_git_variable_does_not_survive_the_scrub(self, monkeypatch):
         """The prefix tuple is not the rule; the namespace strip is.
 
         Review showed the earlier pin was insufficient: replacing the strip
@@ -3936,11 +3936,8 @@ class TestGitEnvIsScrubbedInTheScriptPath:
         subprocesses.
         """
         monkey = 'GIT_NOT_A_REAL_VARIABLE'
-        os.environ[monkey] = 'x'
-        try:
-            assert monkey not in check_test_traps._git_env(), (
-                'a GIT_* name nobody listed survived the scrub, so the strip '
-                'has drifted into a denylist of known-dangerous names'
-            )
-        finally:
-            os.environ.pop(monkey, None)
+        monkeypatch.setenv(monkey, 'x')
+        assert monkey not in check_test_traps._git_env(), (
+            'a GIT_* name nobody listed survived the scrub, so the strip '
+            'has drifted into a denylist of known-dangerous names'
+        )

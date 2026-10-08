@@ -137,12 +137,11 @@ class TestShellSafety:
             'already do.' % directives
         )
 
-    def test_is_covered_by_the_false_green_guard(self):
+    def test_is_covered_by_the_false_green_guard(self, monkeypatch):
         # The guard that requires `set -eu` has to be able to SEE this file.
         # It could not until the repo-root shell scripts were added to
         # DEFAULT_ROOTS, which is why the violation survived.
-        import sys
-        sys.path.insert(0, str(REPO_ROOT / 'scripts'))
+        monkeypatch.syspath_prepend(str(REPO_ROOT / 'scripts'))
         import check_test_traps
 
         covered = any(

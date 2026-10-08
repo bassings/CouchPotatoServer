@@ -90,10 +90,10 @@ def _run_update_library(tmp_path):
     # cleanup block and so runs either way. The regression guard for the
     # reindex-call deletion itself is the source scan in
     # TestAdapterCompatSurface below.
-    with patch.object(Manage, 'conf', lambda self, key, **kw: True), \
-         patch.object(Manage, 'directories', lambda self: [str(library)]), \
-         patch.object(Manage, 'isDisabled', lambda self: False), \
-         patch.object(Manage, 'shuttingDown', lambda self: False), \
+    with patch.object(Manage, 'conf', return_value=True), \
+         patch.object(Manage, 'directories', return_value=[str(library)]), \
+         patch.object(Manage, 'isDisabled', return_value=False), \
+         patch.object(Manage, 'shuttingDown', return_value=False), \
          patch('couchpotato.core.plugins.manage.fireEvent', side_effect=fake_fire), \
          patch('couchpotato.core.plugins.manage.get_db', return_value=FakeDB()), \
          patch('couchpotato.core.plugins.manage.Env') as env:

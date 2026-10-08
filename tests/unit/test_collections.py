@@ -127,8 +127,7 @@ class TestCollectionApi:
 
 
 class TestCollectionsUi:
-    def test_collections_page_is_routable_from_new_ui(self, tmp_path):
-        old_setting = Env.setting
+    def test_collections_page_is_routable_from_new_ui(self, tmp_path, monkeypatch):
         old_app_dir = Env.get('app_dir')
         old_web_base = getattr(Env, '_web_base', None)
         old_api_base = getattr(Env, '_api_base', None)
@@ -149,7 +148,7 @@ class TestCollectionsUi:
             return settings.get(key, kwargs.get('default', ''))
 
         try:
-            Env.setting = staticmethod(mock_setting)
+            monkeypatch.setattr(Env, 'setting', staticmethod(mock_setting))
             Env.set('web_base', '/')
             Env.set('api_base', '/api/testkey123/')
             Env.set('static_path', '/static/')
@@ -164,7 +163,6 @@ class TestCollectionsUi:
             assert 'Collections' in response.text
             assert 'hx-get="/partial/collections"' in response.text
         finally:
-            Env.setting = old_setting
             Env.set('app_dir', old_app_dir)
             Env.set('web_base', old_web_base)
             Env.set('api_base', old_api_base)
