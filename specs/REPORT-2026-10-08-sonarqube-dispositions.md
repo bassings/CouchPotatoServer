@@ -5,10 +5,12 @@
 Each result below comes from an analysis of a clean `master` checkout, with
 Python and JavaScript coverage uploaded. Issue counts use SonarQube's open,
 unresolved issue records, not a count of lines or a filtered dashboard view.
-The baseline was 685 code smells at `2b7ed668`; the final analysis is
-`775c6b05114820b7496965a988ddffacf99f6a1a`. SonarQube is a reporting
-tool for this repository, not a CI or merge gate. An open issue remains open
-when the suggested edit has no demonstrated benefit or would add risk.
+The baseline was 685 code smells at `2b7ed668`; the final analysed code
+revision is `5df3baf7d02d680346ade4e636c0bac940e30b2d`. The per-issue
+snapshot was taken at `775c6b05114820b7496965a988ddffacf99f6a1a`.
+SonarQube is a reporting tool for this repository, not a CI or merge gate.
+An open issue remains open when the suggested edit has no demonstrated benefit
+or would add risk.
 
 The earlier investigations in
 [the assessed-slices plan](PLAN-2026-09-07-sonarqube-slices.md) and
@@ -264,29 +266,33 @@ The decision states why no standalone change was made; each record stays open.
 ## Final measured state
 
 The clean `master` checkout and SonarQube scanner both identified revision
-`775c6b05114820b7496965a988ddffacf99f6a1a`. Coverage reports were
+`5df3baf7d02d680346ade4e636c0bac940e30b2d`. Coverage reports were
 uploaded and coverage measured **64.8%**, so this is not a missing-coverage
 result. The open issue response held **668 code smells** across 59 rules,
 with **zero bugs, vulnerabilities and security hotspots**. Compared with
 the 685-smell baseline, the net change is 17 fewer open records. The issue-key
 trail across the first five code PRs accounts for 23 closed records and five new
 records; #512 changed neither set, and #513 added one `typescript:S2925`
-record without closing an old one. No issue was suppressed.
+record without closing an old one. PR #514's report guard briefly added one
+`python:S9073` record; [#515](https://github.com/bassings/CouchPotatoServer/pull/515)
+closed that exact key without adding another. The final open issue keys match
+the `775c6b051` snapshot exactly. No issue was suppressed.
 
-The informational quality gate is **red for one new violation**, the
-`typescript:S2925` observation window described above. The previous
-new-code duplication failure is no longer present at this revision. CI,
-independent local reviews and cloud reviews passed before merge. The
-automatic beta build passed under the authorised release channel; production
-was not promoted or deployed.
+The informational quality gate is **green** at this revision. Its previous
+new-violation failure at the intermediate report merge closed with #515; the
+earlier new-code duplication failure is also absent. CI, independent local
+reviews and cloud reviews passed before merge. The automatic beta builds
+passed under the authorised release channel; production was not promoted or
+deployed.
 
 ## Complete open-rule inventory
 
 The disposition names correspond to the assessment sections above.
 "Local idiom, next related edit" includes the regex and syntax cautions
 called out there; it is not a recommendation to apply every suggested edit.
-This table is generated from the same open-issue response as the final totals,
-so its counts reconcile with that revision rather than an earlier snapshot.
+This table was generated from the `775c6b051` open-issue response. A key-by-key
+comparison found the final `5df3baf7d` response identical, so its counts also
+reconcile with the final analysed revision.
 
 | Rule | Severity | Open | Disposition |
 | --- | --- | ---: | --- |
