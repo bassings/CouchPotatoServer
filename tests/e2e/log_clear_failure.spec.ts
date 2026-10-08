@@ -68,6 +68,31 @@ test('standalone logs retain entries on HTTP failure and clear after retry on a 
 });
 
 for (const surface of ['settings', 'standalone']) {
+  test(`${surface} logs retain entries and warning when explicit refresh returns HTTP error`, async ({ page }) => {
+    let refreshFails = false;
+    await page.route('**/logging.partial/**', route => route.fulfill({
+      status: refreshFails ? 503 : 200, contentType: 'application/json',
+      body: JSON.stringify(refreshFails ? { success: true, log: [] } : { success: true, log: [entry] }),
+    }));
+    await page.route('**/logging.clear/**', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ success: false, error: 'Unable to clear all logs' }),
+    }));
+    await page.goto(surface === 'settings' ? '/settings/' : '/logs/');
+    if (surface === 'settings') await page.getByRole('tab', { name: 'Logs' }).click();
+    await expect(page.getByText(entry.message)).toBeVisible();
+    await page.getByRole('button', { name: surface === 'settings' ? 'Clear all logs' : 'Clear', exact: true }).click();
+    const error = page.locator('[x-show="clearError"]');
+    await expect(error).toContainText('Unable to clear all logs');
+    refreshFails = true;
+    await page.evaluate(async () => {
+      const panel = (window as any).Alpine.$data(document.querySelector('[x-data="logsPanel()"]'));
+      await panel.refresh(true); // Same forced call used by the Refresh button.
+    });
+    await expect(page.getByText(entry.message)).toBeVisible();
+    await expect(error).toBeVisible();
+  });
+
   test(`${surface} logs ignore a refresh started before a successful clear`, async ({ page }) => {
     let releaseStale!: () => void;
     let signalStale!: () => void;

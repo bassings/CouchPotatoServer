@@ -38,7 +38,7 @@ function logsPanel() {
         const typeParam = this.logType !== 'all' ? '&type=' + this.logType : '';
         const resp = await fetch(CP.apiBase + '/logging.partial/?limit=500' + typeParam);
         const data = await resp.json();
-        if (epoch === this.logEpoch && !this.clearingLogs && data.success !== false) {
+        if (epoch === this.logEpoch && !this.clearingLogs && resp.ok && data.success !== false) {
           this.logs = this.parseLogs(data.log || data.lines || []);
           if (force) this.clearError = '';
         }
