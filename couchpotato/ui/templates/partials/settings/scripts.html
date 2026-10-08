@@ -116,6 +116,7 @@ function settingsPanel() {
     browserError: '',
     browserValid: false,
     browserRequestedPath: '/',
+    browserRequestId: 0,
     browserTarget: null,
     browserParent: '/',
     browserIsRoot: true,
@@ -671,7 +672,7 @@ function settingsPanel() {
     },
 
     async loadDirectories(path) {
-      if (this.browserLoading) return;
+      const requestId = ++this.browserRequestId;
       this.browserLoading = true;
       this.browserValid = false;
       this.browserError = '';
@@ -680,6 +681,7 @@ function settingsPanel() {
       try {
         const resp = await fetch(CP.apiBase + '/directory.list/?path=' + encodeURIComponent(path));
         const data = await resp.json();
+        if (requestId !== this.browserRequestId) return;
         if (!resp.ok || !data || data.success === false || !Array.isArray(data.dirs)
             || !data.dirs.every(dir => typeof dir === 'string')
             || typeof data.parent !== 'string' || typeof data.is_root !== 'boolean') {
@@ -691,10 +693,11 @@ function settingsPanel() {
         this.browserIsRoot = data.is_root;
         this.browserValid = true;
       } catch (e) {
+        if (requestId !== this.browserRequestId) return;
         this.browserDirs = [];
         this.browserError = 'Unable to list directory';
       } finally {
-        this.browserLoading = false;
+        if (requestId === this.browserRequestId) this.browserLoading = false;
       }
     },
 

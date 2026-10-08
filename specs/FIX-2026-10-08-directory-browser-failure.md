@@ -17,6 +17,9 @@ operator to select a path that was never verified.
    previously saved form value is preserved. A later successful retry allows
    selection.
 4. Phone-width and keyboard browser tests exercise failure, retry and selection.
+5. A response from a picker that was closed while loading cannot validate a
+   newly opened picker for another field, whether the old response succeeds or
+   fails.
 
 ## Verification
 
