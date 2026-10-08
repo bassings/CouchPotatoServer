@@ -82,7 +82,7 @@ for (const surface of ['settings', 'standalone']) {
     if (surface === 'settings') await page.getByRole('tab', { name: 'Logs' }).click();
     await expect(page.getByText(entry.message)).toBeVisible();
     await page.getByRole('button', { name: surface === 'settings' ? 'Clear all logs' : 'Clear', exact: true }).click();
-    const error = page.locator('[x-show="clearError"]');
+    const error = page.locator('[x-data="logsPanel()"]').getByRole('alert');
     await expect(error).toContainText('Unable to clear all logs');
     refreshFails = true;
     await page.evaluate(async () => {
@@ -144,7 +144,7 @@ for (const surface of ['settings', 'standalone']) {
     afterFailure = true;
     const clear = page.getByRole('button', { name: surface === 'settings' ? 'Clear all logs' : 'Clear', exact: true });
     await clear.click();
-    const error = page.locator('[x-show="clearError"]');
+    const error = page.locator('[x-data="logsPanel()"]').getByRole('alert');
     await expect(error).toContainText('Unable to clear all logs');
     await page.evaluate(async () => {
       const panel = (window as any).Alpine.$data(document.querySelector('[x-data="logsPanel()"]'));
