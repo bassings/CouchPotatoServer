@@ -113,6 +113,9 @@ function settingsPanel() {
     browserPath: '/',
     browserDirs: [],
     browserLoading: false,
+    browserError: '',
+    browserValid: false,
+    browserRequestedPath: '/',
     browserTarget: null,
     browserParent: '/',
     browserIsRoot: true,
@@ -668,28 +671,42 @@ function settingsPanel() {
     },
 
     async loadDirectories(path) {
+      if (this.browserLoading) return;
       this.browserLoading = true;
+      this.browserValid = false;
+      this.browserError = '';
+      this.browserDirs = [];
+      this.browserRequestedPath = path;
       try {
         const resp = await fetch(CP.apiBase + '/directory.list/?path=' + encodeURIComponent(path));
         const data = await resp.json();
+        if (!resp.ok || !data || data.success === false || !Array.isArray(data.dirs)
+            || !data.dirs.every(dir => typeof dir === 'string')
+            || typeof data.parent !== 'string' || typeof data.is_root !== 'boolean') {
+          throw new Error('Invalid directory listing');
+        }
         this.browserPath = path;
-        this.browserDirs = data.dirs || [];
+        this.browserDirs = data.dirs;
         this.browserParent = data.parent;
         this.browserIsRoot = data.is_root;
+        this.browserValid = true;
       } catch (e) {
         this.browserDirs = [];
+        this.browserError = 'Unable to list directory';
+      } finally {
+        this.browserLoading = false;
       }
-      this.browserLoading = false;
     },
 
     goToParentDirectory() {
-      if (this.browserIsRoot || this.browserLoading) return;
+      if (this.browserIsRoot || this.browserLoading || !this.browserValid) return;
       return this.loadDirectories(this.browserParent);
     },
 
-    selectDirectory(dir) { this.loadDirectories(dir); },
+    selectDirectory(dir) { if (!this.browserLoading && this.browserValid) return this.loadDirectories(dir); },
 
     confirmDirectory() {
+      if (this.browserLoading || !this.browserValid || this.browserError) return;
       const path = this.browserPath;
       if (this.browserTarget) {
         const { section, name, index } = this.browserTarget;
