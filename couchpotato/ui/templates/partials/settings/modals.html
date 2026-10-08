@@ -6,9 +6,12 @@
      class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-lg bg-cp-warning/20 border border-cp-warning/30 backdrop-blur-sm"
      role="alert">
   <span class="text-xs text-cp-warning font-medium">Some changes need a restart to take effect.</span>
-  <button @click="restartApp()" 
-          class="px-3 py-1 rounded-md text-xs font-medium bg-cp-warning text-black hover:opacity-90 transition-opacity">
-    Restart
+  <button @click="restartApp()"
+          :aria-disabled="restartPending.toString()"
+          :aria-busy="restartPending.toString()"
+          :class="restartPending ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'"
+          class="px-3 py-1 rounded-md text-xs font-medium bg-cp-warning text-black transition-opacity"
+          x-text="restartPending ? 'Requesting restart…' : 'Restart'">
   </button>
 </div>
 

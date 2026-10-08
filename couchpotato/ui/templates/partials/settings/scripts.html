@@ -118,6 +118,7 @@ function settingsPanel() {
     saving: false,
     showAdvanced: false,
     needsRestart: false,
+    restartPending: false,
     testing: null,
     testResult: {},
     testResultDetails: {},
@@ -637,13 +638,17 @@ function settingsPanel() {
     },
 
     async restartApp() {
+      if (this.restartPending) return;
+      this.restartPending = true;
       try {
-        await fetch(CP.apiBase + '/app.restart/');
+        const resp = await fetch(CP.apiBase + '/app.restart/');
+        if (!resp.ok || await resp.json() !== 'restarting') throw new Error('Restart not confirmed');
         this.toast('Restarting…', 'success');
         this.needsRestart = false;
         setTimeout(() => location.reload(), 5000);
       } catch (e) {
-        this.toast('Restart failed', 'error');
+        this.restartPending = false;
+        this.toast('Could not confirm restart. Check server status before retrying.', 'error');
       }
     },
 
