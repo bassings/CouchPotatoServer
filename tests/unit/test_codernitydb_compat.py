@@ -9,7 +9,7 @@ import pytest
 # Add libs to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'libs'))
 
-from CodernityDB.database import Database
+from CodernityDB.database import Database, RecordDeleted
 from CodernityDB.hash_index import IU_HashIndex, IU_UniqueHashIndex, HashIndex, UniqueHashIndex
 from CodernityDB.storage import IU_Storage
 
@@ -64,7 +64,7 @@ class TestHashIndexByteHandling:
         result = db.insert({'name': 'to_delete'})
         doc = db.get('id', result['_id'])
         db.delete(doc)
-        with pytest.raises(Exception):
+        with pytest.raises(RecordDeleted):
             db.get('id', result['_id'])
         db.close()
 
