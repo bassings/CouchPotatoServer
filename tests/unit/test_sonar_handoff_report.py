@@ -13,7 +13,7 @@ SNAPSHOT = ROOT / "specs/SONAR-2026-10-08-local-issues.json"
 def test_every_local_issue_has_its_own_disposition():
     snapshot = json.loads(SNAPSHOT.read_text())
     assert snapshot["revision"] == "775c6b05114820b7496965a988ddffacf99f6a1a"
-    expected = {issue["key"]: issue for issue in snapshot["issues"]}
+    expected = {issue["sonar_issue_id"]: issue for issue in snapshot["issues"]}
     assert len(expected) == len(snapshot["issues"]) == 103
 
     section = REPORT.read_text().split("### Per-issue local dispositions\n", 1)[1]
