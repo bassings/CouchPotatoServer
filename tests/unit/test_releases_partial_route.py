@@ -16,12 +16,11 @@ from couchpotato.environment import Env
 
 
 @pytest.fixture(autouse=True)
-def env(tmp_path):
-    Env.set('web_base', '/')
-    Env.set('api_base', '/api/testkey123/')
-    Env.set('static_path', '/static/')
-    Env.set('dev', False)
-    yield
+def env(monkeypatch):
+    monkeypatch.setattr(Env, '_web_base', '/', raising=False)
+    monkeypatch.setattr(Env, '_api_base', '/api/testkey123/', raising=False)
+    monkeypatch.setattr(Env, '_static_path', '/static/', raising=False)
+    monkeypatch.setattr(Env, '_dev', False)
 
 
 @pytest.fixture
