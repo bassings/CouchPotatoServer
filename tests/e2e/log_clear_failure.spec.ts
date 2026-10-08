@@ -26,7 +26,7 @@ test('settings logs retain entries on an API refusal and clear after keyboard re
   const clear = panel.getByRole('button', { name: 'Clear all logs' });
   await clear.focus();
   await page.keyboard.press('Enter');
-  await expect(panel.getByRole('alert')).toContainText('Unable to clear logs');
+  await expect(panel.getByRole('alert')).toContainText('Unable to clear all logs');
   await expect(panel.getByText(entry.message)).toBeVisible();
 
   await clear.focus();
@@ -57,12 +57,79 @@ test('standalone logs retain entries on HTTP failure and clear after retry on a 
   const clear = page.getByRole('button', { name: 'Clear', exact: true });
   await clear.focus();
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('alert').filter({ hasText: 'Unable to clear logs' })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'Unable to clear all logs' })).toBeVisible();
   await expect(page.getByText(entry.message)).toBeVisible();
 
   await clear.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByText(entry.message)).toBeHidden();
   await expect(page.getByText('No log entries found.')).toBeVisible();
-  await expect(page.getByRole('alert').filter({ hasText: 'Unable to clear logs' })).toBeHidden();
+  await expect(page.getByRole('alert').filter({ hasText: 'Unable to clear all logs' })).toBeHidden();
 });
+
+for (const surface of ['settings', 'standalone']) {
+  test(`${surface} logs ignore a refresh started before a successful clear`, async ({ page }) => {
+    let releaseStale!: () => void;
+    let signalStale!: () => void;
+    const staleStarted = new Promise<void>(resolve => { signalStale = resolve; });
+    let holdRefresh = false;
+    await page.route('**/logging.partial/**', async route => {
+      if (holdRefresh) {
+        holdRefresh = false;
+        await new Promise<void>(resolve => { releaseStale = resolve; signalStale(); });
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ success: true, log: [entry] }),
+      });
+    });
+    await page.route('**/logging.clear/**', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+    }));
+    await page.goto(surface === 'settings' ? '/settings/' : '/logs/');
+    if (surface === 'settings') await page.getByRole('tab', { name: 'Logs' }).click();
+    await expect(page.getByText(entry.message)).toBeVisible();
+    holdRefresh = true;
+    await page.evaluate(() => {
+      const panel = (window as any).Alpine.$data(document.querySelector('[x-data="logsPanel()"]'));
+      (window as any).__staleLogRefresh = panel.refresh();
+    });
+    await staleStarted;
+    const clear = page.getByRole('button', { name: surface === 'settings' ? 'Clear all logs' : 'Clear', exact: true });
+    await clear.click();
+    await expect(page.getByText(entry.message)).toBeHidden();
+    releaseStale();
+    await page.evaluate(() => (window as any).__staleLogRefresh);
+    await expect(page.getByText(entry.message)).toBeHidden();
+    await expect(page.getByText('No log entries found.')).toBeVisible();
+  });
+
+  test(`${surface} logs keep the pre-clear display until an explicit refresh after failure`, async ({ page }) => {
+    let afterFailure = false;
+    await page.route('**/logging.partial/**', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ success: true, log: afterFailure ? [] : [entry] }),
+    }));
+    await page.route('**/logging.clear/**', route => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ success: false, error: 'Unable to clear all logs' }),
+    }));
+    await page.goto(surface === 'settings' ? '/settings/' : '/logs/');
+    if (surface === 'settings') await page.getByRole('tab', { name: 'Logs' }).click();
+    await expect(page.getByText(entry.message)).toBeVisible();
+    afterFailure = true;
+    const clear = page.getByRole('button', { name: surface === 'settings' ? 'Clear all logs' : 'Clear', exact: true });
+    await clear.click();
+    const error = page.locator('[x-show="clearError"]');
+    await expect(error).toContainText('Unable to clear all logs');
+    await page.evaluate(async () => {
+      const panel = (window as any).Alpine.$data(document.querySelector('[x-data="logsPanel()"]'));
+      await panel.refresh(); // Same default call used by the automatic timer.
+    });
+    await expect(page.getByText(entry.message)).toBeVisible();
+    await expect(error).toBeVisible();
+
+    await page.getByRole('button', { name: surface === 'settings' ? 'Refresh logs' : 'Refresh', exact: true }).click();
+    await expect(page.getByText('No log entries found.')).toBeVisible();
+    await expect(error).toBeHidden();
+  });
+}

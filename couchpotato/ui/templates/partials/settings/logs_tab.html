@@ -10,7 +10,7 @@
   <!-- Log controls -->
   <div class="flex flex-wrap items-center gap-3 mb-4">
     <label for="settings-log-level" class="sr-only">Filter by log level</label>
-    <select id="settings-log-level" x-model="logType" @change="refresh()"
+    <select id="settings-log-level" x-model="logType" @change="refresh(true)"
             class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
       <option value="all">All</option>
       <option value="error">Errors</option>
@@ -23,7 +23,7 @@
              class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
       <span>Auto-refresh</span>
     </label>
-    <button @click="refresh()" 
+    <button @click="refresh(true)"
             class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors" 
             aria-label="Refresh logs">
       Refresh

@@ -20,6 +20,7 @@ function logsPanel() {
     logLoading: false,
     clearError: '',
     clearingLogs: false,
+    logEpoch: 0,
     logType: 'all',
     autoRefresh: true,
     refreshTimer: null,
@@ -29,23 +30,28 @@ function logsPanel() {
       if (this.autoRefresh) this.startAutoRefresh();
     },
 
-    async refresh() {
+    async refresh(force = false) {
+      if (this.clearingLogs || (this.clearError && !force)) return;
+      const epoch = this.logEpoch;
       this.logLoading = true;
       try {
         const typeParam = this.logType !== 'all' ? '&type=' + this.logType : '';
         const resp = await fetch(CP.apiBase + '/logging.partial/?limit=500' + typeParam);
         const data = await resp.json();
-        if (data.success !== false) {
+        if (epoch === this.logEpoch && !this.clearingLogs && data.success !== false) {
           this.logs = this.parseLogs(data.log || data.lines || []);
+          if (force) this.clearError = '';
         }
       } catch (e) {
-        console.error('Failed to load logs', e);
+        console.error('Failed to load logs');
       }
-      this.logLoading = false;
-      this.$nextTick(() => {
-        const el = document.getElementById('log-container');
-        if (el) el.scrollTop = el.scrollHeight;
-      });
+      if (epoch === this.logEpoch) {
+        this.logLoading = false;
+        this.$nextTick(() => {
+          const el = document.getElementById('log-container');
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
     },
 
     parseLogs(lines) {
@@ -55,6 +61,8 @@ function logsPanel() {
     async clearLogs() {
       if (this.clearingLogs) return;
       this.clearingLogs = true;
+      this.logEpoch++;
+      this.logLoading = false;
       this.clearError = '';
       try {
         const resp = await fetch(CP.apiBase + '/logging.clear/');
@@ -62,7 +70,7 @@ function logsPanel() {
         if (!resp.ok || !data || data.success !== true) throw new Error('Log clear failed');
         this.logs = [];
       } catch (e) {
-        this.clearError = 'Unable to clear logs. Please try again.';
+        this.clearError = 'Unable to clear all logs. Some entries may remain. Refresh to check.';
       } finally {
         this.clearingLogs = false;
       }
