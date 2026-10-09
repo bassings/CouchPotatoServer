@@ -48,8 +48,10 @@ def test_filters_rejected_candidates_and_preserves_accepted_identity():
 
     assert result is True
     assert attempted == [accepted, final]
-    assert attempted[0] is accepted and attempted[1] is final
-    assert accepted['wait_for'] is False and final['wait_for'] is False
+    assert attempted[0] is accepted
+    assert attempted[1] is final
+    assert accepted['wait_for'] is False
+    assert final['wait_for'] is False
     assert all('wait_for' not in item for item in results[:5])
 
 
@@ -64,7 +66,8 @@ def test_waits_when_every_eligible_candidate_is_too_new():
 
     assert result is True
     assert attempted == []
-    assert young['wait_for'] is True and eligible['wait_for'] is True
+    assert young['wait_for'] is True
+    assert eligible['wait_for'] is True
 
 
 def test_one_old_candidate_releases_all_eligible_candidates_from_wait():
@@ -77,7 +80,8 @@ def test_one_old_candidate_releases_all_eligible_candidates_from_wait():
 
     assert result is False
     assert attempted == [young, old]
-    assert young['wait_for'] is True and old['wait_for'] is False
+    assert young['wait_for'] is True
+    assert old['wait_for'] is False
 
 
 def test_no_eligible_candidates_returns_false_without_dispatch():
