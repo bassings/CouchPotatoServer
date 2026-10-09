@@ -29,7 +29,7 @@ so literal extraction must preserve file safety at each boundary.
 
 - [x] I1 Add real-file characterisation and mutation proof; state: completed
 - [x] I2 Extract exact literals and verify syntax-tree equivalence and coverage; state: completed
-- [ ] I3 Complete gates, reviews, PR, merge and exact-master scan; state: building
+- [x] I3 Complete gates, reviews, PR, merge and exact-master scan; state: completed
 
 ## Conductor log
 
@@ -58,3 +58,12 @@ so literal extraction must preserve file safety at each boundary.
   literal inlining check matched the original syntax tree, targeted Ruff
   passed and `make check-traps` scanned 388 files. Final branch reviews
   remain pending.
+- 2026-10-09: Two final independent reviews were clean. PR #528 passed its
+  pre-push gate, CI and cloud reviews and merged as `c00e7b8d`. The exact
+  clean-master scan closed both targeted `python:S1192` keys, reduced open
+  issues from 626 to 624 and critical issues from 151 to 149, and passed the
+  reporting quality gate with 65.9% coverage and zero bugs, vulnerabilities
+  or security hotspots. SonarQube reassigned keys to two existing
+  `python:S1940` findings after the expressions moved three lines; their
+  messages and expressions were unchanged, so the scan introduced no
+  distinct findings.

@@ -72,6 +72,7 @@ class FileBrowser(Plugin):
         return sorted(dirs)
 
     def getFiles(self):
+        # The directory picker lists folders only; file listing is unused.
         pass
 
     def getDriveLetters(self):
