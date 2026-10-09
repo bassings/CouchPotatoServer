@@ -45,5 +45,6 @@ soft-chroot error text. These values can be shared in one bounded batch.
   with meaningful tests. This branch retains seven findings in six modules.
 - 2026-10-09: The rTorrent guard now resolves the shared scheme constant and
   still checks the tuple-prefix call. Changing the constant to a wrong scheme
-  made the guard fail; restoring it passed. Full verification, fresh coverage
-  and independent review remain pending.
+  made the guard fail; restoring it passed. Fresh `make coverage` passed with
+  4,907 Python tests; all 15 changed executable production lines are covered
+  in `coverage.xml`. Full verification and independent review remain pending.
