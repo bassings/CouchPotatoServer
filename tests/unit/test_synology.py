@@ -170,6 +170,32 @@ class TestSynologyRPCResponseContract:
         assert success != failure
 
 
+@pytest.mark.parametrize(
+    ('task_kwargs', 'response', 'log_level'),
+    [
+        ({'url': 'magnet:?xt=urn:btih:ABC'}, {'success': True}, 'info'),
+        ({'url': 'magnet:?xt=urn:btih:ABC'}, {'success': False, 'error': {'code': 400}}, 'error'),
+        ({'filename': 'movie.nzb', 'filedata': b'nzb'}, {'success': True}, 'info'),
+    ],
+)
+def test_create_task_reports_exact_server_response_on_each_submission_path(
+    task_kwargs, response, log_level,
+):
+    rpc = SynologyRPC('mynas', 5000)
+    rpc.sid = 'session'
+
+    with patch.object(rpc, '_login', return_value=True), \
+         patch.object(rpc, '_req', return_value=response) as request, \
+         patch.object(rpc, '_logout') as logout, \
+         patch.object(synology_module, 'log') as log:
+        result = rpc.create_task(**task_kwargs)
+
+    assert result is response['success']
+    request.assert_called_once()
+    logout.assert_called_once_with()
+    getattr(log, log_level).assert_any_call('Response: %s', response)
+
+
 class TestSynologyInterruptPropagation:
     """A return in ``finally`` must not turn process cancellation into a
     routine Synology failure.  ``KeyboardInterrupt`` is intentionally outside
