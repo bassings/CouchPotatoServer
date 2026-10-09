@@ -636,6 +636,25 @@ def _shell_sets_pipefail(shell_value: str) -> bool | None:
     return "pipefail" in value
 
 
+def _default_run_shell(defaults, inherited_shell):
+    if isinstance(defaults, yaml.MappingNode):
+        for dk, dv in defaults.value:
+            if dk.value == "run" and isinstance(dv, yaml.MappingNode):
+                for rk, rv in dv.value:
+                    if rk.value == "shell" and isinstance(rv, yaml.ScalarNode):
+                        inherited_shell = rv.value
+    return inherited_shell
+
+
+def _step_run(keys, inherited_shell):
+    run_node = keys.get("run")
+    if not isinstance(run_node, yaml.ScalarNode):
+        return None
+    own = keys.get("shell")
+    shell = own.value if isinstance(own, yaml.ScalarNode) else inherited_shell
+    return run_node, shell
+
+
 def _iter_run_steps(node, inherited_shell=None):
     """Yield (run_scalar_node, effective_shell) for every `run:` in a workflow.
 
@@ -654,23 +673,12 @@ def _iter_run_steps(node, inherited_shell=None):
         keys = {k.value: v for k, v in node.value if isinstance(k, yaml.ScalarNode)}
 
         # `defaults: run: shell:` at this level applies to everything below it.
-        shell_here = inherited_shell
-        defaults = keys.get("defaults")
-        if isinstance(defaults, yaml.MappingNode):
-            for dk, dv in defaults.value:
-                if dk.value == "run" and isinstance(dv, yaml.MappingNode):
-                    for rk, rv in dv.value:
-                        if rk.value == "shell" and isinstance(rv, yaml.ScalarNode):
-                            shell_here = rv.value
+        shell_here = _default_run_shell(keys.get("defaults"), inherited_shell)
 
         # A step: `run:` plus optionally its own `shell:`, in any key order.
-        run_node = keys.get("run")
-        if isinstance(run_node, yaml.ScalarNode):
-            step_shell = shell_here
-            own = keys.get("shell")
-            if isinstance(own, yaml.ScalarNode):
-                step_shell = own.value
-            yield run_node, step_shell
+        step = _step_run(keys, shell_here)
+        if step is not None:
+            yield step
 
         for _k, value in node.value:
             yield from _iter_run_steps(value, shell_here)
@@ -718,6 +726,43 @@ def _has_unquoted_redirect(line: str) -> bool:
     return False
 
 
+def _check_workflow_run(run_node, shell_value):
+    pipefail = _shell_sets_pipefail(shell_value) if shell_value else False
+    if pipefail is None:
+        return  # not a shell whose pipeline status we police
+    body = run_node.value
+
+    # For a block scalar (`|`/`>`) the value starts on the line AFTER the
+    # indicator; for an inline value it starts on the mark's own line.
+    block = run_node.style in ("|", ">")
+    first_content_line = run_node.start_mark.line + (1 if block else 0)
+
+    lines = body.split("\n")
+
+    # Rule 7 runs unconditionally per shell run-step — an unquoted `>`/`>=`
+    # on a `pip install` line has nothing to do with pipefail, so it must
+    # not be hidden behind the pipefail early-exit below.
+    for local_no, logical in join_continuations(lines):
+        cleaned = strip_shell_comments(logical)
+        if PIP_INSTALL_RE.search(cleaned) and _has_unquoted_redirect(cleaned):
+            yield (first_content_line + local_no, PIP_INSTALL_REDIRECT_MESSAGE)
+
+    if pipefail or _has_pipefail(body):
+        return
+
+    for local_no, logical in join_continuations(lines):
+        cleaned = strip_shell_comments(logical)
+        if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
+            yield (
+                first_content_line + local_no,
+                "workflow step pipes a test/verification command into a filter "
+                "without `pipefail` — GitHub's default shell is `bash -e`, which "
+                "does not set it, so the step passes even when the runner fails. "
+                "Add `set -o pipefail` at the top of the run block, or declare "
+                "`shell: bash` (which is `-eo pipefail`).",
+            )
+
+
 def check_workflow(path: Path, text: str):
     """GitHub's DEFAULT shell is `bash -e` — pipefail is not set unless asked for."""
     if yaml is None:
@@ -740,40 +785,7 @@ def check_workflow(path: Path, text: str):
         return
 
     for run_node, shell_value in _iter_run_steps(root):
-        pipefail = _shell_sets_pipefail(shell_value) if shell_value else False
-        if pipefail is None:
-            continue  # not a shell whose pipeline status we police
-        body = run_node.value
-
-        # For a block scalar (`|`/`>`) the value starts on the line AFTER the
-        # indicator; for an inline value it starts on the mark's own line.
-        block = run_node.style in ("|", ">")
-        first_content_line = run_node.start_mark.line + (1 if block else 0)
-
-        lines = body.split("\n")
-
-        # Rule 7 runs unconditionally per shell run-step — an unquoted `>`/`>=`
-        # on a `pip install` line has nothing to do with pipefail, so it must
-        # not be hidden behind the pipefail early-exit below.
-        for local_no, logical in join_continuations(lines):
-            cleaned = strip_shell_comments(logical)
-            if PIP_INSTALL_RE.search(cleaned) and _has_unquoted_redirect(cleaned):
-                yield (first_content_line + local_no, PIP_INSTALL_REDIRECT_MESSAGE)
-
-        if pipefail or _has_pipefail(body):
-            continue
-
-        for local_no, logical in join_continuations(lines):
-            cleaned = strip_shell_comments(logical)
-            if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
-                yield (
-                    first_content_line + local_no,
-                    "workflow step pipes a test/verification command into a filter "
-                    "without `pipefail` — GitHub's default shell is `bash -e`, which "
-                    "does not set it, so the step passes even when the runner fails. "
-                    "Add `set -o pipefail` at the top of the run block, or declare "
-                    "`shell: bash` (which is `-eo pipefail`).",
-                )
+        yield from _check_workflow_run(run_node, shell_value)
 
 
 def check_git_hook(path: Path):
@@ -1084,33 +1096,7 @@ def _e2e_ast_payload(path: Path, text: str):
     return None, detail
 
 
-def check_e2e_ast_traps(path: Path, text: str):
-    """Run the TypeScript AST guard and enforce stable legacy wait identities."""
-    node = shutil.which("node")
-    if node is None:
-        yield (
-            1,
-            "cannot check Playwright false-green traps: node is not installed, "
-            "so the TypeScript AST guard cannot run.",
-        )
-        return
-    payload, detail = _e2e_ast_payload(path, text)
-    if payload is None:
-        yield (1, "TypeScript AST guard failed to run: %s" % detail)
-        return
-    if payload.get("parseErrors"):
-        yield (1, "TypeScript AST guard found %d parse error(s); refusing to scan a partial tree."
-               % payload["parseErrors"])
-        return
-    if payload.get("sourceFileCount") != 1 or payload.get("unexpectedHostReads") != 0:
-        yield (
-            1,
-            "TypeScript AST guard escaped its stdin-only boundary: loaded %s source files "
-            "and attempted %s unexpected host read(s)."
-            % (payload.get("sourceFileCount"), payload.get("unexpectedHostReads")),
-        )
-        return
-
+def _e2e_wait_findings(path, payload):
     try:
         relative = path.resolve().relative_to(REPO_ROOT).as_posix()
     except ValueError:
@@ -1149,6 +1135,7 @@ def check_e2e_ast_traps(path: Path, text: str):
             % (identity[0], identity[1], identity[2], expected, actual),
         )
 
+def _e2e_guard_findings(payload):
     for finding in payload.get("findings", []):
         line_no = int(finding["line"])
         kind = finding["kind"]
@@ -1178,6 +1165,37 @@ def check_e2e_ast_traps(path: Path, text: str):
                 "was swallowed as null/undefined; let the wait fail or assert the "
                 "response unconditionally.",
             )
+
+
+def check_e2e_ast_traps(path: Path, text: str):
+    """Run the TypeScript AST guard and enforce stable legacy wait identities."""
+    node = shutil.which("node")
+    if node is None:
+        yield (
+            1,
+            "cannot check Playwright false-green traps: node is not installed, "
+            "so the TypeScript AST guard cannot run.",
+        )
+        return
+    payload, detail = _e2e_ast_payload(path, text)
+    if payload is None:
+        yield (1, "TypeScript AST guard failed to run: %s" % detail)
+        return
+    if payload.get("parseErrors"):
+        yield (1, "TypeScript AST guard found %d parse error(s); refusing to scan a partial tree."
+               % payload["parseErrors"])
+        return
+    if payload.get("sourceFileCount") != 1 or payload.get("unexpectedHostReads") != 0:
+        yield (
+            1,
+            "TypeScript AST guard escaped its stdin-only boundary: loaded %s source files "
+            "and attempted %s unexpected host read(s)."
+            % (payload.get("sourceFileCount"), payload.get("unexpectedHostReads")),
+        )
+        return
+
+    yield from _e2e_wait_findings(path, payload)
+    yield from _e2e_guard_findings(payload)
 
 
 def _is_e2e_spec(path: Path) -> bool:
@@ -1304,44 +1322,49 @@ def _live_region_bindings(source):
     return None
 
 
-def check_live_region_visibility(_path: Path, text: str):
-    """Flag a live region asserted by TEXT but never by VISIBILITY.
+def _valid_live_region_payload(payload):
+    return (isinstance(payload, dict) and not payload.get("parseErrors")
+            and payload.get("sourceFileCount") == 1
+            and payload.get("unexpectedHostReads") == 0)
 
-    Text, accessible-name/description, and value matchers read content without
-    proving it is visible, so a spec that only reads content cannot tell a
-    working announcement from one nobody can see. Found twice on one branch (#311):
-    hiding the device code box, and then the status message beside it, each
-    left every spec green. The axe scans do not cover the gap either, because
-    axe skips hidden subtrees.
 
-    Scoped per ELEMENT and resolved LEXICALLY. Accepting any `toBeVisible`
-    anywhere in the file let one element's assertion cover its neighbour, and
-    a file-wide name map let a rebound variable carry the old element's
-    assertions with it. Both made this rule unable to fail on the code that
-    motivated it.
-    """
-    lines = strip_js_comments(text)
-    if not any(t in "\n".join(lines) for t in _LIVE_REGION_TESTIDS):
-        return
+def _record_ast_live_region_assertion(assertion, text_line, has_visibility):
+    matcher = str(assertion.get("matcher", ""))
+    negative = bool(assertion.get("negative"))
+    for testid in assertion.get("testids", []):
+        if matcher in {"toBeVisible", "toBeHidden"}:
+            has_visibility.add(testid)
+        elif matcher in _CONTENT_MATCHERS and not negative:
+            text_line.setdefault(testid, int(assertion["line"]))
 
+
+def _ast_live_region_assertions(path: Path, text: str):
     if shutil.which("node") is not None:
-        payload, _detail = _e2e_ast_payload(_path, text)
-        if (isinstance(payload, dict) and not payload.get("parseErrors")
-                and payload.get("sourceFileCount") == 1
-                and payload.get("unexpectedHostReads") == 0):
+        payload, _detail = _e2e_ast_payload(path, text)
+        if _valid_live_region_payload(payload):
             text_line = {}
             has_visibility = set()
             for assertion in payload.get("assertions", []):
-                matcher = str(assertion.get("matcher", ""))
-                negative = bool(assertion.get("negative"))
-                for testid in assertion.get("testids", []):
-                    if matcher in {"toBeVisible", "toBeHidden"}:
-                        has_visibility.add(testid)
-                    elif matcher in _CONTENT_MATCHERS and not negative:
-                        text_line.setdefault(testid, int(assertion["line"]))
-            yield from _live_region_findings(text_line, has_visibility)
-            return
+                _record_ast_live_region_assertion(assertion, text_line, has_visibility)
+            return text_line, has_visibility
+    return None
 
+
+def _record_live_region_assertion(source, idx, in_scope, text_line, has_visibility):
+    for var, testids in in_scope.items():
+        if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):
+            continue
+        visible = 'toBeVisible' in source or 'toBeHidden' in source
+        texty = (any(m in source for m in _CONTENT_MATCHERS)
+                 and 'not.' not in source)
+        for testid in testids:
+            if visible:
+                has_visibility.add(testid)
+            elif texty:
+                text_line.setdefault(testid, idx + 1)
+
+
+def _lexical_live_region_assertions(lines):
     in_scope = {}
     text_line = {}
     has_visibility = set()
@@ -1362,17 +1385,35 @@ def check_live_region_visibility(_path: Path, text: str):
             in_scope[var] = found
             continue
 
-        for var, testids in in_scope.items():
-            if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):
-                continue
-            visible = 'toBeVisible' in source or 'toBeHidden' in source
-            texty = (any(m in source for m in _CONTENT_MATCHERS)
-                     and 'not.' not in source)
-            for testid in testids:
-                if visible:
-                    has_visibility.add(testid)
-                elif texty:
-                    text_line.setdefault(testid, idx + 1)
+        _record_live_region_assertion(source, idx, in_scope, text_line, has_visibility)
+
+    return text_line, has_visibility
+
+
+def check_live_region_visibility(_path: Path, text: str):
+    """Flag a live region asserted by TEXT but never by VISIBILITY.
+
+    Text, accessible-name/description, and value matchers read content without
+    proving it is visible, so a spec that only reads content cannot tell a
+    working announcement from one nobody can see. Found twice on one branch (#311):
+    hiding the device code box, and then the status message beside it, each
+    left every spec green. The axe scans do not cover the gap either, because
+    axe skips hidden subtrees.
+
+    Scoped per ELEMENT and resolved LEXICALLY. Accepting any `toBeVisible`
+    anywhere in the file let one element's assertion cover its neighbour, and
+    a file-wide name map let a rebound variable carry the old element's
+    assertions with it. Both made this rule unable to fail on the code that
+    motivated it.
+    """
+    lines = strip_js_comments(text)
+    if not any(t in "\n".join(lines) for t in _LIVE_REGION_TESTIDS):
+        return
+
+    assertions = _ast_live_region_assertions(_path, text)
+    if assertions is None:
+        assertions = _lexical_live_region_assertions(lines)
+    text_line, has_visibility = assertions
 
     yield from _live_region_findings(text_line, has_visibility)
 
@@ -1559,6 +1600,21 @@ def _mask_jinja(body: str) -> str:
     return JINJA_TAG_RE.sub(_sub, body)
 
 
+def _inside_spans(index: int, spans) -> bool:
+    return any(start <= index < end for start, end in spans)
+
+
+def _script_block_kind(attrs, body: str) -> str:
+    if "src" in attrs:
+        return "skip-src"
+    if not body.strip():
+        return "skip-empty"
+    script_type = attrs.get("type", "")
+    if script_type not in JS_SCRIPT_TYPES:
+        return f"skip-type:{script_type}"
+    return "module" if script_type == "module" else "classic"
+
+
 def _iter_script_blocks(text: str):
     """Yield (html_line, kind, body) per `<script>` — html_line is where the
     body starts. `kind` is `"classic"`/`"module"`, or `"skip-*"` (external
@@ -1586,25 +1642,12 @@ def _iter_script_blocks(text: str):
     # node reads that block the way a browser does.
     comment_spans = [m.span() for m in HTML_COMMENT_RE.finditer(text)]
 
-    def _inside_comment(index: int) -> bool:
-        return any(start <= index < end for start, end in comment_spans)
-
     for m in SCRIPT_TAG_RE.finditer(text):
-        if _inside_comment(m.start()):
+        if _inside_spans(m.start(), comment_spans):
             continue
         attrs, body = _parse_attrs(m.group(1)), m.group(2)
         line = text.count("\n", 0, m.start(2)) + 1
-        if "src" in attrs:
-            yield (line, "skip-src", body)
-            continue
-        if not body.strip():
-            yield (line, "skip-empty", body)
-            continue
-        script_type = attrs.get("type", "")
-        if script_type not in JS_SCRIPT_TYPES:
-            yield (line, f"skip-type:{script_type}", body)
-            continue
-        yield (line, "module" if script_type == "module" else "classic", body)
+        yield (line, _script_block_kind(attrs, body), body)
 
     # Every `<script` opener NOT inside a matched element lost its body to a
     # missing or malformed `</script>`. Report it, so an extraction failure is
@@ -1621,7 +1664,7 @@ def _iter_script_blocks(text: str):
     # stay trustworthy.
     element_spans = [m.span() for m in SCRIPT_TAG_RE.finditer(text)]
     for opener in SCRIPT_OPEN_RE.finditer(text):
-        if _inside_comment(opener.start()):
+        if _inside_spans(opener.start(), comment_spans):
             continue
         if any(start <= opener.start() < end for start, end in element_spans):
             continue
