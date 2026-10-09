@@ -6,8 +6,6 @@ from pathlib import Path
 import pytest
 
 
-pytest_plugins = ['pytester']
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 

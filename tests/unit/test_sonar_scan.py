@@ -715,6 +715,40 @@ def test_ce_client_error_preserves_previous_stamp(tmp_path, code, message):
     assert stamp.read_text() == "previous\n"
 
 
+@pytest.mark.parametrize("code", [401, 404, 503])
+def test_ce_http_error_closes_response_stream(code):
+    stream = BytesIO(b"private response content")
+    errors = []
+
+    def failed_request(request, timeout):
+        error = HTTPError(request.full_url, code, "failure", {}, stream)
+        errors.append(error)
+        raise error
+
+    error = sonar_scan.TransientCEError if code == 503 else sonar_scan.ScanError
+    with pytest.raises(error):
+        sonar_scan.read_ce_status(Request("http://example.test/api/ce/task"), 1, failed_request)
+
+    assert errors and stream.closed
+
+
+def test_ce_http_error_keeps_poll_failure_when_stream_close_fails():
+    class BrokenClose(BytesIO):
+        def close(self):
+            super().close()
+            raise OSError("socket close failed")
+
+    stream = BrokenClose(b"private response content")
+
+    def failed_request(request, timeout):
+        raise HTTPError(request.full_url, 503, "unavailable", {}, stream)
+
+    with pytest.raises(sonar_scan.TransientCEError):
+        sonar_scan.read_ce_status(Request("http://example.test/api/ce/task"), 1, failed_request)
+
+    assert stream.closed
+
+
 @pytest.mark.parametrize(
     "first_failure",
     ["unreadable", "truncated", "bad-status-line", "line-too-long", "transport", "http-503"],

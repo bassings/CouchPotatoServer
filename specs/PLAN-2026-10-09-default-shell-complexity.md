@@ -27,7 +27,7 @@ one. The remaining issue UUID is
 ## Tasks
 
 - [x] D1 Characterise default-shell edge cases and make the focused change
-- [ ] D2 Complete gate, review, PR, merge and exact-master scan
+- [x] D2 Complete gate, review, PR, merge and exact-master scan; state: merged
 
 ## Conductor log
 
@@ -39,3 +39,9 @@ one. The remaining issue UUID is
   passed, with all nine changed executable lines covered. Old and new
   checkers matched on 3,007 generated and repository workflow inputs.
   `make check-traps` passed across 390 files; Ruff and the secret scan passed.
+- 2026-10-09: PR #533 passed the full gate, two independent local reviews,
+  CI and cloud review, then merged as `0a908e769`. The exact clean-master
+  scan closed the targeted `S3776` UUID with no new records, 609 to 608 open
+  findings, 134 to 133 critical, 66.5% coverage and a green gate.
+  Post-merge CI, CodeQL and the automatic beta build passed. No production
+  deployment occurred.
