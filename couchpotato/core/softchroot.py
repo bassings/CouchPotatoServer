@@ -1,6 +1,8 @@
 import os
 import sys
 
+_NOT_INITIALIZED_MESSAGE = 'SoftChroot is not initialized'
+
 
 class SoftChrootInitError(IOError):
     """Error during soft-chroot initialization"""
@@ -125,7 +127,7 @@ class SoftChroot:
             RuntimeError: when `SoftChroot` is not initialized OR enabled
         """
         if None == self.enabled:
-            raise RuntimeError('SoftChroot is not initialized')
+            raise RuntimeError(_NOT_INITIALIZED_MESSAGE)
         if not self.enabled:
             raise RuntimeError('SoftChroot is not enabled')
 
@@ -134,7 +136,7 @@ class SoftChroot:
     def is_root_abs(self, abspath):
         """ Checks whether absolute path @abspath is the root in the soft-chrooted environment"""
         if None == self.enabled:
-            raise RuntimeError('SoftChroot is not initialized')
+            raise RuntimeError(_NOT_INITIALIZED_MESSAGE)
 
         if None == abspath:
             raise ValueError('abspath can not be None')
@@ -151,7 +153,7 @@ class SoftChroot:
     def is_subdir(self, abspath):
         """ Checks whether @abspath is subdir (on any level) of soft-chroot"""
         if None == self.enabled:
-            raise RuntimeError('SoftChroot is not initialized')
+            raise RuntimeError(_NOT_INITIALIZED_MESSAGE)
 
         if None == abspath:
             return False
@@ -172,7 +174,7 @@ class SoftChroot:
         """
 
         if None == self.enabled:
-            raise RuntimeError('SoftChroot is not initialized')
+            raise RuntimeError(_NOT_INITIALIZED_MESSAGE)
         if not self.enabled:
             return path
 
@@ -211,7 +213,7 @@ class SoftChroot:
         """ Converts absolute path to chrooted path"""
 
         if None == self.enabled:
-            raise RuntimeError('SoftChroot is not initialized')
+            raise RuntimeError(_NOT_INITIALIZED_MESSAGE)
 
         if None == path:
             raise ValueError('path is empty')

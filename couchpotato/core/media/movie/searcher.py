@@ -22,6 +22,8 @@ from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
+_MEDIA_ID_DESCRIPTION = 'The id of the media'
+
 autoload = 'MovieSearcher'
 
 
@@ -45,7 +47,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         addApiView('movie.searcher.try_next', self.tryNextReleaseView, docs = {
             'desc': 'Marks the snatched results as ignored and try the next best release',
             'params': {
-                'media_id': {'desc': 'The id of the media'},
+                'media_id': {'desc': _MEDIA_ID_DESCRIPTION},
             },
         })
 
@@ -54,7 +56,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                     "movie's landed release as failed, resets the movie to active, and "
                     "immediately triggers a manual re-search.",
             'params': {
-                'media_id': {'desc': 'The id of the media'},
+                'media_id': {'desc': _MEDIA_ID_DESCRIPTION},
             },
         })
 
@@ -64,7 +66,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                     "already 'done' or awaiting review, so a better copy can be "
                     "found later and picked by hand.",
             'params': {
-                'media_id': {'desc': 'The id of the media'},
+                'media_id': {'desc': _MEDIA_ID_DESCRIPTION},
             },
         })
 
