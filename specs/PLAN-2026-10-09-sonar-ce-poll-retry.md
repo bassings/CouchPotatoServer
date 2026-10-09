@@ -29,7 +29,7 @@ upload completed.
 
 - [x] P1 Add failing transient-retry and bounded-failure tests.
 - [x] P2 Implement bounded retries and pass focused and full gates.
-- [ ] P3 Complete independent review, PR, CI, merge and post-merge scan. — state: building
+- [ ] P3 Complete independent review, PR, CI, merge and post-merge scan; state: building
 
 ## Conductor log
 
@@ -40,3 +40,11 @@ upload completed.
 - 2026-10-09: Independent review reproduced an unknown CE status leaking response content into stderr. A new test failed with a private-path marker, the error was made generic, all 112 scanner tests passed, and a deliberate reintroduction of the leak failed the new test. Repeat local review is required before pushing.
 - 2026-10-09: PR #519 cloud review found `http.client.IncompleteRead` escaping when a CE response ends before its declared length. A response-read test failed with the raw exception, then passed after classifying it as transient. All 113 scanner tests pass; removing the new catch makes that test fail. Repeat local review is required before the fix push.
 - 2026-10-09: Two local reviewers found the next HTTP parser subclass, `BadStatusLine`, still escaped and could expose server-supplied text. The exception policy now catches the `HTTPException` family instead of individual subclasses. Recovery tests for `IncompleteRead`, `BadStatusLine` and `LineTooLong`, plus a bounded private-marker timeout test, failed before the class-level fix and pass after it. All 116 scanner tests pass; removing the family catch makes four cases fail. Repeat local review is required before pushing.
+- 2026-10-09: PR #519 merged as `6fb95aac`. Its exact clean-master scan
+  showed that the critical `poll_ce_task` complexity warning remains at 16,
+  one above the permitted 15. It also showed one new minor `python:S5713`
+  warning because `URLError` derives from `OSError`, leaving the new-code
+  quality gate in error. The follow-up removes the redundant class and moves
+  the two identical deadline checks into a small helper. This preserves the
+  same monotonic-clock calls, timeout text and poll boundary. Focused tests,
+  full gate, review and post-merge confirmation are required again.
