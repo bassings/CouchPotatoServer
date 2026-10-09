@@ -28,7 +28,7 @@ quote or comment can hide an actual runner or browser assertion.
 
 - [x] T1 Characterise both lexers and prove tests catch a mutation; state: verified
 - [x] T2 Refactor both lexers and pass focused checks; state: completed
-- [ ] T3 Complete full gate, review, PR, CI, merge and exact-master scan; state: building
+- [x] T3 Complete full gate, review, PR, CI, merge and exact-master scan; state: completed
 
 ## Conductor log
 
@@ -45,3 +45,8 @@ quote or comment can hide an actual runner or browser assertion.
   generated inputs, all 312 focused trap-checker tests and `make check-traps`
   passed, and the full `make verify` gate passed before rebase onto the next
   clean master. Independent review and post-rebase verification remain.
+- 2026-10-09: PR #525 merged as `0b888c8d` after two clean final reviews,
+  the pre-push gate, PR CI and cloud review. Its exact clean-master scan closed
+  both targeted critical `python:S3776` issue keys, introduced no issue keys,
+  reduced open issues to 635 and critical issues to 160, and passed the
+  quality gate. No production deployment was made.

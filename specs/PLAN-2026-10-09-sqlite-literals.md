@@ -26,7 +26,7 @@ return the wrong media or release record.
 
 - [x] D1 Share the five exact literal values; state: verified
 - [x] D2 Verify query behaviour, mutation results and full gate; state: verified
-- [ ] D3 Complete independent review, PR, CI, merge and post-merge scan; state: queued
+- [x] D3 Complete independent review, PR, CI, merge and post-merge scan; state: completed
 
 ## Conductor log
 
@@ -51,3 +51,7 @@ return the wrong media or release record.
   311 UI unit tests, 227 desktop browser tests, 2 isolation tests, 24 phone
   tests and 126 accessibility tests. The non-blocking security-lint inventory
   reported 137 existing findings.
+- 2026-10-09: Two independent local reviews, PR #521 checks and cloud review
+  passed. The change merged as `9c28e5ee`. The exact clean-master scan closed
+  all five targeted critical issue keys, found no new issues and passed the
+  quality gate. No production deployment occurred.
