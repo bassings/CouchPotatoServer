@@ -2106,9 +2106,12 @@ class TestRTorrentDownloaderConnect:
         assert check.func.attr == 'startswith'
         assert len(check.args) == 1
         assert isinstance(check.args[0], ast.Tuple)
-        assert [item.value for item in check.args[0].elts] == [
-            'httprpc://', 'httprpc+https://'
-        ]
+        scheme, secure_scheme = check.args[0].elts
+        assert isinstance(scheme, ast.Name)
+        assert scheme.id == '_HTTPRPC_SCHEME'
+        assert rtorrent_module._HTTPRPC_SCHEME == 'httprpc://'
+        assert isinstance(secure_scheme, ast.Constant)
+        assert secure_scheme.value == 'httprpc+https://'
 
     def test_connect_succeeds_when_client_version_call_works(self):
         rt = self._make_downloader()

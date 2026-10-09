@@ -12,8 +12,6 @@ from .index import CategoryIndex, CategoryMediaIndex
 
 log = CPLog(__name__)
 
-_FAILED_LOG_FORMAT = 'Failed: %s'
-
 
 class CategoryPlugin(Plugin):
 
@@ -83,7 +81,7 @@ class CategoryPlugin(Plugin):
                     'category': c
                 }
             except Exception:
-                log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+                log.error('Failed: %s', traceback.format_exc())
 
         return {
             'success': False,
@@ -107,7 +105,7 @@ class CategoryPlugin(Plugin):
                 'success': True
             }
         except Exception:
-            log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+            log.error('Failed: %s', traceback.format_exc())
 
         return {
             'success': False
@@ -136,7 +134,7 @@ class CategoryPlugin(Plugin):
                 'message': message
             }
         except Exception:
-            log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+            log.error('Failed: %s', traceback.format_exc())
 
         return {
             'success': False
@@ -153,4 +151,4 @@ class CategoryPlugin(Plugin):
                     movie['category_id'] = None
                     db.update(movie)
         except Exception:
-            log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+            log.error('Failed: %s', traceback.format_exc())

@@ -16,8 +16,6 @@ log = CPLog(__name__)
 
 autoload = 'XBMC'
 
-_KODI_ERROR_FORMAT = 'Kodi error; %s: %s (%s)'
-
 
 class XBMC(Notification):
 
@@ -65,7 +63,7 @@ class XBMC(Notification):
                     if result.get('result') and result['result'] == 'OK':
                         successful += 1
                     elif result.get('error'):
-                        log.error(_KODI_ERROR_FORMAT, result['id'], result['error']['message'], result['error']['code'])
+                        log.error('Kodi error; %s: %s (%s)', result['id'], result['error']['message'], result['error']['code'])
 
             except Exception:
                 log.error('Failed parsing results: %s', traceback.format_exc())
@@ -99,7 +97,7 @@ class XBMC(Notification):
                         success = True
                         break
                     elif r.get('error'):
-                        log.error(_KODI_ERROR_FORMAT, r['id'], r['error']['message'], r['error']['code'])
+                        log.error('Kodi error; %s: %s (%s)', r['id'], r['error']['message'], r['error']['code'])
                         break
 
             elif result.get('result') and type(result['result']['version']).__name__ == 'dict':
@@ -122,12 +120,12 @@ class XBMC(Notification):
                         success = True
                         break
                     elif r.get('error'):
-                        log.error(_KODI_ERROR_FORMAT, r['id'], r['error']['message'], r['error']['code'])
+                        log.error('Kodi error; %s: %s (%s)', r['id'], r['error']['message'], r['error']['code'])
                         break
 
             # error getting version info (we do have contact with Kodi though)
             elif result.get('error'):
-                log.error(_KODI_ERROR_FORMAT, result['id'], result['error']['message'], result['error']['code'])
+                log.error('Kodi error; %s: %s (%s)', result['id'], result['error']['message'], result['error']['code'])
 
         log.debug('Use JSON notifications: %s ', self.use_json_notifications)
 

@@ -12,8 +12,6 @@ from .index import ProfileIndex
 
 log = CPLog(__name__)
 
-_FAILED_LOG_FORMAT = 'Failed: %s'
-
 
 # Seeded on a fresh install by ProfilePlugin.fill().
 #
@@ -143,7 +141,7 @@ class ProfilePlugin(Plugin):
                     media['profile_id'] = default_id
                     db.update(media)
         except Exception:
-            log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+            log.error('Failed: %s', traceback.format_exc())
 
         # Cleanup profiles that have empty qualites
         profiles = self.all()
@@ -155,7 +153,7 @@ class ProfilePlugin(Plugin):
                     p['qualities'] = [x for x in p['qualities'] if (x != '' and x != '-1')]
                     db.update(p)
             except Exception:
-                log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+                log.error('Failed: %s', traceback.format_exc())
 
     def allView(self, **kwargs):
 
@@ -240,7 +238,7 @@ class ProfilePlugin(Plugin):
                 'profile': p
             }
         except Exception:
-            log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+            log.error('Failed: %s', traceback.format_exc())
 
         return {
             'success': False
@@ -270,7 +268,7 @@ class ProfilePlugin(Plugin):
                 'success': True
             }
         except Exception:
-            log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+            log.error('Failed: %s', traceback.format_exc())
 
         return {
             'success': False
@@ -300,7 +298,7 @@ class ProfilePlugin(Plugin):
                 'message': message
             }
         except Exception:
-            log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+            log.error('Failed: %s', traceback.format_exc())
 
         return {
             'success': False
@@ -318,6 +316,6 @@ class ProfilePlugin(Plugin):
 
             return True
         except Exception:
-            log.error(_FAILED_LOG_FORMAT, traceback.format_exc())
+            log.error('Failed: %s', traceback.format_exc())
 
         return False
