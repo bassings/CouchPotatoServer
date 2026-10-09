@@ -41,3 +41,10 @@ module has 7 uncovered of 13. The three new TMDB chart lines are covered.
 - 2026-10-09: Both independent local reviews are clean after correcting a
   false-green failure test. The full `make verify` gate passed, including
   browser, phone-width and accessibility checks.
+- 2026-10-09: Cloud review on PR #524 found that plugin construction leaked
+  base event handlers into the process-wide registry. A new shared fixture
+  clones handler lists for the release and collection tests. The unisolated
+  release test failed before the fix; disabling the fixture made both test
+  groups fail, and restoring it passed all 18 focused tests. The second full
+  `make verify` gate and two independent local re-reviews passed before the
+  fix push.

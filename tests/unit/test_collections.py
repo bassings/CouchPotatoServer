@@ -18,7 +18,8 @@ def db(tmp_path):
 
 
 @pytest.fixture
-def collections_plugin(db):
+def collections_plugin(db, isolated_event_registry):
+    live_events, original_events = isolated_event_registry
     old_db = Env.get('db')
     old_api = dict(api)
     old_locks = dict(api_locks)
@@ -28,6 +29,7 @@ def collections_plugin(db):
 
     from couchpotato.core.plugins.collection import CollectionPlugin
     CollectionPlugin()
+    assert live_events == original_events
 
     yield db
 

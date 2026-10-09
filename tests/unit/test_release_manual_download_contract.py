@@ -9,7 +9,10 @@ import pytest
 release_main = import_module('couchpotato.core.plugins.release.main')
 
 
-def test_release_registers_the_manual_download_route_with_its_documented_id(monkeypatch):
+def test_release_registers_the_manual_download_route_with_its_documented_id(
+    monkeypatch, isolated_event_registry,
+):
+    live_events, original_events = isolated_event_registry
     routes = []
     events = []
     scheduled = []
@@ -28,6 +31,7 @@ def test_release_registers_the_manual_download_route_with_its_documented_id(monk
     monkeypatch.setattr(release_main, 'fireEvent', schedule)
 
     release = release_main.Release()
+    assert live_events == original_events
 
     manual = [(name, handler, docs) for name, handler, docs in routes if name == 'release.manual_download']
     assert len(manual) == 1

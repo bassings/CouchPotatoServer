@@ -12,6 +12,22 @@ import pytest
 from couchpotato.core.logger import reset_log_suppression
 from tests.conftest import GIT_IDENTITY_ENV_PREFIXES
 
+
+@pytest.fixture
+def isolated_event_registry(monkeypatch):
+    """Let plugin registrations run without changing earlier tests' handlers."""
+    import couchpotato.core.event as event_module
+
+    live_registry = event_module.events
+    original = {name: list(handlers) for name, handlers in live_registry.items()}
+    monkeypatch.setattr(
+        event_module,
+        'events',
+        {name: list(handlers) for name, handlers in live_registry.items()},
+    )
+    yield live_registry, original
+    assert live_registry == original
+
 # Git sets GIT_DIR (and its siblings) in the environment of hook subprocesses
 # launched from a `git worktree` checkout -- but not from the main checkout.
 # `pre-push` runs `make verify`, which runs this suite, so a push made from a
