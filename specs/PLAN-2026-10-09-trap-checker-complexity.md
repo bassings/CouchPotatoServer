@@ -9,7 +9,9 @@ The exact clean-master scan at `c00e7b8d` reports five critical
 These checks are merge safeguards. A refactor must not make a bad workflow,
 Playwright test or inline script pass silently.
 
-Targeted issue keys: `4eb95e12-433d-4b11-bd45-dfa4f201cac8`,
+SonarQube issue UUIDs for the post-merge comparison:
+
+`4eb95e12-433d-4b11-bd45-dfa4f201cac8`,
 `f709fda9-a373-4bfa-94b9-2d1d60487076`,
 `fce372de-4179-4bbc-8dc8-98e738c84769`,
 `ec1ffa14-d665-4f4a-b934-a6b1f958cca9` and
