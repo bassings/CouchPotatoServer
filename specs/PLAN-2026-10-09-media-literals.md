@@ -19,9 +19,9 @@ changing the documented API or response text.
 
 ## Tasks
 
-- [x] M1 Replace all six repeated values. — state: building
-- [x] M2 Verify and independently review the branch. — state: building
-- [ ] M3 Deliver PR and confirm post-merge analysis. — state: building
+- [x] M1 Replace all six repeated values; state: verified
+- [x] M2 Verify and independently review the branch; state: verified
+- [x] M3 Deliver PR and confirm post-merge analysis; state: complete
 
 ## Conductor log
 
@@ -39,3 +39,9 @@ changing the documented API or response text.
   4,833 Python unit tests, 42 integration tests, 311 UI unit tests, 227 desktop,
   2 isolation, 24 phone-width and 126 accessibility browser tests. Repeat
   local review of this status update is required before push.
+- 2026-10-09: PR #520 merged as `2b304a29` after PR CI and cloud review passed.
+  The exact clean-master scan closed all six targeted `python:S1192` issue
+  records with no new findings. Open issues fell from 659 to 653, critical
+  issues from 183 to 177, and measured coverage rose from 65.2% to 65.3%.
+  The SonarQube quality gate, post-merge CI, CodeQL and the automatic beta
+  build all passed. No production deployment was made.

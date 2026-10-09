@@ -21,6 +21,10 @@ from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
+RELEASE_ID_DESCRIPTION = 'ID of the release object in release-table'
+RELEASE_FAILURE_LOG = 'Failed: %s'
+MANUAL_DOWNLOAD_EVENT = 'release.manual_download'
+
 
 def copyIdentity(files):
     """A stable identity for the COPY a scan found, or None if undecidable.
@@ -97,28 +101,28 @@ class Release(Plugin):
     }
 
     def __init__(self):
-        addApiView('release.manual_download', self.manualDownload, docs = {
+        addApiView(MANUAL_DOWNLOAD_EVENT, self.manualDownload, docs = {
             'desc': 'Send a release manually to the downloaders',
             'params': {
-                'id': {'type': 'id', 'desc': 'ID of the release object in release-table'}
+                'id': {'type': 'id', 'desc': RELEASE_ID_DESCRIPTION}
             }
         })
         addApiView('release.delete', self.deleteView, docs = {
             'desc': 'Delete releases',
             'params': {
-                'id': {'type': 'id', 'desc': 'ID of the release object in release-table'}
+                'id': {'type': 'id', 'desc': RELEASE_ID_DESCRIPTION}
             }
         })
         addApiView('release.ignore', self.ignore, docs = {
             'desc': 'Toggle ignore, for bad or wrong releases',
             'params': {
-                'id': {'type': 'id', 'desc': 'ID of the release object in release-table'}
+                'id': {'type': 'id', 'desc': RELEASE_ID_DESCRIPTION}
             }
         })
         addApiView('release.failed', self.failedView, docs = {
             'desc': 'Mark a release as failed (Downloaded/review workflow per-release "Mark failed" action)',
             'params': {
-                'id': {'type': 'id', 'desc': 'ID of the release object in release-table'}
+                'id': {'type': 'id', 'desc': RELEASE_ID_DESCRIPTION}
             }
         })
 
@@ -374,7 +378,7 @@ class Release(Plugin):
 
                 return True
             except Exception:
-                log.error('Failed: %s', traceback.format_exc())
+                log.error(RELEASE_FAILURE_LOG, traceback.format_exc())
 
         return False
 
@@ -395,7 +399,7 @@ class Release(Plugin):
             log.debug('Already deleted: %s', release_id)
             return True
         except Exception:
-            log.error('Failed: %s', traceback.format_exc())
+            log.error(RELEASE_FAILURE_LOG, traceback.format_exc())
 
         return False
 
@@ -424,7 +428,7 @@ class Release(Plugin):
 
             return True
         except Exception:
-            log.error('Failed: %s', traceback.format_exc())
+            log.error(RELEASE_FAILURE_LOG, traceback.format_exc())
 
         return False
 
@@ -441,7 +445,7 @@ class Release(Plugin):
                 'success': True
             }
         except Exception:
-            log.error('Failed: %s', traceback.format_exc())
+            log.error(RELEASE_FAILURE_LOG, traceback.format_exc())
 
         return {
             'success': False
@@ -463,7 +467,7 @@ class Release(Plugin):
                 'success': bool(id) and self.updateStatus(id, 'failed')
             }
         except Exception:
-            log.error('Failed: %s', traceback.format_exc())
+            log.error(RELEASE_FAILURE_LOG, traceback.format_exc())
 
         return {
             'success': False
@@ -478,7 +482,7 @@ class Release(Plugin):
             item = release['info']
             movie = db.get('id', release['media_id'])
 
-            fireEvent(NOTIFY_FRONTEND, type = 'release.manual_download', data = True, message = 'Snatching "%s"' % item['name'])
+            fireEvent(NOTIFY_FRONTEND, type = MANUAL_DOWNLOAD_EVENT, data = True, message = 'Snatching "%s"' % item['name'])
 
             # Get matching provider
             provider = fireEvent('provider.belongs_to', item['url'], provider = item.get('provider'), single = True)
@@ -489,7 +493,7 @@ class Release(Plugin):
             success = self.download(data = item, media = movie, manual = True)
 
             if success:
-                fireEvent(NOTIFY_FRONTEND, type = 'release.manual_download', data = True, message = 'Successfully snatched "%s"' % item['name'])
+                fireEvent(NOTIFY_FRONTEND, type = MANUAL_DOWNLOAD_EVENT, data = True, message = 'Successfully snatched "%s"' % item['name'])
 
             return {
                 'success': success == True
@@ -750,7 +754,7 @@ class Release(Plugin):
 
                 return found_releases
             except Exception:
-                log.error('Failed: %s', traceback.format_exc())
+                log.error(RELEASE_FAILURE_LOG, traceback.format_exc())
 
         return []
 
@@ -817,7 +821,7 @@ class Release(Plugin):
         except ConflictError:
             log.warning('Gave up updating release %s status after retries due to persistent contention', release_id)
         except Exception:
-            log.error('Failed: %s', traceback.format_exc())
+            log.error(RELEASE_FAILURE_LOG, traceback.format_exc())
 
         return False
 

@@ -14,6 +14,10 @@ from .index import CollectionIndex
 
 log = CPLog(__name__)
 
+COLLECTION_ID_REQUIRED = 'Collection id is required'
+COLLECTION_LOCK_KEY = 'collection-%s'
+COLLECTION_NOT_FOUND = 'Collection not found'
+
 
 class CollectionPlugin(Plugin):
 
@@ -108,15 +112,15 @@ class CollectionPlugin(Plugin):
     def update(self, id='', name='', description='', **kwargs):
         name = self._clean_name(name)
         if not id:
-            return self._error('Collection id is required')
+            return self._error(COLLECTION_ID_REQUIRED)
         if not name:
             return self._error('Collection name is required')
 
-        with media_lock('collection-%s' % id):
+        with media_lock(COLLECTION_LOCK_KEY % id):
             try:
                 collection = self._get_collection(id)
             except Exception:
-                return self._error('Collection not found')
+                return self._error(COLLECTION_NOT_FOUND)
 
             collection['name'] = name
             collection['description'] = self._clean_description(description)
@@ -128,21 +132,21 @@ class CollectionPlugin(Plugin):
 
     def delete(self, id='', **kwargs):
         if not id:
-            return self._error('Collection id is required')
+            return self._error(COLLECTION_ID_REQUIRED)
         try:
             collection = self._get_collection(id)
         except Exception:
-            return self._error('Collection not found')
+            return self._error(COLLECTION_NOT_FOUND)
         get_db().delete(collection)
         return {'success': True}
 
     def addMedia(self, id='', media_id='', **kwargs):
         if not id:
-            return self._error('Collection id is required')
+            return self._error(COLLECTION_ID_REQUIRED)
         if not media_id:
             return self._error('Media id is required')
 
-        with media_lock('collection-%s' % id):
+        with media_lock(COLLECTION_LOCK_KEY % id):
             try:
                 collection = self._get_collection(id)
                 self._get_media(media_id)
@@ -161,15 +165,15 @@ class CollectionPlugin(Plugin):
 
     def removeMedia(self, id='', media_id='', **kwargs):
         if not id:
-            return self._error('Collection id is required')
+            return self._error(COLLECTION_ID_REQUIRED)
         if not media_id:
             return self._error('Media id is required')
 
-        with media_lock('collection-%s' % id):
+        with media_lock(COLLECTION_LOCK_KEY % id):
             try:
                 collection = self._get_collection(id)
             except Exception:
-                return self._error('Collection not found')
+                return self._error(COLLECTION_NOT_FOUND)
 
             media_ids = [x for x in (collection.get('media_ids', []) or []) if x != media_id]
             if media_ids != collection.get('media_ids', []):
