@@ -997,6 +997,32 @@ def test_strip_shell_comments_respects_quotes():
     assert blanked.count('"') == 2
 
 
+@pytest.mark.parametrize(
+    ("source", "expected", "blanked"),
+    [
+        (r"echo \#literal # real", r"echo \#literal ", r"echo \#literal "),
+        ('echo "a \\" # b" # real', 'echo "a \\" # b" ', 'echo "        " '),
+        ("PAT='\\'  # hidden", "PAT='\\'  ", "PAT=' '  "),
+    ],
+)
+def test_strip_shell_comments_keeps_escaped_hashes_and_quote_boundaries(source, expected, blanked):
+    assert check_test_traps.strip_shell_comments(source) == expected
+    assert check_test_traps.strip_shell_comments(source, blank_strings=True) == blanked
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("const u = 'http://x/'; // ignore\nread();", ["const u = 'http://x/'; ", "read();"]),
+        ("// /* hidden\nrun();", ["", "run();"]),
+        ("const a = `one\n// text`;\nrun();", ["const a = `one", "// text`;", "run();"]),
+        ("/* hidden\nstill hidden */ run();", ["", " run();"]),
+    ],
+)
+def test_strip_js_comments_preserves_string_and_comment_state_across_lines(source, expected):
+    assert check_test_traps.strip_js_comments(source) == expected
+
+
 def test_pipefail_is_detected_in_every_real_form_and_not_when_disabled():
     has = check_test_traps._has_pipefail
     for setting in (
