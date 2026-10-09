@@ -48,3 +48,7 @@ module has 7 uncovered of 13. The three new TMDB chart lines are covered.
   groups fail, and restoring it passed all 18 focused tests. The second full
   `make verify` gate and two independent local re-reviews passed before the
   fix push.
+- 2026-10-09: Cloud re-review accepted the registry fix and repeated a
+  non-blocking test-quality observation: the release route test pinned the
+  unrelated total event count. Removed that count; 51 focused release,
+  collection and event-system tests passed.

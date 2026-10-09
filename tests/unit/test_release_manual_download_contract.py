@@ -14,14 +14,15 @@ def test_release_registers_the_manual_download_route_with_its_documented_id(
 ):
     live_events, original_events = isolated_event_registry
     routes = []
-    events = []
     scheduled = []
 
     def register_route(name, handler, docs):
         routes.append((name, handler, docs))
 
     def register_event(name, handler, **kwargs):
-        events.append((name, handler, kwargs))
+        assert isinstance(name, str)
+        assert callable(handler)
+        assert set(kwargs) <= {'priority'}
 
     def schedule(event, *args, **kwargs):
         scheduled.append((event, args, kwargs))
@@ -40,7 +41,6 @@ def test_release_registers_the_manual_download_route_with_its_documented_id(
         'type': 'id',
         'desc': 'ID of the release object in release-table',
     }
-    assert len(events) == 11
     assert scheduled == [
         ('schedule.interval', ('movie.clean_releases', release.cleanDone), {'hours': 12}),
     ]
