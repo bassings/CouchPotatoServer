@@ -145,6 +145,7 @@ class YarrProvider(Provider):
             return []
 
     def buildUrl(self, *args, **kwargs):
+        # Providers that need a request URL supply their own implementation.
         pass
 
     def login(self):

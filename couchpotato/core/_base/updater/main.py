@@ -182,6 +182,7 @@ class BaseUpdater(Plugin):
         return 'base'
 
     def doUpdate(self):
+        # Concrete updater types implement their own update action.
         pass
 
     def info(self):
@@ -197,9 +198,11 @@ class BaseUpdater(Plugin):
         }
 
     def getVersion(self):
+        # Concrete updater types determine the installed version.
         pass
 
     def check(self):
+        # Concrete updater types check their own update source.
         pass
 
 
