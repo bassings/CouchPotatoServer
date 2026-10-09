@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
@@ -352,7 +352,7 @@ def read_ce_status(request: Request, timeout: float, open_url: Callable) -> str:
         if 500 <= exc.code < 600:
             raise TransientCEError from exc
         raise ScanError(f"SonarQube CE request failed with HTTP {exc.code}; retry the scan") from exc
-    except (HTTPException, URLError, OSError, ValueError, TypeError) as exc:
+    except (HTTPException, OSError, ValueError, TypeError) as exc:
         raise TransientCEError from exc
 
     try:
@@ -362,6 +362,13 @@ def read_ce_status(request: Request, timeout: float, open_url: Callable) -> str:
     if not isinstance(status, str):
         raise ScanError("SonarQube CE returned malformed task data; no freshness stamp written")
     return status
+
+
+def ce_poll_remaining(config: Config, started: float, monotonic: Callable[[], float]) -> float:
+    remaining = config.poll_timeout - (monotonic() - started)
+    if remaining <= 0:
+        raise ScanError("SonarQube CE task timed out; check the task on the server and retry the scan")
+    return remaining
 
 
 def poll_ce_task(
@@ -383,9 +390,7 @@ def poll_ce_task(
     started = monotonic()
 
     while True:
-        remaining = config.poll_timeout - (monotonic() - started)
-        if remaining <= 0:
-            raise ScanError("SonarQube CE task timed out; check the task on the server and retry the scan")
+        remaining = ce_poll_remaining(config, started, monotonic)
         request = Request(url, headers={"Authorization": f"Basic {authorization}"})
         try:
             status = read_ce_status(request, min(10.0, remaining), open_url)
@@ -397,9 +402,7 @@ def poll_ce_task(
             raise ScanError(f"SonarQube CE task ended {status}; inspect server logs and retry the scan")
         if status is not None and status not in ACTIVE_CE_STATES:
             raise ScanError("SonarQube CE returned an unknown status; no freshness stamp written")
-        remaining = config.poll_timeout - (monotonic() - started)
-        if remaining <= 0:
-            raise ScanError("SonarQube CE task timed out; check the task on the server and retry the scan")
+        remaining = ce_poll_remaining(config, started, monotonic)
         sleep(min(config.poll_interval, remaining))
 
 
