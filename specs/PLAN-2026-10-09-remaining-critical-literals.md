@@ -28,7 +28,7 @@ soft-chroot error text. These values can be shared in one bounded batch.
 
 - [x] R1 Inventory the seven covered literal call sites and preserve their exact values; state: completed
 - [x] R2 Substitute module constants and verify AST equivalence and focused behaviour; state: completed
-- [ ] R3 Complete full gate, local reviews, PR, CI, merge and exact-master scan; state: queued
+- [x] R3 Complete full gate, local reviews, PR, CI, merge and exact-master scan; state: completed
 
 ## Conductor log
 
@@ -51,3 +51,8 @@ soft-chroot error text. These values can be shared in one bounded batch.
   phone-width and accessibility browser suites. Two preliminary independent
   reviews found no actionable issue; the branch rebased cleanly onto the
   merged shell-gate batch. Final branch review remains pending.
+- 2026-10-09: Two final local reviews and the pre-push full gate passed. PR
+  #527 passed CI and cloud review and merged as `049f6edd`. Its exact
+  clean-master scan closed all seven targeted critical `python:S1192` issue
+  keys, found no new keys and passed the quality gate. Open critical findings
+  fell from 158 to 151. No production deployment was made.
