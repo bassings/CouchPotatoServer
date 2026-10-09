@@ -1,6 +1,9 @@
 from .main import Plex
 
 
+_MYPLEX_REQUIRED_DESCRIPTION = 'Required for myPlex'
+
+
 def autoload():
     return Plex()
 
@@ -41,14 +44,14 @@ config = [{
                     'name': 'username',
                     'label': 'Username',
                     'default': '',
-                    'description': 'Required for myPlex'
+                    'description': _MYPLEX_REQUIRED_DESCRIPTION
                 },
                 {
                     'name': 'password',
                     'label': 'Password',
                     'default': '',
                     'type': 'password',
-                    'description': 'Required for myPlex'
+                    'description': _MYPLEX_REQUIRED_DESCRIPTION
                 },
                 {
                     'name': 'auth_token',
@@ -56,7 +59,7 @@ config = [{
                     'label': 'Auth Token',
                     'default': '',
                     'advanced': True,
-                    'description': 'Required for myPlex'
+                    'description': _MYPLEX_REQUIRED_DESCRIPTION
                 },
                 {
                     'name': 'clients',

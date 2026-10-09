@@ -27,7 +27,7 @@ be simplified together without relaxing the false-green guard.
 
 - [x] S1 Characterise shell-gate behaviour and mutation-prove tests; state: completed
 - [x] S2 Refactor both functions with unchanged outputs; state: completed
-- [ ] S3 Complete gates, reviews, PR, merge and exact-master scan; state: building
+- [x] S3 Complete gates, reviews, PR, merge and exact-master scan; state: completed
 
 ## Conductor log
 
@@ -47,3 +47,10 @@ be simplified together without relaxing the false-green guard.
   desktop, phone and accessibility browser suites. The branch rebased cleanly
   onto the merged lexer batch. Focused post-rebase verification and final
   branch reviews are pending.
+- 2026-10-09: The post-rebase trap-checker suite passed all 318 tests and
+  `make check-traps` scanned 387 files. Two independent final reviews were
+  clean, and the pre-push full gate passed. PR #526 passed CI and cloud review
+  and merged as `d76f31e1`. The exact clean-master scan closed both targeted
+  critical `python:S3776` issue keys, found no new issue keys and passed the
+  quality gate. Open critical findings fell from 160 to 158. No production
+  deployment was made.

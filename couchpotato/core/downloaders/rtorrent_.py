@@ -24,6 +24,8 @@ log = CPLog(__name__)
 
 autoload = 'rTorrent'
 
+_HTTPRPC_SCHEME = 'httprpc://'
+
 # Fields fetched (in this exact order) for every torrent by get_torrents().
 # Matches what getAllDownloadStatus()/getTorrentStatus() below read off each
 # returned torrent object.
@@ -323,10 +325,10 @@ class rTorrent(DownloaderBase):
         url = cleanHost(self.conf('host'), protocol = True, ssl = self.conf('ssl'))
 
         # Automatically add '+https' to 'httprpc' protocol if SSL is enabled
-        if self.conf('ssl') and url.startswith('httprpc://'):
-            url = url.replace('httprpc://', 'httprpc+https://')
+        if self.conf('ssl') and url.startswith(_HTTPRPC_SCHEME):
+            url = url.replace(_HTTPRPC_SCHEME, 'httprpc+https://')
 
-        is_httprpc = url.startswith(('httprpc://', 'httprpc+https://'))
+        is_httprpc = url.startswith((_HTTPRPC_SCHEME, 'httprpc+https://'))
         url = _rewrite_httprpc_url(url)
 
         parsed = urlparse(url)
