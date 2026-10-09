@@ -39,3 +39,8 @@ substitution within its original module.
   After inlining those constants, each module's syntax tree matches
   `origin/master`. Targeted Ruff, `git diff --check` and 299 focused unit
   tests passed. Full verification and independent review are pending.
+- 2026-10-09: The previous full-suite `coverage.xml` marks only 8 of 34
+  executable lines touched by substitutions as covered. This estimates a
+  new-coverage gate risk rather than the branch's final coverage. Add focused
+  behaviour tests or reduce the slice before delivery; verify the resulting
+  changed-line coverage from a fresh report.
