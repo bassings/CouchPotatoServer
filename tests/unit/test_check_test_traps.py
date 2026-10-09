@@ -1039,6 +1039,38 @@ def test_pipefail_is_detected_in_every_real_form_and_not_when_disabled():
     assert not has('echo "set -o pipefail"'), "a string literal must not count"
 
 
+@pytest.mark.parametrize(
+    ('source', 'expected'),
+    [
+        ('set -eu; set -o pipefail', True),
+        ('set +o pipefail; set -eu', False),
+        ('echo "set -o pipefail"; set -eu', False),
+        ('set -eu \\\n-o pipefail', True),
+    ],
+)
+def test_pipefail_scan_respects_command_and_continuation_boundaries(source, expected):
+    assert check_test_traps._has_pipefail(source) is expected
+
+
+@pytest.mark.parametrize(
+    ('shebang', 'expected_line', 'message_fragment'),
+    [
+        ('#!/bin/bash', 3, 'Add `set -o pipefail`'),
+        ('#!/bin/sh', 3, 'bash-only'),
+    ],
+)
+def test_shell_gate_reports_one_runner_pipe_finding_with_shell_specific_advice(
+    shebang, expected_line, message_fragment,
+):
+    source = f'{shebang}\nset -eu\npytest tests/ | tail -1\n'
+
+    findings = list(check_test_traps.check_shell_script(Path('gate.sh'), source))
+
+    assert len(findings) == 1
+    assert findings[0][0] == expected_line
+    assert message_fragment in findings[0][1]
+
+
 def test_makefile_pipe_outside_a_recipe_line_is_not_flagged(tmp_path):
     """A variable assignment is not a shell command."""
     makefile = tmp_path / "Makefile"

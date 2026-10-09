@@ -387,52 +387,66 @@ def join_continuations(lines: list[str]) -> list[tuple[int, str]]:
     return joined
 
 
-def _has_pipefail(text: str) -> bool:
-    """True only if `pipefail` is actually SET.
+def _is_shell_option_word(option: str) -> bool:
+    flags = option[1:]
+    return not (
+        len(option) < 1
+        or option[0] not in "+-"
+        or not flags.isascii()
+        or (flags and not flags.isalpha())
+    )
 
-    A mention in a comment does not count, and neither does one inside a string
-    literal — both were live false-green holes.
-    """
+
+def _is_lowercase_option_name(words: list[str], index: int) -> bool:
+    return (
+        index < len(words)
+        and words[index].isascii()
+        and words[index].isalpha()
+        and words[index].islower()
+    )
+
+
+def _scan_set_options_for_pipefail(words: list[str], index: int) -> tuple[bool, int]:
+    while index < len(words):
+        option = words[index]
+        if not _is_shell_option_word(option):
+            break
+        if (
+            option.startswith("-")
+            and "o" in option[1:]
+            and index + 1 < len(words)
+            and words[index + 1] == "pipefail"
+        ):
+            return True, index
+        index += 1
+        if _is_lowercase_option_name(words, index):
+            index += 1
+    return False, index
+
+
+def _set_command_enables_pipefail(words: list[str]) -> bool:
+    search_at = 0
+    while search_at < len(words):
+        try:
+            set_at = words.index("set", search_at)
+        except ValueError:
+            break
+        found, index = _scan_set_options_for_pipefail(words, set_at + 1)
+        if found:
+            return True
+        # Resume after the options already classified, including embedded
+        # `set` words, instead of rescanning each suffix.
+        search_at = max(index, set_at + 1)
+    return False
+
+
+def _has_pipefail(text: str) -> bool:
+    """True only if `pipefail` is actually set, outside comments and strings."""
     cleaned = [strip_shell_comments(ln, blank_strings=True) for ln in text.split("\n")]
     for _line_number, line in join_continuations(cleaned):
         for command in line.replace(";", "\n").splitlines():
-            words = command.split()
-            search_at = 0
-            while search_at < len(words):
-                try:
-                    set_at = words.index("set", search_at)
-                except ValueError:
-                    break
-                index = set_at + 1
-                while index < len(words):
-                    option = words[index]
-                    flags = option[1:]
-                    if (
-                        len(option) < 1
-                        or option[0] not in "+-"
-                        or not flags.isascii()
-                        or (flags and not flags.isalpha())
-                    ):
-                        break
-                    if (
-                        option.startswith("-")
-                        and "o" in flags
-                        and index + 1 < len(words)
-                        and words[index + 1] == "pipefail"
-                    ):
-                        return True
-                    index += 1
-                    if (
-                        index < len(words)
-                        and words[index].isascii()
-                        and words[index].isalpha()
-                        and words[index].islower()
-                    ):
-                        index += 1
-                # The option scan has already classified every word through
-                # ``index``. Resume there rather than reconsidering each
-                # embedded ``set`` and rescanning its entire suffix.
-                search_at = max(index, set_at + 1)
+            if _set_command_enables_pipefail(command.split()):
+                return True
     return False
 
 
@@ -511,102 +525,70 @@ def _has_real_pipeline(lines: list[str]) -> bool:
     return False
 
 
+def _runner_pipe_lines(lines: list[str], has_pipefail: bool) -> list[int]:
+    if has_pipefail:
+        return []
+    line_numbers = []
+    for line_no, logical in join_continuations(lines):
+        cleaned = strip_shell_comments(logical)
+        if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
+            line_numbers.append(line_no)
+    return line_numbers
+
+
+def _flags_in_set_command(tokens: list[str]) -> set[str]:
+    if not tokens or tokens[0] != "set":
+        return set()
+    enabled = set()
+    for token in tokens[1:]:
+        if token == "--":
+            # End options for this command only; later commands start fresh.
+            break
+        if token.startswith("-") and not token.startswith("--"):
+            enabled.update(token[1:])
+        elif token in ("errexit", "nounset"):
+            enabled.add({"errexit": "e", "nounset": "u"}[token])
+    return enabled
+
+
+def _enabled_shell_flags(lines: list[str]) -> set[str]:
+    # Blank quoted hints before reading `set` options, and split commands so
+    # `sort -u` cannot supply a flag that belongs to a preceding `set -e`.
+    set_lines = [
+        strip_shell_comments(line, blank_strings=True)
+        for line in lines if re.search(r"(?:^|[;&|])\s*set\s+-", line)
+    ]
+    enabled = set()
+    for set_line in set_lines:
+        for command in re.split(r"[;&|]+", set_line):
+            enabled.update(_flags_in_set_command(command.split()))
+    return enabled
+
+
+def _missing_shell_gate_options(
+    lines: list[str], is_posix_sh: bool, has_pipefail: bool, runner_pipes: list[int],
+) -> list[str]:
+    enabled = _enabled_shell_flags(lines)
+    missing = []
+    if "e" not in enabled:
+        missing.append("-e (exit on error)")
+    if "u" not in enabled:
+        missing.append("-u (error on unset variable)")
+    if not is_posix_sh and not has_pipefail and _has_real_pipeline(lines) and not runner_pipes:
+        missing.append("pipefail (a failing command in a pipeline is otherwise ignored)")
+    return missing
+
+
 def check_shell_script(path: Path, text: str):
     """Rules 2 and 3 for a shell script."""
     lines = text.split("\n")
     shebang = lines[0] if lines else ""
     is_posix_sh = "/bin/sh" in shebang and "bash" not in shebang
     has_pipefail = _has_pipefail(text)
+    runner_pipes = _runner_pipe_lines(lines, has_pipefail)
 
-    # Rule 2 candidates are computed first: when a runner pipe is present, the
-    # specific finding is reported at its line and `pipefail` is dropped from the
-    # generic rule-3 message, so one fix is never reported twice.
-    runner_pipes = []
-    if not has_pipefail:
-        for line_no, logical in join_continuations(lines):
-            cleaned = strip_shell_comments(logical)
-            if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
-                runner_pipes.append(line_no)
-
-    # Rule 3 — the gate's own options.
-    #
-    # `pipefail` IS required when the script contains a real pipeline. That
-    # requirement was briefly dropped because it false-positived on `case a|b)`
-    # and on `|` inside quoted strings — but that lost genuine coverage: a
-    # `docker build ... | tee` or `./guardrails.sh | grep -c FAIL` swallows its
-    # exit code just as thoroughly as pytest does, and RUNNER_RE will never list
-    # every command. Now that comment/string stripping is quote-aware, the
-    # requirement is back without the false positives.
     if shebang.startswith("#!") and ("bash" in shebang or "/bin/sh" in shebang):
-        missing = []
-        # blank_strings=True, like the pipefail check three rules up. Without
-        # it, `set -e; echo "run with set -u for stricter checking"` counted
-        # the `-u` INSIDE the string and the file came back clean -- the exact
-        # false-green class strip_shell_comments' own docstring records
-        # (`echo "hint: add set -o pipefail"` silenced rule 2 for a whole
-        # file), reintroduced two rules away by omitting one keyword.
-        #
-        # Kept per-line rather than joined, so a `--` on one `set` line cannot
-        # terminate option parsing for a later one.
-        set_lines_list = [
-            strip_shell_comments(ln, blank_strings=True)
-            for ln in lines if re.search(r"(?:^|[;&|])\s*set\s+-", ln)
-        ]
-        # Tokenised rather than pattern-matched against the whole line.
-        # Two false positives on correct scripts, both from a BLOCKING gate,
-        # and both because the old regexes anchored on `set -<cluster>`:
-        #
-        #   set -o errexit -o nounset   -> flagged "missing -e". `nounset` was
-        #                                  accepted as a long form and
-        #                                  `errexit` was not, so the checker
-        #                                  rejected the most explicit correct
-        #                                  spelling of what it demands.
-        #   set -e -u                   -> flagged "missing -u". Separate
-        #                                  clusters do not sit adjacent to the
-        #                                  word `set`, so only the first was
-        #                                  ever read.
-        #
-        # A false positive here is not a harmless nag: the reader "fixes" a
-        # correct script to satisfy the gate, or learns to bypass the gate.
-        enabled = set()
-        for set_line in set_lines_list:
-            # Split into COMMANDS first, and read only the arguments of the
-            # ones that are actually `set`. Tokenising the whole line counted
-            # flags belonging to the next command: measured,
-            # `set -e; sort -u /etc/hosts` came back CLEAN, because `sort`'s
-            # `-u` was read as `set -u`. A blocking gate passing a script that
-            # genuinely lacks `-u` -- and a REGRESSION, since the regex this
-            # tokeniser replaced flagged it correctly.
-            #
-            # Splitting also removes the trailing `;` that `set -o nounset;`
-            # used to carry, so no separate strip is needed, and it makes `--`
-            # end options for ITS OWN command rather than for the rest of the
-            # line (`set -- alpha; set -eu` was being reported as missing
-            # both).
-            for command in re.split(r"[;&|]+", set_line):
-                tokens = command.split()
-                if not tokens or tokens[0] != "set":
-                    continue
-                for token in tokens[1:]:
-                    if token == "--":
-                        # End of options: everything after it is a POSITIONAL
-                        # parameter, not a flag. `set -- -e -u` sets $1 and $2
-                        # and enables nothing; it was read as `set -eu`.
-                        break
-                    if token.startswith("-") and not token.startswith("--"):
-                        # A flag cluster: `-eu`, `-e`, `-euo`. `+e` DISABLES
-                        # and is deliberately not read as enabling.
-                        enabled.update(token[1:])
-                    elif token in ("errexit", "nounset"):
-                        # Long forms, as in `set -o errexit`.
-                        enabled.add({"errexit": "e", "nounset": "u"}[token])
-
-        if "e" not in enabled:
-            missing.append("-e (exit on error)")
-        if "u" not in enabled:
-            missing.append("-u (error on unset variable)")
-        if not is_posix_sh and not has_pipefail and _has_real_pipeline(lines) and not runner_pipes:
-            missing.append("pipefail (a failing command in a pipeline is otherwise ignored)")
+        missing = _missing_shell_gate_options(lines, is_posix_sh, has_pipefail, runner_pipes)
         if missing:
             yield (
                 1,
@@ -618,7 +600,6 @@ def check_shell_script(path: Path, text: str):
 
     for line_no in runner_pipes:
         yield (line_no, _runner_pipe_message(is_posix_sh))
-
 
 def check_makefile(path: Path, text: str):
     """Every recipe line runs in its own shell, so pipefail is never inherited."""
