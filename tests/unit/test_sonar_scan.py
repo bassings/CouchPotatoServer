@@ -12,9 +12,10 @@ import subprocess
 import sys
 import time
 from email.message import Message
+from http.client import BadStatusLine, IncompleteRead, LineTooLong
 from io import BytesIO
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import BaseHandler, ProxyHandler, Request, build_opener
 from urllib.response import addinfourl
 
@@ -676,18 +677,124 @@ def test_malformed_ce_response_preserves_previous_stamp(tmp_path, payload):
     assert stamp.read_text() == "previous\n"
 
 
-def test_ce_auth_failure_preserves_previous_stamp(tmp_path):
+def test_unknown_ce_status_does_not_disclose_response_data(tmp_path):
+    cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
+    stamp = tmp_path / ".sonar-last-analysis"
+    stamp.write_text("previous\n")
+    private_marker = "/private/media/library-owner"
+
+    with pytest.raises(sonar_scan.ScanError, match="unknown status") as error:
+        sonar_scan.run_scan(
+            cfg,
+            run=commands,
+            open_url=lambda *_args, **_kwargs: Response({"task": {"status": private_marker}}),
+        )
+
+    assert private_marker not in str(error.value)
+    assert stamp.read_text() == "previous\n"
+
+
+@pytest.mark.parametrize("code, message", [(401, "authentication"), (403, "authentication"), (404, "HTTP 404")])
+def test_ce_client_error_preserves_previous_stamp(tmp_path, code, message):
     cfg = config(tmp_path)
     commands = FakeCommands(tmp_path)
     stamp = tmp_path / ".sonar-last-analysis"
     stamp.write_text("previous\n")
 
-    def unauthorized(request, timeout):
-        raise HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+    polls = []
 
-    with pytest.raises(sonar_scan.ScanError, match="authentication"):
-        sonar_scan.run_scan(cfg, run=commands, open_url=unauthorized)
+    def client_error(request, timeout):
+        polls.append(request)
+        raise HTTPError(request.full_url, code, "Client error", {}, None)
 
+    with pytest.raises(sonar_scan.ScanError, match=message):
+        sonar_scan.run_scan(cfg, run=commands, open_url=client_error)
+
+    assert len(polls) == 1
+    assert stamp.read_text() == "previous\n"
+
+
+@pytest.mark.parametrize(
+    "first_failure",
+    ["unreadable", "truncated", "bad-status-line", "line-too-long", "transport", "http-503"],
+)
+def test_transient_ce_poll_recovers_without_reupload(tmp_path, first_failure):
+    cfg = config(tmp_path)
+    commands = FakeCommands(tmp_path)
+    polls = []
+
+    class UnreadableResponse(Response):
+        def read(self):
+            return b"{"
+
+    class TruncatedResponse(Response):
+        def read(self):
+            raise IncompleteRead(b"{", 10)
+
+    def recovering_opener(request, timeout):
+        polls.append(request)
+        if len(polls) == 1:
+            if first_failure == "unreadable":
+                return UnreadableResponse({})
+            if first_failure == "truncated":
+                return TruncatedResponse({})
+            if first_failure == "bad-status-line":
+                raise BadStatusLine("private-path /media/library-owner")
+            if first_failure == "line-too-long":
+                raise LineTooLong("header")
+            if first_failure == "transport":
+                raise URLError("temporary connection reset")
+            raise HTTPError(request.full_url, 503, "Unavailable", {}, None)
+        return Response({"task": {"status": "SUCCESS"}})
+
+    sonar_scan.run_scan(
+        cfg,
+        run=commands,
+        open_url=recovering_opener,
+        sleep=lambda _seconds: None,
+    )
+
+    assert len(polls) == 2
+    assert sum(argv[0] == "node" for argv, _kwargs in commands.calls) == 1
+    assert (tmp_path / ".sonar-last-analysis").read_text().splitlines()[0] == SHA_A
+
+
+@pytest.mark.parametrize("failure", ["unreadable", "bad-status-line"])
+def test_repeated_transient_ce_polls_timeout_without_replacing_stamp(tmp_path, failure):
+    cfg = config(tmp_path)
+    cfg.poll_timeout = 1.0
+    cfg.poll_interval = 0.5
+    commands = FakeCommands(tmp_path)
+    stamp = tmp_path / ".sonar-last-analysis"
+    stamp.write_text("previous\n")
+    clock = [0.0]
+    polls = []
+
+    class UnreadableResponse(Response):
+        def read(self):
+            return b"{"
+
+    def unreadable_opener(request, timeout):
+        polls.append(request)
+        if failure == "bad-status-line":
+            raise BadStatusLine("private-path /media/library-owner")
+        return UnreadableResponse({})
+
+    def advance(seconds):
+        clock[0] += seconds
+
+    with pytest.raises(sonar_scan.ScanError, match="timed out") as error:
+        sonar_scan.run_scan(
+            cfg,
+            run=commands,
+            open_url=unreadable_opener,
+            sleep=advance,
+            monotonic=lambda: clock[0],
+        )
+
+    assert len(polls) == 2
+    assert "private-path" not in str(error.value)
     assert stamp.read_text() == "previous\n"
 
 

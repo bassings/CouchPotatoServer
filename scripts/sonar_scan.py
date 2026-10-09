@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+from http.client import HTTPException
 import os
 import re
 import signal
@@ -337,6 +338,32 @@ def read_task_id(report_path: Path) -> str:
     return task_id
 
 
+class TransientCEError(Exception):
+    """A CE poll failed before it could report a task status."""
+
+
+def read_ce_status(request: Request, timeout: float, open_url: Callable) -> str:
+    try:
+        with open_url(request, timeout=timeout) as response:
+            payload = json.loads(response.read())
+    except HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise ScanError("SonarQube CE authentication failed; verify the analysis token and retry") from exc
+        if 500 <= exc.code < 600:
+            raise TransientCEError from exc
+        raise ScanError(f"SonarQube CE request failed with HTTP {exc.code}; retry the scan") from exc
+    except (HTTPException, URLError, OSError, ValueError, TypeError) as exc:
+        raise TransientCEError from exc
+
+    try:
+        status = payload["task"]["status"]
+    except (KeyError, TypeError) as exc:
+        raise ScanError("SonarQube CE returned malformed task data; no freshness stamp written") from exc
+    if not isinstance(status, str):
+        raise ScanError("SonarQube CE returned malformed task data; no freshness stamp written")
+    return status
+
+
 def poll_ce_task(
     config: Config,
     task_id: str,
@@ -361,27 +388,15 @@ def poll_ce_task(
             raise ScanError("SonarQube CE task timed out; check the task on the server and retry the scan")
         request = Request(url, headers={"Authorization": f"Basic {authorization}"})
         try:
-            with open_url(request, timeout=min(10.0, remaining)) as response:
-                payload = json.loads(response.read())
-        except HTTPError as exc:
-            if exc.code in {401, 403}:
-                raise ScanError("SonarQube CE authentication failed; verify the analysis token and retry") from exc
-            raise ScanError(f"SonarQube CE request failed with HTTP {exc.code}; retry the scan") from exc
-        except (URLError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
-            raise ScanError("SonarQube CE returned an unreadable response; retry the scan") from exc
-
-        try:
-            status = payload["task"]["status"]
-        except (KeyError, TypeError) as exc:
-            raise ScanError("SonarQube CE returned malformed task data; no freshness stamp written") from exc
-        if not isinstance(status, str):
-            raise ScanError("SonarQube CE returned malformed task data; no freshness stamp written")
+            status = read_ce_status(request, min(10.0, remaining), open_url)
+        except TransientCEError:
+            status = None
         if status == "SUCCESS":
             return
         if status in FAILED_CE_STATES:
             raise ScanError(f"SonarQube CE task ended {status}; inspect server logs and retry the scan")
-        if status not in ACTIVE_CE_STATES:
-            raise ScanError(f"SonarQube CE returned unknown status {status!r}; no freshness stamp written")
+        if status is not None and status not in ACTIVE_CE_STATES:
+            raise ScanError("SonarQube CE returned an unknown status; no freshness stamp written")
         remaining = config.poll_timeout - (monotonic() - started)
         if remaining <= 0:
             raise ScanError("SonarQube CE task timed out; check the task on the server and retry the scan")
