@@ -636,13 +636,18 @@ def _shell_sets_pipefail(shell_value: str) -> bool | None:
     return "pipefail" in value
 
 
+def _mapping_values(node, key):
+    if isinstance(node, yaml.MappingNode):
+        for entry_key, value in node.value:
+            if entry_key.value == key:
+                yield value
+
+
 def _default_run_shell(defaults, inherited_shell):
-    if isinstance(defaults, yaml.MappingNode):
-        for dk, dv in defaults.value:
-            if dk.value == "run" and isinstance(dv, yaml.MappingNode):
-                for rk, rv in dv.value:
-                    if rk.value == "shell" and isinstance(rv, yaml.ScalarNode):
-                        inherited_shell = rv.value
+    for run_node in _mapping_values(defaults, "run"):
+        for shell_node in _mapping_values(run_node, "shell"):
+            if isinstance(shell_node, yaml.ScalarNode):
+                inherited_shell = shell_node.value
     return inherited_shell
 
 

@@ -609,6 +609,23 @@ def test_defaults_run_shell_bash_is_not_flagged(tmp_path):
     assert findings_for(workflow) == []
 
 
+@pytest.mark.parametrize(
+    ("document", "inherited", "expected"),
+    [
+        ("value", "sh", "sh"),
+        ("other: true", "sh", "sh"),
+        ("run: bash", "sh", "sh"),
+        ("run:\n  shell: bash\nrun:\n  shell: sh", "python", "sh"),
+        ("run:\n  shell: bash\n  shell: python", "sh", "python"),
+        ("run:\n  shell: bash\n  shell: [sh]", "python", "bash"),
+    ],
+)
+def test_default_run_shell_preserves_last_scalar_value(document, inherited, expected):
+    node = check_test_traps.yaml.compose(document)
+
+    assert check_test_traps._default_run_shell(node, inherited) == expected
+
+
 def test_default_shell_without_an_explicit_declaration_is_still_flagged(tmp_path):
     """`shell: sh` is `sh -e` — no pipefail — so it must still be caught."""
     workflow = tmp_path / "ci.yml"
