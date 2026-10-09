@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -347,11 +348,16 @@ def read_ce_status(request: Request, timeout: float, open_url: Callable) -> str:
         with open_url(request, timeout=timeout) as response:
             payload = json.loads(response.read())
     except HTTPError as exc:
-        if exc.code in {401, 403}:
-            raise ScanError("SonarQube CE authentication failed; verify the analysis token and retry") from exc
-        if 500 <= exc.code < 600:
-            raise TransientCEError from exc
-        raise ScanError(f"SonarQube CE request failed with HTTP {exc.code}; retry the scan") from exc
+        try:
+            if exc.code in {401, 403}:
+                raise ScanError("SonarQube CE authentication failed; verify the analysis token and retry") from exc
+            if 500 <= exc.code < 600:
+                raise TransientCEError from exc
+            raise ScanError(f"SonarQube CE request failed with HTTP {exc.code}; retry the scan") from exc
+        finally:
+            # A failed close must not replace the original poll failure.
+            with suppress(OSError):
+                exc.close()
     except (HTTPException, OSError, ValueError, TypeError) as exc:
         raise TransientCEError from exc
 

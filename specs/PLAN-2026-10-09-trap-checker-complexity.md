@@ -37,7 +37,7 @@ SonarQube issue UUIDs for the post-merge comparison:
 
 - [x] C1 Capture baseline and characterise guard boundaries; state: completed
 - [x] C2 Extract small helpers and prove differential equivalence; state: completed
-- [ ] C3 Complete gates, reviews, PR, merge and exact-master scan; state: building
+- [x] C3 Complete gates, reviews, PR, merge and exact-master scan; state: merged
 
 ## Conductor log
 
@@ -62,3 +62,9 @@ SonarQube issue UUIDs for the post-merge comparison:
   is flagged. I reproduced both results. Current tracked uses of this live
   region use `page.locator`, and the gap is unchanged by this refactor; it
   needs a separate behavioural guard fix with a failing test.
+- 2026-10-09: PR #531 passed the full gate, two local reviews, CI and cloud
+  review, then merged as `5b493ace4`. The exact scan closed its five original
+  `S3776` UUIDs, but reported one new `S3776` on `_default_run_shell` at
+  line 639, complexity 17. Open findings fell 613 to 609 and critical 138
+  to 134. The new record was eventually closed in PR #533; the final scan
+  at `0a908e769` has no checker complexity finding.

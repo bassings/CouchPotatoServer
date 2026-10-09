@@ -91,6 +91,26 @@ class IncompleteReleaseSet:
 INCOMPLETE_RELEASE_SET = IncompleteReleaseSet()
 
 
+def _acceptable_download_result(rel, quality_custom, minimum_seeders):
+    if rel.get('status') in ['ignored', 'failed']:
+        log.info('Ignored: %s', rel['name'])
+        return False
+
+    if rel['score'] < quality_custom.get('minimum_score'):
+        log.info('Ignored, score "%s" too low, need at least "%s": %s', rel['score'], quality_custom.get('minimum_score'), rel['name'])
+        return False
+
+    if rel['size'] <= 50:
+        log.info('Ignored, size "%sMB" too low: %s', rel['size'], rel['name'])
+        return False
+
+    if 'seeders' in rel and rel.get('seeders') < minimum_seeders:
+        log.info('Ignored, not enough seeders, has %s needs %s: %s', rel.get('seeders'), minimum_seeders, rel['name'])
+        return False
+
+    return True
+
+
 class Release(Plugin):
 
     _database = {
@@ -596,20 +616,7 @@ class Release(Plugin):
         # Filter out ignored and other releases we don't want
         for rel in results:
 
-            if rel.get('status') in ['ignored', 'failed']:
-                log.info('Ignored: %s', rel['name'])
-                continue
-
-            if rel['score'] < quality_custom.get('minimum_score'):
-                log.info('Ignored, score "%s" too low, need at least "%s": %s', rel['score'], quality_custom.get('minimum_score'), rel['name'])
-                continue
-
-            if rel['size'] <= 50:
-                log.info('Ignored, size "%sMB" too low: %s', rel['size'], rel['name'])
-                continue
-
-            if 'seeders' in rel and rel.get('seeders') < minimum_seeders:
-                log.info('Ignored, not enough seeders, has %s needs %s: %s', rel.get('seeders'), minimum_seeders, rel['name'])
+            if not _acceptable_download_result(rel, quality_custom, minimum_seeders):
                 continue
 
             # If a single release comes through the "wait for", let through all

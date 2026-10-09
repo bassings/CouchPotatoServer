@@ -12,6 +12,8 @@ import pytest
 from couchpotato.core.logger import reset_log_suppression
 from tests.conftest import GIT_IDENTITY_ENV_PREFIXES
 
+pytest_plugins = ['pytester']
+
 
 @pytest.fixture
 def isolated_event_registry(monkeypatch):

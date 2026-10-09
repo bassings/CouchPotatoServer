@@ -26,7 +26,7 @@ issue UUID is `c96c1624-43b1-4e7a-a180-4a0f3b347b25`.
 ## Tasks
 
 - [x] R1 Extract the mapping traversal and verify equivalent output
-- [ ] R2 Complete gate, review, PR, merge and exact-master scan
+- [x] R2 Complete gate, review, PR, merge and exact-master scan; state: merged
 
 ## Conductor log
 
@@ -35,3 +35,9 @@ issue UUID is `c96c1624-43b1-4e7a-a180-4a0f3b347b25`.
   check-traps` across 390 files. A differential run on 3,007 generated and
   repository workflows found identical returned scalar-node identities,
   shell values and checker findings. No new test or guard was added.
+- 2026-10-09: PR #532 passed the full gate, two local reviews, CI and cloud
+  review, then merged as `faa51b713`. Its exact scan stayed at 609 open and
+  134 critical findings, with no closed or new UUIDs and a green gate. The
+  target was incorrectly attributed to `_iter_run_steps`; line 639 defined
+  `_default_run_shell`. The extraction was behaviour-preserving but did not
+  meet the intended Sonar closure. PR #533 corrected the actual function.
