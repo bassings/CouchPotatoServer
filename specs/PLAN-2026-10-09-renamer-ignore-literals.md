@@ -29,7 +29,7 @@ so literal extraction must preserve file safety at each boundary.
 
 - [x] I1 Add real-file characterisation and mutation proof; state: completed
 - [x] I2 Extract exact literals and verify syntax-tree equivalence and coverage; state: completed
-- [ ] I3 Complete gates, reviews, PR, merge and exact-master scan; state: queued
+- [ ] I3 Complete gates, reviews, PR, merge and exact-master scan; state: building
 
 ## Conductor log
 
@@ -53,3 +53,8 @@ so literal extraction must preserve file safety at each boundary.
   wrong-literal mutations supplied the load-bearing proof for this module.
   Two preliminary independent reviews found no substantive issue. Final
   branch review and delivery remain pending.
+- 2026-10-09: Rebasing onto the merged seven-literal batch was clean. After
+  rebase, 55 focused renamer tests passed with two expected xfails, the
+  literal inlining check matched the original syntax tree, targeted Ruff
+  passed and `make check-traps` scanned 388 files. Final branch reviews
+  remain pending.
