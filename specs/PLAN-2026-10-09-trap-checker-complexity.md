@@ -54,3 +54,9 @@ Targeted issue keys: `4eb95e12-433d-4b11-bd45-dfa4f201cac8`,
   checker lines (82.6%). The earlier run overlapped a source edit and made an
   `inspect.getsource` test read mixed line numbers; the frozen-source rerun
   passed that test and the full suite.
+- 2026-10-09: An independent reviewer found a pre-existing live-region guard
+  gap: a text-only assertion through `page.getByTestId('trakt-auth-status')`
+  yields no finding, while the equivalent `page.locator('[data-testid=...]')`
+  is flagged. I reproduced both results. Current tracked uses of this live
+  region use `page.locator`, and the gap is unchanged by this refactor; it
+  needs a separate behavioural guard fix with a failing test.
