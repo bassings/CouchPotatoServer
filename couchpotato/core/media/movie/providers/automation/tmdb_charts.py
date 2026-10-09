@@ -16,6 +16,10 @@ from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
+NOW_PLAYING_DESCRIPTION = 'Movies currently in theaters.'
+POPULAR_DESCRIPTION = 'Current popular movies.'
+TOP_RATED_DESCRIPTION = 'Highest rated movies of all time.'
+
 autoload = 'TMDBCharts'
 
 
@@ -40,19 +44,19 @@ class TMDBChartsBase(Automation):
             'order': 1,
             'name': 'TMDB - Now Playing',
             'endpoint': '/movie/now_playing',
-            'description': 'Movies currently in theaters.',
+            'description': NOW_PLAYING_DESCRIPTION,
         },
         'popular': {
             'order': 2,
             'name': 'TMDB - Popular',
             'endpoint': '/movie/popular',
-            'description': 'Current popular movies.',
+            'description': POPULAR_DESCRIPTION,
         },
         'top_rated': {
             'order': 3,
             'name': 'TMDB - Top Rated',
             'endpoint': '/movie/top_rated',
-            'description': 'Highest rated movies of all time.',
+            'description': TOP_RATED_DESCRIPTION,
         },
         'upcoming': {
             'order': 4,
@@ -291,21 +295,21 @@ config = [{
                     'name': 'automation_charts_now_playing',
                     'type': 'bool',
                     'label': 'Now Playing',
-                    'description': 'Movies currently in theaters.',
+                    'description': NOW_PLAYING_DESCRIPTION,
                     'default': True,
                 },
                 {
                     'name': 'automation_charts_popular',
                     'type': 'bool',
                     'label': 'Popular',
-                    'description': 'Current popular movies.',
+                    'description': POPULAR_DESCRIPTION,
                     'default': True,
                 },
                 {
                     'name': 'automation_charts_top_rated',
                     'type': 'bool',
                     'label': 'Top Rated',
-                    'description': 'Highest rated movies of all time.',
+                    'description': TOP_RATED_DESCRIPTION,
                     'default': False,
                 },
                 {
@@ -333,21 +337,21 @@ config = [{
                     'name': 'chart_display_now_playing',
                     'type': 'bool',
                     'label': 'Now Playing',
-                    'description': 'Movies currently in theaters.',
+                    'description': NOW_PLAYING_DESCRIPTION,
                     'default': True,
                 },
                 {
                     'name': 'chart_display_popular',
                     'type': 'bool',
                     'label': 'Popular',
-                    'description': 'Current popular movies.',
+                    'description': POPULAR_DESCRIPTION,
                     'default': True,
                 },
                 {
                     'name': 'chart_display_top_rated',
                     'type': 'bool',
                     'label': 'Top Rated',
-                    'description': 'Highest rated movies of all time.',
+                    'description': TOP_RATED_DESCRIPTION,
                     'default': False,
                 },
                 {
