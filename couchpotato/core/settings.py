@@ -329,6 +329,30 @@ class Settings:
             value = value.decode('unicode_escape')
         return toUnicode(value).strip()
 
+    def _registered_ui_value(self, section, option_name, soft_chroot):
+        """Render only values belonging to a registered, typed setting."""
+        value = self.get(option_name, section)
+        option_type = self.getType(section, option_name)
+
+        if option_type == 'password' and value:
+            return len(value) * '*'
+
+        if option_type == 'directory' and value:
+            try:
+                return soft_chroot.abs2chroot(value)
+            except Exception:
+                return ''
+
+        if option_type == 'directories':
+            if not value:
+                value = []
+            try:
+                return list(map(soft_chroot.abs2chroot, value))
+            except Exception:
+                return []
+
+        return value
+
     def getValues(self):
         from couchpotato.environment import Env
 
@@ -366,26 +390,8 @@ class Settings:
                     values[section][option_name] = len(masked) * '*' if masked else masked
                     continue
 
-                value = self.get(option_name, section)
-
-                if self.getType(section, option_name) == 'password' and value:
-                    value = len(value) * '*'
-
-                if self.getType(section, option_name) == 'directory' and value:
-                    try:
-                        value = soft_chroot.abs2chroot(value)
-                    except Exception:
-                        value = ""
-
-                if self.getType(section, option_name) == 'directories':
-                    if not value:
-                        value = []
-                    try:
-                        value = list(map(soft_chroot.abs2chroot, value))
-                    except Exception:
-                        value = []
-
-                values[section][option_name] = value
+                values[section][option_name] = self._registered_ui_value(
+                    section, option_name, soft_chroot)
 
         return values
 
