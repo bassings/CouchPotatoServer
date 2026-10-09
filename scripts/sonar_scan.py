@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+from http.client import HTTPException
 import os
 import re
 import signal
@@ -351,7 +352,7 @@ def read_ce_status(request: Request, timeout: float, open_url: Callable) -> str:
         if 500 <= exc.code < 600:
             raise TransientCEError from exc
         raise ScanError(f"SonarQube CE request failed with HTTP {exc.code}; retry the scan") from exc
-    except (URLError, OSError, ValueError, TypeError) as exc:
+    except (HTTPException, URLError, OSError, ValueError, TypeError) as exc:
         raise TransientCEError from exc
 
     try:

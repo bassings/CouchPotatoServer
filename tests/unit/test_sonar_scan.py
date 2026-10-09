@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from email.message import Message
+from http.client import BadStatusLine, IncompleteRead, LineTooLong
 from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -714,7 +715,10 @@ def test_ce_client_error_preserves_previous_stamp(tmp_path, code, message):
     assert stamp.read_text() == "previous\n"
 
 
-@pytest.mark.parametrize("first_failure", ["unreadable", "transport", "http-503"])
+@pytest.mark.parametrize(
+    "first_failure",
+    ["unreadable", "truncated", "bad-status-line", "line-too-long", "transport", "http-503"],
+)
 def test_transient_ce_poll_recovers_without_reupload(tmp_path, first_failure):
     cfg = config(tmp_path)
     commands = FakeCommands(tmp_path)
@@ -724,11 +728,21 @@ def test_transient_ce_poll_recovers_without_reupload(tmp_path, first_failure):
         def read(self):
             return b"{"
 
+    class TruncatedResponse(Response):
+        def read(self):
+            raise IncompleteRead(b"{", 10)
+
     def recovering_opener(request, timeout):
         polls.append(request)
         if len(polls) == 1:
             if first_failure == "unreadable":
                 return UnreadableResponse({})
+            if first_failure == "truncated":
+                return TruncatedResponse({})
+            if first_failure == "bad-status-line":
+                raise BadStatusLine("private-path /media/library-owner")
+            if first_failure == "line-too-long":
+                raise LineTooLong("header")
             if first_failure == "transport":
                 raise URLError("temporary connection reset")
             raise HTTPError(request.full_url, 503, "Unavailable", {}, None)
@@ -746,7 +760,8 @@ def test_transient_ce_poll_recovers_without_reupload(tmp_path, first_failure):
     assert (tmp_path / ".sonar-last-analysis").read_text().splitlines()[0] == SHA_A
 
 
-def test_repeated_unreadable_ce_polls_timeout_without_replacing_stamp(tmp_path):
+@pytest.mark.parametrize("failure", ["unreadable", "bad-status-line"])
+def test_repeated_transient_ce_polls_timeout_without_replacing_stamp(tmp_path, failure):
     cfg = config(tmp_path)
     cfg.poll_timeout = 1.0
     cfg.poll_interval = 0.5
@@ -762,12 +777,14 @@ def test_repeated_unreadable_ce_polls_timeout_without_replacing_stamp(tmp_path):
 
     def unreadable_opener(request, timeout):
         polls.append(request)
+        if failure == "bad-status-line":
+            raise BadStatusLine("private-path /media/library-owner")
         return UnreadableResponse({})
 
     def advance(seconds):
         clock[0] += seconds
 
-    with pytest.raises(sonar_scan.ScanError, match="timed out"):
+    with pytest.raises(sonar_scan.ScanError, match="timed out") as error:
         sonar_scan.run_scan(
             cfg,
             run=commands,
@@ -777,6 +794,7 @@ def test_repeated_unreadable_ce_polls_timeout_without_replacing_stamp(tmp_path):
         )
 
     assert len(polls) == 2
+    assert "private-path" not in str(error.value)
     assert stamp.read_text() == "previous\n"
 
 
