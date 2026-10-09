@@ -35,8 +35,8 @@ RPC message, logging level or status and deletion behaviour.
 
 - [x] C1 Pin the NZBGet connection and failure contracts in focused tests.
 - [x] C2 Consolidate the repeated connection check and pass local verification.
-- [ ] C3 Complete independent review, PR, CI, merge and exact-master scan. — state: building (since 2026-10-08T23:28:20+00:00)
-- [ ] C4 Reconcile the next critical group against the new scan and record its disposition or implementation plan.
+- [x] C3 Complete independent review, PR, CI, merge and exact-master scan.
+- [x] C4 Reconcile the next critical group against the new scan and record its disposition or implementation plan.
 
 ## Conductor log
 
@@ -44,3 +44,4 @@ RPC message, logging level or status and deletion behaviour.
 - 2026-10-09: Twenty focused tests cover the four RPC messages, true and false `writelog` results, socket failure, authentication refusal and other protocol errors. They pass before and after consolidating the four connection blocks. A deliberate false-success mutation caused eight test failures; restoration returned all twenty to green. The refactor preserves an existing byte-rendered filename in the download RPC message.
 - 2026-10-09: Independent review found the old non-401 protocol log exposes credentials embedded in the RPC URL and a test checked only the log format, not its argument. A revised test failed in all four callers against the unsafe helper. The helper now logs only the HTTP code; all twenty focused cases pass, and deliberately passing the exception object again made the four privacy cases fail. The first full gate was interrupted after this change; two transient failures in unrelated gate tests passed when rerun together.
 - 2026-10-09: The fresh full local gate passed: 4,823 Python unit tests, 42 integration tests, 311 UI unit tests, 225 desktop, 24 phone-width and 126 accessibility browser tests, plus lint, traps and conformance. The working-tree secret scan passed. Two fresh independent reviews found no remaining material issue. The changed production file is outside configured mutation scope, so the deliberate connection-result and privacy mutations supply the load-bearing proof.
+- 2026-10-09: The pre-push hook repeated the full gate, and PR #517 passed CI, CodeQL, dependency review and cloud review before merging as `34b310d8856d71e4df99ff733069314a063ab6e8`. Automatic beta build and post-merge CI passed. Exact-master SonarQube analysis closed seven critical records, added none, and measured 661 open smells (184 critical), 65.1% coverage, zero bugs/vulnerabilities/hotspots and a green informational quality gate. The remaining critical `NZBGet.getAllDownloadStatus` complexity record is paired with a real unavailable time estimate; its next slice is specified in `PLAN-2026-10-09-nzbget-status.md`. No production action was taken.
