@@ -18,7 +18,8 @@ def db(tmp_path):
 
 
 @pytest.fixture
-def collections_plugin(db):
+def collections_plugin(db, isolated_event_registry):
+    live_events, original_events = isolated_event_registry
     old_db = Env.get('db')
     old_api = dict(api)
     old_locks = dict(api_locks)
@@ -28,6 +29,7 @@ def collections_plugin(db):
 
     from couchpotato.core.plugins.collection import CollectionPlugin
     CollectionPlugin()
+    assert live_events == original_events
 
     yield db
 
@@ -62,6 +64,36 @@ class TestSQLiteCollectionIndex:
 
 
 class TestCollectionApi:
+    @pytest.mark.parametrize(
+        ('action', 'kwargs'),
+        [
+            ('collection.update', {'name': 'Renamed'}),
+            ('collection.delete', {}),
+            ('collection.add_media', {'media_id': 'missing-media'}),
+            ('collection.remove_media', {'media_id': 'missing-media'}),
+        ],
+    )
+    def test_collection_actions_require_an_id(self, collections_plugin, action, kwargs):
+        assert callApiHandler(action, **kwargs) == {
+            'success': False,
+            'error': 'Collection id is required',
+        }
+
+    @pytest.mark.parametrize(
+        ('action', 'kwargs', 'error'),
+        [
+            ('collection.update', {'name': 'Renamed'}, 'Collection not found'),
+            ('collection.delete', {}, 'Collection not found'),
+            ('collection.add_media', {'media_id': 'missing-media'}, 'Collection or media not found'),
+            ('collection.remove_media', {'media_id': 'missing-media'}, 'Collection not found'),
+        ],
+    )
+    def test_collection_actions_report_an_unknown_id(self, collections_plugin, action, kwargs, error):
+        assert callApiHandler(action, id='missing', **kwargs) == {
+            'success': False,
+            'error': error,
+        }
+
     def test_create_and_list_collections(self, collections_plugin):
         created = callApiHandler('collection.create', name='Weekend Watch', description='Friday night')
 
