@@ -655,6 +655,21 @@ def _step_run(keys, inherited_shell):
     return run_node, shell
 
 
+def _iter_mapping_run_steps(node, inherited_shell):
+    keys = {k.value: v for k, v in node.value if isinstance(k, yaml.ScalarNode)}
+
+    # `defaults: run: shell:` at this level applies to everything below it.
+    shell_here = _default_run_shell(keys.get("defaults"), inherited_shell)
+
+    # A step: `run:` plus optionally its own `shell:`, in any key order.
+    step = _step_run(keys, shell_here)
+    if step is not None:
+        yield step
+
+    for _k, value in node.value:
+        yield from _iter_run_steps(value, shell_here)
+
+
 def _iter_run_steps(node, inherited_shell=None):
     """Yield (run_scalar_node, effective_shell) for every `run:` in a workflow.
 
@@ -670,19 +685,7 @@ def _iter_run_steps(node, inherited_shell=None):
     won over a third round of patches.
     """
     if isinstance(node, yaml.MappingNode):
-        keys = {k.value: v for k, v in node.value if isinstance(k, yaml.ScalarNode)}
-
-        # `defaults: run: shell:` at this level applies to everything below it.
-        shell_here = _default_run_shell(keys.get("defaults"), inherited_shell)
-
-        # A step: `run:` plus optionally its own `shell:`, in any key order.
-        step = _step_run(keys, shell_here)
-        if step is not None:
-            yield step
-
-        for _k, value in node.value:
-            yield from _iter_run_steps(value, shell_here)
-
+        yield from _iter_mapping_run_steps(node, inherited_shell)
     elif isinstance(node, yaml.SequenceNode):
         for item in node.value:
             yield from _iter_run_steps(item, inherited_shell)
