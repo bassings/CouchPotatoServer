@@ -43,3 +43,7 @@ be simplified together without relaxing the false-green guard.
   on 10,000 generated scripts, including exact findings. All 311 trap-checker
   unit tests, `make check-traps` over 387 files and targeted Ruff passed.
   Both mutation checks still failed as intended after the refactor.
+- 2026-10-09: The full `make verify` gate passed before rebase, including
+  desktop, phone and accessibility browser suites. The branch rebased cleanly
+  onto the merged lexer batch. Focused post-rebase verification and final
+  branch reviews are pending.

@@ -20,14 +20,16 @@ module has 7 uncovered of 13. The three new TMDB chart lines are covered.
    gate.
 3. Focused tests, the full repository gate and two independent local reviews
    pass before push. PR, CI and cloud review pass, then an exact clean-master
-   SonarQube scan shows new-code coverage at or above 80%, no new issues and
-   a passing quality gate. No production deployment.
+   SonarQube scan has no new issues and a passing quality gate. Measure the
+   29 changed executable lines from the earlier literal batch in that scan's
+   `coverage.xml` and require at least 80% coverage if SonarQube omits its
+   new-code coverage measure for the tests-only merge. No production deployment.
 
 ## Tasks
 
 - [x] C1 Add and mutation-prove the collection and release tests; state: completed
 - [x] C2 Pass focused and full gates and independent review; state: completed
-- [ ] C3 Deliver PR, merge and confirm clean-master coverage; state: building
+- [x] C3 Deliver PR, merge and confirm clean-master coverage; state: completed
 
 ## Conductor log
 
@@ -52,3 +54,9 @@ module has 7 uncovered of 13. The three new TMDB chart lines are covered.
   non-blocking test-quality observation: the release route test pinned the
   unrelated total event count. Removed that count; 51 focused release,
   collection and event-system tests passed.
+- 2026-10-09: PR #524 merged as `a9fdbc0e`. The exact clean-master scan found
+  637 open issues, 162 critical, zero new issues and a passing quality gate.
+  SonarQube omitted `new_coverage` because this merge changed tests only;
+  the scan's `coverage.xml` covers 24 of the 29 executable lines changed by
+  the preceding literal batch (82.8%). Post-merge CI, CodeQL and beta build
+  passed. No production deployment was made.

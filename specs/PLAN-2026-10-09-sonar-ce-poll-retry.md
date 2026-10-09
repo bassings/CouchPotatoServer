@@ -29,7 +29,7 @@ upload completed.
 
 - [x] P1 Add failing transient-retry and bounded-failure tests.
 - [x] P2 Implement bounded retries and pass focused and full gates.
-- [ ] P3 Complete independent review, PR, CI, merge and post-merge scan; state: building
+- [x] P3 Complete independent review, PR, CI, merge and post-merge scan; state: completed
 
 ## Conductor log
 
@@ -48,3 +48,8 @@ upload completed.
   the two identical deadline checks into a small helper. This preserves the
   same monotonic-clock calls, timeout text and poll boundary. Focused tests,
   full gate, review and post-merge confirmation are required again.
+- 2026-10-09: The follow-up PR #522 merged as `e1f9fe94` after two clean local
+  reviews, full verification, PR CI and cloud review. The exact clean-master
+  scan closed both the remaining critical `python:S3776` and new minor
+  `python:S5713` issue keys, introduced no new keys and passed the quality
+  gate. No production deployment was made.
