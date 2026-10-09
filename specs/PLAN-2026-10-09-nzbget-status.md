@@ -29,7 +29,7 @@ exception handler hides both errors. The relevant API references are
 
 - [x] S1 Add failing API-shaped status and boundary tests.
 - [x] S2 Fix the estimate and pass local verification.
-- [ ] S3 Complete review, PR, CI, merge and SonarQube confirmation. — state: building (since 2026-10-09T00:21:29+00:00)
+- [x] S3 Complete review, PR, CI, merge and SonarQube confirmation. — state: merged
 
 ## Conductor log
 
@@ -38,3 +38,4 @@ exception handler hides both errors. The relevant API references are
 - 2026-10-09: The full local gate passed: 4,831 Python unit, 42 integration, 311 UI unit, 225 desktop, 24 phone-width and 126 accessibility browser tests. Working-tree secret scan passed. Two independent reviews found no material defect. PR #517 merged and its exact-master scan is running; this branch will be rebased onto that merge before delivery.
 - 2026-10-09: PR #517's exact-master scan closed seven critical issue keys with no new keys, leaving this function's `python:S3776` open. The status API marks `DownloadRate` deprecated in favour of split low/high fields. Two new tests failed when the legacy field was absent; the estimator now reconstructs the 64-bit rate and all 43 focused tests pass. Changing the high-word shift to zero made the high-rate test fail, then restoration passed. The full gate and final local review will be repeated after this compatibility addition.
 - 2026-10-09: The revised full gate passed: 4,833 Python unit, 42 integration, 311 UI unit, 225 desktop, 24 phone-width and 126 accessibility browser tests. Two fresh independent reviews of the code and plan diffs found no material issue. PR #517's beta and post-merge CI passed; this branch is ready for its final pre-push review after the task status update.
+- 2026-10-09: PR #518 merged as `880b5398` after CI and cloud reviews passed. Its exact clean-master SonarQube analysis closed the targeted `python:S3776` issue with no new issue keys: 661 to 660 open smells, 184 to 183 critical; coverage 65.2%, with zero bugs, vulnerabilities or hotspots. Post-merge CI, CodeQL and the automatic beta build passed. No production deployment occurred.
