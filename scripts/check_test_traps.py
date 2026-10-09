@@ -242,6 +242,15 @@ NON_SHELL_INTERPRETERS = ("python", "pwsh", "powershell", "node", "ruby", "perl"
 # ── Comment stripping (correctness-critical — see module docstring) ──────────
 
 
+def _shell_quoted_step(line: str, i: int, quote: str, blank_strings: bool) -> tuple[str, int, str | None]:
+    ch = line[i]
+    if quote == '"' and ch == "\\" and i + 1 < len(line):
+        return ("  " if blank_strings else line[i : i + 2], i + 2, quote)
+    if ch == quote:
+        return ch, i + 1, None
+    return (" " if blank_strings else ch), i + 1, quote
+
+
 def strip_shell_comments(line: str, blank_strings: bool = False) -> str:
     """Remove a `#` comment, respecting single and double quotes.
 
@@ -259,16 +268,8 @@ def strip_shell_comments(line: str, blank_strings: bool = False) -> str:
     while i < len(line):
         ch = line[i]
         if quote:
-            if quote == '"' and ch == "\\" and i + 1 < len(line):
-                out.append("  " if blank_strings else line[i : i + 2])
-                i += 2
-                continue
-            if ch == quote:
-                quote = None
-                out.append(ch)
-            else:
-                out.append(" " if blank_strings else ch)
-            i += 1
+            fragment, i, quote = _shell_quoted_step(line, i, quote, blank_strings)
+            out.append(fragment)
             continue
         if ch in ("'", '"'):
             quote = ch
@@ -286,87 +287,78 @@ def strip_shell_comments(line: str, blank_strings: bool = False) -> str:
     return "".join(out)
 
 
-def strip_js_comments(text: str) -> list[str]:
-    """Return code-only lines, line numbering preserved.
+def _js_line_end_state(state: str) -> str:
+    # Raw newlines end line comments and quoted strings, but not templates or
+    # block comments. This also bounds damage from quotes inside regex literals.
+    return "code" if state in ("line_comment", "squote", "dquote") else state
 
-    A state machine over strings, template literals and both comment forms. The
-    previous line-local regex approach let an unmatched `/*` inside a `//`
-    comment latch block-comment state for the rest of the file, and let
-    `'http://x/'` eat the remainder of its own line — both silently disabling
-    rule 1. A regex cannot see string context; this can.
+
+def _js_code_step(line: str, col: int) -> tuple[str, int, str]:
+    ch = line[col]
+    nxt = line[col + 1] if col + 1 < len(line) else ""
+    if ch == "/" and nxt == "/":
+        return "line_comment", col + 2, ""
+    if ch == "/" and nxt == "*":
+        return "block_comment", col + 2, ""
+    if ch == "'":
+        return "squote", col + 1, ch
+    if ch == '"':
+        return "dquote", col + 1, ch
+    if ch == "`":
+        return "template", col + 1, ch
+    return "code", col + 1, ch
+
+
+def _js_block_comment_step(line: str, col: int) -> tuple[str, int]:
+    if line[col] == "*" and col + 1 < len(line) and line[col + 1] == "/":
+        return "code", col + 2
+    return "block_comment", col + 1
+
+
+def _js_string_step(line: str, col: int, state: str) -> tuple[str, int, str]:
+    ch = line[col]
+    if ch == "\\":
+        if col + 1 < len(line):
+            return state, col + 2, line[col : col + 2]
+        return state, col + 1, ch
+    if (
+        (state == "squote" and ch == "'")
+        or (state == "dquote" and ch == '"')
+        or (state == "template" and ch == "`")
+    ):
+        return "code", col + 1, ch
+    return state, col + 1, ch
+
+
+def strip_js_comments(text: str) -> list[str]:
+    """Return code-only lines, preserving line numbers and string content.
+
+    Line and block comments are recognised only in code. Quoted strings reset
+    at raw newlines, while template literals and block comments span lines.
     """
     lines = text.split("\n")
     out = [""] * len(lines)
     row, col = 0, 0
-    state = "code"  # code | line_comment | block_comment | squote | dquote | template
+    state = "code"
 
     while row < len(lines):
         line = lines[row]
         if col >= len(line):
-            if state == "line_comment":
-                state = "code"
-            # A single- or double-quoted JS string cannot contain a raw newline,
-            # so an unterminated one means we mis-detected the opening quote —
-            # most often a quote inside a regex literal such as /['"]/. Reset at
-            # end of line so the damage is bounded to that line instead of
-            # latching for the rest of the file (which turned real `//` comments
-            # into reported geometry reads). Template literals DO span lines, so
-            # they are deliberately not reset.
-            if state in ("squote", "dquote"):
-                state = "code"
+            state = _js_line_end_state(state)
             row += 1
             col = 0
             continue
-
-        ch = line[col]
-        nxt = line[col + 1] if col + 1 < len(line) else ""
-
         if state == "code":
-            if ch == "/" and nxt == "/":
-                state = "line_comment"
-                col += 2
-            elif ch == "/" and nxt == "*":
-                state = "block_comment"
-                col += 2
-            else:
-                if ch == "'":
-                    state = "squote"
-                elif ch == '"':
-                    state = "dquote"
-                elif ch == "`":
-                    state = "template"
-                out[row] += ch
-                col += 1
-            continue
-
-        if state == "line_comment":
+            state, col, fragment = _js_code_step(line, col)
+        elif state == "line_comment":
             col = len(line)
             continue
-
-        if state == "block_comment":
-            if ch == "*" and nxt == "/":
-                state = "code"
-                col += 2
-            else:
-                col += 1
+        elif state == "block_comment":
+            state, col = _js_block_comment_step(line, col)
             continue
-
-        # Inside a string. Keep characters while tracking the terminator.
-        out[row] += ch
-        if ch == "\\":
-            if col + 1 < len(line):
-                out[row] += line[col + 1]
-                col += 2
-            else:
-                col += 1
-            continue
-        if (
-            (state == "squote" and ch == "'")
-            or (state == "dquote" and ch == '"')
-            or (state == "template" and ch == "`")
-        ):
-            state = "code"
-        col += 1
+        else:
+            state, col, fragment = _js_string_step(line, col, state)
+        out[row] += fragment
 
     return out
 
