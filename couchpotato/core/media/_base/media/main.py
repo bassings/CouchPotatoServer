@@ -20,6 +20,13 @@ from .index import MediaIndex, MediaStatusIndex, MediaWatchedIndex, MediaTypeInd
 
 log = CPLog(__name__)
 
+API_COMMA_SEPARATED_INT = 'int (comma separated)'
+API_ARRAY_OR_CSV = 'array or csv'
+MEDIA_ID_DESC = 'Media ID'
+MEDIA_NOT_FOUND_ERROR = 'Media not found'
+DATABASE_BUSY_ERROR = 'Database busy, please retry'
+DATABASE_ERROR = 'Database error'
+
 
 def _bind_media_type(callback, media_type):
     def route_callback(*args, **kwargs):
@@ -47,7 +54,7 @@ class MediaPlugin(MediaBase):
         addApiView('media.refresh', self.refresh, docs = {
             'desc': 'Refresh a any media type by ID',
             'params': {
-                'id': {'desc': 'Movie, Show, Season or Episode ID(s) you want to refresh.', 'type': 'int (comma separated)'},
+                'id': {'desc': 'Movie, Show, Season or Episode ID(s) you want to refresh.', 'type': API_COMMA_SEPARATED_INT},
             }
         })
 
@@ -55,8 +62,8 @@ class MediaPlugin(MediaBase):
             'desc': 'List media',
             'params': {
                 'type': {'type': 'string', 'desc': 'Media type to filter on.'},
-                'status': {'type': 'array or csv', 'desc': 'Filter media by status. Example:"active,done"'},
-                'release_status': {'type': 'array or csv', 'desc': 'Filter media by status of its releases. Example:"snatched,available"'},
+                'status': {'type': API_ARRAY_OR_CSV, 'desc': 'Filter media by status. Example:"active,done"'},
+                'release_status': {'type': API_ARRAY_OR_CSV, 'desc': 'Filter media by status of its releases. Example:"snatched,available"'},
                 'limit_offset': {'desc': 'Limit and offset the media list. Examples: "50" or "50,30"'},
                 'starts_with': {'desc': 'Starts with these characters. Example: "a" returns all media starting with the letter "a"'},
                 'search': {'desc': 'Search media title'},
@@ -79,7 +86,7 @@ class MediaPlugin(MediaBase):
         addApiView('media.delete', self.deleteView, docs = {
             'desc': 'Delete a media from the wanted list',
             'params': {
-                'id': {'desc': 'Media ID(s) you want to delete.', 'type': 'int (comma separated)'},
+                'id': {'desc': 'Media ID(s) you want to delete.', 'type': API_COMMA_SEPARATED_INT},
                 'delete_from': {'desc': 'Delete media from this page', 'type': 'string: all (default), wanted, manage'},
             }
         })
@@ -87,14 +94,14 @@ class MediaPlugin(MediaBase):
         addApiView('media.done', self.markDone, docs = {
             'desc': 'Mark media as done (stops searching)',
             'params': {
-                'id': {'desc': 'Media ID'},
+                'id': {'desc': MEDIA_ID_DESC},
             }
         })
 
         addApiView('media.watched', self.markWatched, docs = {
             'desc': 'Mark media as watched without changing wanted/done status',
             'params': {
-                'id': {'desc': 'Media ID'},
+                'id': {'desc': MEDIA_ID_DESC},
                 'watched_by': {'desc': 'Optional person/profile who watched it'},
                 'source': {'desc': 'Optional source for the watch event, default manual'},
             }
@@ -102,7 +109,7 @@ class MediaPlugin(MediaBase):
         addApiView('media.unwatched', self.markUnwatched, docs = {
             'desc': 'Mark media as unwatched without changing wanted/done status',
             'params': {
-                'id': {'desc': 'Media ID'},
+                'id': {'desc': MEDIA_ID_DESC},
             }
         })
         addApiView('media.watch_history', self.watchHistory, docs = {
@@ -462,8 +469,8 @@ class MediaPlugin(MediaBase):
             addApiView('%s.list' % media_type, tempList, docs = {
                 'desc': 'List media',
                 'params': {
-                    'status': {'type': 'array or csv', 'desc': 'Filter ' + media_type + ' by status. Example:"active,done"'},
-                    'release_status': {'type': 'array or csv', 'desc': 'Filter ' + media_type + ' by status of its releases. Example:"snatched,available"'},
+                    'status': {'type': API_ARRAY_OR_CSV, 'desc': 'Filter ' + media_type + ' by status. Example:"active,done"'},
+                    'release_status': {'type': API_ARRAY_OR_CSV, 'desc': 'Filter ' + media_type + ' by status of its releases. Example:"snatched,available"'},
                     'limit_offset': {'desc': 'Limit and offset the ' + media_type + ' list. Examples: "50" or "50,30"'},
                     'starts_with': {'desc': 'Starts with these characters. Example: "a" returns all ' + media_type + 's starting with the letter "a"'},
                     'search': {'desc': 'Search ' + media_type + ' title'},
@@ -675,13 +682,13 @@ class MediaPlugin(MediaBase):
         try:
             updated = db.update_with_retry(_mark_done, id)
         except (RecordNotFound, RecordDeleted, KeyError):
-            return {'success': False, 'error': 'Media not found'}
+            return {'success': False, 'error': MEDIA_NOT_FOUND_ERROR}
         except ConflictError:
             log.warning('Gave up marking media %s done after retries due to persistent contention', id)
-            return {'success': False, 'error': 'Database busy, please retry'}
+            return {'success': False, 'error': DATABASE_BUSY_ERROR}
         except Exception:
             log.error('Unexpected error marking media %s done: %s', id, traceback.format_exc())
-            return {'success': False, 'error': 'Database error'}
+            return {'success': False, 'error': DATABASE_ERROR}
 
         # The mutator returned False (expected_status mismatch): no write
         # happened, so report failure without touching the landed release.
@@ -729,13 +736,13 @@ class MediaPlugin(MediaBase):
         try:
             media = db.update_with_retry(_mark_watched, id)
         except (RecordNotFound, RecordDeleted, KeyError):
-            return {'success': False, 'error': 'Media not found'}
+            return {'success': False, 'error': MEDIA_NOT_FOUND_ERROR}
         except ConflictError:
             log.warning('Gave up marking media %s watched after retries due to persistent contention', id)
-            return {'success': False, 'error': 'Database busy, please retry'}
+            return {'success': False, 'error': DATABASE_BUSY_ERROR}
         except Exception:
             log.error('Unexpected error marking media %s watched: %s', id, traceback.format_exc())
-            return {'success': False, 'error': 'Database error'}
+            return {'success': False, 'error': DATABASE_ERROR}
 
         fireEvent(NOTIFY_FRONTEND, type = 'movie.update', data = media)
         return {'success': True, 'media': media}
@@ -753,13 +760,13 @@ class MediaPlugin(MediaBase):
         try:
             media = db.update_with_retry(_mark_unwatched, id)
         except (RecordNotFound, RecordDeleted, KeyError):
-            return {'success': False, 'error': 'Media not found'}
+            return {'success': False, 'error': MEDIA_NOT_FOUND_ERROR}
         except ConflictError:
             log.warning('Gave up marking media %s unwatched after retries due to persistent contention', id)
-            return {'success': False, 'error': 'Database busy, please retry'}
+            return {'success': False, 'error': DATABASE_BUSY_ERROR}
         except Exception:
             log.error('Unexpected error marking media %s unwatched: %s', id, traceback.format_exc())
-            return {'success': False, 'error': 'Database error'}
+            return {'success': False, 'error': DATABASE_ERROR}
 
         fireEvent(NOTIFY_FRONTEND, type = 'movie.update', data = media)
         return {'success': True, 'media': media}
@@ -801,7 +808,7 @@ class MediaPlugin(MediaBase):
             addApiView('%s.delete' % media_type, tempDelete, docs = {
             'desc': 'Delete a ' + media_type + ' from the wanted list',
             'params': {
-                'id': {'desc': 'Media ID(s) you want to delete.', 'type': 'int (comma separated)'},
+                'id': {'desc': 'Media ID(s) you want to delete.', 'type': API_COMMA_SEPARATED_INT},
                 'delete_from': {'desc': 'Delete ' + media_type + ' from this page', 'type': 'string: all (default), wanted, manage'},
             }
         })
