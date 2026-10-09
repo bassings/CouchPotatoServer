@@ -47,4 +47,7 @@ soft-chroot error text. These values can be shared in one bounded batch.
   still checks the tuple-prefix call. Changing the constant to a wrong scheme
   made the guard fail; restoring it passed. Fresh `make coverage` passed with
   4,907 Python tests; all 15 changed executable production lines are covered
-  in `coverage.xml`. Full verification and independent review remain pending.
+  in `coverage.xml`. The full `make verify` gate passed, including desktop,
+  phone-width and accessibility browser suites. Two preliminary independent
+  reviews found no actionable issue; the branch rebased cleanly onto the
+  merged shell-gate batch. Final branch review remains pending.
