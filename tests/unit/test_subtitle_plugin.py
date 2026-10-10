@@ -146,6 +146,20 @@ class TestGetProviderConfigs:
 # ===========================================================================
 
 class TestScanVideo:
+    def test_real_fromname_fallback_keeps_movie_identity(self, monkeypatch):
+        monkeypatch.setattr(
+            subtitle_module.subliminal, 'scan_video',
+            MagicMock(side_effect=FileNotFoundError('movie unavailable')),
+        )
+
+        video = _make_subtitle().scanVideo(
+            '/movies/The.Lion.King.2019.1080p.BluRay.mkv',
+        )
+
+        assert isinstance(video, subliminal.Movie)
+        assert video.title == 'The Lion King'
+        assert video.year == 2019
+
     def test_prefers_scan_video(self, monkeypatch):
         sentinel = object()
         monkeypatch.setattr(subtitle_module.subliminal, 'scan_video', MagicMock(return_value=sentinel))
