@@ -39,8 +39,8 @@ Investigate and repair that first if it affects users, guards or delivery.
 - [x] R3 Triage release-plugin critical findings and characterise safe behaviour
 - [x] R4 Implement and deliver the selected bounded critical slice
 - [x] R5 Confirm exact-master results and select the next critical group
-- [ ] R6 Close new test-only SonarQube warnings and restore the reporting gate; state: building
-- [ ] R7 Triage the three critical E2E guard complexity findings; state: queued
+- [x] R6 Close new test-only SonarQube warnings and restore the reporting gate
+- [ ] R7 Triage the three critical E2E guard complexity findings; state: building
 
 ## Conductor log
 
@@ -117,6 +117,14 @@ Investigate and repair that first if it affects users, guards or delivery.
   or security hotspots. They are the immediate cleanup slice. The next
   critical cluster to triage is three `javascript:S3776` findings in
   `scripts/check_e2e_test_traps.mjs`, a potential bounded bulk fix.
+- 2026-10-10: PR #535 closed all seven test-only warning UUIDs and restored
+  the exact-master reporting gate to green. Its merged commit is `6eacdf557`;
+  the scan moved open findings 613 to 606, left critical at 132, introduced
+  no new finding and retained 66.5% coverage with zero bugs, vulnerabilities
+  or hotspots. The next critical batch is the three E2E guard complexity
+  findings. Their refactor matched the original guard's JSON on 48 inputs,
+  passed 324 focused tests, three load-bearing mutation probes, the full local
+  gate and two independent reviews. PR delivery remains open.
 - 2026-10-10: The seven test-only warnings were fixed with individual
   assertions and narrow `pytest.raises` blocks. All 124 focused tests passed;
   size-filter and stream-close mutations made the intended tests fail and
