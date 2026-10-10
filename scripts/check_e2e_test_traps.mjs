@@ -128,23 +128,31 @@ function collectWaitBinding(name, expression) {
     return;
   }
   if (ts.isObjectBindingPattern(name)) {
-    for (const element of name.elements) {
-      const key = element.propertyName || element.name;
-      if (staticName(key) === 'waitForTimeout') {
-        if (ts.isIdentifier(element.name)) track(aliases, element.name);
-      }
-    }
+    collectDestructuredWaitBinding(name);
   }
   if (ts.isObjectLiteralExpression(name)) {
-    for (const element of name.properties) {
-      if (ts.isPropertyAssignment(element) &&
-          staticName(element.name) === 'waitForTimeout' &&
-          ts.isIdentifier(element.initializer)) {
-        track(aliases, element.initializer);
-      } else if (ts.isShorthandPropertyAssignment(element) &&
-          element.name.text === 'waitForTimeout') {
-        track(aliases, element.name);
-      }
+    collectAssignedWaitBinding(name);
+  }
+}
+
+function collectDestructuredWaitBinding(pattern) {
+  for (const element of pattern.elements) {
+    const key = element.propertyName || element.name;
+    if (staticName(key) === 'waitForTimeout' && ts.isIdentifier(element.name)) {
+      track(aliases, element.name);
+    }
+  }
+}
+
+function collectAssignedWaitBinding(object) {
+  for (const element of object.properties) {
+    if (ts.isPropertyAssignment(element) &&
+        staticName(element.name) === 'waitForTimeout' &&
+        ts.isIdentifier(element.initializer)) {
+      track(aliases, element.initializer);
+    } else if (ts.isShorthandPropertyAssignment(element) &&
+        element.name.text === 'waitForTimeout') {
+      track(aliases, element.name);
     }
   }
 }
@@ -350,45 +358,62 @@ function collectSwallowedBinding(name, initializer) {
   }
 }
 
-function collectBindings(node) {
-  if (ts.isVariableDeclaration(node) && node.initializer) {
-    collectWaitBinding(node.name, node.initializer);
-    if (contains(node.initializer, child =>
-      ts.isCallExpression(child) && ['isVisible', 'count'].includes(propertyName(child.expression)))) {
-      if (ts.isIdentifier(node.name)) track(guardNames, node.name);
-    }
-    collectSwallowedBinding(node.name, node.initializer);
-    if (ts.isIdentifier(node.name)) {
-      const testids = new Set();
-      contains(node.initializer, child => {
-        if (ts.isStringLiteral(child) || ts.isNoSubstitutionTemplateLiteral(child)) {
-          for (const testid of liveRegionTestIds) {
-            if (child.text.includes(`data-testid="${testid}"`) ||
-                child.text.includes(`data-testid='${testid}'`)) {
-              testids.add(testid);
-            }
-          }
+function containsGuardCall(expression) {
+  return contains(expression, child =>
+    ts.isCallExpression(child) && ['isVisible', 'count'].includes(propertyName(child.expression)));
+}
+
+function liveRegionIds(expression) {
+  const testids = new Set();
+  contains(expression, child => {
+    if (ts.isStringLiteral(child) || ts.isNoSubstitutionTemplateLiteral(child)) {
+      for (const testid of liveRegionTestIds) {
+        if (child.text.includes(`data-testid="${testid}"`) ||
+            child.text.includes(`data-testid='${testid}'`)) {
+          testids.add(testid);
         }
-        return false;
-      });
-      const symbol = symbolOf(node.name);
-      if (symbol && testids.size) liveRegionBindings.set(symbol, [...testids]);
-      if (testids.size) {
-        const prior = liveRegionBindingsByName.get(node.name.text) || [];
-        prior.push({ line: lineOf(node), testids: [...testids] });
-        liveRegionBindingsByName.set(node.name.text, prior);
       }
     }
+    return false;
+  });
+  return [...testids];
+}
+
+function collectLiveRegionBinding(node) {
+  if (!ts.isIdentifier(node.name)) return;
+  const testids = liveRegionIds(node.initializer);
+  const symbol = symbolOf(node.name);
+  if (symbol && testids.length) liveRegionBindings.set(symbol, testids);
+  if (testids.length) {
+    const prior = liveRegionBindingsByName.get(node.name.text) || [];
+    prior.push({ line: lineOf(node), testids });
+    liveRegionBindingsByName.set(node.name.text, prior);
   }
+}
+
+function collectVariableBinding(node) {
+  collectWaitBinding(node.name, node.initializer);
+  if (containsGuardCall(node.initializer) && ts.isIdentifier(node.name)) {
+    track(guardNames, node.name);
+  }
+  collectSwallowedBinding(node.name, node.initializer);
+  collectLiveRegionBinding(node);
+}
+
+function collectAssignmentBinding(node) {
+  collectWaitBinding(node.left, node.right);
+  if (ts.isIdentifier(node.left) && containsGuardCall(node.right)) {
+    track(guardNames, node.left);
+  }
+  collectSwallowedBinding(node.left, node.right);
+}
+
+function collectBindings(node) {
+  if (ts.isVariableDeclaration(node) && node.initializer) collectVariableBinding(node);
   if (ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       (ts.isIdentifier(node.left) || ts.isObjectLiteralExpression(node.left))) {
-    collectWaitBinding(node.left, node.right);
-    if (ts.isIdentifier(node.left) && contains(node.right, child =>
-      ts.isCallExpression(child) && ['isVisible', 'count'].includes(propertyName(child.expression)))) {
-      track(guardNames, node.left);
-    }
-    collectSwallowedBinding(node.left, node.right);
+    collectAssignmentBinding(node);
   }
   ts.forEachChild(node, collectBindings);
 }
@@ -424,74 +449,81 @@ function assertionFromCall(node) {
   return { line: lineOf(node), matcher, negative, testids };
 }
 
+function recordWait(node) {
+  if (!ts.isCallExpression(node) || !isWaitTarget(node.expression)) return;
+  const line = lineOf(node);
+  waits.push({
+    line,
+    argument: node.arguments.map(arg => arg.getText(source)).join(', ').trim(),
+    test: testTitleFor(node),
+    context: waitContext(node),
+    sourceLine: lineText(line),
+  });
+}
+
+function recordFinding(node, kind) {
+  findings.push({ line: lineOf(node), kind, sourceLine: lineText(lineOf(node)) });
+}
+
+function recordGuardFinding(node) {
+  if (!containsGuardProbe(node.expression)) return;
+  const hasExpect = containsAssertion(node.thenStatement) || earlyReturnSkipsAssertion(node);
+  const hasClick = containsClick(node.thenStatement);
+  const bothAssert = hasExpect && node.elseStatement && containsAssertion(node.elseStatement);
+  if (!bothAssert && (hasExpect || hasClick)) {
+    recordFinding(node, hasClick && !hasExpect ? 'click-guard' : 'expect-guard');
+  }
+}
+
+function recordResponseIfFinding(node) {
+  const presentName = guardedResponseName(node.expression);
+  if (presentName && containsAssertion(node.thenStatement, presentName)) {
+    recordFinding(node, 'swallowed-response');
+  }
+  const absentName = absentResponseName(node.expression);
+  if (!absentName || !isOnlyReturn(node.thenStatement) || !ts.isBlock(node.parent)) return;
+  const index = node.parent.statements.indexOf(node);
+  if (index >= 0 && node.parent.statements.slice(index + 1)
+    .some(statement => containsAssertion(statement, absentName))) {
+    recordFinding(node, 'swallowed-response');
+  }
+}
+
+function recordResponseBinaryFinding(node) {
+  const operator = node.operatorToken.kind;
+  let responseName = null;
+  if (operator === ts.SyntaxKind.AmpersandAmpersandToken) {
+    responseName = guardedResponseName(node.left);
+  } else if (operator === ts.SyntaxKind.BarBarToken) {
+    responseName = absentResponseName(node.left);
+  }
+  if (responseName && containsAssertion(node.right, responseName)) {
+    recordFinding(node, 'swallowed-response');
+  }
+}
+
+function recordResponseConditionalFinding(node) {
+  const presentName = guardedResponseName(node.condition);
+  const absentName = absentResponseName(node.condition);
+  const gatedName = presentName || absentName;
+  const gatedBranch = presentName ? node.whenTrue : node.whenFalse;
+  const otherBranch = presentName ? node.whenFalse : node.whenTrue;
+  if (gatedName && containsAssertion(gatedBranch, gatedName) &&
+      !containsAssertion(otherBranch)) {
+    recordFinding(node, 'swallowed-response');
+  }
+}
+
 function visit(node) {
   const assertion = assertionFromCall(node);
   if (assertion) assertions.push(assertion);
-
-  if (ts.isCallExpression(node) && isWaitTarget(node.expression)) {
-    const line = lineOf(node);
-    waits.push({
-      line,
-      argument: node.arguments.map(arg => arg.getText(source)).join(', ').trim(),
-      test: testTitleFor(node),
-      context: waitContext(node),
-      sourceLine: lineText(line),
-    });
+  recordWait(node);
+  if (ts.isIfStatement(node)) {
+    recordGuardFinding(node);
+    recordResponseIfFinding(node);
   }
-
-  if (ts.isIfStatement(node) && containsGuardProbe(node.expression)) {
-    const hasExpect = containsAssertion(node.thenStatement) || earlyReturnSkipsAssertion(node);
-    const hasClick = containsClick(node.thenStatement);
-    const bothAssert = hasExpect && node.elseStatement && containsAssertion(node.elseStatement);
-    if (!bothAssert && (hasExpect || hasClick)) {
-      findings.push({
-        line: lineOf(node),
-        kind: hasClick && !hasExpect ? 'click-guard' : 'expect-guard',
-        sourceLine: lineText(lineOf(node)),
-      });
-    }
-  }
-
-  const responseName = ts.isIfStatement(node) ? guardedResponseName(node.expression) : null;
-  if (ts.isIfStatement(node) && responseName &&
-      containsAssertion(node.thenStatement, responseName)) {
-    findings.push({ line: lineOf(node), kind: 'swallowed-response', sourceLine: lineText(lineOf(node)) });
-  }
-  const absentName = ts.isIfStatement(node) ? absentResponseName(node.expression) : null;
-  if (ts.isIfStatement(node) && absentName && isOnlyReturn(node.thenStatement) &&
-      ts.isBlock(node.parent)) {
-    const index = node.parent.statements.indexOf(node);
-    if (index >= 0 && node.parent.statements.slice(index + 1)
-      .some(statement => containsAssertion(statement, absentName))) {
-      findings.push({ line: lineOf(node), kind: 'swallowed-response', sourceLine: lineText(lineOf(node)) });
-    }
-  }
-
-  if (ts.isBinaryExpression(node)) {
-    const operator = node.operatorToken.kind;
-    const responseName = operator === ts.SyntaxKind.AmpersandAmpersandToken
-      ? guardedResponseName(node.left)
-      : operator === ts.SyntaxKind.BarBarToken
-        ? absentResponseName(node.left)
-        : null;
-    if (responseName && containsAssertion(node.right, responseName)) {
-      findings.push({ line: lineOf(node), kind: 'swallowed-response', sourceLine: lineText(lineOf(node)) });
-    }
-  }
-
-
-  if (ts.isConditionalExpression(node)) {
-    const presentName = guardedResponseName(node.condition);
-    const absentName = absentResponseName(node.condition);
-    const gatedName = presentName || absentName;
-    const gatedBranch = presentName ? node.whenTrue : node.whenFalse;
-    const otherBranch = presentName ? node.whenFalse : node.whenTrue;
-    if (gatedName && containsAssertion(gatedBranch, gatedName) &&
-        !containsAssertion(otherBranch)) {
-      findings.push({ line: lineOf(node), kind: 'swallowed-response', sourceLine: lineText(lineOf(node)) });
-    }
-  }
-
+  if (ts.isBinaryExpression(node)) recordResponseBinaryFinding(node);
+  if (ts.isConditionalExpression(node)) recordResponseConditionalFinding(node);
   ts.forEachChild(node, visit);
 }
 visit(source);
