@@ -41,8 +41,8 @@ Investigate and repair that first if it affects users, guards or delivery.
 - [x] R5 Confirm exact-master results and select the next critical group
 - [x] R6 Close new test-only SonarQube warnings and restore the reporting gate
 - [x] R7 Close the three critical E2E guard complexity findings
-- [ ] R8 Close the three critical TMDB provider complexity findings; state: building
-- [ ] R9 Triage the three critical settings script findings; state: planning
+- [x] R8 Close the three critical TMDB provider complexity findings
+- [ ] R9 Close the three critical settings script findings; state: building
 
 ## Conductor log
 
@@ -143,3 +143,11 @@ Investigate and repair that first if it affects users, guards or delivery.
   full local gate, old/new differential checks, six new contracts, three
   load-bearing post-refactor mutations and two independent reviews. The
   settings script has a further three critical findings to triage next.
+- 2026-10-10: PR #537 merged as `6105762c7`. Its exact clean-master scan
+  closed all three targeted TMDB critical findings and introduced none.
+  Open findings moved 602 to 599, critical 129 to 126; coverage rose to
+  66.6%, bugs, vulnerabilities and hotspots remained zero, and the
+  reporting gate stayed green. The settings script batch has five new
+  browser contracts, passing load-bearing mutation probes, 19 focused
+  settings tests, the full local gate and two independent local reviews.
+  PR delivery remains open.
