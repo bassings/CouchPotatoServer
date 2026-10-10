@@ -26,8 +26,8 @@ that can pass without checking the intended behaviour. Include the related
 - [x] G1 Characterise current guard output and assess existing contracts
 - [x] G2 Extract focused helpers and verify equivalent output
 - [x] G3 Complete full local gate and independent reviews
-- [ ] G4 Deliver PR through CI, cloud review and merge
-- [ ] G5 Confirm exact-master SonarQube result
+- [x] G4 Deliver PR through CI, cloud review and merge
+- [x] G5 Confirm exact-master SonarQube result
 
 ## Conductor log
 
@@ -49,3 +49,9 @@ that can pass without checking the intended behaviour. Include the related
   UI conformance checks also passed. Two independent code-reviewer agents
   found the guard extraction clean. PR delivery and exact-master analysis
   remain open.
+- 2026-10-10: PR #536 passed CI and cloud review and merged as `63e860bdb`.
+  The exact clean-master scan closed the three critical `javascript:S3776`
+  issues and the related `javascript:S3358` issue. Open findings moved from
+  606 to 602, critical from 132 to 129, with no new findings. Coverage was
+  66.5%, bugs, vulnerabilities and hotspots were zero, and the reporting
+  gate was green.
