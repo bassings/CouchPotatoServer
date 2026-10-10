@@ -37,8 +37,10 @@ Investigate and repair that first if it affects users, guards or delivery.
 - [x] R1 Investigate and fix the reported reliability issue
 - [x] R2 Reconcile #530 to #533 completion evidence in their plans
 - [x] R3 Triage release-plugin critical findings and characterise safe behaviour
-- [ ] R4 Implement and deliver the selected bounded critical slice; state: building
-- [ ] R5 Confirm exact-master results and select the next critical group; state: queued
+- [x] R4 Implement and deliver the selected bounded critical slice
+- [x] R5 Confirm exact-master results and select the next critical group
+- [ ] R6 Close new test-only SonarQube warnings and restore the reporting gate; state: building
+- [ ] R7 Triage the three critical E2E guard complexity findings; state: queued
 
 ## Conductor log
 
@@ -94,3 +96,31 @@ Investigate and repair that first if it affects users, guards or delivery.
   tests. Ruff, the test-trap check and UI conformance passed. The reported
   `pytest_plugins` placement is fixed locally; delivery and exact-master
   confirmation remain open.
+- 2026-10-10: The pre-push hook repeated and passed the full gate, then
+  pushed `5a0fe11c1`. PR #534 is open for CI and cloud review. No production
+  deployment was started.
+- 2026-10-10: Claude's cloud review passed. Codex raised a P1 claim that
+  pytest forbids `pytest_plugins` in `tests/unit/conftest.py`; this is
+  contradicted by two complete root-run local gates with the repository's
+  pinned pytest 9.1.1. Replied with that evidence and resolved the thread.
+  CI Python, accessibility, lint, secrets, dependency review and CodeQL pass;
+  Docker and browser CI jobs remain pending.
+- 2026-10-10: All PR #534 checks passed, the cloud review thread was resolved,
+  and the PR merged as `655b5488bf482c80c51f487d69b33e3a3db2922e`.
+  Remote `master` matches that commit. Exact-master SonarQube confirmation is
+  next; automatic beta and post-merge checks are separate from production.
+- 2026-10-10: Exact clean-master analysis of `655b5488b` closed the reported
+  `python:S8999` and the release filter's critical `python:S3776`. Open
+  findings moved 608 to 613 and critical findings 133 to 132. Seven new
+  test-only findings, five `python:S9073` and two `python:S5778`, made the
+  reporting gate red; coverage stayed 66.5% with zero bugs, vulnerabilities
+  or security hotspots. They are the immediate cleanup slice. The next
+  critical cluster to triage is three `javascript:S3776` findings in
+  `scripts/check_e2e_test_traps.mjs`, a potential bounded bulk fix.
+- 2026-10-10: The seven test-only warnings were fixed with individual
+  assertions and narrow `pytest.raises` blocks. All 124 focused tests passed;
+  size-filter and stream-close mutations made the intended tests fail and
+  restoration passed. The complete local gate passed, including 4,905 Python
+  unit, 42 integration, 311 JavaScript unit, 227 desktop, 2 isolation, 24
+  phone and 126 accessibility tests. Two independent local reviews were clean.
+  PR delivery and exact-master SonarQube confirmation remain open.
