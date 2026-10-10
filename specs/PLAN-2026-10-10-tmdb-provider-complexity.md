@@ -29,8 +29,8 @@ change.
 - [x] T1 Characterise existing behaviour and add missing contracts
 - [x] T2 Extract focused helpers with equivalent results and traces
 - [x] T3 Complete full local gate and independent reviews
-- [ ] T4 Deliver PR through CI, cloud review and merge
-- [ ] T5 Confirm exact-master SonarQube result
+- [x] T4 Deliver PR through CI, cloud review and merge
+- [x] T5 Confirm exact-master SonarQube result
 
 ## Conductor log
 
@@ -57,3 +57,9 @@ change.
   after restoration. The original provider SHA-256 was restored. Two
   independent local reviews found no material issue; final review refresh
   remains before the first push.
+- 2026-10-10: PR #537 passed the pre-push full gate, CI and cloud review,
+  then merged as `6105762c7`. The exact clean-master scan closed all three
+  targeted `python:S3776` findings. Open findings moved from 602 to 599,
+  critical from 129 to 126, with no new finding. Coverage rose to 66.6%,
+  bugs, vulnerabilities and hotspots stayed at zero, and the reporting gate
+  remained green.
