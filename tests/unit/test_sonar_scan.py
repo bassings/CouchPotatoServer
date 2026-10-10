@@ -726,10 +726,12 @@ def test_ce_http_error_closes_response_stream(code):
         raise error
 
     error = sonar_scan.TransientCEError if code == 503 else sonar_scan.ScanError
+    request = Request("http://example.test/api/ce/task")
     with pytest.raises(error):
-        sonar_scan.read_ce_status(Request("http://example.test/api/ce/task"), 1, failed_request)
+        sonar_scan.read_ce_status(request, 1, failed_request)
 
-    assert errors and stream.closed
+    assert errors
+    assert stream.closed
 
 
 def test_ce_http_error_keeps_poll_failure_when_stream_close_fails():
@@ -743,8 +745,9 @@ def test_ce_http_error_keeps_poll_failure_when_stream_close_fails():
     def failed_request(request, timeout):
         raise HTTPError(request.full_url, 503, "unavailable", {}, stream)
 
+    request = Request("http://example.test/api/ce/task")
     with pytest.raises(sonar_scan.TransientCEError):
-        sonar_scan.read_ce_status(Request("http://example.test/api/ce/task"), 1, failed_request)
+        sonar_scan.read_ce_status(request, 1, failed_request)
 
     assert stream.closed
 
