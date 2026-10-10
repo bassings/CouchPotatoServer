@@ -23,7 +23,7 @@ RUN apk add --no-cache \
         cargo
 
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir --upgrade pip==26.1.1 \
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1 \
     && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
