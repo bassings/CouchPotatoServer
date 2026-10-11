@@ -47,27 +47,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # --- Build once (single-arch, loaded) and smoke-test before publishing ---
-      - name: Build test image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          load: true
-          tags: couchpotato:test
-          pull: true
-          no-cache: true
-
-      - name: Smoke-test image
-        run: |
-          docker run -d --name cp-test -p 5051:5050 couchpotato:test
-          for _ in $(seq 1 30); do
-            if curl -fsS http://localhost:5051/ >/dev/null 2>&1; then ok=1; break; fi
-            sleep 2
-          done
-          docker logs cp-test
-          docker rm -f cp-test
-          test "${ok:-0}" = "1" || { echo "::error::image did not become healthy"; exit 1; }
-
       # --- Compute the beta version (minor bump per commit) ---
       - name: Compute beta version
         id: ver
@@ -108,14 +87,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push beta image to GHCR
+        id: candidate
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: true
           platforms: linux/amd64,linux/arm64
-          # Publish under a run-specific candidate tag. The public beta and
-          # immutable version tags appear only after both platforms pass.
-          tags: ${{ env.GHCR_IMAGE }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          # Push by digest only: a rejected build has no retrievable beta or
+          # candidate tag. Public tags appear after smoke and Trivy gates.
+          outputs: type=image,name=${{ env.GHCR_IMAGE }},push=true,push-by-digest=true,name-canonical=true
           build-args: |
             CP_VERSION=${{ steps.ver.outputs.base }}
           pull: true
@@ -125,9 +104,25 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          DIGEST="$(docker buildx imagetools inspect "${GHCR_IMAGE}:candidate-${{ github.run_id }}-${{ github.run_attempt }}" --format '{{.Manifest.Digest}}')"
+          DIGEST="${{ steps.candidate.outputs.digest }}"
           test -n "$DIGEST"
+          ACTUAL="$(docker buildx imagetools inspect "${GHCR_IMAGE}@${DIGEST}" --format '{{.Manifest.Digest}}')"
+          test "$ACTUAL" = "$DIGEST"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke-test published amd64 image
+        run: |
+          set -euo pipefail
+          REF="${GHCR_IMAGE}@${{ steps.image.outputs.digest }}"
+          docker pull --platform linux/amd64 "$REF"
+          docker run -d --platform linux/amd64 --name cp-test -p 5051:5050 "$REF"
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:5051/ >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs cp-test
+          docker rm -f cp-test
+          test "${ok:-0}" = "1" || { echo "::error::image did not become healthy"; exit 1; }
 
       # Trivy must fetch the registry image. Without remote mode it can choose
       # a locally loaded image and silently scan the wrong CPU architecture.
