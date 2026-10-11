@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import pytest
+import requests
 from unittest.mock import call, patch, MagicMock, PropertyMock, Mock
 from base64 import b64encode
 
@@ -852,6 +853,46 @@ class TestTorrentPotatoJackettIntegration:
             p = Base.__new__(Base)
             p._http_client = None
             return p
+
+    @pytest.mark.parametrize(('host_url', 'expected'), [
+        ('http://jackett.example:9117/jackett/potato/yts/api', True),
+        ('http://other.example:9117/jackett/potato/yts/api', False),
+        ('http://jackett.example:9117/potato/yts/api', False),
+        ('http://jackett.example:9117/jackett/torznab/all/api', False),
+        ('http://jackett.example:9117/jackett/potato/yts/other', False),
+    ])
+    def test_search_only_exempts_configured_jackett_indexers(self, host_url, expected):
+        provider = self._make_provider()
+        with patch.object(provider, 'conf', return_value='http://jackett.example:9117/jackett'), \
+             patch.object(provider, 'buildUrl', return_value=host_url + '?search=test', create=True), \
+             patch.object(provider, 'getJsonData', return_value=[]) as get_json:
+            provider._searchOnHost({'host': host_url}, {}, None, [])
+
+        assert get_json.call_args.kwargs['ignore_host_failure_on_400'] is expected
+
+    def test_indexer_refusals_leave_jackett_listing_reachable(self):
+        provider = self._make_provider()
+        provider.http_time_between_calls = 0
+        indexer_url = 'http://jackett.example:9117/potato/tv-only/api'
+        listing_url = 'http://jackett.example:9117/torznab/all/api?t=indexers'
+        refused = requests.Response()
+        refused.status_code = 400
+        refused.url = indexer_url
+        listing = requests.Response()
+        listing.status_code = 200
+        listing._content = b'<indexers />'
+        session = MagicMock()
+        session.request.side_effect = [refused] * 6 + [listing]
+
+        with patch.object(provider, 'conf', return_value='http://jackett.example:9117'), \
+             patch.object(provider, 'buildUrl', return_value=indexer_url, create=True), \
+             patch.object(Env, 'get', side_effect=lambda key: session if key == 'http_opener' else None):
+            for _ in range(6):
+                provider._searchOnHost({'host': indexer_url}, {}, None, [], manual=True)
+            assert provider.urlopen(listing_url) == b'<indexers />'
+
+        assert 'jackett.example:9117' not in provider.http_client.failed_disabled
+        assert session.request.call_count == 7
 
     def test_getJackettIndexers_parses_xml(self):
         p = self._make_provider()

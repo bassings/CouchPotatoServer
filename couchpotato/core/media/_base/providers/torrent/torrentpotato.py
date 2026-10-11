@@ -71,7 +71,10 @@ class Base(TorrentProvider):
         cache_timeout = -1 if manual else 1800
 
         try:
-            torrents = self.getJsonData(url, cache_timeout=cache_timeout)
+            torrents = self.getJsonData(
+                url, cache_timeout=cache_timeout,
+                ignore_host_failure_on_400=self._isJackettIndexerHost(host['host']),
+            )
         except HTTPError as e:
             # Handle 400 Bad Request gracefully - common for TV/Anime-only indexers
             if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:
@@ -107,6 +110,22 @@ class Base(TorrentProvider):
 
             except Exception:
                 log.error('Failed getting results from %s: %s', host['host'], traceback.format_exc())
+
+    def _isJackettIndexerHost(self, host_url):
+        """Identify indexer URLs on the configured Jackett service."""
+        saved_url = self.conf('jackett_url')
+        if not saved_url:
+            return False
+
+        base = urlparse(cleanHost(toUnicode(saved_url)))
+        candidate = urlparse(host_url)
+        indexer_path = base.path.rstrip('/') + '/potato/'
+        return (
+            candidate.scheme.lower() == base.scheme.lower()
+            and candidate.netloc.lower() == base.netloc.lower()
+            and candidate.path.startswith(indexer_path)
+            and candidate.path.endswith('/api')
+        )
 
     def getHosts(self):
 

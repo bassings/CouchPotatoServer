@@ -162,10 +162,12 @@ class Plugin:
                 log.error('Couldn\'t remove empty directory %s: %s', folder_path, traceback.format_exc())
 
     # http request — delegates to HttpClient
-    def urlopen(self, url, timeout=30, data=None, headers=None, files=None, show_error=True, stream=False):
+    def urlopen(self, url, timeout=30, data=None, headers=None, files=None, show_error=True,
+                stream=False, ignore_host_failure_on_400=False):
         return self.http_client.request(
             url, timeout=timeout, data=data, headers=headers,
             files=files, show_error=show_error, stream=stream,
+            ignore_host_failure_on_400=ignore_host_failure_on_400,
         )
 
 

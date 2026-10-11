@@ -224,7 +224,7 @@ class HttpClient:
             self._rate_event.wait(timeout=self.time_between_calls)
 
     def request(self, url, timeout=30, data=None, headers=None, files=None,
-                show_error=True, stream=False):
+                show_error=True, stream=False, ignore_host_failure_on_400=False):
         """Make an HTTP request with retry, rate limiting, and failure tracking.
 
         Args:
@@ -235,6 +235,8 @@ class HttpClient:
             files: Optional files dict for multipart upload.
             show_error: Whether to log errors.
             stream: Whether to stream the response.
+            ignore_host_failure_on_400: Whether a caller-identified HTTP 400
+                should leave the shared host failure circuit unchanged.
 
         Returns:
             Response content (bytes) or Response object if stream=True.
@@ -312,7 +314,10 @@ class HttpClient:
             elif show_error:
                 log.error('Failed opening url: %s %s', url, traceback.format_exc(0))
 
-            self._record_failure(host, status_code)
+            # An indexer's 400 can be a refusal of that indexer rather than an
+            # outage of its shared host. Only the caller can identify it.
+            if not (is_http_400 and ignore_host_failure_on_400):
+                self._record_failure(host, status_code)
             raise
 
         with self._lock:
