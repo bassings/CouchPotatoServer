@@ -252,8 +252,11 @@ image.
   static analysis, per-PR + weekly.
 - **dependency-review** (`dependency-review.yml`) — blocks PRs that add deps
   with known high/critical vulns.
-- **Trivy** image scan in the `docker` job — fails on fixable HIGH/CRITICAL
-  CVEs (`ignore-unfixed`, `.trivyignore` for the DS-0002 false positive).
+- **Trivy** image scan in the `docker` job — fails on fixable CVEs at every
+  severity, including UNKNOWN, LOW and MEDIUM (`ignore-unfixed`,
+  `.trivyignore` for the DS-0002 false positive). The beta workflow also
+  smoke-tests its published digest and scans both architectures before
+  assigning public beta tags.
 - **secrets** (gitleaks, pinned `v8.30.1`) — scans the **working tree**, not full
   history. Full history holds 37 findings — 31 of them upstream CouchPotato's own
   committed provider keys spanning 2011–2017, and 6 authored by this fork (see

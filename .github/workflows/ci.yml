@@ -676,15 +676,15 @@ jobs:
         docker stop cp-test
 
     # Image vulnerability scan (the manual pre-release Trivy step, now in CI).
-    # Alpine base targets 0 CVEs; fail on fixable HIGH/CRITICAL so a regression
-    # is caught before release. ignore-unfixed keeps un-patchable upstream CVEs
-    # from blocking unrelated PRs; .trivyignore suppresses the DS-0002 false +.
+    # Alpine base targets 0 CVEs; fail on every fixable severity, including
+    # MEDIUM (a zlib CVE reached beta while this filtered it out).
+    # ignore-unfixed leaves unpatchable upstream findings informational.
     - name: Scan image with Trivy
       uses: aquasecurity/trivy-action@v0.36.0
       with:
         image-ref: couchpotato:test
         scanners: vuln
-        severity: CRITICAL,HIGH
+        severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
         ignore-unfixed: true
         trivyignores: .trivyignore
         exit-code: '1'

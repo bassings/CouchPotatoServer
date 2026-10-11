@@ -69,6 +69,8 @@ ENV PYTHONUNBUFFERED=1 \
 #   Measured in a python:3.14-alpine container: installed libuuid 2.42.1-r0,
 #   available 2.42.3-r1 in Alpine v3.24 main, and the pin resolves.
 #   Drop this explicit pin once the base image ships libuuid >= 2.42.3-r1.
+# - The base's zlib 1.3.2-r0 has CVE-2026-85091 (MEDIUM). Alpine 3.24 main
+#   already carries the fixed 1.3.2-r1; require it until the base catches up.
 RUN apk add --no-cache \
         ca-certificates \
         su-exec \
@@ -78,7 +80,8 @@ RUN apk add --no-cache \
         "c-ares>=1.34.8-r0" \
         "libcrypto3>=3.5.8-r0" \
         "libssl3>=3.5.8-r0" \
-        "libuuid>=2.42.3-r1"
+        "libuuid>=2.42.3-r1" \
+        "zlib>=1.3.2-r1"
 
 # Create app user
 ARG PUID=1000
