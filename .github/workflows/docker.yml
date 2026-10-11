@@ -54,8 +54,8 @@ jobs:
           context: .
           load: true
           tags: couchpotato:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          pull: true
+          no-cache: true
 
       - name: Smoke-test image
         run: |
@@ -113,18 +113,65 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          # :<version> is the IMMUTABLE artifact (each build gets a fresh
-          # version, so it is never rewritten). :beta and :sha-<short> are
-          # convenience pointers — a re-run of the same commit repoints
-          # :sha-<short> at the newer build. Pin :<version> for immutability.
-          tags: |
-            ${{ env.GHCR_IMAGE }}:beta
-            ${{ env.GHCR_IMAGE }}:${{ steps.ver.outputs.full }}
-            ${{ env.GHCR_IMAGE }}:sha-${{ steps.ver.outputs.short }}
+          # Publish under a run-specific candidate tag. The public beta and
+          # immutable version tags appear only after both platforms pass.
+          tags: ${{ env.GHCR_IMAGE }}:candidate-${{ github.run_id }}-${{ github.run_attempt }}
           build-args: |
             CP_VERSION=${{ steps.ver.outputs.base }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          pull: true
+          no-cache: true
+
+      - name: Resolve immutable beta image digest
+        id: image
+        run: |
+          set -euo pipefail
+          DIGEST="$(docker buildx imagetools inspect "${GHCR_IMAGE}:candidate-${{ github.run_id }}-${{ github.run_attempt }}" --format '{{.Manifest.Digest}}')"
+          test -n "$DIGEST"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # Trivy must fetch the registry image. Without remote mode it can choose
+      # a locally loaded image and silently scan the wrong CPU architecture.
+      - name: Scan published amd64 image
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_IMAGE_SRC: remote
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ${{ env.GHCR_IMAGE }}@${{ steps.image.outputs.digest }}
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+          format: table
+
+      - name: Scan published arm64 image
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_IMAGE_SRC: remote
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ env.GHCR_IMAGE }}@${{ steps.image.outputs.digest }}
+          scanners: vuln
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+          format: table
+
+      - name: Move verified beta tags in GHCR
+        run: |
+          set -euo pipefail
+          SOURCE="${GHCR_IMAGE}@${{ steps.image.outputs.digest }}"
+          docker buildx imagetools create \
+            --tag "${GHCR_IMAGE}:${{ steps.ver.outputs.full }}" \
+            --tag "${GHCR_IMAGE}:beta" \
+            --tag "${GHCR_IMAGE}:sha-${{ steps.ver.outputs.short }}" \
+            "$SOURCE"
+          for TAG in "${{ steps.ver.outputs.full }}" beta "sha-${{ steps.ver.outputs.short }}"; do
+            ACTUAL="$(docker buildx imagetools inspect "${GHCR_IMAGE}:${TAG}" --format '{{.Manifest.Digest}}')"
+            test "$ACTUAL" = "${{ steps.image.outputs.digest }}"
+          done
 
       # --- Optional Docker Hub beta mirror (only if creds configured) ---
       - name: Log in to Docker Hub
@@ -134,20 +181,17 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push beta image to Docker Hub
+      - name: Mirror verified beta image to Docker Hub
         if: env.HAS_DOCKER_CREDS == 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            bassings/couchpotato:beta
-            bassings/couchpotato:${{ steps.ver.outputs.full }}
-          build-args: |
-            CP_VERSION=${{ steps.ver.outputs.base }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: |
+          set -euo pipefail
+          SOURCE="${GHCR_IMAGE}@${{ steps.image.outputs.digest }}"
+          docker buildx imagetools create \
+            --tag "docker.io/bassings/couchpotato:beta" \
+            --tag "docker.io/bassings/couchpotato:${{ steps.ver.outputs.full }}" \
+            "$SOURCE"
+          ACTUAL="$(docker buildx imagetools inspect "docker.io/bassings/couchpotato:${{ steps.ver.outputs.full }}" --format '{{.Manifest.Digest}}')"
+          test "$ACTUAL" = "${{ steps.image.outputs.digest }}"
 
       # --- Tag + GitHub prerelease (marks it pre-release so :latest users'
       #     updater, which reads /releases/latest, never sees it) ---
