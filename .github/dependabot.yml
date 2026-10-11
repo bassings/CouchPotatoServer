@@ -11,19 +11,6 @@ updates:
     commit-message:
       prefix: "deps"
       include: "scope"
-    ignore:
-      # guessit 4.x and rebulk 6.x are a coupled major upgrade. The subtitle
-      # chain (subliminal -> knowit -> trakit) declares broad lower bounds, but
-      # has not been verified against rebulk 6; accepting either major alone
-      # would test a dependency combination we do not ship. Keep the proven
-      # guessit 3.8.0 / rebulk 3.2.0 pair until both majors can be upgraded and
-      # subtitle parsing exercised together. See closed PR #183 for the original
-      # compatibility analysis.
-      - dependency-name: "guessit"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "rebulk"
-        update-types: ["version-update:semver-major"]
-
   # Node.js dependencies
   - package-ecosystem: "npm"
     directory: "/"
