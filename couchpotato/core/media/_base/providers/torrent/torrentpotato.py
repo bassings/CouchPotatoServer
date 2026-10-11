@@ -1,6 +1,5 @@
 from urllib.parse import urlparse
 import re
-import traceback
 import xml.etree.ElementTree as ET
 
 from requests import HTTPError
@@ -78,19 +77,17 @@ class Base(TorrentProvider):
         except HTTPError as e:
             # Handle 400 Bad Request gracefully - common for TV/Anime-only indexers
             if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:
-                host_name = host.get('name') or urlparse(host['host']).hostname or host['host']
-                log.warning('Indexer %s returned 400 Bad Request - likely a TV/Anime-only indexer that does not support movie searches',
-                           host_name)
+                log.warning('Indexer returned 400 Bad Request, possibly because it does not support movie searches')
                 return
             raise
-        except Exception:
-            log.error('Failed getting results from %s: %s', host['host'], traceback.format_exc())
+        except Exception as error:
+            log.error('Failed getting results from indexer: %s', type(error).__name__)
             return
 
         if torrents:
             try:
                 if torrents.get('error'):
-                    log.error('%s: %s', torrents.get('error'), host['host'])
+                    log.error('Indexer returned an error response')
                 elif torrents.get('results'):
                     for torrent in torrents.get('results', []):
                         results.append({
@@ -108,8 +105,8 @@ class Base(TorrentProvider):
                             'seed_time': host['seed_time'],
                         })
 
-            except Exception:
-                log.error('Failed getting results from %s: %s', host['host'], traceback.format_exc())
+            except Exception as error:
+                log.error('Failed getting results from indexer: %s', type(error).__name__)
 
     def _isJackettIndexerHost(self, host_url):
         """Identify indexer URLs on the configured Jackett service."""
@@ -203,7 +200,7 @@ class Base(TorrentProvider):
             # Use the torznab endpoint with t=indexers to get all indexers
             indexers_url = f'{jackett_url}/torznab/all/api?apikey={jackett_api_key}&t=indexers'
 
-            log.info('Fetching Jackett indexers from: %s', indexers_url.replace(jackett_api_key, '***'))
+            log.info('Fetching Jackett indexers')
 
             response = self.urlopen(indexers_url, timeout=30)
             if not response:
@@ -215,9 +212,8 @@ class Base(TorrentProvider):
             # Check for Jackett error response
             error = root.find('.//error')
             if error is not None:
-                error_desc = error.get('description', 'Unknown error')
-                log.error('Jackett returned error: %s', error_desc)
-                return None, f'Jackett error: {error_desc}'
+                log.error('Jackett returned an error response')
+                return None, 'Jackett returned an error response'
 
             indexers = []
             skipped_tv_only = []
@@ -259,12 +255,12 @@ class Base(TorrentProvider):
             log.info('Found %d configured Jackett indexers with movie support', len(indexers))
             return indexers, None
 
-        except ET.ParseError as e:
-            log.error('Failed to parse Jackett response: %s', e)
-            return None, f'Failed to parse Jackett response: {e}'
+        except ET.ParseError:
+            log.error('Failed to parse Jackett response XML')
+            return None, 'Failed to parse Jackett response XML'
         except Exception as e:
-            log.error('Failed to fetch Jackett indexers: %s', traceback.format_exc())
-            return None, f'Failed to connect to Jackett: {e}'
+            log.error('Failed to fetch Jackett indexers: %s', type(e).__name__)
+            return None, f'Failed to connect to Jackett: {type(e).__name__}'
 
     def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
         """Test Jackett connection and return list of available indexers"""
@@ -316,9 +312,6 @@ class Base(TorrentProvider):
         """
         saved_url = self.conf('jackett_url')
         saved_key = self.conf('jackett_api_key')
-
-        log.debug('jackettSync: saved_url type=%s, repr=%r', type(saved_url).__name__, saved_url)
-        log.debug('jackettSync: saved_key type=%s, repr=%r', type(saved_key).__name__, saved_key[:10] if saved_key else None)
 
         # Ensure values are strings (settings may return bytes)
         if isinstance(saved_url, bytes):
@@ -418,13 +411,17 @@ class Base(TorrentProvider):
     def test(self):
         """Test connectivity to all enabled TorrentPotato hosts."""
         hosts = self.getHosts()
-        enabled_hosts = [h for h in hosts if self.isEnabled(h)]
+        enabled_hosts = [
+            (index, host)
+            for index, host in enumerate(hosts, start=1)
+            if self.isEnabled(host)
+        ]
 
         if not enabled_hosts:
             return False, 'No hosts enabled'
 
         results = []
-        for host in enabled_hosts:
+        for index, host in enabled_hosts:
             host_url = host.get('host', 'unknown')
             try:
                 # Build a simple test URL - TorrentPotato providers typically respond to any search
@@ -437,24 +434,22 @@ class Base(TorrentProvider):
                 if isinstance(data, bytes):
                     data = data.decode('utf-8', errors='replace')
 
-                hostname = urlparse(host_url).hostname or host_url
                 if data:
                     # Try to parse as JSON to verify it's a valid TorrentPotato response
                     import json
                     try:
                         parsed = json.loads(data)
                         if 'error' in parsed:
-                            results.append((False, '%s: %s' % (hostname, parsed.get('error', 'Unknown error'))))
+                            results.append((False, 'Indexer %d: remote error response' % index))
                         else:
-                            results.append((True, '%s: OK' % hostname))
+                            results.append((True, 'Indexer %d: OK' % index))
                     except json.JSONDecodeError:
                         # Not JSON but got a response, might still be OK
-                        results.append((True, '%s: Connected' % hostname))
+                        results.append((True, 'Indexer %d: Connected' % index))
                 else:
-                    results.append((False, '%s: No response' % hostname))
+                    results.append((False, 'Indexer %d: No response' % index))
             except Exception as e:
-                hostname = urlparse(host_url).hostname or host_url
-                results.append((False, '%s: %s' % (hostname, str(e)[:50])))
+                results.append((False, 'Indexer %d: %s' % (index, type(e).__name__)))
 
         # Return overall success and combined message
         all_success = all(r[0] for r in results)

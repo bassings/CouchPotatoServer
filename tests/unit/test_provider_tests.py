@@ -161,7 +161,7 @@ class TestTorrentPotatoProviderTest:
         result = provider.test()
 
         assert result[0] is True
-        assert 'torrent.example.com' in result[1]  # codeql[py/incomplete-url-substring-sanitization]
+        assert 'Indexer 1' in result[1]
 
     def test_test_handles_error_response(self):
         """Test should handle error responses."""
@@ -177,4 +177,23 @@ class TestTorrentPotatoProviderTest:
         result = provider.test()
 
         assert result[0] is False
-        assert 'Invalid passkey' in result[1]
+        assert 'Indexer 1' in result[1]
+        assert 'Invalid passkey' not in result[1]
+
+    def test_test_keeps_configured_position_after_disabled_host(self):
+        """A safe indexer label must point to the correct settings row."""
+        from couchpotato.core.media._base.providers.torrent.torrentpotato import Base
+
+        provider = object.__new__(Base)
+        provider.getHosts = Mock(return_value=[
+            {'use': '0', 'host': 'http://disabled.private', 'pass_key': 'unused', 'name': ''},
+            {'use': '1', 'host': 'http://enabled.private', 'pass_key': 'TOP_SECRET', 'name': ''},
+        ])
+        provider.isEnabled = Mock(side_effect=lambda host: host['use'] == '1')
+        provider.urlopen = Mock(return_value='{"error": "TOP_SECRET"}')
+
+        result = provider.test()
+
+        assert result == (False, 'Indexer 2: remote error response')
+        assert 'enabled.private' not in result[1]
+        assert 'TOP_SECRET' not in result[1]

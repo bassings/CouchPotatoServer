@@ -290,11 +290,12 @@ class Plugin:
             if data and cache_timeout > 0 and use_cache:
                 self.setCache(cache_key, data, timeout = cache_timeout)
             return data
-        except Exception:
+        except Exception as error:
             if not kwargs.get('show_error', True):
                 raise
 
-            log.debug('Failed getting cache: %s', traceback.format_exc(0))
+            status = getattr(getattr(error, 'response', None), 'status_code', None)
+            log.debug('Failed getting cache: error=%s status=%s', type(error).__name__, status)
             return ''
 
     def setCache(self, cache_key, value, timeout = 300):
