@@ -148,7 +148,7 @@ class MediaParserMixin:
         return ''
 
     def getMeta(self, filename):
-        if not enzyme:
+        if not enzyme or os.path.splitext(filename)[1].lower() not in ('.mkv', '.webm'):
             return {}
 
         try:
@@ -198,10 +198,10 @@ class MediaParserMixin:
                 'resolution_height': tryInt(getattr(vt, 'height', 0)),
                 'audio_channels': getattr(audio_tracks[0], 'channels', 0) if audio_tracks else 0,
             }
-        except enzyme.exceptions.ParserError:
-            log.debug('Failed to parse meta for %s', filename)
-        except Exception:
-            log.debug('Failed parsing %s', filename)
+        except enzyme.exceptions.Error as error:
+            log.warning('Unable to parse media metadata: %s', type(error).__name__)
+        except Exception as error:
+            log.warning('Unable to read media metadata: %s', type(error).__name__)
 
         return {}
 

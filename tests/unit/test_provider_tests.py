@@ -161,7 +161,7 @@ class TestTorrentPotatoProviderTest:
         result = provider.test()
 
         assert result[0] is True
-        assert 'torrent.example.com' in result[1]  # codeql[py/incomplete-url-substring-sanitization]
+        assert 'Indexer 1' in result[1]
 
     def test_test_handles_error_response(self):
         """Test should handle error responses."""
@@ -177,4 +177,5 @@ class TestTorrentPotatoProviderTest:
         result = provider.test()
 
         assert result[0] is False
-        assert 'Invalid passkey' in result[1]
+        assert 'Indexer 1' in result[1]
+        assert 'Invalid passkey' not in result[1]
