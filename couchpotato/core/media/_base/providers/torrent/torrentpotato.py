@@ -411,13 +411,17 @@ class Base(TorrentProvider):
     def test(self):
         """Test connectivity to all enabled TorrentPotato hosts."""
         hosts = self.getHosts()
-        enabled_hosts = [h for h in hosts if self.isEnabled(h)]
+        enabled_hosts = [
+            (index, host)
+            for index, host in enumerate(hosts, start=1)
+            if self.isEnabled(host)
+        ]
 
         if not enabled_hosts:
             return False, 'No hosts enabled'
 
         results = []
-        for index, host in enumerate(enabled_hosts, start=1):
+        for index, host in enabled_hosts:
             host_url = host.get('host', 'unknown')
             try:
                 # Build a simple test URL - TorrentPotato providers typically respond to any search

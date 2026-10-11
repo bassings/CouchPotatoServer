@@ -26,6 +26,7 @@ request exception text into Jackett test and sync API errors.
 5. Jackett listing, search errors and test/sync failure logs omit the private
    host, path, query and exception text. A failed Jackett API request returns
    a useful error class without disclosing the URL or API key.
-6. The provider settings test reports each indexer by position and safe status,
-   without forwarding the configured hostname, remote error text or exception
-   text into its API response.
+6. The provider settings test reports each indexer by its configured position
+   and safe status, including when earlier rows are disabled, without
+   forwarding the hostname, remote error text or exception text into its API
+   response.

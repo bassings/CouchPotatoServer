@@ -179,3 +179,21 @@ class TestTorrentPotatoProviderTest:
         assert result[0] is False
         assert 'Indexer 1' in result[1]
         assert 'Invalid passkey' not in result[1]
+
+    def test_test_keeps_configured_position_after_disabled_host(self):
+        """A safe indexer label must point to the correct settings row."""
+        from couchpotato.core.media._base.providers.torrent.torrentpotato import Base
+
+        provider = object.__new__(Base)
+        provider.getHosts = Mock(return_value=[
+            {'use': '0', 'host': 'http://disabled.private', 'pass_key': 'unused', 'name': ''},
+            {'use': '1', 'host': 'http://enabled.private', 'pass_key': 'TOP_SECRET', 'name': ''},
+        ])
+        provider.isEnabled = Mock(side_effect=lambda host: host['use'] == '1')
+        provider.urlopen = Mock(return_value='{"error": "TOP_SECRET"}')
+
+        result = provider.test()
+
+        assert result == (False, 'Indexer 2: remote error response')
+        assert 'enabled.private' not in result[1]
+        assert 'TOP_SECRET' not in result[1]
