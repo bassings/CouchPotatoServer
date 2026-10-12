@@ -1,13 +1,13 @@
 # CouchPotato Docker Container
 # Multi-stage build for smaller image
 #
-# Base image: python:3.14-alpine (Alpine Linux / musl).
+# Base image: python:3.14-alpine (Alpine Linux / musl), pinned by digest below.
 # Chosen over python:3.14-slim (Debian) because the Alpine base ships with 0
 # known CVEs vs ~106 on Debian 13 — the Debian OS packages (perl, ncurses,
 # libssh2, libcurl) repeatedly carry HIGH/CRITICAL CVEs with no upstream fix.
 
 # Stage 1: Build dependencies
-FROM python:3.14-alpine AS builder
+FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72 AS builder
 
 WORKDIR /build
 
@@ -27,7 +27,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1 \
     && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
-FROM python:3.14-alpine
+FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
 
 LABEL maintainer="CouchPotato"
 LABEL description="CouchPotato - Automatic Movie Downloader"
@@ -51,24 +51,17 @@ ENV PYTHONUNBUFFERED=1 \
 # - c-ares is pulled in transitively; pin it to the patched version to clear
 #   CVE-2026-33630 (HIGH, use-after-free/double-free) which fails the Trivy gate.
 #   Drop this explicit pin once the base image ships c-ares >= 1.34.8-r0.
-# - libcrypto3/libssl3 arrive with the base image at 3.5.7-r0 and are pinned
-#   for the same reason: CVE-2026-14456 (HIGH, unbounded memory growth in the
-#   QUIC server path) is fixed in 3.5.8-r0, which Alpine v3.24 main already
-#   carries. This is a real finding rather than a number to silence: nothing
-#   here serves QUIC, so the practical exposure is low, but the fix is a
-#   version bump that is already published and costs nothing to take.
-#   Drop this explicit pin once the base image ships openssl >= 3.5.8-r0.
+# - libcrypto3/libssl3 must stay at or above 3.5.8-r0 to avoid
+#   CVE-2026-14456. The pinned base currently ships 3.5.9-r0; keep these
+#   minimums to protect future base refreshes.
 #
 #   libuuid is pinned for the same reason, and the package name is the trap.
 #   Trivy reports CVE-2026-78408, CVE-2026-78409 and CVE-2026-78410 against
 #   "util-linux", which is the SOURCE package. util-linux is not installed
 #   here; the only artefact from that source in the runtime image is
-#   libuuid, at 2.42.1-r0. Pinning "util-linux" would have installed a
-#   package that was not previously present and left libuuid untouched, so
-#   the scan would have kept failing while the change looked correct.
-#   Measured in a python:3.14-alpine container: installed libuuid 2.42.1-r0,
-#   available 2.42.3-r1 in Alpine v3.24 main, and the pin resolves.
-#   Drop this explicit pin once the base image ships libuuid >= 2.42.3-r1.
+#   libuuid. Pinning "util-linux" would install an unrelated package and leave
+#   libuuid untouched. The pinned base currently ships libuuid 2.42.3-r1;
+#   keep the minimum to protect future base refreshes.
 # - The base's zlib 1.3.2-r0 has CVE-2026-85091 (MEDIUM). Alpine 3.24 main
 #   already carries the fixed 1.3.2-r1; require it until the base catches up.
 RUN apk add --no-cache \
