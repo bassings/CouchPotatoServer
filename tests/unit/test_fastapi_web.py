@@ -1286,9 +1286,17 @@ class TestAppCreation:
         resp = client.get('/cp/')
 
         assert resp.status_code == 200
-        assert 'src="/cp/static/scripts/vendor/new-ui/htmx-2.0.4.min.js"' in resp.text
+        script_sources = re.findall(r'<script\b[^>]*\bsrc="([^"]+)"', resp.text)
+        assert '/cp/static/scripts/vendor/new-ui/htmx-2.0.11.min.js' in script_sources
         assert "navigator.serviceWorker.register('/cp/static/sw.js')" in resp.text
         assert 'src="/static/scripts/vendor/new-ui/' not in resp.text
+
+        for source in script_sources:
+            assert source.startswith('/cp/static/')
+            script_resp = client.get(source)
+            assert script_resp.status_code == 200, source
+            assert 'javascript' in script_resp.headers['content-type'], source
+            assert script_resp.content, source
 
         sw_resp = client.get('/cp/static/sw.js')
         assert sw_resp.status_code == 200
