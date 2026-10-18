@@ -529,7 +529,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--host-url")
     parser.add_argument("--token-file", type=Path, required=True)
-    parser.add_argument("--scanner-version", default="5.0.1")
+    parser.add_argument("--scanner-version", default="5.0.2")
     parser.add_argument("--make-command", default="make")
     parser.add_argument("--check-token", action="store_true")
     return parser.parse_args(argv)
