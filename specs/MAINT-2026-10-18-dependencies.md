@@ -24,6 +24,10 @@ promotion and deployment. Prior exemplar: `MAINT-2026-10-13-dependencies.md`.
   runtime image without cache, confirm startup/health and preserve rollback.
 - AC-A11Y-1: The updated axe and browser tooling passes accessibility checks in
   both themes and the existing phone-width suite without weakening assertions.
+- AC-A11Y-2: Movie, chart, recommendation and search cards expose their visible title,
+  year and badges in their accessible names, so voice selection and screen
+  reader labels cannot drift from the rendered card content. Preserve
+  meaningful status/quality information and align the charts test fixture.
 - AC-DESIGN-1: Existing browser workflows pass with the updated tooling and
   application framework; no UI or design-system changes are intended.
 - AC-PROD-1: The tested beta is promoted without rebuild after all required
@@ -57,6 +61,9 @@ This snapshot defines the batch; later releases are assessed separately.
 | vite, lodash-es, ws overrides | Current installed versions | Retain security constraints |
 | Claude action | v1.0.248 | v1.0.252 |
 | Sonar scanner | 5.0.1 | 5.0.2 |
+| Bundled htmx | 2.0.4 | 2.0.11; retain supported version 2 API, assess version 4 separately |
+| Bundled Alpine | 3.15.12 | 3.17.4 |
+| Bundled Tailwind Play CDN | 3.4.17 | Retain; current published version of that browser bundle |
 | Other Python/Node pins and development lower bounds | Current | Retain; fresh environments resolve current versions |
 | Docker Python base digest | Current published manifest | Retain identical digest in both stages |
 | Docker pip | 26.2.1 | Retain; current |
@@ -73,12 +80,6 @@ against freshly installed candidates. Record the pre-change jsdom/undici
 contract mismatch and prove it resolves after removing the stale override.
 Any application adaptation discovered during verification requires its own
 failing regression test before implementation. Do not weaken existing gates.
-
-## Tasks
-
-- [ ] T1 Apply updates and record full local verification. — state: building
-- [ ] T2 Independent local review, PR CI/cloud review and merge. — state: queued
-- [ ] T3 Beta publication, backup, production promotion and deployment checks. — state: queued
 
 ## Release-note assessment
 
@@ -110,3 +111,52 @@ failing regression test before implementation. Do not weaken existing gates.
   workflow triggers its documented self-validation skip on the PR; inspect the
   visible skip notice and use the independent local reviews for that surface.
   Confirm the updated action executes a real review after merge.
+
+## Bundled browser assets
+
+The active UI also ships three libraries outside package.json. htmx 2.0.11
+and Alpine 3.17.4 are included in this refresh, using the official npm release
+files with registry integrity verification. The htmx bytes additionally match
+the official repository at commit `fa978b24e75fb03c137bf2cdae4fef0e711cf8a1`.
+Rename the htmx asset and update its template reference; the custom-base route
+test must fetch the referenced files and fail on missing assets. Existing
+browser, accessibility and phone-width tests exercise the library upgrades.
+
+Hold htmx 4: it changes attributes, events and extension interfaces, requiring
+a separate application migration. The npm version-2 distribution remains
+available and receives fixes. Hold Tailwind at 3.4.17: the existing file is
+byte-identical to the versioned official Play CDN response. Although npm has
+Tailwind 3.4.19 and 4.3.3, the Play CDN rejects 3.4.19 as an unknown version.
+Version 4 changes configuration/theme integration, so substituting it would
+require a design-system/build migration beyond a compatible dependency refresh.
+
+## Verification findings carried into this batch
+
+The first full gate passed 4,950 Python unit tests, 42 integration tests,
+311 JavaScript tests, Chromium and worker isolation. Axe 4.14 then exposed
+`label-content-name-mismatch` on wanted/library/chart cards: explicit labels
+omitted visible badge or placeholder text. Correct that single class using
+content-derived names across all four card templates and matching fixtures;
+retain the new rule and the full WCAG 2.2 AA gate. The final gate is rerun
+after this fix, browser-bundle refresh and compatible transitive npm refresh.
+
+The transitive npm check includes installed packages, not only direct entries.
+Refresh packages within their parents' supported ranges; hold unsupported
+major upgrades and uninstalled optional peers/platform artefacts. Forcing
+unsupported versions globally is the same failure mode as the stale undici
+override removed above.
+
+Compatible transitive refreshes taken: css-color 7.1.7, Puppeteer browsers
+3.2.5, baseline-browser-mapping 2.11.29, caniuse-lite 1.0.30001816,
+electron-to-chromium 1.5.459, es-module-lexer 3.0.4, modern-tar 0.8.6,
+node-releases 2.0.59, puppeteer-core 25.14.0, web-features 3.43.0,
+whatwg-url 17.3.0 and zod 4.6.7. No lockfile package entries added or removed.
+Retain parent-pinned OpenTelemetry 0.220 and DevTools protocol snapshots;
+upgrading those requires a supported Sentry/Lighthouse/Puppeteer release.
+
+Use versioned htmx and Alpine filenames and update the service-worker precache
+list with them, so renamed assets cannot produce precache 404s and the new
+Alpine file cannot be served from an existing cache under its former URL.
+Search poster controls have their visible title outside the button; retain
+movie identity with screen-reader text inside the control while allowing
+its visible content to contribute to the native name.
