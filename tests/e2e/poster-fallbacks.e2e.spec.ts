@@ -95,7 +95,7 @@ test('failed poster requests reveal each real template fallback without changing
     const root = page.locator(`[data-poster-surface="${surface}"]`);
     const image = root.locator('img[onerror]');
     const fallback = image.locator('xpath=following-sibling::*[1]');
-    const control = root.locator('button[aria-label], a[aria-label]').first();
+    const control = root.locator('button[onclick^="openMovieModal("], .poster-card > a').first();
     await expect(image).toHaveCSS('display', 'none');
     await expect(fallback).toBeVisible();
     await expect(control).toHaveAccessibleName(/fallback movie/i);

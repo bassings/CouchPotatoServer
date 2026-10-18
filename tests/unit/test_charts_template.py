@@ -81,10 +81,16 @@ def test_card_carries_data_imdb(html):
 
 
 def test_card_has_an_accessible_name(html):
-    """axe checks that interactive controls are labelled."""
-    assert re.search(r'aria-label="[^"]+"', _card_tag(html)), (
-        "the poster card button has no aria-label"
-    )
+    """Use all visible content as the name, including the chart and action hint.
+
+    The browser regression checks the computed name. An explicit label here
+    would conceal visible text again as card content changes.
+    """
+    tag = _card_tag(html)
+    assert not re.search(r"\baria-label(?:ledby)?=", tag)
+    card = html.split(tag, 1)[1].split("</button>", 1)[0]
+    content = " ".join(re.sub(r"<[^>]+>", " ", card).split())
+    assert content == "chart View Details Example Movie 2026"
 
 
 def test_card_has_a_visible_focus_indicator(html):
@@ -108,8 +114,9 @@ def test_the_e2e_stub_mirrors_the_contract_this_file_asserts():
     stub = STUB.read_text(encoding="utf-8")
     charts_stub = stub.split("mockSuggestionsCharts", 1)[1].split("export ", 1)[0]
 
-    for required in ("poster-card", "data-imdb=", "aria-label=", "focus:ring-2"):
+    for required in ("poster-card", "data-imdb=", "focus:ring-2", "View Details"):
         assert required in charts_stub, (
             f"the charts stub in tests/e2e/helpers.ts is missing {required!r}, "
             f"which the real template provides and the a11y spec asserts against"
         )
+    assert not re.search(r"\baria-label(?:ledby)?=", _card_tag(charts_stub))

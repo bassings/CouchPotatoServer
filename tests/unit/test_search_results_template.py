@@ -114,6 +114,15 @@ def test_each_card_has_an_add_button(html):
     assert re.search(r">\s*Add\s*<", html), "no button labelled 'Add' in the rendered card"
 
 
+def test_poster_name_includes_visible_content_and_movie_identity(html):
+    """The poster's title is outside the button, so include hidden context too."""
+    button = re.search(r"<button\b[^>]*>(.*?)</button>", html, re.DOTALL)
+    assert button
+    assert "aria-label=" not in button.group(0)
+    assert 'class="sr-only">The Matrix (1999)</span>' in button.group(1)
+    assert "View Details" in button.group(1)
+
+
 def test_year_falls_back_to_tba_rather_than_rendering_zero():
     """A missing year must not render as `0` — that is what DEF-007 fixed."""
     html = render([{"titles": ["No Year Movie"], "year": 0, "imdb": "tt0000001"}])
@@ -156,3 +165,8 @@ def test_the_e2e_stub_mirrors_the_contract_this_file_asserts():
             f"the search stub in tests/e2e/helpers.ts is missing {required!r}, "
             f"which the real template provides and search.spec.ts selects on"
         )
+    button = re.search(r"<button\b[^>]*>(.*?)</button>", search_stub, re.DOTALL)
+    assert button
+    assert "aria-label=" not in button.group(0)
+    assert 'class="sr-only">${title} (${year})</span>' in button.group(1)
+    assert "View Details" in button.group(1)

@@ -101,7 +101,7 @@ SONAR_TOKEN_FILE ?= $(HOME)/.sonar-token
 # already in its environment and the repository on disk: an unpinned fetch
 # immediately after loading a credential is a dependency-confusion vector,
 # not just a reproducibility problem. Bump deliberately.
-SONAR_SCANNER_VERSION ?= 5.0.1
+SONAR_SCANNER_VERSION ?= 5.0.2
 
 coverage: ## Generate the coverage reports SonarQube ingests (Python + JS)
 	@# Both, not one. Sonar blends them, and a MISSING report is silent -- it
