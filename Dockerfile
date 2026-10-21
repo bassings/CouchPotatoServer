@@ -7,7 +7,7 @@
 # libssh2, libcurl) repeatedly carry HIGH/CRITICAL CVEs with no upstream fix.
 
 # Stage 1: Build dependencies
-FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72 AS builder
+FROM python:3.15-alpine@sha256:2699b90f4d562a22e2dd076c82f964032f64814204bff36d271a54ba4cc2c7e2 AS builder
 
 WORKDIR /build
 
@@ -27,7 +27,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1 \
     && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
-FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
+FROM python:3.15-alpine@sha256:2699b90f4d562a22e2dd076c82f964032f64814204bff36d271a54ba4cc2c7e2
 
 LABEL maintainer="CouchPotato"
 LABEL description="CouchPotato - Automatic Movie Downloader"
