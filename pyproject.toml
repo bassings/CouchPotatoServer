@@ -133,21 +133,45 @@ ignore = [
 # `paths_to_mutate` name is deprecated. scripts/mutation_changed.py reads this
 # list rather than keeping its own copy, and accepts either name.
 source_paths = ["couchpotato/core/db/sqlite_adapter.py"]
-# `tests_dir` is LOAD-BEARING despite the deprecation warning: mutmut 3.x folds it
-# into `pytest_add_cli_args_test_selection` (in `configuration.py`) and uses it to
-# select tests (`__main__.py`, the pytest-arg assembly and the --collect-only
-# call). Migrate the key when convenient, but do not simply delete it.
-#
-# Cited by SYMBOL, not by line. This comment previously carried three exact
-# line numbers and ALL THREE moved between 3.6.0 and 3.7.0 — caught in review
-# of the 3.7.0 bump, along with a claim in that bump's own commit message that
-# they had not gone stale. Line citations into a third-party package rot on
-# every bump, and a wrong one reads as precision.
-tests_dir = ["tests/unit/"]
-# `runner`, by contrast, is INERT on mutmut 3.x (re-verified on 3.7.0) —
-# `_load_config()` never reads it
-# and __main__.py hardcodes `runner = PytestRunner()` under a `# TODO:
-# config/option for runner`. It is kept only as documentation of which tests
-# cover the mutated module; editing it changes nothing, so if you need to narrow
-# the test selection, change `tests_dir` (or the modern key) instead.
-runner = "python -m pytest -x -q tests/unit/test_sqlite_adapter.py tests/unit/test_sqlite_transactions.py tests/unit/test_db_factory.py"
+# Support imports must be available inside mutmut's isolated sandbox. Copying
+# these files does not expand source_paths or mutate application code outside
+# the adapter. Keep the normal full gate independent of this focused selection.
+also_copy = ["couchpotato/", "libs/", "scripts/", "pytest.ini", "requirements.txt"]
+# Existing behavioural tests that instantiate the real adapter, plus its
+# factory and migration boundaries. Keep the full repository guard suite in
+# make verify: source-inspection tests cannot analyse mutmut's trampolines.
+pytest_add_cli_args_test_selection = [
+    "tests/integration/test_duplicate_detection.py",
+    "tests/integration/test_migration.py",
+    "tests/unit/test_collections.py",
+    "tests/unit/test_corrupted_document_reporting.py",
+    "tests/unit/test_db_factory.py",
+    "tests/unit/test_fastapi_web.py",
+    "tests/unit/test_hostile_session_cookies.py",
+    "tests/unit/test_mark_done.py",
+    "tests/unit/test_migrate_codernity_script.py",
+    "tests/unit/test_movie_add_integrity.py",
+    "tests/unit/test_orphan_cleanup_gate.py",
+    "tests/unit/test_password_rotation_after_commit.py",
+    "tests/unit/test_quality_fill.py",
+    "tests/unit/test_quality_ranking.py",
+    "tests/unit/test_release_download_lookup.py",
+    "tests/unit/test_release_for_media_real_backend.py",
+    "tests/unit/test_release_update_status_cas.py",
+    "tests/unit/test_release_with_status_media_id_contract.py",
+    "tests/unit/test_searcher_correct_release.py",
+    "tests/unit/test_session_cookie_attributes.py",
+    "tests/unit/test_session_rejection_logging.py",
+    "tests/unit/test_session_revocation.py",
+    "tests/unit/test_session_secret_disclosure.py",
+    "tests/unit/test_session_secret_recovery.py",
+    "tests/unit/test_session_secret_store.py",
+    "tests/unit/test_session_secrets_not_logged.py",
+    "tests/unit/test_session_upgrade_path.py",
+    "tests/unit/test_sign_out_control.py",
+    "tests/unit/test_sonar_s8519_first_item.py",
+    "tests/unit/test_sqlite_adapter.py",
+    "tests/unit/test_sqlite_adapter_concurrency.py",
+    "tests/unit/test_sqlite_transactions.py",
+    "tests/unit/test_watch_history.py",
+]

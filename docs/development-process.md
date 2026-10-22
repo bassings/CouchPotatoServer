@@ -289,7 +289,7 @@ behaviour) should be noted and skipped rather than chased.
 |---|---|
 | `make mutation-changed` | **Only files changed vs `master`** — fast enough to run per-change. `BASE=origin/master` to compare elsewhere. To see the commands without running them, invoke the script directly: `python scripts/mutation_changed.py --dry-run` (`make mutation-changed --dry-run` does not work — make consumes `--dry-run` as its own `-n`). |
 | `make mutation-py` | Everything in `[tool.mutmut] source_paths` (mutmut) |
-| `make mutation-js` | Everything in stryker's `mutate` (Stryker over the extracted UI logic in `couchpotato/static/scripts/ui/`, ~96% score) |
+| `make mutation-js` | Everything in stryker's `mutate` (Stryker over the extracted UI logic in `couchpotato/static/scripts/ui/`) |
 
 Also runs nightly + on-demand via the *Mutation Testing* workflow. Config lives
 in `[tool.mutmut]` (`pyproject.toml`) and `stryker.conf.json`;
@@ -823,7 +823,7 @@ exist to prevent, so they do not get to be the untested part of the suite.
   `adapter.create(str(tmp_path / 'name'))`.
 - `test_api_auth.py`, `test_fastapi_web.py`, `test_security.py` run locally too —
   `httpx` is installed in `.venv`, so run them via `.venv/bin/python -m pytest`.
-- CI matrix: Python 3.14 only — exactly the interpreter the Dockerfile ships, enforced by `test_ci_matrix_tests_exactly_the_dockerfile_version`. Narrowed from 3.10-3.14 on 2026-08-09: 59 consecutive runs showed no leg ever failing and no two legs disagreeing, and the four extra legs cost 15.6 runner-minutes a push on the critical path.
+- CI matrix: Python 3.15 only — exactly the interpreter the Dockerfile ships, enforced by `test_ci_matrix_tests_exactly_the_dockerfile_version`. Narrowed from 3.10-3.14 on 2026-08-09: 59 consecutive runs showed no leg ever failing and no two legs disagreeing, and the four extra legs cost 15.6 runner-minutes a push on the critical path.
 - Note: a bare `pytest tests/unit/ -q` may hit import errors for tests touching
   vendored `libs/` — `make test-py` sets `PYTHONPATH=libs`. Prefer `make verify`
   / `make test-py`, or add the prefix if invoking pytest directly.

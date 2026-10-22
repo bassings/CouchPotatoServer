@@ -879,11 +879,12 @@ def test_dry_run_executes_nothing(monkeypatch):
     assert calls == [], "--dry-run must not invoke a runner"
 
 
-def test_a_failing_runner_still_exits_zero_because_mutation_is_informational(monkeypatch):
-    """The documented contract: survivors are for review, not a build failure."""
+@pytest.mark.parametrize(("runner_code", "expected"), [(1, 1), (2, 2), (-15, 143)])
+def test_runner_errors_fail_visibly_while_survivors_remain_informational(monkeypatch, runner_code, expected):
+    """Both tools return zero for survivors; nonzero means the runner failed."""
 
     class Failed:
-        returncode = 1
+        returncode = runner_code
 
     monkeypatch.setattr(mutation_changed.subprocess, "run", lambda *a, **k: Failed())
     monkeypatch.setattr(
@@ -892,7 +893,7 @@ def test_a_failing_runner_still_exits_zero_because_mutation_is_informational(mon
     monkeypatch.setattr(mutation_changed, "python_scope", lambda root: ["couchpotato/"])
     monkeypatch.setattr(mutation_changed, "js_scope", lambda root: ["nothing/**/*.js"])
 
-    assert mutation_changed.main(["--base", "master"]) == 0
+    assert mutation_changed.main(["--base", "master"]) == expected
 
 
 def test_a_config_error_exits_two_rather_than_pretending_there_was_nothing_to_do(monkeypatch):

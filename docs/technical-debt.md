@@ -735,7 +735,7 @@ scope and a reviewer can read the dedent directly against the original.
 5. `diskcache` was replaced with `SQLiteCache` (CVE-2025-69872 — pickle RCE,
    lib abandoned).
 6. Branch protection check names must match exactly — matrix jobs report as
-   `test (3.14)`, not `test`. (The matrix is a single version as of
+   `test (3.15)`, not `test`. (The matrix is a single version as of
    2026-08-09, but it is still a matrix, so the leg name still carries the
    version. No matrix leg is a required context; `test-summary` is, and it
    `needs: [test]`.)

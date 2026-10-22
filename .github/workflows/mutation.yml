@@ -1,8 +1,8 @@
 name: Mutation Testing
 
 # Mutation testing is slow, so it runs nightly and on-demand — NOT per-PR.
-# It is informational (never blocks a merge); use the reports to find weak
-# spots in the test suite (mutants that survived = behaviour no test pins down).
+# Scores are informational; runner and reporting errors fail visibly. Use
+# survivor reports to identify behaviour the current tests do not pin down.
 
 on:
   schedule:
@@ -11,11 +11,11 @@ on:
   workflow_dispatch:
     inputs:
       paths:
-        # Passed to `mutmut run $MUTMUT_PATHS` below. mutmut 3.x takes MUTANT
+        # Passed as literal arguments to `mutmut run` below. mutmut 3.x takes MUTANT
         # NAME filters here, not source paths — a bare module path matches
         # nothing, so use a glob like 'couchpotato.core.db.sqlite_adapter*'
         # (same form scripts/mutation_changed.py builds).
-        description: 'Mutant-name filter(s), e.g. couchpotato.api* (space-separated, optional)'
+        description: 'Mutant-name filter(s), e.g. couchpotato.core.db.sqlite_adapter* (space-separated, optional)'
         required: false
         default: ''
 
@@ -28,14 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.14'
+          python-version: '3.15'
 
       - name: Install dependencies
         run: |
@@ -45,26 +44,33 @@ jobs:
       - name: Run mutmut
         env:
           PYTHONPATH: ${{ github.workspace }}/libs
-          # Via env (not inline interpolation) so a crafted dispatch input can't
-          # inject shell; left unquoted below so multiple space-separated paths
-          # still word-split as intended.
+          # Split into an array without shell evaluation or filename expansion.
+          # Dispatch text is data, including glob filters and shell characters.
           MUTMUT_PATHS: ${{ github.event.inputs.paths }}
-        # Never fail the job on surviving mutants — this is a report, not a gate.
         run: |
-          # shellcheck disable=SC2086  # intentional word-split of MUTMUT_PATHS
-          mutmut run $MUTMUT_PATHS || true
-          echo '## Python mutation results' >> "$GITHUB_STEP_SUMMARY"
-          mutmut results >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+          set -euo pipefail
+          mkdir -p reports/mutation/python
+          read -r -a mutation_command <<< "mutmut run ${MUTMUT_PATHS:-}"
+          "${mutation_command[@]}" 2>&1 | tee reports/mutation/python/run.log
 
-      - name: Generate HTML report
-        run: mutmut html || true
+      - name: Generate mutation report
+        run: |
+          set -euo pipefail
+          mutmut results --all true | tee reports/mutation/python/results.txt
+          echo '## Python mutation results' >> "$GITHUB_STEP_SUMMARY"
+          cat reports/mutation/python/results.txt >> "$GITHUB_STEP_SUMMARY"
+          rm -f mutants/mutmut-cicd-stats.json
+          mutmut export-cicd-stats
+          test -s mutants/mutmut-cicd-stats.json
+          cp mutants/mutmut-cicd-stats.json reports/mutation/python/
 
       - name: Upload mutmut report
         uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutmut-report
-          path: html/
+          path: reports/mutation/python/
+          if-no-files-found: error
           retention-days: 14
 
   js-mutation:
@@ -72,10 +78,8 @@ jobs:
     runs-on: ubuntu-latest
     # Mutates the extracted UI logic under couchpotato/static/scripts/ui/
     # (see stryker.conf.json). Informational, so a low score never blocks.
-    continue-on-error: true
     permissions:
       contents: read
-      actions: write
     steps:
       - uses: actions/checkout@v7
 
@@ -89,7 +93,12 @@ jobs:
         run: npm ci
 
       - name: Run Stryker
-        run: npm run test:mutation || true
+        run: |
+          set -euo pipefail
+          mkdir -p reports/mutation
+          npm run test:mutation 2>&1 | tee reports/mutation/run.log
+          test -s reports/mutation/mutation.json
+          test -s reports/mutation/stryker.html
 
       - name: Upload Stryker report
         uses: actions/upload-artifact@v7
@@ -97,4 +106,5 @@ jobs:
         with:
           name: stryker-report
           path: reports/mutation/
+          if-no-files-found: error
           retention-days: 14

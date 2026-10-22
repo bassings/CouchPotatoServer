@@ -45,7 +45,7 @@ and `implementer` (delegated work). Invoke them by name rather than composing a
 persona from memory; `AGENTS.md` is the review rubric they apply.
 
 - **Repo:** https://github.com/bassings/CouchPotatoServer — default branch `master`
-- **Stack:** Python 3.14 (the version production ships and the only one CI tests), FastAPI/Uvicorn, htmx + Tailwind + Alpine.js UI, SQLite, Docker
+- **Stack:** Python 3.15 (the version production ships and the only one CI tests), FastAPI/Uvicorn, htmx + Tailwind + Alpine.js UI, SQLite, Docker
 - **Entry point:** `CouchPotato.py`
 - **Local environment:** operational hosts, ports, credential locations and
   server paths are private machine-local context in
@@ -136,7 +136,7 @@ persona from memory; `AGENTS.md` is the review rubric they apply.
 | Web framework | FastAPI/Uvicorn | Replaced Tornado — modern async, better typing |
 | UI | htmx + Tailwind + Alpine.js at `/` | The legacy UI is retired; `/old/*` redirects to `/` while the parity backlog remains in `specs/UI-MIGRATION.md` |
 | UI design system | `docs/design-system/README.md` | **Visual source of truth.** Conform new UI against `docs/design-system/CONFORMANCE.md` (CI-gated) |
-| Container base | `python:3.14-alpine` + `su-exec` | Debian base carried ~119 OS CVEs; Alpine ships 0. Healthcheck uses Python `urllib` (no curl in image) |
+| Container base | `python:3.15-alpine` + `su-exec` | Debian base carried ~119 OS CVEs; Alpine ships 0. Healthcheck uses Python `urllib` (no curl in image) |
 
 ### Database patterns
 

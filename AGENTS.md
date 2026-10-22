@@ -8,7 +8,7 @@ CouchPotatoServer is a media-management web application with a Python backend, a
 
 Treat this as a home-server application that may run on private networks and manage personal media libraries, automation credentials, user settings, and downloaded metadata. Changes should preserve reliability, privacy, and production deployability.
 
-The default branch is `master`. Production ships Python 3.14 with
+The default branch is `master`. Production ships Python 3.15 with
 FastAPI/Uvicorn, an htmx, Tailwind and Alpine.js interface, SQLite-backed
 state, and an Alpine-based Docker image. The application entry point is
 `CouchPotato.py`.

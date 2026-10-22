@@ -19,7 +19,7 @@ const STATIC_ASSETS = [
   'add/',
   'static/manifest.json',
   'static/scripts/vendor/new-ui/htmx-2.0.11.min.js',
-  'static/scripts/vendor/new-ui/alpine-3.17.4.min.js'
+  'static/scripts/vendor/new-ui/alpine-3.17.5.min.js'
 ].map(withBase);
 
 // Install event - cache static assets

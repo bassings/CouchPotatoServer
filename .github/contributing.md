@@ -1,6 +1,6 @@
 # Contributing to CouchPotato
 
-Contributions are welcome! Target Python 3.14 (what production runs and what CI tests) and include tests where practical.
+Contributions are welcome! Target Python 3.15 (what production runs and what CI tests) and include tests where practical.
 
 ## Getting Started
 

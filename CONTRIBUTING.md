@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.14 — the interpreter the Docker image ships and the only one CI tests
+- Python 3.15 — the interpreter the Docker image ships and the only one CI tests
 - Docker (recommended for local development)
 
 ## Getting Started

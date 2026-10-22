@@ -1,13 +1,15 @@
 # CouchPotato Docker Container
 # Multi-stage build for smaller image
 #
-# Base image: python:3.14-alpine (Alpine Linux / musl), pinned by digest below.
-# Chosen over python:3.14-slim (Debian) because the Alpine base ships with 0
-# known CVEs vs ~106 on Debian 13 — the Debian OS packages (perl, ncurses,
-# libssh2, libcurl) repeatedly carry HIGH/CRITICAL CVEs with no upstream fix.
+# Base image: python:3.15-alpine (Alpine Linux / musl), pinned by digest below.
+# Alpine avoids the Debian OS packages that previously carried unfixed
+# vulnerabilities. Re-scan every rebuilt image; the base alone is not the gate.
+
+# Both stages require patched libc packages for CVE-2026-107891.
+# Minimums keep a future base refresh from silently restoring vulnerable musl.
 
 # Stage 1: Build dependencies
-FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72 AS builder
+FROM python:3.15-alpine@sha256:d44b1254cb92329418d164b22b20d86bbd3869d48e80e09e476531a409a728bb AS builder
 
 WORKDIR /build
 
@@ -15,6 +17,8 @@ WORKDIR /build
 # wheel and must compile from source. Lives in the builder stage only and is
 # discarded; the runtime image never sees it.
 RUN apk add --no-cache \
+        "musl>=1.2.6-r3" \
+        "musl-utils>=1.2.6-r3" \
         build-base \
         libffi-dev \
         openssl-dev \
@@ -23,11 +27,11 @@ RUN apk add --no-cache \
         cargo
 
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1 \
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.2 \
     && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
-FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
+FROM python:3.15-alpine@sha256:d44b1254cb92329418d164b22b20d86bbd3869d48e80e09e476531a409a728bb
 
 LABEL maintainer="CouchPotato"
 LABEL description="CouchPotato - Automatic Movie Downloader"
@@ -62,9 +66,11 @@ ENV PYTHONUNBUFFERED=1 \
 #   libuuid. Pinning "util-linux" would install an unrelated package and leave
 #   libuuid untouched. The pinned base currently ships libuuid 2.42.3-r1;
 #   keep the minimum to protect future base refreshes.
-# - The base's zlib 1.3.2-r0 has CVE-2026-85091 (MEDIUM). Alpine 3.24 main
-#   already carries the fixed 1.3.2-r1; require it until the base catches up.
+# - zlib must stay at or above 1.3.2-r1 to avoid CVE-2026-85091 (MEDIUM).
+#   The pinned base ships that fix; keep the floor for future base refreshes.
 RUN apk add --no-cache \
+        "musl>=1.2.6-r3" \
+        "musl-utils>=1.2.6-r3" \
         ca-certificates \
         su-exec \
         mediainfo \
