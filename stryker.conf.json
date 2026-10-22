@@ -1,10 +1,15 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "JS mutation testing (Stryker). Run with: make mutation-js (or npx stryker run). Mutates the extracted UI logic under couchpotato/static/scripts/ui/, which the inline Alpine components delegate to and the vitest tests import (~96% mutation score). 'break' is null so it never fails CI — the nightly job is informational. The retired MooTools plugin scripts have been deleted; this scope covers the testable current-UI logic.",
+  "_comment": "JS mutation testing over the extracted UI logic. The supported command runner avoids Stryker10/Vitest5 zero-test name filtering (https://github.com/stryker-mutator/stryker-js/issues/6210) and starts a fresh process per mutant. These pure-function tests need no DOM; the normal full gate retains jsdom. Scores remain informational.",
   "packageManager": "npm",
-  "testRunner": "vitest",
-  "reporters": ["html", "clear-text", "progress"],
-  "coverageAnalysis": "perTest",
+  "testRunner": "command",
+  "reporters": [
+    "html",
+    "json",
+    "clear-text",
+    "progress"
+  ],
+  "coverageAnalysis": "off",
   "mutate": [
     "couchpotato/static/scripts/ui/**/*.{js,ts}"
   ],
@@ -16,5 +21,9 @@
   "tempDirName": ".stryker-tmp",
   "htmlReporter": {
     "fileName": "reports/mutation/stryker.html"
-  }
+  },
+  "commandRunner": {
+    "command": "npx vitest run tests/unit/ui --maxWorkers 1 --environment node"
+  },
+  "disableTypeChecks": "**/*.{js,ts,jsx,tsx,mjs,cjs,mts,cts}"
 }

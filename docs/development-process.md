@@ -289,7 +289,7 @@ behaviour) should be noted and skipped rather than chased.
 |---|---|
 | `make mutation-changed` | **Only files changed vs `master`** — fast enough to run per-change. `BASE=origin/master` to compare elsewhere. To see the commands without running them, invoke the script directly: `python scripts/mutation_changed.py --dry-run` (`make mutation-changed --dry-run` does not work — make consumes `--dry-run` as its own `-n`). |
 | `make mutation-py` | Everything in `[tool.mutmut] source_paths` (mutmut) |
-| `make mutation-js` | Everything in stryker's `mutate` (Stryker over the extracted UI logic in `couchpotato/static/scripts/ui/`, ~96% score) |
+| `make mutation-js` | Everything in stryker's `mutate` (Stryker over the extracted UI logic in `couchpotato/static/scripts/ui/`) |
 
 Also runs nightly + on-demand via the *Mutation Testing* workflow. Config lives
 in `[tool.mutmut]` (`pyproject.toml`) and `stryker.conf.json`;

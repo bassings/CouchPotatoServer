@@ -389,20 +389,21 @@ def main(argv: list[str]) -> int:
     if args.dry_run:
         return 0
 
-    # Mutation testing is informational — run every command and report, rather
-    # than fail-fast, so one language's survivors don't hide the other's.
+    # Both runners return zero for surviving mutants. Run both languages, then
+    # propagate infrastructure or execution failures instead of hiding them.
     worst = 0
     for argv_ in commands:
         result = subprocess.run(argv_, cwd=REPO_ROOT, env=runner_env())
-        worst = max(worst, result.returncode)
+        status = result.returncode if result.returncode >= 0 else 128 - result.returncode
+        worst = max(worst, status)
     if worst:
         print(
-            "\nmutation_changed: a runner exited non-zero. Mutation results are "
-            "INFORMATIONAL — review the survivor list above and strengthen the "
-            "weak assertions; there is no score threshold to satisfy.",
+            "\nmutation_changed: a mutation runner failed. Fix collection or "
+            "execution errors before reviewing the survivor list. Scores remain "
+            "informational; there is no score threshold to satisfy.",
             file=sys.stderr,
         )
-    return 0
+    return worst
 
 
 if __name__ == "__main__":
