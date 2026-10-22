@@ -15,6 +15,7 @@ branches with explicit `0` defaults so partial dicts missing a key return
 False instead of raising TypeError. See specs/BUG-014-prerelease-eta-guard.md.
 """
 
+from datetime import date
 import time
 
 import pytest
@@ -111,26 +112,26 @@ class TestCouldBeReleasedPreReleaseGuard:
         """Pin the strict-inequality edge of the 1-week window
         (`theater - 604800 < now`). Exactly one week out is OUTSIDE the
         window and must return False; one second inside must return True.
-        Time is frozen so the sub-second gap between the test clock and the
-        method's own `time.time()` can't make this flaky. `theater` is
-        non-zero, so the top-of-method 'no dates' heuristic never applies
-        regardless of `year`.
-
-        Note for reviewers: the monkeypatch target `searcher.time.time`
-        resolves to the shared `time` MODULE's `time` attribute (searcher
-        imports the module, not the function), and CPython's
-        `datetime.date.today()` calls `time.time()` internally — so the
-        method's `date.today()` future-year guard is frozen to 2027 along
-        with the clock, and `year=2027` never trips it. Verified
-        empirically: with this patch active, `date.today()` returns
-        2027-01-15 regardless of the real system date."""
+        Freeze the timestamp and calendar date explicitly so the future-year
+        guard agrees with the boundary clock on every supported interpreter.
+        Patching time.time alone does not freeze date.today on Python 3.15.
+        """
         frozen_now = 1_800_000_000  # fixed reference timestamp
+
+        class FrozenDate(date):
+            @classmethod
+            def today(cls):
+                return cls.fromtimestamp(frozen_now)
+
+        monkeypatch.setattr(
+            'couchpotato.core.media.movie.searcher.date', FrozenDate,
+        )
         monkeypatch.setattr(
             'couchpotato.core.media.movie.searcher.time.time',
             lambda: frozen_now,
         )
         one_week = 604800
-        year = time.gmtime(frozen_now).tm_year
+        year = FrozenDate.today().year
 
         on_boundary = searcher.couldBeReleased(
             True, {'theater': frozen_now + one_week, 'dvd': 0}, year=year,
