@@ -1,8 +1,8 @@
 # CouchPotatoServer - Python dependencies
 
 # Web Framework
-fastapi==0.143.5
-starlette==1.8.0
+fastapi==0.161.0
+starlette==1.9.0
 uvicorn==0.54.0
 Jinja2==3.1.6
 python-multipart==0.0.32
@@ -12,11 +12,11 @@ blinker==1.9.0
 pydantic==2.14.1
 apscheduler==3.11.3
 tenacity==9.2.1
-dulwich==1.2.17
+dulwich==1.2.19
 
 # Network
 requests==2.34.2
-certifi==2026.7.22
+certifi==2026.10.19
 chardet==7.7.0
 
 # Parsing
@@ -57,18 +57,18 @@ rarfile==4.5
 # Downloaders
 deluge-client==1.10.2
 putio.py==8.8.0
-qbittorrent-api==2026.10.0
+qbittorrent-api==2026.10.1
 rtorrent-rpc==0.9.7
 
 # Notifications
 gntp==1.0.3
 
 # Utilities
-python-dateutil==2.9.0.post0
+python-dateutil==3.0.0
 natsort==8.4.0
 packaging==26.3
-filelock==4.2.2
-platformdirs==4.13.4
+filelock==4.2.4
+platformdirs==4.13.5
 rich==15.0.0
 six==1.17.0
 pyOpenSSL==26.4.0
