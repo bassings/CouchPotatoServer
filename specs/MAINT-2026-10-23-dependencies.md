@@ -248,3 +248,12 @@ mutation workflow. Run that workflow on the merged commit to verify its real
 Python and JavaScript runners, rather than inferring compatibility from a tool
 version or a no-op changed-file mutation check. Review survivors without
 inventing a score gate.
+
+## Full-gate test compatibility
+
+The Python 3.15 full gate exposed an existing release-window boundary test
+whose patched `time.time()` did not freeze the separate `date.today()` API.
+Its fixed 2027 timestamp met the actual 2026 future-year guard before reaching
+the intended one-week boundary. Freeze both clocks explicitly, retain the
+exact-boundary and one-second-inside assertions, and prove they reject an
+intentional boundary regression. No application search/release logic changes.
