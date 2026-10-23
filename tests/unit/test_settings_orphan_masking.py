@@ -25,6 +25,7 @@ registry.
 import pytest
 
 from couchpotato.core.settings import Settings
+from couchpotato.environment import Env
 
 pytestmark = pytest.mark.unit
 
@@ -106,6 +107,28 @@ class TestRegisteredOptionsAreUnaffected:
         assert values['core']['api_key'] != 'REGISTERED_SECRET'
         assert set(values['core']['api_key']) == {'*'}
 
+    def test_registered_directory_conversion_failure_stays_empty(
+            self, tmp_path, monkeypatch):
+        cfg = tmp_path / 'config.ini'
+        _write_config(cfg, '[library]\nroot = outside\nfolders = inside::outside\n')
+        settings = _settings(cfg)
+        settings.registerDefaults('library', {
+            'root': {'default': '', 'type': 'directory'},
+            'folders': {'default': '', 'type': 'directories'},
+        }, save=False)
+
+        class RejectOutside:
+            def abs2chroot(self, value):
+                if value == 'outside':
+                    raise ValueError('outside soft chroot')
+                return '/' + value
+
+        monkeypatch.setattr(Env, '_softchroot', RejectOutside(), raising=False)
+        values = settings.getValues()['library']
+
+        assert values['root'] == ''
+        assert values['folders'] == []
+
 
 class TestHadoukenUpgradeScenario:
     """The scenario this fix exists for: an install that once configured
@@ -163,6 +186,22 @@ class TestRegistrationDoesNotBleedBetweenInstances:
 
         assert values_b['plugin_x']['token'] != 'tok'
         assert set(values_b['plugin_x']['token']) == {'*'}
+
+    def test_orphan_is_masked_before_stale_shared_type_is_consulted(
+            self, tmp_path, monkeypatch):
+        cfg = tmp_path / 'orphan.ini'
+        _write_config(cfg, '[removed_plugin]\ncredential = PRIVATE_VALUE\n')
+        other = Settings()
+        other.setType('removed_plugin', 'credential', 'directory')
+        settings = _settings(cfg)
+
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError('orphan entered registered-value conversion')
+
+        monkeypatch.setattr(settings, 'get', forbidden)
+        monkeypatch.setattr(settings, 'getType', forbidden)
+
+        assert settings.getValues()['removed_plugin']['credential'] == '*' * len('PRIVATE_VALUE')
 
 
 class TestRegistrationIsRecordedTheWayConfigParserStoresIt:
