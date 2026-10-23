@@ -23,7 +23,7 @@ function worker() {
   const console = {log: vi.fn()};
   vm.runInNewContext(readFileSync('couchpotato/static/sw.js', 'utf8'), {
     self, caches, fetch, console, URL, Response,
-  });
+  }, {filename: new URL('../../couchpotato/static/sw.js', import.meta.url).href});
   function dispatch(name: string, values: Record<string, unknown> = {}) {
     const lifetime: Promise<unknown>[] = [];
     let active = true;

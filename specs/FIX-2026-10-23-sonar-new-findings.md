@@ -69,3 +69,11 @@ Resolve the 23 records first observed by the exact-master analysis of `7adb683fc
 
 - The complete gate then passed 4,971 Python unit, 42 integration, 327 JavaScript, 237 desktop, two isolation and 24 phone tests, but found target-size failures on seven existing description links next to the new disclosure. One scoped rule now gives every provider-description link a 24px minimum target. The focused disclosure test now runs the complete WCAG-tagged axe check in all four theme/viewport combinations after visual transitions settle. Removing the sizing rule reproduces target-size failure; restoration passes. All three existing whole-settings accessibility sweeps pass after correction; the full pre-push gate remains mandatory.
 - Scott explicitly approved the four administrative dispositions. Their comments and final FALSE_POSITIVE/ACCEPTED states were verified on the server. No rule or quality gate was disabled.
+
+## Post-merge coverage attribution
+
+The exact-master analysis of PR #553 confirms all 23 keys have their intended outcome: 19 fixed, one false positive and three accepted. There are no new unresolved issues; bugs are zero and code smells are 594. The reporting gate still fails because new-code coverage is 5.1 percent.
+
+The worker tests execute source in a VM without a filename, so the coverage provider cannot attribute the execution to `sw.js`. An isolated coverage run measures zero of 49 executable lines and zero of 33 branches. Giving the VM the actual source file URL measures 47 of 49 lines and 29 of 33 branches, with all 15 worker cases passing. Removing that filename reproduces the missing attribution.
+
+AC-COVERAGE-1: Worker execution is attributed to the actual source file in the normal LCOV report, with non-zero line and branch hits. Existing tests, source code and coverage thresholds stay intact. Deliver this reporting correction through local review, the pre-push gate, PR/CI, merge and a fresh exact-master scan.
