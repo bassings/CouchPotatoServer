@@ -1,4 +1,6 @@
 import {test, expect} from './fixtures';
+import AxeBuilder from '@axe-core/playwright';
+import {expectVisualTransitionsToSettle} from './helpers';
 
 for (const theme of ['light', 'dark'] as const) {
   for (const width of [393, 1280]) {
@@ -13,6 +15,12 @@ for (const theme of ['light', 'dark'] as const) {
       }
       await page.getByRole('tab', {name: 'Searchers', exact: true}).click();
       await expect(page.getByRole('heading', {name: 'Newznab', level: 3, exact: true})).toBeVisible();
+      await expectVisualTransitionsToSettle(page, 'Settings provider disclosures');
+      const scan = await new AxeBuilder({page})
+        .include('[x-data="settingsPanel()"]')
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .analyze();
+      expect(scan.violations.map(violation => violation.id)).toEqual([]);
       const disclosure = page.getByRole('button', {name: 'Newznab', exact: true});
       await expect(disclosure).toBeVisible();
       await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
