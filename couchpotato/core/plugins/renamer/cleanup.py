@@ -9,6 +9,9 @@ from couchpotato.core.logger import CPLog
 
 log = CPLog(__name__)
 
+_IGNORE_EXTENSION = '.ignore'
+_TAGGED_IGNORE_FILENAME = '%s.%s.ignore'
+
 
 class CleanupMixin:
     """Mixin providing tag/untag/cleanup methods for the Renamer class."""
@@ -35,9 +38,9 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                     tag_files.extend([os.path.join(root, name) for name in names])
 
         for filename in tag_files:
-            if os.path.splitext(filename)[1] == '.ignore':
+            if os.path.splitext(filename)[1] == _IGNORE_EXTENSION:
                 continue
-            tag_filename = '%s.%s.ignore' % (os.path.splitext(filename)[0], tag)
+            tag_filename = _TAGGED_IGNORE_FILENAME % (os.path.splitext(filename)[0], tag)
             if not os.path.isfile(tag_filename):
                 self.createFile(tag_filename, text)
 
@@ -61,7 +64,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                 tag_files = release_download.get('files', [])
             else:
                 for root, folders, names in os.walk(folder):
-                    tag_files.extend([sp(os.path.join(root, name)) for name in names if not os.path.splitext(name)[1] == '.ignore'])
+                    tag_files.extend([sp(os.path.join(root, name)) for name in names if not os.path.splitext(name)[1] == _IGNORE_EXTENSION])
 
         if not folder:
             return False
@@ -71,7 +74,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
             ignore_files.extend(fnmatch.filter([sp(os.path.join(root, filename)) for filename in filenames], '*%s.ignore' % tag))
 
         for tag_file in tag_files:
-            ignore_file = fnmatch.filter(ignore_files, fnEscape('%s.%s.ignore' % (os.path.splitext(tag_file)[0], tag if tag else '*')))
+            ignore_file = fnmatch.filter(ignore_files, fnEscape(_TAGGED_IGNORE_FILENAME % (os.path.splitext(tag_file)[0], tag if tag else '*')))
             for filename in ignore_file:
                 try:
                     os.remove(filename)
@@ -93,13 +96,13 @@ Remove it if you want it to be renamed (again, or at least let it try again)
             tag_files = release_download.get('files', [])
         else:
             for root, folders, names in os.walk(folder):
-                tag_files.extend([sp(os.path.join(root, name)) for name in names if not os.path.splitext(name)[1] == '.ignore'])
+                tag_files.extend([sp(os.path.join(root, name)) for name in names if not os.path.splitext(name)[1] == _IGNORE_EXTENSION])
 
         for root, dirnames, filenames in os.walk(folder):
             ignore_files.extend(fnmatch.filter([sp(os.path.join(root, filename)) for filename in filenames], '*%s.ignore' % tag))
 
         for tag_file in [tag_files] if isinstance(tag_files, str) else tag_files:
-            ignore_file = fnmatch.filter(ignore_files, fnEscape('%s.%s.ignore' % (os.path.splitext(tag_file)[0], tag if tag else '*')))
+            ignore_file = fnmatch.filter(ignore_files, fnEscape(_TAGGED_IGNORE_FILENAME % (os.path.splitext(tag_file)[0], tag if tag else '*')))
             if ignore_file:
                 return True
 
@@ -125,7 +128,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
             # Check if folder is effectively empty (only samples/metadata remain)
             dominated_by_samples = True
             for f in remaining:
-                if not any(x in f.lower() for x in ['sample', '.nfo', '.txt', '.jpg', '.png', '.ignore']):
+                if not any(x in f.lower() for x in ['sample', '.nfo', '.txt', '.jpg', '.png', _IGNORE_EXTENSION]):
                     dominated_by_samples = False
                     break
 

@@ -413,7 +413,7 @@ describe('dependency and privacy closure', () => {
     const lockText = await readFile(path.join(REPO_ROOT, 'package-lock.json'), 'utf8');
     const lock = JSON.parse(lockText);
     expect(manifest.devDependencies.lighthouse).toBe('13.5.0');
-    expect(manifest.devDependencies['chrome-launcher']).toBe('1.2.1');
+    expect(manifest.devDependencies['chrome-launcher']).toBe(lock.packages['node_modules/chrome-launcher'].version);
     expect(manifest.engines.node).toBe(lock.packages['node_modules/jsdom'].engines.node);
     expect(manifest.devDependencies['@lhci/cli']).toBeUndefined();
     expect(manifest.devDependencies['@lhci/utils']).toBeUndefined();

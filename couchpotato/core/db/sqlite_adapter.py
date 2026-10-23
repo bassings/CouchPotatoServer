@@ -18,6 +18,12 @@ from couchpotato.core.logger import CPLog
 
 log = CPLog(__name__)
 
+DB_FILENAME = 'couchpotato.db'
+SELECT_MEDIA_SQL = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+ORDER_BY_MEDIA_TITLE_SQL = " ORDER BY json_extract(data, '$.title')"
+SELECT_RELEASE_SQL = "SELECT _id, _rev, data FROM documents WHERE _t = 'release'"
+RELEASE_IDENTIFIER_PREDICATE_SQL = " AND json_extract(data, '$.identifier') = ?"
+
 
 class ConflictError(Exception):
     """Raised by SQLiteAdapter.update() when a compare-and-swap on `_rev`
@@ -301,7 +307,7 @@ class SQLiteAdapter(DatabaseInterface):
         if self._conn is not None:
             self.close()
         self._path = path
-        db_file = os.path.join(path, 'couchpotato.db') if os.path.isdir(path) else path
+        db_file = os.path.join(path, DB_FILENAME) if os.path.isdir(path) else path
         self._conn = sqlite3.connect(db_file, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode = WAL")
@@ -318,7 +324,7 @@ class SQLiteAdapter(DatabaseInterface):
             self.close()
         self._path = path
         os.makedirs(path, exist_ok=True)
-        db_file = os.path.join(path, 'couchpotato.db') if os.path.isdir(path) else path
+        db_file = os.path.join(path, DB_FILENAME) if os.path.isdir(path) else path
         self._conn = sqlite3.connect(db_file, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
@@ -374,7 +380,7 @@ class SQLiteAdapter(DatabaseInterface):
         """Get database size and details (CodernityDB compatibility)."""
         if self._path is None:
             return {'size': 0}
-        db_file = os.path.join(self._path, 'couchpotato.db') if os.path.isdir(self._path) else self._path
+        db_file = os.path.join(self._path, DB_FILENAME) if os.path.isdir(self._path) else self._path
         try:
             size = os.path.getsize(db_file) if os.path.isfile(db_file) else 0
         except OSError:
@@ -685,10 +691,10 @@ class SQLiteAdapter(DatabaseInterface):
                          WHERE mi.provider = ? AND mi.identifier = ?"""
                 params = [provider, identifier]
             else:
-                sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+                sql = SELECT_MEDIA_SQL
 
         elif index_name == 'media_status':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            sql = SELECT_MEDIA_SQL
             if key is not None:
                 sql += " AND json_extract(data, '$.status') = ?"
                 params.append(key)
@@ -702,14 +708,14 @@ class SQLiteAdapter(DatabaseInterface):
             sql += " ORDER BY json_extract(data, '$.status')"
 
         elif index_name == 'media_by_type':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            sql = SELECT_MEDIA_SQL
             if key is not None:
                 sql += " AND json_extract(data, '$.type') = ?"
                 params.append(key)
             sql += " ORDER BY json_extract(data, '$.type')"
 
         elif index_name == 'media_watched':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            sql = SELECT_MEDIA_SQL
             if key is not None:
                 watched_key = key if isinstance(key, bool) else str(key).lower() in ('true', '1', 'yes')
                 if watched_key:
@@ -719,7 +725,7 @@ class SQLiteAdapter(DatabaseInterface):
             sql += " ORDER BY json_extract(data, '$.watched_at') DESC"
 
         elif index_name == 'media_title':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            sql = SELECT_MEDIA_SQL
             if key is not None:
                 sql += " AND json_extract(data, '$.title') = ?"
                 params.append(key)
@@ -730,24 +736,24 @@ class SQLiteAdapter(DatabaseInterface):
                 if end is not None:
                     sql += " AND json_extract(data, '$.title') <= ?"
                     params.append(end)
-            sql += " ORDER BY json_extract(data, '$.title')"
+            sql += ORDER_BY_MEDIA_TITLE_SQL
 
         elif index_name in ('media_title_search', 'media_search_title'):
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            sql = SELECT_MEDIA_SQL
             if key is not None:
                 sql += " AND LOWER(json_extract(data, '$.title')) LIKE ?"
                 params.append(f"%{key.strip('_').lower()}%")
-            sql += " ORDER BY json_extract(data, '$.title')"
+            sql += ORDER_BY_MEDIA_TITLE_SQL
 
         elif index_name == 'media_startswith':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            sql = SELECT_MEDIA_SQL
             if key is not None:
                 sql += " AND LOWER(SUBSTR(json_extract(data, '$.title'), 1, 1)) = ?"
                 params.append(key.lower())
-            sql += " ORDER BY json_extract(data, '$.title')"
+            sql += ORDER_BY_MEDIA_TITLE_SQL
 
         elif index_name == 'media_children':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            sql = SELECT_MEDIA_SQL
             if key is not None:
                 sql += " AND json_extract(data, '$.parent_id') = ?"
                 params.append(key)
@@ -765,7 +771,7 @@ class SQLiteAdapter(DatabaseInterface):
                          JOIN media_tags mt ON d._id = mt.media_id"""
 
         elif index_name == 'category_media':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            sql = SELECT_MEDIA_SQL
             if key is not None:
                 sql += " AND json_extract(data, '$.category_id') = ?"
                 params.append(key)
@@ -773,7 +779,7 @@ class SQLiteAdapter(DatabaseInterface):
                 sql += " AND json_extract(data, '$.category_id') IS NOT NULL"
 
         elif index_name == 'release':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'release'"
+            sql = SELECT_RELEASE_SQL
             if key is not None:
                 sql += " AND json_extract(data, '$.media_id') = ?"
                 params.append(key)
@@ -787,7 +793,7 @@ class SQLiteAdapter(DatabaseInterface):
             sql += " ORDER BY json_extract(data, '$.media_id')"
 
         elif index_name == 'release_status':
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'release'"
+            sql = SELECT_RELEASE_SQL
             if key is not None:
                 sql += " AND json_extract(data, '$.status') = ?"
                 params.append(key)
@@ -797,9 +803,9 @@ class SQLiteAdapter(DatabaseInterface):
             # ReleaseIDIndex — keyed by the release identifier string.
             # Both index names map to the same column; 'release_identifier' is the
             # name used in _database and by db.get() call-sites in release/main.py.
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'release'"
+            sql = SELECT_RELEASE_SQL
             if key is not None:
-                sql += " AND json_extract(data, '$.identifier') = ?"
+                sql += RELEASE_IDENTIFIER_PREDICATE_SQL
                 params.append(key)
 
         elif index_name == 'release_download':
@@ -826,7 +832,7 @@ class SQLiteAdapter(DatabaseInterface):
             # while nzbget stores `nzb['NZBID']`, an int. The caller formats
             # the key with %s, so comparing raw JSON values would test '123'
             # against 123 and silently match nothing for every NZBGet install.
-            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'release'"
+            sql = SELECT_RELEASE_SQL
             if key is not None:
                 if isinstance(key, (tuple, list)) and len(key) == 2:
                     downloader, download_id = key
@@ -864,7 +870,7 @@ class SQLiteAdapter(DatabaseInterface):
         elif index_name == 'quality':
             sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'quality'"
             if key is not None:
-                sql += " AND json_extract(data, '$.identifier') = ?"
+                sql += RELEASE_IDENTIFIER_PREDICATE_SQL
                 params.append(key)
 
         elif index_name == 'notification':
@@ -898,7 +904,7 @@ class SQLiteAdapter(DatabaseInterface):
         elif index_name == 'property':
             sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'property'"
             if key is not None:
-                sql += " AND json_extract(data, '$.identifier') = ?"
+                sql += RELEASE_IDENTIFIER_PREDICATE_SQL
                 params.append(key)
 
         else:

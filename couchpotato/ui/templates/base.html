@@ -17,9 +17,9 @@
 <link rel="icon" type="image/png" sizes="32x32" href="{{ web_base }}static/icons/icon-96.png">
 
 <script src="{{ web_base }}static/scripts/vendor/new-ui/tailwindcss-cdn.js"></script>
-<script src="{{ web_base }}static/scripts/vendor/new-ui/htmx-2.0.4.min.js"></script>
+<script src="{{ web_base }}static/scripts/vendor/new-ui/htmx-2.0.11.min.js"></script>
 <script>
-  /* Disable htmx's localStorage history snapshots (WCAG-adjacent correctness,
+  /* Disable htmx's history snapshots (WCAG-adjacent correctness,
      not a perf tweak).
 
      FEAT-007 Part B introduced the first `hx-push-url` in this codebase, which
@@ -49,7 +49,7 @@
   window.CP = window.CP || {};
   window.CP.ui = ui;
 </script>
-<script defer src="{{ web_base }}static/scripts/vendor/new-ui/alpine-3.x.min.js"></script>
+<script defer src="{{ web_base }}static/scripts/vendor/new-ui/alpine-3.17.5.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script>

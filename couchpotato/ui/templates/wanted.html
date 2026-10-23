@@ -141,7 +141,7 @@
        {# htmx's own "load" trigger is a ONE-SHOT special case (fires once
           during element init, never registers a real event listener) --
           a later `htmx.trigger(elt, 'load')` is a silent no-op, confirmed
-          against the vendored htmx-2.0.4 source and by watching the
+          against the vendored htmx-2.0.11 source and by watching the
           network panel: the request that ran once at page load never runs
           again. "review-action" is an ordinary trigger name, so it DOES
           get a real listener and genuinely re-fetches. Card review

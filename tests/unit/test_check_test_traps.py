@@ -609,6 +609,23 @@ def test_defaults_run_shell_bash_is_not_flagged(tmp_path):
     assert findings_for(workflow) == []
 
 
+@pytest.mark.parametrize(
+    ("document", "inherited", "expected"),
+    [
+        ("value", "sh", "sh"),
+        ("other: true", "sh", "sh"),
+        ("run: bash", "sh", "sh"),
+        ("run:\n  shell: bash\nrun:\n  shell: sh", "python", "sh"),
+        ("run:\n  shell: bash\n  shell: python", "sh", "python"),
+        ("run:\n  shell: bash\n  shell: [sh]", "python", "bash"),
+    ],
+)
+def test_default_run_shell_preserves_last_scalar_value(document, inherited, expected):
+    node = check_test_traps.yaml.compose(document)
+
+    assert check_test_traps._default_run_shell(node, inherited) == expected
+
+
 def test_default_shell_without_an_explicit_declaration_is_still_flagged(tmp_path):
     """`shell: sh` is `sh -e` — no pipefail — so it must still be caught."""
     workflow = tmp_path / "ci.yml"
@@ -997,6 +1014,32 @@ def test_strip_shell_comments_respects_quotes():
     assert blanked.count('"') == 2
 
 
+@pytest.mark.parametrize(
+    ("source", "expected", "blanked"),
+    [
+        (r"echo \#literal # real", r"echo \#literal ", r"echo \#literal "),
+        ('echo "a \\" # b" # real', 'echo "a \\" # b" ', 'echo "        " '),
+        ("PAT='\\'  # hidden", "PAT='\\'  ", "PAT=' '  "),
+    ],
+)
+def test_strip_shell_comments_keeps_escaped_hashes_and_quote_boundaries(source, expected, blanked):
+    assert check_test_traps.strip_shell_comments(source) == expected
+    assert check_test_traps.strip_shell_comments(source, blank_strings=True) == blanked
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("const u = 'http://x/'; // ignore\nread();", ["const u = 'http://x/'; ", "read();"]),
+        ("// /* hidden\nrun();", ["", "run();"]),
+        ("const a = `one\n// text`;\nrun();", ["const a = `one", "// text`;", "run();"]),
+        ("/* hidden\nstill hidden */ run();", ["", " run();"]),
+    ],
+)
+def test_strip_js_comments_preserves_string_and_comment_state_across_lines(source, expected):
+    assert check_test_traps.strip_js_comments(source) == expected
+
+
 def test_pipefail_is_detected_in_every_real_form_and_not_when_disabled():
     has = check_test_traps._has_pipefail
     for setting in (
@@ -1011,6 +1054,38 @@ def test_pipefail_is_detected_in_every_real_form_and_not_when_disabled():
     assert not has("set +o pipefail"), "disabling pipefail must not count as setting it"
     assert not has("# set -o pipefail"), "a comment must not count"
     assert not has('echo "set -o pipefail"'), "a string literal must not count"
+
+
+@pytest.mark.parametrize(
+    ('source', 'expected'),
+    [
+        ('set -eu; set -o pipefail', True),
+        ('set +o pipefail; set -eu', False),
+        ('echo "set -o pipefail"; set -eu', False),
+        ('set -eu \\\n-o pipefail', True),
+    ],
+)
+def test_pipefail_scan_respects_command_and_continuation_boundaries(source, expected):
+    assert check_test_traps._has_pipefail(source) is expected
+
+
+@pytest.mark.parametrize(
+    ('shebang', 'expected_line', 'message_fragment'),
+    [
+        ('#!/bin/bash', 3, 'Add `set -o pipefail`'),
+        ('#!/bin/sh', 3, 'bash-only'),
+    ],
+)
+def test_shell_gate_reports_one_runner_pipe_finding_with_shell_specific_advice(
+    shebang, expected_line, message_fragment,
+):
+    source = f'{shebang}\nset -eu\npytest tests/ | tail -1\n'
+
+    findings = list(check_test_traps.check_shell_script(Path('gate.sh'), source))
+
+    assert len(findings) == 1
+    assert findings[0][0] == expected_line
+    assert message_fragment in findings[0][1]
 
 
 def test_makefile_pipe_outside_a_recipe_line_is_not_flagged(tmp_path):
@@ -3925,7 +4000,7 @@ class TestGitEnvIsScrubbedInTheScriptPath:
 
         assert check_test_traps._GIT_IDENTITY_PREFIXES == GIT_IDENTITY_ENV_PREFIXES
 
-    def test_an_unknown_git_variable_does_not_survive_the_scrub(self):
+    def test_an_unknown_git_variable_does_not_survive_the_scrub(self, monkeypatch):
         """The prefix tuple is not the rule; the namespace strip is.
 
         Review showed the earlier pin was insufficient: replacing the strip
@@ -3936,11 +4011,8 @@ class TestGitEnvIsScrubbedInTheScriptPath:
         subprocesses.
         """
         monkey = 'GIT_NOT_A_REAL_VARIABLE'
-        os.environ[monkey] = 'x'
-        try:
-            assert monkey not in check_test_traps._git_env(), (
-                'a GIT_* name nobody listed survived the scrub, so the strip '
-                'has drifted into a denylist of known-dangerous names'
-            )
-        finally:
-            os.environ.pop(monkey, None)
+        monkeypatch.setenv(monkey, 'x')
+        assert monkey not in check_test_traps._git_env(), (
+            'a GIT_* name nobody listed survived the scrub, so the strip '
+            'has drifted into a denylist of known-dangerous names'
+        )

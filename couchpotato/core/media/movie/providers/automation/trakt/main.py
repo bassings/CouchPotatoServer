@@ -15,6 +15,8 @@ from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
+_JSON_CONTENT_TYPE = 'application/json'
+
 
 # M1: bounds for the device-auth poll interval and code expiry Trakt hands
 # back. Both are relayed to the browser's poll loop and stored for the next
@@ -144,7 +146,7 @@ class TraktBase(Provider):
             return []
 
         headers = {
-            'Content-Type': 'application/json',
+            'Content-Type': _JSON_CONTENT_TYPE,
             'trakt-api-version': '2',
             'trakt-api-key': client_id,
         }
@@ -225,7 +227,7 @@ class Trakt(Automation, TraktBase):
                         'grant_type': 'refresh_token',
                     },
                     headers={
-                        'Content-Type': 'application/json',
+                        'Content-Type': _JSON_CONTENT_TYPE,
                     },
                     timeout=30
                 )
@@ -315,7 +317,7 @@ class Trakt(Automation, TraktBase):
             response = requests.post(
                 self.api_url + self.urls['device_code'],
                 json={'client_id': client_id},
-                headers={'Content-Type': 'application/json'},
+                headers={'Content-Type': _JSON_CONTENT_TYPE},
                 timeout=30
             )
 
@@ -409,7 +411,7 @@ class Trakt(Automation, TraktBase):
                     'client_id': client_id,
                     'client_secret': client_secret,
                 },
-                headers={'Content-Type': 'application/json'},
+                headers={'Content-Type': _JSON_CONTENT_TYPE},
                 timeout=30
             )
 

@@ -17,6 +17,9 @@ log = CPLog(__name__)
 
 autoload = 'FileManager'
 
+_SUBFOLDER_TEST_PATH = '/test/sub/folder'
+_CASE_SENSITIVE_TEST_PATH = '/CapItaLs/Are/OK'
+
 
 class FileManager(Plugin):
 
@@ -229,14 +232,14 @@ class FileManager(Plugin):
 
         tests = {
             ('/test/subfolder', '/test/sub'): False,
-            ('/test/sub/folder', '/test/sub'): True,
-            ('/test/sub/folder', '/test/sub2'): False,
+            (_SUBFOLDER_TEST_PATH, '/test/sub'): True,
+            (_SUBFOLDER_TEST_PATH, '/test/sub2'): False,
             ('/sub/fold', '/test/sub/fold'): False,
-            ('/sub/fold', '/test/sub/folder'): False,
+            ('/sub/fold', _SUBFOLDER_TEST_PATH): False,
             ('/opt/couchpotato', '/var/opt/couchpotato'): False,
             ('/var/opt', '/var/opt/couchpotato'): False,
-            ('/CapItaLs/Are/OK', '/CapItaLs/Are/OK'): True,
-            ('/CapItaLs/Are/OK', '/CapItaLs/Are/OK2'): False,
+            (_CASE_SENSITIVE_TEST_PATH, _CASE_SENSITIVE_TEST_PATH): True,
+            (_CASE_SENSITIVE_TEST_PATH, '/CapItaLs/Are/OK2'): False,
             ('/capitals/are/not/OK', '/capitals/are/NOT'): False,
             ('\\\\Mounted\\Volume\\Test', '\\\\Mounted\\Volume'): True,
             ('C:\\\\test\\path', 'C:\\\\test2'): False

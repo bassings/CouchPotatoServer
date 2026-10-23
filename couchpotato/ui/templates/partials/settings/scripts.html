@@ -18,6 +18,11 @@ function logsPanel() {
   return {
     logs: [],
     logLoading: false,
+    clearError: '',
+    loadError: '',
+    clearingLogs: false,
+    logEpoch: 0,
+    refreshRequestId: 0,
     logType: 'all',
     autoRefresh: true,
     refreshTimer: null,
@@ -27,23 +32,36 @@ function logsPanel() {
       if (this.autoRefresh) this.startAutoRefresh();
     },
 
-    async refresh() {
+    async refresh(force = false) {
+      if (this.clearingLogs || (this.clearError && !force)) return;
+      const epoch = this.logEpoch;
+      const requestId = ++this.refreshRequestId;
+      const isCurrent = () => epoch === this.logEpoch && requestId === this.refreshRequestId && !this.clearingLogs;
       this.logLoading = true;
       try {
         const typeParam = this.logType !== 'all' ? '&type=' + this.logType : '';
         const resp = await fetch(CP.apiBase + '/logging.partial/?limit=500' + typeParam);
         const data = await resp.json();
-        if (data.success !== false) {
-          this.logs = this.parseLogs(data.log || data.lines || []);
+        const lines = data?.log ?? data?.lines;
+        if (!resp.ok || data?.success !== true || !Array.isArray(lines)) throw new Error('Log load failed');
+        if (isCurrent()) {
+          this.logs = this.parseLogs(lines);
+          this.loadError = '';
+          if (force) this.clearError = '';
         }
       } catch (e) {
-        console.error('Failed to load logs', e);
+        if (isCurrent()) {
+          this.loadError = 'Unable to load logs. Refresh to retry.';
+          console.error('Failed to load logs');
+        }
       }
-      this.logLoading = false;
-      this.$nextTick(() => {
-        const el = document.getElementById('log-container');
-        if (el) el.scrollTop = el.scrollHeight;
-      });
+      if (epoch === this.logEpoch && requestId === this.refreshRequestId) {
+        this.logLoading = false;
+        this.$nextTick(() => {
+          const el = document.getElementById('log-container');
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
     },
 
     parseLogs(lines) {
@@ -51,11 +69,21 @@ function logsPanel() {
     },
 
     async clearLogs() {
+      if (this.clearingLogs) return;
+      this.clearingLogs = true;
+      this.logEpoch++;
+      this.logLoading = false;
+      this.clearError = '';
       try {
-        await fetch(CP.apiBase + '/logging.clear/');
+        const resp = await fetch(CP.apiBase + '/logging.clear/');
+        const data = await resp.json();
+        if (!resp.ok || !data || data.success !== true) throw new Error('Log clear failed');
         this.logs = [];
+        this.loadError = '';
       } catch (e) {
-        console.error('Failed to clear logs');
+        this.clearError = 'Unable to clear all logs. Some entries may remain. Refresh to check.';
+      } finally {
+        this.clearingLogs = false;
       }
     },
 
@@ -90,6 +118,7 @@ function settingsPanel() {
     saving: false,
     showAdvanced: false,
     needsRestart: false,
+    restartPending: false,
     testing: null,
     testResult: {},
     testResultDetails: {},
@@ -113,6 +142,10 @@ function settingsPanel() {
     browserPath: '/',
     browserDirs: [],
     browserLoading: false,
+    browserError: '',
+    browserValid: false,
+    browserRequestedPath: '/',
+    browserRequestId: 0,
     browserTarget: null,
     browserParent: '/',
     browserIsRoot: true,
@@ -240,29 +273,8 @@ function settingsPanel() {
         this.options = data.options || {};
         this.values = data.values || {};
 
-        try {
-          const vResp = await fetch(CP.apiBase + '/updater.info/');
-          const vData = await vResp.json();
-          if (vData.version) this.version = vData.version.repr || vData.version.hash?.substring(0,7) || '';
-          if (vData.update_version) this.updateAvailable = vData.update_version;
-        } catch (e) {}
-
-        const tabSet = new Set();
-        for (const [sectionName, section] of Object.entries(this.options)) {
-          if (this.hiddenSections.has(sectionName)) continue;
-          for (const grp of (section.groups || [])) {
-            tabSet.add(grp.tab || 'general');
-          }
-        }
-
-        const preferred = ['general', 'searcher', 'downloaders', 'renamer', 'notifications', 'automation', 'manage', 'display'];
-        this.tabOrder = preferred.filter(t => tabSet.has(t) && !this.hiddenTabs.has(t));
-        for (const t of tabSet) {
-          if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
-        }
-        if (!this.hiddenTabs.has('profiles') && !this.tabOrder.includes('profiles')) this.tabOrder.push('profiles');
-        if (!this.hiddenTabs.has('categories') && !this.tabOrder.includes('categories')) this.tabOrder.push('categories');
-        if (!this.hiddenTabs.has('logs') && !this.tabOrder.includes('logs')) this.tabOrder.push('logs');
+        await this.loadVersionInfo();
+        this.computeTabOrder();
 
         this.computeOpenGroups();
         this.updateCurrentGroups();
@@ -271,6 +283,34 @@ function settingsPanel() {
         this.toast('Failed to load settings', 'error');
       }
       this.loading = false;
+    },
+
+    async loadVersionInfo() {
+      try {
+        const vResp = await fetch(CP.apiBase + '/updater.info/');
+        const vData = await vResp.json();
+        if (vData.version) this.version = vData.version.repr || vData.version.hash?.substring(0,7) || '';
+        if (vData.update_version) this.updateAvailable = vData.update_version;
+      } catch (e) {}
+    },
+
+    computeTabOrder() {
+      const tabSet = new Set();
+      for (const [sectionName, section] of Object.entries(this.options)) {
+        if (this.hiddenSections.has(sectionName)) continue;
+        for (const grp of (section.groups || [])) {
+          tabSet.add(grp.tab || 'general');
+        }
+      }
+
+      const preferred = ['general', 'searcher', 'downloaders', 'renamer', 'notifications', 'automation', 'manage', 'display'];
+      this.tabOrder = preferred.filter(t => tabSet.has(t) && !this.hiddenTabs.has(t));
+      for (const t of tabSet) {
+        if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
+      }
+      if (!this.hiddenTabs.has('profiles') && !this.tabOrder.includes('profiles')) this.tabOrder.push('profiles');
+      if (!this.hiddenTabs.has('categories') && !this.tabOrder.includes('categories')) this.tabOrder.push('categories');
+      if (!this.hiddenTabs.has('logs') && !this.tabOrder.includes('logs')) this.tabOrder.push('logs');
     },
 
     computeOpenGroups() {
@@ -296,40 +336,13 @@ function settingsPanel() {
     getTabGroups(tab) {
       const groups = [];
       const combinedGroups = [];
-      
+
       for (const [sectionName, section] of Object.entries(this.options)) {
         if (this.hiddenSections.has(sectionName)) continue;
         if (this.advancedSections.has(sectionName) && !this.showAdvanced) continue;
-        
-        for (const grp of (section.groups || [])) {
-          let originalTab = grp.tab || 'general';
-          let grpTab = this.tabRemaps[originalTab] || originalTab;
-          if (grpTab !== tab) continue;
-          
-          const combineInfo = this.combinedBasicsSections[sectionName];
-          if (tab === 'searcher' && combineInfo && combineInfo.tab === 'searcher') {
-            combinedGroups.push({
-              ...grp,
-              section: sectionName,
-              order: combineInfo.order + (grp.name === 'filter' ? 0.5 : 0),
-              _subLabel: grp.label || combineInfo.label,
-              _isCombinedPart: true,
-            });
-            continue;
-          }
-          
-          const catInfo = this.providerCategories[sectionName];
-          groups.push({ 
-            ...grp, 
-            section: sectionName, 
-            order: section.order || 999,
-            _category: catInfo ? catInfo.category : 'zzz',
-            _categoryLabel: catInfo ? catInfo.label : null,
-            _categoryOrder: catInfo ? catInfo.order : 99,
-          });
-        }
+        this.appendTabGroups(sectionName, section, tab, groups, combinedGroups);
       }
-      
+
       groups.sort((a, b) => {
         if (a._categoryOrder !== b._categoryOrder) return a._categoryOrder - b._categoryOrder;
         return a.order - b.order;
@@ -349,6 +362,36 @@ function settingsPanel() {
       }
       
       return groups;
+    },
+
+    appendTabGroups(sectionName, section, tab, groups, combinedGroups) {
+      for (const grp of (section.groups || [])) {
+        let originalTab = grp.tab || 'general';
+        let grpTab = this.tabRemaps[originalTab] || originalTab;
+        if (grpTab !== tab) continue;
+
+        const combineInfo = this.combinedBasicsSections[sectionName];
+        if (tab === 'searcher' && combineInfo && combineInfo.tab === 'searcher') {
+          combinedGroups.push({
+            ...grp,
+            section: sectionName,
+            order: combineInfo.order + (grp.name === 'filter' ? 0.5 : 0),
+            _subLabel: grp.label || combineInfo.label,
+            _isCombinedPart: true,
+          });
+          continue;
+        }
+
+        const catInfo = this.providerCategories[sectionName];
+        groups.push({
+          ...grp,
+          section: sectionName,
+          order: section.order || 999,
+          _category: catInfo ? catInfo.category : 'zzz',
+          _categoryLabel: catInfo ? catInfo.label : null,
+          _categoryOrder: catInfo ? catInfo.order : 99,
+        });
+      }
     },
 
     shouldShowCategoryHeader(groupIdx) {
@@ -476,12 +519,7 @@ function settingsPanel() {
         // {'success': False} for a directory that resolves outside the soft
         // chroot, where the old code silently let the traversal through. The
         // security fix created a failure response nothing was listening for.
-        let payload = null;
-        try {
-          payload = await resp.json();
-        } catch (parseError) {
-          payload = null;  // non-JSON body; fall back to the status code
-        }
+        const payload = await this.readSavePayload(resp);
         if (!resp.ok || (payload && payload.success === false)) {
           const detail = (payload && payload.error) ? payload.error : ('HTTP ' + resp.status);
           this.toast('Could not save ' + name + ': ' + detail, 'error');
@@ -489,78 +527,90 @@ function settingsPanel() {
           return;   // leave the value dirty and unchanged: it did NOT save
         }
 
-        // Store what the SERVER stored, not what we submitted.
-        //
-        // A save hook may rewrite the value: `Core.guardAuthRequired` turns a
-        // submitted `1` into `0` when no password is set, refusing to create an
-        // unrecoverable lockout. The response is `success: true` -- the write
-        // genuinely happened -- so the refusal path above does not catch it,
-        // and writing `value` here left the "Require login" checkbox ticked,
-        // the dirty flag cleared and "Saved" announced, while the server stayed
-        // PUBLIC. The UI stated the opposite of the truth about whether
-        // authentication was on.
-        //
-        // NEVER fall back to the submitted value.
-        //
-        // This used to do `('value' in payload) ? payload.value : value`, which
-        // reads as harmless defensiveness and is not: the server deliberately
-        // OMITS `value` for a password-typed option, so the fallback substituted
-        // the plaintext the operator had just typed -- into `this.values` and,
-        // via the toast below, onto the screen. The absence of `value` is a
-        // deliberate refusal to disclose, and treating it as a gap to be filled
-        // locally defeats it.
-        //
-        // No `value` means: do not update local state for this field. The last
-        // loaded value (already masked by `getValues` for a password) stays,
-        // which is exactly right -- there is nothing displayable to replace it
-        // with.
-        const hasValue = payload && 'value' in payload;
-
-        if (hasValue) {
-          if (!this.values[section]) this.values[section] = {};
-          this.values[section][name] = payload.value;
-        }
-        delete this.dirty[section + '.' + name];
-
-        // Say so when the server did not take what was asked for. Silently
-        // showing a different value than the one just typed is how the operator
-        // ends up believing a security control is on.
-        //
-        // Gated on `hasValue` as well as `changed`: the message names the stored
-        // value, and the only value available when the server withheld one is
-        // the secret the operator just typed.
-        if (payload && payload.changed && hasValue) {
-          this.toast(
-            name.replaceAll('_', ' ') + ' could not be set to that value; the server stored "'
-              + payload.value + '" instead. Check the log for the reason.',
-            'error', 6000,
-          );
-          // RETURN. Without it, `lastSaved = true` below fires the green "Saved"
-          // tick in header.html and its own role="status" aria-live="polite"
-          // region -- so on the one flow this change exists to make truthful,
-          // the primary confirmation affordance said the save was accepted.
-          // Measured: the real client function returned message='... could not
-          // be set ...', messageType='error' AND lastSaved=true together, so a
-          // sighted operator glancing at the header sees a tick, and a screen
-          // reader delivers "Saved" from the polite queue after the assertive
-          // error.
-          //
-          // The comment a few lines above already closed this for the
-          // `success: false` branch; the `changed` branch is new in the same
-          // commit and did not inherit it.
-          this.saving = false;
-          return;
-        }
-
-        const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
-        if (restartKeys.includes(section + '.' + name)) this.needsRestart = true;
-
-        this.lastSaved = true;
-        setTimeout(() => { this.lastSaved = false; }, 2000);
+        this.applyAcceptedSave(section, name, payload);
       } catch (e) {
         this.toast('Failed to save: ' + e.message, 'error');
       }
       this.saving = false;
+    },
+
+    async readSavePayload(resp) {
+      try {
+        return await resp.json();
+      } catch (parseError) {
+        return null;  // non-JSON body; fall back to the status code
+      }
+    },
+
+    applyAcceptedSave(section, name, payload) {
+      // Store what the SERVER stored, not what we submitted.
+      //
+      // A save hook may rewrite the value: `Core.guardAuthRequired` turns a
+      // submitted `1` into `0` when no password is set, refusing to create an
+      // unrecoverable lockout. The response is `success: true` -- the write
+      // genuinely happened -- so the refusal path above does not catch it,
+      // and writing `value` here left the "Require login" checkbox ticked,
+      // the dirty flag cleared and "Saved" announced, while the server stayed
+      // PUBLIC. The UI stated the opposite of the truth about whether
+      // authentication was on.
+      //
+      // NEVER fall back to the submitted value.
+      //
+      // This used to do `('value' in payload) ? payload.value : value`, which
+      // reads as harmless defensiveness and is not: the server deliberately
+      // OMITS `value` for a password-typed option, so the fallback substituted
+      // the plaintext the operator had just typed -- into `this.values` and,
+      // via the toast below, onto the screen. The absence of `value` is a
+      // deliberate refusal to disclose, and treating it as a gap to be filled
+      // locally defeats it.
+      //
+      // No `value` means: do not update local state for this field. The last
+      // loaded value (already masked by `getValues` for a password) stays,
+      // which is exactly right -- there is nothing displayable to replace it
+      // with.
+      const hasValue = payload && 'value' in payload;
+
+      if (hasValue) {
+        if (!this.values[section]) this.values[section] = {};
+        this.values[section][name] = payload.value;
+      }
+      delete this.dirty[section + '.' + name];
+
+      // Say so when the server did not take what was asked for. Silently
+      // showing a different value than the one just typed is how the operator
+      // ends up believing a security control is on.
+      //
+      // Gated on `hasValue` as well as `changed`: the message names the stored
+      // value, and the only value available when the server withheld one is
+      // the secret the operator just typed.
+      if (payload && payload.changed && hasValue) {
+        this.toast(
+          name.replaceAll('_', ' ') + ' could not be set to that value; the server stored "'
+            + payload.value + '" instead. Check the log for the reason.',
+          'error', 6000,
+        );
+        // RETURN. Without it, `lastSaved = true` below fires the green "Saved"
+        // tick in header.html and its own role="status" aria-live="polite"
+        // region -- so on the one flow this change exists to make truthful,
+        // the primary confirmation affordance said the save was accepted.
+        // Measured: the real client function returned message='... could not
+        // be set ...', messageType='error' AND lastSaved=true together, so a
+        // sighted operator glancing at the header sees a tick, and a screen
+        // reader delivers "Saved" from the polite queue after the assertive
+        // error.
+        //
+        // The comment a few lines above already closed this for the
+        // `success: false` branch; the `changed` branch is new in the same
+        // commit and did not inherit it.
+        this.saving = false;
+        return;
+      }
+
+      const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
+      if (restartKeys.includes(section + '.' + name)) this.needsRestart = true;
+
+      this.lastSaved = true;
+      setTimeout(() => { this.lastSaved = false; }, 2000);
     },
 
     toggleGroup(key) { this.openGroups[key] = !this.openGroups[key]; },
@@ -605,13 +655,21 @@ function settingsPanel() {
     },
 
     async restartApp() {
+      if (this.restartPending) return;
+      this.restartPending = true;
+      const controller = new AbortController();
+      const deadline = setTimeout(() => controller.abort(), 10000);
       try {
-        await fetch(CP.apiBase + '/app.restart/');
+        const resp = await fetch(CP.apiBase + '/app.restart/', { signal: controller.signal });
+        if (!resp.ok || await resp.json() !== 'restarting') throw new Error('Restart not confirmed');
         this.toast('Restarting…', 'success');
         this.needsRestart = false;
         setTimeout(() => location.reload(), 5000);
       } catch (e) {
-        this.toast('Restart failed', 'error');
+        this.restartPending = false;
+        this.toast('Could not confirm restart. Check server status before retrying.', 'error');
+      } finally {
+        clearTimeout(deadline);
       }
     },
 
@@ -668,28 +726,44 @@ function settingsPanel() {
     },
 
     async loadDirectories(path) {
+      const requestId = ++this.browserRequestId;
       this.browserLoading = true;
+      this.browserValid = false;
+      this.browserError = '';
+      this.browserDirs = [];
+      this.browserRequestedPath = path;
       try {
         const resp = await fetch(CP.apiBase + '/directory.list/?path=' + encodeURIComponent(path));
         const data = await resp.json();
+        if (requestId !== this.browserRequestId) return;
+        if (!resp.ok || !data || data.success === false || !Array.isArray(data.dirs)
+            || !data.dirs.every(dir => typeof dir === 'string')
+            || typeof data.parent !== 'string' || typeof data.is_root !== 'boolean') {
+          throw new Error('Invalid directory listing');
+        }
         this.browserPath = path;
-        this.browserDirs = data.dirs || [];
+        this.browserDirs = data.dirs;
         this.browserParent = data.parent;
         this.browserIsRoot = data.is_root;
+        this.browserValid = true;
       } catch (e) {
+        if (requestId !== this.browserRequestId) return;
         this.browserDirs = [];
+        this.browserError = 'Unable to list directory';
+      } finally {
+        if (requestId === this.browserRequestId) this.browserLoading = false;
       }
-      this.browserLoading = false;
     },
 
     goToParentDirectory() {
-      if (this.browserIsRoot || this.browserLoading) return;
+      if (this.browserIsRoot || this.browserLoading || !this.browserValid) return;
       return this.loadDirectories(this.browserParent);
     },
 
-    selectDirectory(dir) { this.loadDirectories(dir); },
+    selectDirectory(dir) { if (!this.browserLoading && this.browserValid) return this.loadDirectories(dir); },
 
     confirmDirectory() {
+      if (this.browserLoading || !this.browserValid || this.browserError) return;
       const path = this.browserPath;
       if (this.browserTarget) {
         const { section, name, index } = this.browserTarget;

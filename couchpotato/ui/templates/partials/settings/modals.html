@@ -6,9 +6,12 @@
      class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-lg bg-cp-warning/20 border border-cp-warning/30 backdrop-blur-sm"
      role="alert">
   <span class="text-xs text-cp-warning font-medium">Some changes need a restart to take effect.</span>
-  <button @click="restartApp()" 
-          class="px-3 py-1 rounded-md text-xs font-medium bg-cp-warning text-black hover:opacity-90 transition-opacity">
-    Restart
+  <button @click="restartApp()"
+          :aria-disabled="restartPending.toString()"
+          :aria-busy="restartPending.toString()"
+          :class="restartPending ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'"
+          class="px-3 py-1 rounded-md text-xs font-medium bg-cp-warning text-black transition-opacity"
+          x-text="restartPending ? 'Requesting restart…' : 'Restart'">
   </button>
 </div>
 
@@ -80,8 +83,8 @@
     <div class="px-4 py-2 border-b border-white/[0.04] bg-white/[0.02]">
       <div class="flex items-center gap-2 text-xs">
         <button @click="goToParentDirectory()"
-                :aria-disabled="(browserIsRoot || browserLoading).toString()"
-                :class="browserIsRoot || browserLoading ? 'opacity-30 cursor-not-allowed' : ''"
+                :aria-disabled="(browserIsRoot || browserLoading || !browserValid).toString()"
+                :class="browserIsRoot || browserLoading || !browserValid ? 'opacity-30 cursor-not-allowed' : ''"
                 class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06]"
                 aria-label="Up one folder">
           ↑ Up
@@ -115,8 +118,13 @@
         <span class="sr-only">Loading folders…</span>
       </div>
       
+      <div x-show="!browserLoading && browserError" class="py-8 text-center text-xs text-cp-danger" role="alert">
+        <span x-text="browserError"></span>
+        <button @click="loadDirectories(browserRequestedPath)" class="block mx-auto mt-3 px-3 py-2 rounded-md border border-cp-danger text-cp-text">Retry</button>
+      </div>
+
       <!-- Empty state -->
-      <div x-show="!browserLoading && browserDirs.length === 0" class="py-8 text-center text-xs text-cp-muted">
+      <div x-show="!browserLoading && !browserError && browserDirs.length === 0" class="py-8 text-center text-xs text-cp-muted">
         Empty folder
       </div>
       
@@ -138,7 +146,8 @@
               class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">
         Cancel
       </button>
-      <button @click="confirmDirectory()" 
+      <button @click="confirmDirectory()" :aria-disabled="(browserLoading || !browserValid).toString()"
+              :class="browserLoading || !browserValid ? 'opacity-50 cursor-not-allowed' : ''"
               class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover">
         Select This Folder
       </button>

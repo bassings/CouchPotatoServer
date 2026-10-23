@@ -3,12 +3,15 @@
 Uses unittest.mock to avoid real HTTP calls.
 """
 import ast
+import io
+import logging
 import re
 from pathlib import Path
 import json
 import os
 import sys
 import pytest
+import requests
 from unittest.mock import call, patch, MagicMock, PropertyMock, Mock
 from base64 import b64encode
 
@@ -724,6 +727,38 @@ class TestTorrentPotatoProvider:
 
         assert len(results) == 0
 
+    @pytest.mark.parametrize('response', [
+        {'error': 'Internal URL http://indexer.private/path?passkey=TOP_SECRET'},
+        [{'unexpected': 'shape'}],
+    ])
+    def test_search_error_does_not_log_private_host_or_untrusted_response(self, response, caplog):
+        from couchpotato.core.media._base.providers.torrent.torrentpotato import Base
+        provider = Base.__new__(Base)
+        private_url = 'http://indexer.private/potato/private/api?passkey=TOP_SECRET'
+
+        with patch.object(provider, 'getJsonData', return_value=response), \
+             patch.object(provider, 'buildUrl', return_value=private_url), \
+             caplog.at_level('ERROR'):
+            provider._searchOnHost({'host': private_url}, {}, {}, [])
+
+        assert 'Failed getting results' in caplog.text or 'Indexer returned an error' in caplog.text
+        assert 'indexer.private' not in caplog.text
+        assert 'TOP_SECRET' not in caplog.text
+
+    def test_search_fetch_exception_does_not_log_private_host(self, caplog):
+        from couchpotato.core.media._base.providers.torrent.torrentpotato import Base
+        provider = Base.__new__(Base)
+        private_url = 'http://indexer.private/potato/private/api?passkey=TOP_SECRET'
+
+        with patch.object(provider, 'getJsonData', side_effect=RuntimeError(private_url)), \
+             patch.object(provider, 'buildUrl', return_value=private_url), \
+             caplog.at_level('ERROR'):
+            provider._searchOnHost({'host': private_url}, {}, {}, [])
+
+        assert 'RuntimeError' in caplog.text
+        assert 'indexer.private' not in caplog.text
+        assert 'TOP_SECRET' not in caplog.text
+
     def test_searchOnHost_empty_results(self):
         from couchpotato.core.media._base.providers.torrent.torrentpotato import Base
         p = Base.__new__(Base)
@@ -853,6 +888,80 @@ class TestTorrentPotatoJackettIntegration:
             p._http_client = None
             return p
 
+    @pytest.mark.parametrize(('host_url', 'expected'), [
+        ('http://jackett.example:9117/jackett/potato/yts/api', True),
+        ('http://other.example:9117/jackett/potato/yts/api', False),
+        ('http://jackett.example:9117/potato/yts/api', False),
+        ('http://jackett.example:9117/jackett/torznab/all/api', False),
+        ('http://jackett.example:9117/jackett/potato/yts/other', False),
+    ])
+    def test_search_only_exempts_configured_jackett_indexers(self, host_url, expected):
+        provider = self._make_provider()
+        with patch.object(provider, 'conf', return_value='http://jackett.example:9117/jackett'), \
+             patch.object(provider, 'buildUrl', return_value=host_url + '?search=test', create=True), \
+             patch.object(provider, 'getJsonData', return_value=[]) as get_json:
+            provider._searchOnHost({'host': host_url}, {}, None, [])
+
+        assert get_json.call_args.kwargs['ignore_host_failure_on_400'] is expected
+
+    def test_indexer_refusals_leave_jackett_listing_reachable(self):
+        provider = self._make_provider()
+        provider.http_time_between_calls = 0
+        indexer_url = 'http://jackett.example:9117/potato/tv-only/api'
+        listing_url = 'http://jackett.example:9117/torznab/all/api?t=indexers'
+        refused = requests.Response()
+        refused.status_code = 400
+        refused.url = indexer_url
+        listing = requests.Response()
+        listing.status_code = 200
+        listing._content = b'<indexers />'
+        session = MagicMock()
+        session.request.side_effect = [refused] * 6 + [listing]
+
+        with patch.object(provider, 'conf', return_value='http://jackett.example:9117'), \
+             patch.object(provider, 'buildUrl', return_value=indexer_url, create=True), \
+             patch.object(Env, 'get', side_effect=lambda key: session if key == 'http_opener' else None):
+            for _ in range(6):
+                provider._searchOnHost({'host': indexer_url}, {}, None, [], manual=True)
+            assert provider.urlopen(listing_url) == b'<indexers />'
+
+        assert 'jackett.example:9117' not in provider.http_client.failed_disabled
+        assert session.request.call_count == 7
+
+    def test_indexer_500_keeps_searching_without_logging_private_url(self, caplog):
+        provider = self._make_provider()
+        provider.http_time_between_calls = 0
+        base = 'http://jackett.private:9117'
+        hosts = [
+            {'host': base + '/potato/failing/api'},
+            {'host': base + '/potato/healthy/api'},
+        ]
+        secret_query = '?passkey=TOP_SECRET&search=Private+Movie'
+        failed = requests.Response()
+        failed.status_code = 500
+        failed.url = hosts[0]['host'] + secret_query
+        healthy = requests.Response()
+        healthy.status_code = 200
+        healthy.url = hosts[1]['host'] + secret_query
+        healthy._content = b'{"results":[]}'
+        session = MagicMock()
+        session.request.side_effect = [failed, healthy]
+
+        with patch.object(provider, 'getHosts', return_value=hosts), \
+             patch.object(provider, 'isDisabled', return_value=False), \
+             patch.object(provider, 'buildUrl', side_effect=lambda _media, host: host['host'] + secret_query), \
+             patch.object(provider, 'conf', return_value=base), \
+             patch.object(Env, 'get', side_effect=lambda key: session if key == 'http_opener' else None), \
+             patch.object(Env, 'setting', return_value=None), \
+             caplog.at_level('DEBUG'):
+            results = provider.search({}, None, manual=True)
+
+        assert results == []
+        assert session.request.call_count == 2
+        assert provider.http_client.failed_request['jackett.private:9117'] == 0
+        for private_value in ('jackett.private', '/potato/failing', 'TOP_SECRET', 'Private+Movie'):
+            assert private_value not in caplog.text
+
     def test_getJackettIndexers_parses_xml(self):
         p = self._make_provider()
 
@@ -880,6 +989,76 @@ class TestTorrentPotatoJackettIntegration:
         assert 'potato/yts/api' in indexers[0]['potato_url']
         assert indexers[1]['id'] == '1337x'
 
+    def test_indexer_listing_log_omits_private_url_and_key(self):
+        provider = self._make_provider()
+        private_url = 'http://jackett.private:9117/internal'
+        from couchpotato.core.media._base.providers.torrent.torrentpotato import log
+        from couchpotato.core.logger import PrivacyFilter
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.addFilter(PrivacyFilter())
+        logger = log.logger
+        old_level = logger.level
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+
+        try:
+            with patch.object(provider, 'urlopen', return_value=b'<indexers />'):
+                indexers, error = provider.getJackettIndexers(private_url, 'TOP_SECRET')
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(old_level)
+            handler.close()
+
+        assert indexers == [] and error is None
+        assert 'Fetching Jackett indexers' in stream.getvalue()
+        assert 'jackett.private' not in stream.getvalue()
+        assert '/internal' not in stream.getvalue()
+        assert 'TOP_SECRET' not in stream.getvalue()
+
+    @pytest.mark.parametrize('operation', ['jackettTest', 'jackettSync'])
+    def test_indexer_http_failure_does_not_expose_key_in_api_or_log(self, operation, caplog):
+        provider = self._make_provider()
+        private_url = 'http://jackett.private:9117/internal'
+        secret_key = 'TOP_SECRET'
+        response = requests.Response()
+        response.status_code = 500
+        response.url = f'{private_url}/torznab/all/api?apikey={secret_key}&t=indexers'
+        with pytest.raises(requests.HTTPError) as raised:
+            response.raise_for_status()
+        failure = raised.value
+
+        with patch.object(provider, 'urlopen', side_effect=failure), \
+             patch.object(provider, 'conf', return_value=''), \
+             caplog.at_level('DEBUG'):
+            result = getattr(provider, operation)(private_url, secret_key)
+
+        assert result['success'] is False
+        assert 'HTTPError' in result['error']
+        for private_value in ('jackett.private', '/internal', secret_key):
+            assert private_value not in result['error']
+            assert private_value not in caplog.text
+
+    @pytest.mark.parametrize('remote_result', [
+        '{"error": "credential TOP_SECRET for Private Film on http://indexer.private"}',
+        requests.ConnectionError('http://indexer.private?passkey=TOP_SECRET Private Film'),
+    ])
+    def test_settings_provider_test_omits_remote_private_details(self, remote_result):
+        provider = self._make_provider()
+        private_host = 'http://indexer.private/potato/private/api'
+        host = {'use': '1', 'host': private_host, 'pass_key': 'TOP_SECRET', 'name': 'Private Film'}
+
+        with patch.object(provider, 'getHosts', return_value=[host]), \
+             patch.object(provider, 'isEnabled', return_value=True), \
+             patch.object(provider, 'urlopen', side_effect=remote_result if isinstance(remote_result, Exception) else None,
+                          return_value=remote_result if isinstance(remote_result, str) else None):
+            result = provider._test()
+
+        assert result['success'] is False
+        assert 'Indexer 1' in result['msg']
+        for private_value in ('indexer.private', 'TOP_SECRET', 'Private Film'):
+            assert private_value not in result['msg']
+
     def test_getJackettIndexers_empty_response(self):
         p = self._make_provider()
 
@@ -899,7 +1078,7 @@ class TestTorrentPotatoJackettIntegration:
             indexers, error = p.getJackettIndexers('http://localhost:9117', 'testapikey')
 
         assert indexers is None
-        assert 'Connection refused' in error
+        assert 'Exception' in error
 
     def test_getJackettIndexers_invalid_xml(self):
         p = self._make_provider()

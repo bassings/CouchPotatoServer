@@ -114,6 +114,26 @@ def test_view_returns_chroot_relative_directories_as_a_list(tmp_path):
     assert result['dirs'] == ['/movies/', '/tv/']
     assert result['empty'] is False
 
+
+def test_view_distinguishes_empty_directory_from_failed_listing(tmp_path, monkeypatch, caplog):
+    chroot = SoftChroot()
+    chroot.initialize(os.path.realpath(str(tmp_path)))
+    with mock.patch('couchpotato.core.plugins.browser.Env') as env:
+        env.get.return_value = chroot
+        assert FileBrowser().view('/')['empty'] is True
+
+        private_path = 'private-person-media-path'
+
+        def denied(_path):
+            raise PermissionError(private_path)
+
+        monkeypatch.setattr('couchpotato.core.plugins.browser.os.listdir', denied)
+        result = FileBrowser().view('/')
+
+    assert result == {'success': False, 'error': 'Unable to list directory'}
+    assert private_path not in caplog.text
+    assert str(tmp_path) not in caplog.text
+
 # 'couchpotato.core.plugins.browser.Env', 
 @mock.patch('couchpotato.core.plugins.browser.Env', name='EnvMock')
 class FileBrowserChrootedTest(TestCase):
@@ -149,6 +169,8 @@ class FileBrowserChrootedTest(TestCase):
         #def view(self, path = '/', show_hidden = True, **kwargs):
 
         self.tuneMock(env)
+        os.mkdir(os.path.join(self.chroot_dir, 'asdf'))
+        os.makedirs(os.path.join(self.chroot_dir, 'mnk', '123', 't'))
 
         # Chroot-RELATIVE paths only. The third case used to be CHROOT_DIR
         # itself, which only produced parent '/' because '/tmp' happens to be

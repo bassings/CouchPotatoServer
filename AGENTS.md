@@ -8,7 +8,7 @@ CouchPotatoServer is a media-management web application with a Python backend, a
 
 Treat this as a home-server application that may run on private networks and manage personal media libraries, automation credentials, user settings, and downloaded metadata. Changes should preserve reliability, privacy, and production deployability.
 
-The default branch is `master`. Production ships Python 3.14 with
+The default branch is `master`. Production ships Python 3.15 with
 FastAPI/Uvicorn, an htmx, Tailwind and Alpine.js interface, SQLite-backed
 state, and an Alpine-based Docker image. The application entry point is
 `CouchPotato.py`.
@@ -28,6 +28,19 @@ state, and an Alpine-based Docker image. The application entry point is
 | `make sonar` | Upload a post-merge clean-`master` analysis to the internal SonarQube instance. Reporting only, never a CI or merge gate. |
 | `./scripts/test-local.sh` | Run Python unit tests in a clean Alpine container. |
 | `./scripts/backup.sh` | Snapshot production SQLite state and settings before a promotion when the documented policy requires it. |
+
+## Finding Delivery Authority
+
+When Scott asks to resolve a set of repository or SonarQube findings, carry
+each finding through triage, a focused fix or evidence-backed disposition,
+verification, independent local review, a pull request, CI and cloud-review
+follow-up, merge, and post-merge confirmation. An instruction to resolve and
+merge findings authorises the necessary code pushes, pull requests and merges;
+do not stop after a local commit to request approval for those steps.
+
+Ask Scott for approval before deliberately creating a release or deploying to
+production. Keep release and deployment decisions separate from code merge.
+The release channel rules in `docs/development-process.md` still apply.
 
 ## Review Guidelines
 

@@ -367,6 +367,22 @@ class PrivacyFilter(logging.Filter):
         return True
 
 
+class _EnzymeUnknownElementFilter(logging.Filter):
+    """Ignore the exact Enzyme diagnostic for an element it has skipped."""
+
+    _message = re.compile(r'Element with id 0x[0-9a-fA-F]+ is not in the specs')
+
+    def filter(self, record):
+        return not (
+            record.name == 'enzyme.parsers.ebml.core'
+            and record.levelno == logging.ERROR
+            and self._message.fullmatch(record.getMessage())
+        )
+
+
+_ENZYME_UNKNOWN_ELEMENT_FILTER = _EnzymeUnknownElementFilter()
+
+
 class CPLog:
     """Factory that creates stdlib loggers with a context prefix.
 
@@ -453,6 +469,9 @@ def setup_logging(log_path=None, debug=False, console=True, encoding='utf-8'):
         logger.addHandler(file_handler)
 
     # Quiet noisy libraries
+    enzyme_parser = logging.getLogger('enzyme.parsers.ebml.core')
+    if _ENZYME_UNKNOWN_ELEMENT_FILTER not in enzyme_parser.filters:
+        enzyme_parser.addFilter(_ENZYME_UNKNOWN_ELEMENT_FILTER)
     for name in ['enzyme', 'guessit', 'subliminal', 'apscheduler', 'uvicorn', 'requests']:
         logging.getLogger(name).setLevel(logging.ERROR)
     for name in ['gntp']:

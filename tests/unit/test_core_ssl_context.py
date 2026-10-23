@@ -19,11 +19,9 @@ def test_instantiating_core_does_not_disable_ssl_verification(monkeypatch):
     monkeypatch.setattr(Env, '_desktop', True)
 
     original_context_factory = ssl._create_default_https_context
-    try:
-        Core()
+    monkeypatch.setattr(ssl, '_create_default_https_context', original_context_factory)
+    Core()
 
-        ctx = ssl._create_default_https_context()
-        assert ctx.verify_mode == ssl.CERT_REQUIRED
-        assert ctx.check_hostname is True
-    finally:
-        ssl._create_default_https_context = original_context_factory
+    ctx = ssl._create_default_https_context()
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True

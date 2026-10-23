@@ -18,7 +18,8 @@ def db(tmp_path):
 
 
 @pytest.fixture
-def collections_plugin(db):
+def collections_plugin(db, isolated_event_registry):
+    live_events, original_events = isolated_event_registry
     old_db = Env.get('db')
     old_api = dict(api)
     old_locks = dict(api_locks)
@@ -28,6 +29,7 @@ def collections_plugin(db):
 
     from couchpotato.core.plugins.collection import CollectionPlugin
     CollectionPlugin()
+    assert live_events == original_events
 
     yield db
 
@@ -62,6 +64,36 @@ class TestSQLiteCollectionIndex:
 
 
 class TestCollectionApi:
+    @pytest.mark.parametrize(
+        ('action', 'kwargs'),
+        [
+            ('collection.update', {'name': 'Renamed'}),
+            ('collection.delete', {}),
+            ('collection.add_media', {'media_id': 'missing-media'}),
+            ('collection.remove_media', {'media_id': 'missing-media'}),
+        ],
+    )
+    def test_collection_actions_require_an_id(self, collections_plugin, action, kwargs):
+        assert callApiHandler(action, **kwargs) == {
+            'success': False,
+            'error': 'Collection id is required',
+        }
+
+    @pytest.mark.parametrize(
+        ('action', 'kwargs', 'error'),
+        [
+            ('collection.update', {'name': 'Renamed'}, 'Collection not found'),
+            ('collection.delete', {}, 'Collection not found'),
+            ('collection.add_media', {'media_id': 'missing-media'}, 'Collection or media not found'),
+            ('collection.remove_media', {'media_id': 'missing-media'}, 'Collection not found'),
+        ],
+    )
+    def test_collection_actions_report_an_unknown_id(self, collections_plugin, action, kwargs, error):
+        assert callApiHandler(action, id='missing', **kwargs) == {
+            'success': False,
+            'error': error,
+        }
+
     def test_create_and_list_collections(self, collections_plugin):
         created = callApiHandler('collection.create', name='Weekend Watch', description='Friday night')
 
@@ -127,8 +159,7 @@ class TestCollectionApi:
 
 
 class TestCollectionsUi:
-    def test_collections_page_is_routable_from_new_ui(self, tmp_path):
-        old_setting = Env.setting
+    def test_collections_page_is_routable_from_new_ui(self, tmp_path, monkeypatch):
         old_app_dir = Env.get('app_dir')
         old_web_base = getattr(Env, '_web_base', None)
         old_api_base = getattr(Env, '_api_base', None)
@@ -149,7 +180,7 @@ class TestCollectionsUi:
             return settings.get(key, kwargs.get('default', ''))
 
         try:
-            Env.setting = staticmethod(mock_setting)
+            monkeypatch.setattr(Env, 'setting', staticmethod(mock_setting))
             Env.set('web_base', '/')
             Env.set('api_base', '/api/testkey123/')
             Env.set('static_path', '/static/')
@@ -164,7 +195,6 @@ class TestCollectionsUi:
             assert 'Collections' in response.text
             assert 'hx-get="/partial/collections"' in response.text
         finally:
-            Env.setting = old_setting
             Env.set('app_dir', old_app_dir)
             Env.set('web_base', old_web_base)
             Env.set('api_base', old_api_base)

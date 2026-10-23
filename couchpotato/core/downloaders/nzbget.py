@@ -50,19 +50,7 @@ class NZBGet(DownloaderBase):
 
         rpc = self.getRPC()
 
-        try:
-            if rpc.writelog('INFO', 'CouchPotato connected to drop off %s.' % nzb_name):
-                log.debug('Successfully connected to NZBGet')
-            else:
-                log.info('Successfully connected to NZBGet, but unable to send a message')
-        except OSError:
-            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
-            return False
-        except xmlrpclib.ProtocolError as e:
-            if e.errcode == 401:
-                log.error('Password is incorrect.')
-            else:
-                log.error('Protocol Error: %s', e)
+        if not self._connect_rpc(rpc, 'INFO', 'CouchPotato connected to drop off %s.' % nzb_name):
             return False
 
         if re.search(r"^0", rpc.version()):
@@ -91,19 +79,7 @@ class NZBGet(DownloaderBase):
 
         rpc = self.getRPC()
 
-        try:
-            if rpc.writelog('INFO', 'CouchPotato connected to test connection'):
-                log.debug('Successfully connected to NZBGet')
-            else:
-                log.info('Successfully connected to NZBGet, but unable to send a message')
-        except OSError:
-            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
-            return False
-        except xmlrpclib.ProtocolError as e:
-            if e.errcode == 401:
-                log.error('Password is incorrect.')
-            else:
-                log.error('Protocol Error: %s', e)
+        if not self._connect_rpc(rpc, 'INFO', 'CouchPotato connected to test connection'):
             return False
 
         return True
@@ -121,19 +97,7 @@ class NZBGet(DownloaderBase):
 
         rpc = self.getRPC()
 
-        try:
-            if rpc.writelog('DETAIL', 'CouchPotato connected to check status'):
-                log.debug('Successfully connected to NZBGet')
-            else:
-                log.info('Successfully connected to NZBGet, but unable to send a message')
-        except OSError:
-            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
-            return []
-        except xmlrpclib.ProtocolError as e:
-            if e.errcode == 401:
-                log.error('Password is incorrect.')
-            else:
-                log.error('Protocol Error: %s', e)
+        if not self._connect_rpc(rpc, 'DETAIL', 'CouchPotato connected to check status'):
             return []
 
         # Get NZBGet data
@@ -148,6 +112,25 @@ class NZBGet(DownloaderBase):
 
         release_downloads = ReleaseDownloadList(self)
 
+        release_downloads.extend(self._group_downloads(groups, status, ids))
+        release_downloads.extend(self._post_queue_downloads(queue, status, ids))
+        release_downloads.extend(self._history_downloads(history, ids))
+
+        return release_downloads
+
+    def _group_timeleft(self, nzb, status):
+        try:
+            if 'DownloadRateLo' in status:
+                rate = status['DownloadRateLo'] + (status.get('DownloadRateHi', 0) << 32)
+            else:
+                rate = status['DownloadRate']
+            if nzb['ActiveDownloads'] <= 0 or rate <= 0 or status['DownloadPaused'] or status.get('Download2Paused', False):
+                return -1
+            return str(timedelta(seconds = nzb['RemainingSizeMB'] * (2 ** 20) / rate))
+        except (KeyError, TypeError, ValueError, OverflowError, ZeroDivisionError):
+            return -1
+
+    def _group_downloads(self, groups, status, ids):
         for nzb in groups:
             try:
                 nzb_id = [param['Value'] for param in nzb['Parameters'] if param['Name'] == 'couchpotato'][0]
@@ -156,31 +139,26 @@ class NZBGet(DownloaderBase):
 
             if nzb_id in ids:
                 log.debug('Found %s in NZBGet download queue', nzb['NZBFilename'])
-                timeleft = -1
-                try:
-                    if nzb['ActiveDownloads'] > 0 and nzb['DownloadRate'] > 0 and not (status['DownloadPaused'] or status['Download2Paused']):
-                        timeleft = str(timedelta(seconds = nzb['RemainingSizeMB'] / status['DownloadRate'] * 2 ^ 20))
-                except Exception:
-                    pass
-
-                release_downloads.append({
+                yield {
                     'id': nzb_id,
                     'name': nzb['NZBFilename'],
                     'original_status': 'DOWNLOADING' if nzb['ActiveDownloads'] > 0 else 'QUEUED',
                     # Seems to have no native API function for time left. This will return the time left after NZBGet started downloading this item
-                    'timeleft': timeleft,
-                })
+                    'timeleft': self._group_timeleft(nzb, status),
+                }
 
+    def _post_queue_downloads(self, queue, status, ids):
         for nzb in queue:  # 'Parameters' is not passed in rpc.postqueue
             if nzb['NZBID'] in ids:
                 log.debug('Found %s in NZBGet postprocessing queue', nzb['NZBFilename'])
-                release_downloads.append({
+                yield {
                     'id': nzb['NZBID'],
                     'name': nzb['NZBFilename'],
                     'original_status': nzb['Stage'],
                     'timeleft': str(timedelta(seconds = 0)) if not status['PostPaused'] else -1,
-                })
+                }
 
+    def _history_downloads(self, history, ids):
         for nzb in history:
             try:
                 nzb_id = [param['Value'] for param in nzb['Parameters'] if param['Name'] == 'couchpotato'][0]
@@ -189,16 +167,14 @@ class NZBGet(DownloaderBase):
 
             if nzb_id in ids:
                 log.debug('Found %s in NZBGet history. TotalStatus: %s, ParStatus: %s, ScriptStatus: %s, Log: %s', nzb['NZBFilename'] , nzb['Status'], nzb['ParStatus'], nzb['ScriptStatus'] , nzb['Log'])
-                release_downloads.append({
+                yield {
                     'id': nzb_id,
                     'name': nzb['NZBFilename'],
                     'status': 'completed' if 'SUCCESS' in nzb['Status'] else 'failed',
                     'original_status': nzb['Status'],
                     'timeleft': str(timedelta(seconds = 0)),
                     'folder': sp(nzb['DestDir'])
-                })
-
-        return release_downloads
+                }
 
     def removeFailed(self, release_download):
 
@@ -206,19 +182,7 @@ class NZBGet(DownloaderBase):
 
         rpc = self.getRPC()
 
-        try:
-            if rpc.writelog('INFO', 'CouchPotato connected to delete some history'):
-                log.debug('Successfully connected to NZBGet')
-            else:
-                log.info('Successfully connected to NZBGet, but unable to send a message')
-        except OSError:
-            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
-            return False
-        except xmlrpclib.ProtocolError as e:
-            if e.errcode == 401:
-                log.error('Password is incorrect.')
-            else:
-                log.error('Protocol Error: %s', e)
+        if not self._connect_rpc(rpc, 'INFO', 'CouchPotato connected to delete some history'):
             return False
 
         try:
@@ -236,6 +200,24 @@ class NZBGet(DownloaderBase):
                 shutil.rmtree(path, True)
         except Exception:
             log.error('Failed deleting: %s', traceback.format_exc(0))
+            return False
+
+        return True
+
+    def _connect_rpc(self, rpc, level, message):
+        try:
+            if rpc.writelog(level, message):
+                log.debug('Successfully connected to NZBGet')
+            else:
+                log.info('Successfully connected to NZBGet, but unable to send a message')
+        except OSError:
+            log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
+            return False
+        except xmlrpclib.ProtocolError as e:
+            if e.errcode == 401:
+                log.error('Password is incorrect.')
+            else:
+                log.error('NZBGet protocol error (HTTP %s)', e.errcode)
             return False
 
         return True

@@ -13,4 +13,5 @@ class TrailerProvider(Provider):
         addEvent('trailer.search', self.search)
 
     def search(self, *args, **kwargs):
+        # Trailer providers implement their own search endpoint.
         pass

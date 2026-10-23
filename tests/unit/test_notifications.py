@@ -16,10 +16,9 @@ from couchpotato.environment import Env
 
 
 @pytest.fixture(autouse=True)
-def setup_env():
-    Env.set('appname', 'CouchPotato')
-    Env.set('dev', False)
-    yield
+def setup_env(monkeypatch):
+    monkeypatch.setattr(Env, '_appname', 'CouchPotato')
+    monkeypatch.setattr(Env, '_dev', False)
 
 
 def _make_notification(cls_path, cls_name):

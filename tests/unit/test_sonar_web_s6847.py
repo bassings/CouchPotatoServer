@@ -39,7 +39,7 @@ AUDITED_S6847_SOURCES = {
         "partials/movie_cards.html",
         HANDLER,
         "a",
-        "{{ title }}",
+        "",  # The link's visible title names it; the poster must not repeat it.
         "div",
         "display:none",
     ): "fe776ece-7d5f-4f9b-a70f-16871444e5bb",

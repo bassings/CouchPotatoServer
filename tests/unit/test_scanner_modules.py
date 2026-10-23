@@ -876,6 +876,21 @@ class TestGatherFilesSymlinkContainment:
 
 
 class TestGetReleaseNameYear:
+    @pytest.mark.parametrize(
+        ('filename', 'title', 'year'),
+        [
+            ('The.Movie.2023.720p.BluRay.x264-GROUP.mkv', 'The Movie', 2023),
+            ('The.Lion.King.1994.1080p.BluRay.mkv', 'The Lion King', 1994),
+            ('The.Lion.King.2019.1080p.BluRay.mkv', 'The Lion King', 2019),
+            ('Nosferatu.2024.1080p.WEB-DL.mkv', 'Nosferatu', 2024),
+        ],
+    )
+    def test_real_guessit_keeps_movie_identity(self, scanner, filename, title, year):
+        result = scanner.getReleaseNameYear(filename, filename)
+
+        assert result['name'] == title
+        assert result['year'] == year
+
     def test_basic(self, scanner):
         result = scanner.getReleaseNameYear('The.Movie.2023.720p.BluRay')
         assert result.get('year') == 2023

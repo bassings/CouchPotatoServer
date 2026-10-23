@@ -84,6 +84,59 @@ class TestHttpClient:
         client._record_failure('api.example.com', status_code=429)
         assert client.failed_disabled.get('api.example.com', 0) > 0
 
+    def test_jackett_indexer_400_does_not_disable_indexer_listing(self, mock_env):
+        """One bad indexer must not block the whole Jackett server."""
+        _, session, _ = mock_env
+        client = HttpClient()
+        bad_indexer = requests.Response()
+        bad_indexer.status_code = 400
+        bad_indexer.url = 'http://jackett.example:9117/potato/tv-only/api'
+        listing = requests.Response()
+        listing.status_code = 200
+        listing._content = b'<indexers />'
+        session.request.side_effect = [bad_indexer] * (MAX_FAILURES_BEFORE_DISABLE + 1) + [listing]
+
+        for _ in range(MAX_FAILURES_BEFORE_DISABLE + 1):
+            with pytest.raises(requests.HTTPError):
+                client.request(bad_indexer.url, ignore_host_failure_on_400=True)
+
+        assert client.request('http://jackett.example:9117/torznab/all/api?t=indexers') == b'<indexers />'
+        assert 'jackett.example:9117' not in client.failed_disabled
+        assert session.request.call_count == MAX_FAILURES_BEFORE_DISABLE + 2
+
+    @pytest.mark.parametrize(('url', 'status'), [
+        ('http://provider.example/api', 400),
+        ('http://provider.example/potato/search', 400),
+        ('http://jackett.example:9117/torznab/all/api', 400),
+        ('http://jackett.example:9117/potato/movies/api', 500),
+    ])
+    def test_other_http_failures_still_disable_host(self, mock_env, url, status):
+        _, session, _ = mock_env
+        client = HttpClient()
+        bad_response = requests.Response()
+        bad_response.status_code = status
+        bad_response.url = url
+        session.request.return_value = bad_response
+
+        for _ in range(MAX_FAILURES_BEFORE_DISABLE + 1):
+            with pytest.raises(requests.HTTPError):
+                client.request(bad_response.url)
+
+        assert bad_response.url.split('/')[2] in client.failed_disabled
+
+    def test_jackett_rate_limit_still_disables_immediately(self, mock_env):
+        _, session, _ = mock_env
+        client = HttpClient()
+        response = requests.Response()
+        response.status_code = 429
+        response.url = 'http://jackett.example:9117/potato/movies/api'
+        session.request.return_value = response
+
+        with pytest.raises(requests.HTTPError):
+            client.request(response.url, ignore_host_failure_on_400=True)
+
+        assert 'jackett.example:9117' in client.failed_disabled
+
     def test_disabled_host_returns_empty(self, mock_env):
         env, session, response = mock_env
         client = HttpClient()

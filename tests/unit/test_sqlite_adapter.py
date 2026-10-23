@@ -396,6 +396,16 @@ class TestSQLiteAdapterUpdateWithRetry:
 
 
 class TestSQLiteAdapterIndexQueries:
+    @pytest.mark.parametrize('index_name', ('media_title', 'media_search_title', 'media_startswith'))
+    def test_media_title_indexes_preserve_ascending_order(self, db, sample_media, index_name):
+        first = dict(sample_media, title='Zulu', identifiers={'imdb': 'tt0000001'})
+        second = dict(sample_media, title='Alpha', identifiers={'imdb': 'tt0000002'})
+        db.insert(first)
+        db.insert(second)
+
+        titles = [row['doc']['title'] for row in db.query(index_name, with_doc=True)]
+        assert titles == ['Alpha', 'Zulu']
+
     def test_media_status_query(self, db, sample_media):
         db.insert(sample_media)
         # Distinct identifiers: two media docs can no longer share the same

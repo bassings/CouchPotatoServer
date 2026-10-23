@@ -895,8 +895,9 @@
         
         <div class="px-4 py-2 border-b border-white/[0.04] bg-white/[0.02]">
           <div class="flex items-center gap-2 text-xs">
-            <button @click="loadDirectories(browserParent)" :disabled="browserIsRoot" 
-                    class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] disabled:opacity-30 disabled:cursor-not-allowed">
+            <button @click="if (!browserLoading && browserValid && !browserIsRoot) loadDirectories(browserParent)" :aria-disabled="(browserIsRoot || browserLoading || !browserValid).toString()"
+                    :class="browserIsRoot || browserLoading || !browserValid ? 'opacity-30 cursor-not-allowed' : ''"
+                    class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06]">
               ↑ Up
             </button>
             <span class="text-cp-muted font-mono truncate" x-text="browserPath"></span>
@@ -907,7 +908,11 @@
           <div x-show="browserLoading" class="flex items-center justify-center py-8">
             <svg class="w-4 h-4 animate-spin text-cp-muted" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
           </div>
-          <div x-show="!browserLoading && browserDirs.length === 0" class="py-8 text-center text-xs text-cp-muted">
+          <div x-show="!browserLoading && browserError" class="py-8 text-center text-xs text-cp-danger" role="alert">
+            <span x-text="browserError"></span>
+            <button @click="loadDirectories(browserRequestedPath)" class="block mx-auto mt-3 px-3 py-2 rounded-md border border-cp-danger text-cp-text">Retry</button>
+          </div>
+          <div x-show="!browserLoading && !browserError && browserDirs.length === 0" class="py-8 text-center text-xs text-cp-muted">
             Empty folder
           </div>
           <template x-for="dir in browserDirs" :key="dir">
@@ -923,7 +928,7 @@
         
         <div class="px-4 py-3 border-t border-white/[0.04] flex justify-end gap-2">
           <button @click="browserOpen = false" class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">Cancel</button>
-          <button @click="confirmDirectory()" class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover">Select This Folder</button>
+          <button @click="confirmDirectory()" :aria-disabled="(browserLoading || !browserValid).toString()" :class="browserLoading || !browserValid ? 'opacity-50 cursor-not-allowed' : ''" class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover">Select This Folder</button>
         </div>
       </div>
     </div>
@@ -1042,6 +1047,10 @@ function setupWizard() {
     browserPath: '/',
     browserDirs: [],
     browserLoading: false,
+    browserError: '',
+    browserValid: false,
+    browserRequestedPath: '/',
+    browserRequestId: 0,
     browserTarget: null,
     browserParent: '/',
     browserIsRoot: true,
@@ -1497,25 +1506,41 @@ function setupWizard() {
     },
 
     async loadDirectories(path) {
+      const requestId = ++this.browserRequestId;
       this.browserLoading = true;
+      this.browserValid = false;
+      this.browserError = '';
+      this.browserDirs = [];
+      this.browserRequestedPath = path;
       try {
         const resp = await fetch(CP.apiBase + '/directory.list/?path=' + encodeURIComponent(path));
         const data = await resp.json();
+        if (requestId !== this.browserRequestId) return;
+        if (!resp.ok || !data || data.success === false || !Array.isArray(data.dirs)
+            || !data.dirs.every(dir => typeof dir === 'string')
+            || typeof data.parent !== 'string' || typeof data.is_root !== 'boolean') {
+          throw new Error('Invalid directory listing');
+        }
         this.browserPath = path;
-        this.browserDirs = data.dirs || [];
+        this.browserDirs = data.dirs;
         this.browserParent = data.parent;
         this.browserIsRoot = data.is_root;
+        this.browserValid = true;
       } catch (e) {
-        console.error('Failed to load directories:', e);
+        if (requestId !== this.browserRequestId) return;
+        this.browserDirs = [];
+        this.browserError = 'Unable to list directory';
+      } finally {
+        if (requestId === this.browserRequestId) this.browserLoading = false;
       }
-      this.browserLoading = false;
     },
 
     selectDirectory(dir) {
-      this.loadDirectories(dir);
+      if (!this.browserLoading && this.browserValid) this.loadDirectories(dir);
     },
 
     confirmDirectory() {
+      if (this.browserLoading || !this.browserValid || this.browserError) return;
       const path = this.browserPath;
       // Map target to the correct form field
       switch (this.browserTarget) {

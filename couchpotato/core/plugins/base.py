@@ -162,10 +162,12 @@ class Plugin:
                 log.error('Couldn\'t remove empty directory %s: %s', folder_path, traceback.format_exc())
 
     # http request — delegates to HttpClient
-    def urlopen(self, url, timeout=30, data=None, headers=None, files=None, show_error=True, stream=False):
+    def urlopen(self, url, timeout=30, data=None, headers=None, files=None, show_error=True,
+                stream=False, ignore_host_failure_on_400=False):
         return self.http_client.request(
             url, timeout=timeout, data=data, headers=headers,
             files=files, show_error=show_error, stream=stream,
+            ignore_host_failure_on_400=ignore_host_failure_on_400,
         )
 
 
@@ -288,11 +290,12 @@ class Plugin:
             if data and cache_timeout > 0 and use_cache:
                 self.setCache(cache_key, data, timeout = cache_timeout)
             return data
-        except Exception:
+        except Exception as error:
             if not kwargs.get('show_error', True):
                 raise
 
-            log.debug('Failed getting cache: %s', traceback.format_exc(0))
+            status = getattr(getattr(error, 'response', None), 'status_code', None)
+            log.debug('Failed getting cache: error=%s status=%s', type(error).__name__, status)
             return ''
 
     def setCache(self, cache_key, value, timeout = 300):

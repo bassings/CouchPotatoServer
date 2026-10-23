@@ -106,13 +106,7 @@ class TheMovieDb(MovieProvider):
 
         raw = None
         try:
-            if search_type:
-                effective_search_type = search_type
-            elif limit > 1:
-                effective_search_type = 'ngram'
-            else:
-                effective_search_type = 'phrase'
-
+            effective_search_type = self._searchType(limit, search_type)
             name_year = fireEvent(SCANNER_NAME_YEAR, q, single = True)
             raw = self.request('search/movie', {
                 'query': name_year.get('name', q),
@@ -145,21 +139,18 @@ class TheMovieDb(MovieProvider):
 
         return results
 
+    def _searchType(self, limit, search_type):
+        if search_type:
+            return search_type
+        return 'ngram' if limit > 1 else 'phrase'
+
     def getTrailer(self, identifier = None, id = None, **kwargs):
         """Get YouTube trailer for a movie via TMDB videos endpoint."""
         identifier = identifier or id
         if not identifier:
             return {'success': False}
 
-        # Try IMDB ID first (find TMDB ID)
-        tmdb_id = None
-        if identifier.startswith('tt'):
-            result = self.request('find/%s' % identifier, params={'external_source': 'imdb_id'})
-            if result and result.get('movie_results'):
-                tmdb_id = result['movie_results'][0].get('id')
-        else:
-            tmdb_id = identifier
-
+        tmdb_id = self._trailerTmdbId(identifier)
         if not tmdb_id:
             return {'success': False}
 
@@ -167,6 +158,17 @@ class TheMovieDb(MovieProvider):
         if not videos:
             return {'success': False}
 
+        return self._selectTrailer(videos)
+
+    def _trailerTmdbId(self, identifier):
+        if not identifier.startswith('tt'):
+            return identifier
+        result = self.request('find/%s' % identifier, params={'external_source': 'imdb_id'})
+        if result and result.get('movie_results'):
+            return result['movie_results'][0].get('id')
+        return None
+
+    def _selectTrailer(self, videos):
         # Prefer official trailers, then teasers, then any video
         for vtype in ['Trailer', 'Teaser', None]:
             for v in videos:
@@ -234,38 +236,8 @@ class TheMovieDb(MovieProvider):
         if not movie:
             return
 
-        movie_path = movie_path_template % movie.get('id')
-        if self.default_language == 'en':
-            movie_default = movie
-        else:
-            movie_default = self.request(movie_path, {
-                'append_to_response': append_to_response,
-                'language': self.default_language
-            })
-
-        movie_default = movie_default or movie
-
-        movie_others = []
-        for language in self.languages or []:
-            movie_others.append(self.request(movie_path, {
-                'append_to_response': append_to_response,
-                'language': language
-            }))
-
-        # Images
-        poster = self.getImage(movie, type = 'poster', size = 'w154')
-        poster_original = self.getImage(movie, type = 'poster', size = 'original')
-        backdrop_original = self.getImage(movie, type = 'backdrop', size = 'original')
-        extra_thumbs = self.getMultImages(movie, type = 'backdrops', size = 'original') if extended else []
-
-        images = {
-            'poster': [poster] if poster else [],
-            #'backdrop': [backdrop] if backdrop else [],
-            'poster_original': [poster_original] if poster_original else [],
-            'backdrop_original': [backdrop_original] if backdrop_original else [],
-            'actors': {},
-            'extra_thumbs': extra_thumbs
-        }
+        movie_default, movie_others = self._translatedMovies(movie, append_to_response)
+        images = self._movieImages(movie, extended)
 
         # Genres
         try:
@@ -273,24 +245,8 @@ class TheMovieDb(MovieProvider):
         except Exception:
             genres = []
 
-        # 1900 is the same as None
-        year = str(movie.get('release_date') or '')[:4]
-        if not movie.get('release_date') or year == '1900' or year.lower() == 'none':
-            year = None
-
-        # Gather actors data
-        actors = {}
-        if extended:
-
-            # Full data
-            cast = movie.get('casts', {}).get('cast', [])
-
-            for cast_item in cast:
-                try:
-                    actors[toUnicode(cast_item.get('name'))] = toUnicode(cast_item.get('character'))
-                    images['actors'][toUnicode(cast_item.get('name'))] = self.getImage(cast_item, type = 'profile', size = 'original')
-                except Exception:
-                    log.debug('Error getting cast info for %s: %s', cast_item, traceback.format_exc())
+        year = self._releaseYear(movie)
+        actors = self._castActors(movie, images) if extended else {}
 
         movie_data = {
             'type': 'movie',
@@ -311,21 +267,72 @@ class TheMovieDb(MovieProvider):
 
         movie_data = dict((k, v) for k, v in movie_data.items() if v)
 
-        # Add alternative names
+        movie_data['titles'] = self._appendMovieTitles(
+            movie, movie_default, movie_others, movie_data['titles']
+        )
+
+        return movie_data
+
+    def _translatedMovies(self, movie, append_to_response):
+        movie_path = 'movie/%s' % movie.get('id')
+        if self.default_language == 'en':
+            movie_default = movie
+        else:
+            movie_default = self.request(movie_path, {
+                'append_to_response': append_to_response,
+                'language': self.default_language
+            })
+
+        movie_default = movie_default or movie
+
+        movie_others = []
+        for language in self.languages or []:
+            movie_others.append(self.request(movie_path, {
+                'append_to_response': append_to_response,
+                'language': language
+            }))
+        return movie_default, movie_others
+
+    def _movieImages(self, movie, extended):
+        poster = self.getImage(movie, type = 'poster', size = 'w154')
+        poster_original = self.getImage(movie, type = 'poster', size = 'original')
+        backdrop_original = self.getImage(movie, type = 'backdrop', size = 'original')
+        extra_thumbs = self.getMultImages(movie, type = 'backdrops', size = 'original') if extended else []
+        return {
+            'poster': [poster] if poster else [],
+            #'backdrop': [backdrop] if backdrop else [],
+            'poster_original': [poster_original] if poster_original else [],
+            'backdrop_original': [backdrop_original] if backdrop_original else [],
+            'actors': {},
+            'extra_thumbs': extra_thumbs
+        }
+
+    def _releaseYear(self, movie):
+        # 1900 is the same as None
+        year = str(movie.get('release_date') or '')[:4]
+        if not movie.get('release_date') or year == '1900' or year.lower() == 'none':
+            year = None
+        return year
+
+    def _castActors(self, movie, images):
+        actors = {}
+        cast = movie.get('casts', {}).get('cast', [])
+        for cast_item in cast:
+            try:
+                actors[toUnicode(cast_item.get('name'))] = toUnicode(cast_item.get('character'))
+                images['actors'][toUnicode(cast_item.get('name'))] = self.getImage(cast_item, type = 'profile', size = 'original')
+            except Exception:
+                log.debug('Error getting cast info for %s: %s', cast_item, traceback.format_exc())
+        return actors
+
+    def _appendMovieTitles(self, movie, movie_default, movie_others, alternate_titles):
         movies = [ movie ] + movie_others if movie == movie_default else [ movie, movie_default ] + movie_others
         movie_titles = [ self.getTitles(movie) for movie in movies ]
-
         all_titles = sorted(list(itertools.chain.from_iterable(movie_titles)))
-
-        alternate_titles = movie_data['titles']
-
         for title in all_titles:
             if title and title not in alternate_titles and title.lower() != 'none' and title is not None:
                 alternate_titles.append(title)
-
-        movie_data['titles'] = alternate_titles
-
-        return movie_data
+        return alternate_titles
 
     def getImage(self, movie, type = 'poster', size = 'poster'):
 

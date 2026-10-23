@@ -72,6 +72,7 @@ class FileBrowser(Plugin):
         return sorted(dirs)
 
     def getFiles(self):
+        # The directory picker lists folders only; file listing is unused.
         pass
 
     def getDriveLetters(self):
@@ -101,9 +102,9 @@ class FileBrowser(Plugin):
 
         try:
             dirs = self.getDirectories(path = path, show_hidden = show_hidden)
-        except Exception:
-            log.error('Failed getting directory "%s" : %s', path, traceback.format_exc())
-            dirs = []
+        except Exception as exc:
+            log.error('Unable to list directory (%s)', type(exc).__name__)
+            return {'success': False, 'error': 'Unable to list directory'}
 
         if soft_chroot.enabled:
             # A list, not `map()`. Under Python 2 `map` returned a list; under

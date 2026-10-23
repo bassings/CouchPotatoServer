@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Logs — CouchPotato{% endblock %}
 {% block content %}
-<div class="p-4 lg:p-8 fade-in" x-data="logsPanel()" x-init="init()">
+<div class="p-4 lg:p-8 fade-in" x-data="logsPanel()">
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-xl font-semibold tracking-tight">Logs</h1>
     <div class="flex items-center gap-3">
       <label for="log-level-filter" class="sr-only">Filter by log level</label>
-      <select id="log-level-filter" x-model="logType" @change="refresh()"
+      <select id="log-level-filter" x-model="logType" @change="refresh(true)"
               class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
         <option value="all">All</option>
         <option value="error">Errors</option>
@@ -19,14 +19,16 @@
                class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
         <span>Auto-refresh</span>
       </label>
-      <button @click="refresh()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">
+      <button @click="refresh(true)" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">
         Refresh
       </button>
-      <button @click="clearLogs()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors">
+      <button @click="clearLogs()" :aria-disabled="clearingLogs.toString()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors">
         Clear
       </button>
     </div>
   </div>
+
+  <p x-show="clearError || loadError" x-text="clearError || loadError" role="alert" class="mb-4 text-xs text-cp-danger"></p>
 
   <!-- Loading -->
   <div x-show="loading && logs.length === 0" class="flex items-center justify-center py-20" role="status" aria-live="polite">
@@ -40,7 +42,7 @@
   <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden font-mono text-[11px] leading-relaxed">
     <div class="max-h-[calc(100vh-200px)] overflow-y-auto" id="log-container"
          tabindex="0" role="region" aria-label="Application logs">
-      <template x-if="logs.length === 0 && !loading">
+      <template x-if="logs.length === 0 && !loading && !clearError && !loadError">
         <div class="px-4 py-8 text-center text-cp-muted text-xs">No log entries found.</div>
       </template>
       <template x-for="(entry, idx) in logs" :key="idx">
@@ -72,6 +74,11 @@ function logsPanel() {
   return {
     logs: [],
     loading: true,
+    clearError: '',
+    loadError: '',
+    clearingLogs: false,
+    logEpoch: 0,
+    refreshRequestId: 0,
     logType: 'all',
     autoRefresh: true,
     refreshTimer: null,
@@ -81,24 +88,37 @@ function logsPanel() {
       if (this.autoRefresh) this.startAutoRefresh();
     },
 
-    async refresh() {
+    async refresh(force = false) {
+      if (this.clearingLogs || (this.clearError && !force)) return;
+      const epoch = this.logEpoch;
+      const requestId = ++this.refreshRequestId;
+      const isCurrent = () => epoch === this.logEpoch && requestId === this.refreshRequestId && !this.clearingLogs;
       this.loading = true;
       try {
         const typeParam = this.logType !== 'all' ? '&type=' + this.logType : '';
         const resp = await fetch(CP.apiBase + '/logging.partial/?limit=500' + typeParam);
         const data = await resp.json();
-        if (data.success !== false) {
-          this.logs = this.parseLogs(data.log || data.lines || []);
+        const lines = data?.log ?? data?.lines;
+        if (!resp.ok || data?.success !== true || !Array.isArray(lines)) throw new Error('Log load failed');
+        if (isCurrent()) {
+          this.logs = this.parseLogs(lines);
+          this.loadError = '';
+          if (force) this.clearError = '';
         }
       } catch (e) {
-        console.error('Failed to load logs', e);
+        if (isCurrent()) {
+          this.loadError = 'Unable to load logs. Refresh to retry.';
+          console.error('Failed to load logs');
+        }
       }
-      this.loading = false;
-      // Scroll to bottom
-      this.$nextTick(() => {
-        const el = document.getElementById('log-container');
-        if (el) el.scrollTop = el.scrollHeight;
-      });
+      if (epoch === this.logEpoch && requestId === this.refreshRequestId) {
+        this.loading = false;
+        // Scroll to bottom
+        this.$nextTick(() => {
+          const el = document.getElementById('log-container');
+          if (el) el.scrollTop = el.scrollHeight;
+        });
+      }
     },
 
     parseLogs(lines) {
@@ -106,11 +126,21 @@ function logsPanel() {
     },
 
     async clearLogs() {
+      if (this.clearingLogs) return;
+      this.clearingLogs = true;
+      this.logEpoch++;
+      this.loading = false;
+      this.clearError = '';
       try {
-        await fetch(CP.apiBase + '/logging.clear/');
+        const resp = await fetch(CP.apiBase + '/logging.clear/');
+        const data = await resp.json();
+        if (!resp.ok || !data || data.success !== true) throw new Error('Log clear failed');
         this.logs = [];
+        this.loadError = '';
       } catch (e) {
-        console.error('Failed to clear logs');
+        this.clearError = 'Unable to clear all logs. Some entries may remain. Refresh to check.';
+      } finally {
+        this.clearingLogs = false;
       }
     },
 

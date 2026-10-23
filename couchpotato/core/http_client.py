@@ -6,7 +6,6 @@ Provides rate limiting per host, and proxy support.
 import re
 import threading
 import time
-import traceback
 from urllib.parse import quote, urlparse
 from urllib.request import getproxies
 
@@ -158,7 +157,7 @@ class HttpClient:
             disabled_time = self.failed_disabled.get(host, 0)
             if disabled_time > 0:
                 if disabled_time > (time.time() - DISABLE_DURATION):
-                    msg = f'Disabled calls to {host} for 15 minutes because so many failed requests.'
+                    msg = 'Disabled calls to remote host for 15 minutes because so many failed requests.'
                     log.info2(msg)
                     if not show_error:
                         raise Exception(msg)
@@ -182,8 +181,8 @@ class HttpClient:
 
                 if count > MAX_FAILURES_BEFORE_DISABLE and not isLocalIP(host):
                     self.failed_disabled[host] = time.time()
-        except Exception:
-            log.debug('Failed logging failed requests for host %s: %s', host, traceback.format_exc())
+        except Exception as error:
+            log.debug('Failed tracking remote host failures: %s', type(error).__name__)
 
     def _wait_for_rate_limit(self, host, url=''):
         """Enforce per-host rate limiting using event-based waiting instead of busy-wait."""
@@ -218,13 +217,13 @@ class HttpClient:
                     # Signal other waiters that a slot opened
                     self._rate_event.set()
                     break
-        except Exception:
-            log.error('Failed handling waiting call: %s', traceback.format_exc())
+        except Exception as error:
+            log.error('Failed handling waiting call: %s', type(error).__name__)
             self._rate_event.clear()
             self._rate_event.wait(timeout=self.time_between_calls)
 
     def request(self, url, timeout=30, data=None, headers=None, files=None,
-                show_error=True, stream=False):
+                show_error=True, stream=False, ignore_host_failure_on_400=False):
         """Make an HTTP request with retry, rate limiting, and failure tracking.
 
         Args:
@@ -235,6 +234,8 @@ class HttpClient:
             files: Optional files dict for multipart upload.
             show_error: Whether to log errors.
             stream: Whether to stream the response.
+            ignore_host_failure_on_400: Whether a caller-identified HTTP 400
+                should leave the shared host failure circuit unchanged.
 
         Returns:
             Response content (bytes) or Response object if stream=True.
@@ -284,8 +285,7 @@ class HttpClient:
             }
             method = 'post' if len(data) > 0 or files else 'get'
 
-            data_keys = [x for x in data.keys()] if isinstance(data, dict) else 'with data'
-            log.info('Opening url: %s %s, data: %s', method, url, data_keys)
+            log.info('Opening url: %s request', method)
             response = r.request(method, url, **kwargs)
 
             status_code = response.status_code
@@ -308,11 +308,15 @@ class HttpClient:
 
             if is_http_400 and is_jackett:
                 # Expected error for TV/Anime-only indexers that don't support movie searches
-                log.warning('Jackett indexer returned 400 Bad Request (likely TV/Anime-only, no movie support): %s', url.split('?')[0])
+                log.warning('Jackett indexer returned 400 Bad Request (likely TV/Anime-only, no movie support)')
             elif show_error:
-                log.error('Failed opening url: %s %s', url, traceback.format_exc(0))
+                log.error('Failed opening url: method=%s status=%s error=%s',
+                          method, status_code, type(e).__name__)
 
-            self._record_failure(host, status_code)
+            # An indexer's 400 can be a refusal of that indexer rather than an
+            # outage of its shared host. Only the caller can identify it.
+            if not (is_http_400 and ignore_host_failure_on_400):
+                self._record_failure(host, status_code)
             raise
 
         with self._lock:

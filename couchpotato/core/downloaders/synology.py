@@ -12,6 +12,8 @@ log = CPLog(__name__)
 
 autoload = 'Synology'
 
+_RESPONSE_LOG_FORMAT = 'Response: %s'
+
 # python:S113 -- requests.post with no timeout can hang the calling thread
 # forever against an unresponsive NAS, which on an unattended home server
 # reads as "downloads silently stopped" with nothing in the log. 60s rather
@@ -231,9 +233,9 @@ class SynologyRPC:
                     args['uri'] = url
                     response = self._req(self.download_url, args = args)
                     if response['success']:
-                        log.info('Response: %s', response)
+                        log.info(_RESPONSE_LOG_FORMAT, response)
                     else:
-                        log.error('Response: %s', response)
+                        log.error(_RESPONSE_LOG_FORMAT, response)
                         synoerrortype = {
                             400 : 'File upload failed',
                             401 : 'Max number of tasks reached',
@@ -251,7 +253,7 @@ class SynologyRPC:
                     log.info('Login success, adding torrent')
                     files = {'file': (filename, filedata)}
                     response = self._req(self.download_url, args = args, files = files)
-                    log.info('Response: %s', response)
+                    log.info(_RESPONSE_LOG_FORMAT, response)
                     result = response['success']
                 else:
                     log.error('Invalid use of SynologyRPC.create_task: either url or filename+filedata must be specified')

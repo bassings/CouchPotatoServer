@@ -9,8 +9,7 @@
   <button type="button"
           onclick="openMovieModal('{{ imdb }}', this, 'suggestion')"
           class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group text-left w-full cursor-pointer hover:border-white/[0.12] transition-colors focus:outline-none focus:ring-2 focus:ring-cp-accent/50 focus:ring-offset-2 focus:ring-offset-cp-bg"
-          data-imdb="{{ imdb }}"
-          aria-label="View details for {{ title }} ({{ year }})">
+          data-imdb="{{ imdb }}">
     <div class="relative aspect-[2/3] overflow-hidden bg-cp-surface">
       {% if poster %}
       <img src="{{ poster }}" alt="" class="w-full h-full object-cover" loading="lazy"

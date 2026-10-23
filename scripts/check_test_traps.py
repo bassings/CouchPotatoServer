@@ -242,6 +242,15 @@ NON_SHELL_INTERPRETERS = ("python", "pwsh", "powershell", "node", "ruby", "perl"
 # ── Comment stripping (correctness-critical — see module docstring) ──────────
 
 
+def _shell_quoted_step(line: str, i: int, quote: str, blank_strings: bool) -> tuple[str, int, str | None]:
+    ch = line[i]
+    if quote == '"' and ch == "\\" and i + 1 < len(line):
+        return ("  " if blank_strings else line[i : i + 2], i + 2, quote)
+    if ch == quote:
+        return ch, i + 1, None
+    return (" " if blank_strings else ch), i + 1, quote
+
+
 def strip_shell_comments(line: str, blank_strings: bool = False) -> str:
     """Remove a `#` comment, respecting single and double quotes.
 
@@ -259,16 +268,8 @@ def strip_shell_comments(line: str, blank_strings: bool = False) -> str:
     while i < len(line):
         ch = line[i]
         if quote:
-            if quote == '"' and ch == "\\" and i + 1 < len(line):
-                out.append("  " if blank_strings else line[i : i + 2])
-                i += 2
-                continue
-            if ch == quote:
-                quote = None
-                out.append(ch)
-            else:
-                out.append(" " if blank_strings else ch)
-            i += 1
+            fragment, i, quote = _shell_quoted_step(line, i, quote, blank_strings)
+            out.append(fragment)
             continue
         if ch in ("'", '"'):
             quote = ch
@@ -286,87 +287,78 @@ def strip_shell_comments(line: str, blank_strings: bool = False) -> str:
     return "".join(out)
 
 
-def strip_js_comments(text: str) -> list[str]:
-    """Return code-only lines, line numbering preserved.
+def _js_line_end_state(state: str) -> str:
+    # Raw newlines end line comments and quoted strings, but not templates or
+    # block comments. This also bounds damage from quotes inside regex literals.
+    return "code" if state in ("line_comment", "squote", "dquote") else state
 
-    A state machine over strings, template literals and both comment forms. The
-    previous line-local regex approach let an unmatched `/*` inside a `//`
-    comment latch block-comment state for the rest of the file, and let
-    `'http://x/'` eat the remainder of its own line — both silently disabling
-    rule 1. A regex cannot see string context; this can.
+
+def _js_code_step(line: str, col: int) -> tuple[str, int, str]:
+    ch = line[col]
+    nxt = line[col + 1] if col + 1 < len(line) else ""
+    if ch == "/" and nxt == "/":
+        return "line_comment", col + 2, ""
+    if ch == "/" and nxt == "*":
+        return "block_comment", col + 2, ""
+    if ch == "'":
+        return "squote", col + 1, ch
+    if ch == '"':
+        return "dquote", col + 1, ch
+    if ch == "`":
+        return "template", col + 1, ch
+    return "code", col + 1, ch
+
+
+def _js_block_comment_step(line: str, col: int) -> tuple[str, int]:
+    if line[col] == "*" and col + 1 < len(line) and line[col + 1] == "/":
+        return "code", col + 2
+    return "block_comment", col + 1
+
+
+def _js_string_step(line: str, col: int, state: str) -> tuple[str, int, str]:
+    ch = line[col]
+    if ch == "\\":
+        if col + 1 < len(line):
+            return state, col + 2, line[col : col + 2]
+        return state, col + 1, ch
+    if (
+        (state == "squote" and ch == "'")
+        or (state == "dquote" and ch == '"')
+        or (state == "template" and ch == "`")
+    ):
+        return "code", col + 1, ch
+    return state, col + 1, ch
+
+
+def strip_js_comments(text: str) -> list[str]:
+    """Return code-only lines, preserving line numbers and string content.
+
+    Line and block comments are recognised only in code. Quoted strings reset
+    at raw newlines, while template literals and block comments span lines.
     """
     lines = text.split("\n")
     out = [""] * len(lines)
     row, col = 0, 0
-    state = "code"  # code | line_comment | block_comment | squote | dquote | template
+    state = "code"
 
     while row < len(lines):
         line = lines[row]
         if col >= len(line):
-            if state == "line_comment":
-                state = "code"
-            # A single- or double-quoted JS string cannot contain a raw newline,
-            # so an unterminated one means we mis-detected the opening quote —
-            # most often a quote inside a regex literal such as /['"]/. Reset at
-            # end of line so the damage is bounded to that line instead of
-            # latching for the rest of the file (which turned real `//` comments
-            # into reported geometry reads). Template literals DO span lines, so
-            # they are deliberately not reset.
-            if state in ("squote", "dquote"):
-                state = "code"
+            state = _js_line_end_state(state)
             row += 1
             col = 0
             continue
-
-        ch = line[col]
-        nxt = line[col + 1] if col + 1 < len(line) else ""
-
         if state == "code":
-            if ch == "/" and nxt == "/":
-                state = "line_comment"
-                col += 2
-            elif ch == "/" and nxt == "*":
-                state = "block_comment"
-                col += 2
-            else:
-                if ch == "'":
-                    state = "squote"
-                elif ch == '"':
-                    state = "dquote"
-                elif ch == "`":
-                    state = "template"
-                out[row] += ch
-                col += 1
-            continue
-
-        if state == "line_comment":
+            state, col, fragment = _js_code_step(line, col)
+        elif state == "line_comment":
             col = len(line)
             continue
-
-        if state == "block_comment":
-            if ch == "*" and nxt == "/":
-                state = "code"
-                col += 2
-            else:
-                col += 1
+        elif state == "block_comment":
+            state, col = _js_block_comment_step(line, col)
             continue
-
-        # Inside a string. Keep characters while tracking the terminator.
-        out[row] += ch
-        if ch == "\\":
-            if col + 1 < len(line):
-                out[row] += line[col + 1]
-                col += 2
-            else:
-                col += 1
-            continue
-        if (
-            (state == "squote" and ch == "'")
-            or (state == "dquote" and ch == '"')
-            or (state == "template" and ch == "`")
-        ):
-            state = "code"
-        col += 1
+        else:
+            state, col, fragment = _js_string_step(line, col, state)
+        out[row] += fragment
 
     return out
 
@@ -395,52 +387,66 @@ def join_continuations(lines: list[str]) -> list[tuple[int, str]]:
     return joined
 
 
-def _has_pipefail(text: str) -> bool:
-    """True only if `pipefail` is actually SET.
+def _is_shell_option_word(option: str) -> bool:
+    flags = option[1:]
+    return not (
+        len(option) < 1
+        or option[0] not in "+-"
+        or not flags.isascii()
+        or (flags and not flags.isalpha())
+    )
 
-    A mention in a comment does not count, and neither does one inside a string
-    literal — both were live false-green holes.
-    """
+
+def _is_lowercase_option_name(words: list[str], index: int) -> bool:
+    return (
+        index < len(words)
+        and words[index].isascii()
+        and words[index].isalpha()
+        and words[index].islower()
+    )
+
+
+def _scan_set_options_for_pipefail(words: list[str], index: int) -> tuple[bool, int]:
+    while index < len(words):
+        option = words[index]
+        if not _is_shell_option_word(option):
+            break
+        if (
+            option.startswith("-")
+            and "o" in option[1:]
+            and index + 1 < len(words)
+            and words[index + 1] == "pipefail"
+        ):
+            return True, index
+        index += 1
+        if _is_lowercase_option_name(words, index):
+            index += 1
+    return False, index
+
+
+def _set_command_enables_pipefail(words: list[str]) -> bool:
+    search_at = 0
+    while search_at < len(words):
+        try:
+            set_at = words.index("set", search_at)
+        except ValueError:
+            break
+        found, index = _scan_set_options_for_pipefail(words, set_at + 1)
+        if found:
+            return True
+        # Resume after the options already classified, including embedded
+        # `set` words, instead of rescanning each suffix.
+        search_at = max(index, set_at + 1)
+    return False
+
+
+def _has_pipefail(text: str) -> bool:
+    """True only if `pipefail` is actually set, outside comments and strings."""
     cleaned = [strip_shell_comments(ln, blank_strings=True) for ln in text.split("\n")]
     for _line_number, line in join_continuations(cleaned):
         for command in line.replace(";", "\n").splitlines():
-            words = command.split()
-            search_at = 0
-            while search_at < len(words):
-                try:
-                    set_at = words.index("set", search_at)
-                except ValueError:
-                    break
-                index = set_at + 1
-                while index < len(words):
-                    option = words[index]
-                    flags = option[1:]
-                    if (
-                        len(option) < 1
-                        or option[0] not in "+-"
-                        or not flags.isascii()
-                        or (flags and not flags.isalpha())
-                    ):
-                        break
-                    if (
-                        option.startswith("-")
-                        and "o" in flags
-                        and index + 1 < len(words)
-                        and words[index + 1] == "pipefail"
-                    ):
-                        return True
-                    index += 1
-                    if (
-                        index < len(words)
-                        and words[index].isascii()
-                        and words[index].isalpha()
-                        and words[index].islower()
-                    ):
-                        index += 1
-                # The option scan has already classified every word through
-                # ``index``. Resume there rather than reconsidering each
-                # embedded ``set`` and rescanning its entire suffix.
-                search_at = max(index, set_at + 1)
+            if _set_command_enables_pipefail(command.split()):
+                return True
     return False
 
 
@@ -519,102 +525,70 @@ def _has_real_pipeline(lines: list[str]) -> bool:
     return False
 
 
+def _runner_pipe_lines(lines: list[str], has_pipefail: bool) -> list[int]:
+    if has_pipefail:
+        return []
+    line_numbers = []
+    for line_no, logical in join_continuations(lines):
+        cleaned = strip_shell_comments(logical)
+        if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
+            line_numbers.append(line_no)
+    return line_numbers
+
+
+def _flags_in_set_command(tokens: list[str]) -> set[str]:
+    if not tokens or tokens[0] != "set":
+        return set()
+    enabled = set()
+    for token in tokens[1:]:
+        if token == "--":
+            # End options for this command only; later commands start fresh.
+            break
+        if token.startswith("-") and not token.startswith("--"):
+            enabled.update(token[1:])
+        elif token in ("errexit", "nounset"):
+            enabled.add({"errexit": "e", "nounset": "u"}[token])
+    return enabled
+
+
+def _enabled_shell_flags(lines: list[str]) -> set[str]:
+    # Blank quoted hints before reading `set` options, and split commands so
+    # `sort -u` cannot supply a flag that belongs to a preceding `set -e`.
+    set_lines = [
+        strip_shell_comments(line, blank_strings=True)
+        for line in lines if re.search(r"(?:^|[;&|])\s*set\s+-", line)
+    ]
+    enabled = set()
+    for set_line in set_lines:
+        for command in re.split(r"[;&|]+", set_line):
+            enabled.update(_flags_in_set_command(command.split()))
+    return enabled
+
+
+def _missing_shell_gate_options(
+    lines: list[str], is_posix_sh: bool, has_pipefail: bool, runner_pipes: list[int],
+) -> list[str]:
+    enabled = _enabled_shell_flags(lines)
+    missing = []
+    if "e" not in enabled:
+        missing.append("-e (exit on error)")
+    if "u" not in enabled:
+        missing.append("-u (error on unset variable)")
+    if not is_posix_sh and not has_pipefail and _has_real_pipeline(lines) and not runner_pipes:
+        missing.append("pipefail (a failing command in a pipeline is otherwise ignored)")
+    return missing
+
+
 def check_shell_script(path: Path, text: str):
     """Rules 2 and 3 for a shell script."""
     lines = text.split("\n")
     shebang = lines[0] if lines else ""
     is_posix_sh = "/bin/sh" in shebang and "bash" not in shebang
     has_pipefail = _has_pipefail(text)
+    runner_pipes = _runner_pipe_lines(lines, has_pipefail)
 
-    # Rule 2 candidates are computed first: when a runner pipe is present, the
-    # specific finding is reported at its line and `pipefail` is dropped from the
-    # generic rule-3 message, so one fix is never reported twice.
-    runner_pipes = []
-    if not has_pipefail:
-        for line_no, logical in join_continuations(lines):
-            cleaned = strip_shell_comments(logical)
-            if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
-                runner_pipes.append(line_no)
-
-    # Rule 3 — the gate's own options.
-    #
-    # `pipefail` IS required when the script contains a real pipeline. That
-    # requirement was briefly dropped because it false-positived on `case a|b)`
-    # and on `|` inside quoted strings — but that lost genuine coverage: a
-    # `docker build ... | tee` or `./guardrails.sh | grep -c FAIL` swallows its
-    # exit code just as thoroughly as pytest does, and RUNNER_RE will never list
-    # every command. Now that comment/string stripping is quote-aware, the
-    # requirement is back without the false positives.
     if shebang.startswith("#!") and ("bash" in shebang or "/bin/sh" in shebang):
-        missing = []
-        # blank_strings=True, like the pipefail check three rules up. Without
-        # it, `set -e; echo "run with set -u for stricter checking"` counted
-        # the `-u` INSIDE the string and the file came back clean -- the exact
-        # false-green class strip_shell_comments' own docstring records
-        # (`echo "hint: add set -o pipefail"` silenced rule 2 for a whole
-        # file), reintroduced two rules away by omitting one keyword.
-        #
-        # Kept per-line rather than joined, so a `--` on one `set` line cannot
-        # terminate option parsing for a later one.
-        set_lines_list = [
-            strip_shell_comments(ln, blank_strings=True)
-            for ln in lines if re.search(r"(?:^|[;&|])\s*set\s+-", ln)
-        ]
-        # Tokenised rather than pattern-matched against the whole line.
-        # Two false positives on correct scripts, both from a BLOCKING gate,
-        # and both because the old regexes anchored on `set -<cluster>`:
-        #
-        #   set -o errexit -o nounset   -> flagged "missing -e". `nounset` was
-        #                                  accepted as a long form and
-        #                                  `errexit` was not, so the checker
-        #                                  rejected the most explicit correct
-        #                                  spelling of what it demands.
-        #   set -e -u                   -> flagged "missing -u". Separate
-        #                                  clusters do not sit adjacent to the
-        #                                  word `set`, so only the first was
-        #                                  ever read.
-        #
-        # A false positive here is not a harmless nag: the reader "fixes" a
-        # correct script to satisfy the gate, or learns to bypass the gate.
-        enabled = set()
-        for set_line in set_lines_list:
-            # Split into COMMANDS first, and read only the arguments of the
-            # ones that are actually `set`. Tokenising the whole line counted
-            # flags belonging to the next command: measured,
-            # `set -e; sort -u /etc/hosts` came back CLEAN, because `sort`'s
-            # `-u` was read as `set -u`. A blocking gate passing a script that
-            # genuinely lacks `-u` -- and a REGRESSION, since the regex this
-            # tokeniser replaced flagged it correctly.
-            #
-            # Splitting also removes the trailing `;` that `set -o nounset;`
-            # used to carry, so no separate strip is needed, and it makes `--`
-            # end options for ITS OWN command rather than for the rest of the
-            # line (`set -- alpha; set -eu` was being reported as missing
-            # both).
-            for command in re.split(r"[;&|]+", set_line):
-                tokens = command.split()
-                if not tokens or tokens[0] != "set":
-                    continue
-                for token in tokens[1:]:
-                    if token == "--":
-                        # End of options: everything after it is a POSITIONAL
-                        # parameter, not a flag. `set -- -e -u` sets $1 and $2
-                        # and enables nothing; it was read as `set -eu`.
-                        break
-                    if token.startswith("-") and not token.startswith("--"):
-                        # A flag cluster: `-eu`, `-e`, `-euo`. `+e` DISABLES
-                        # and is deliberately not read as enabling.
-                        enabled.update(token[1:])
-                    elif token in ("errexit", "nounset"):
-                        # Long forms, as in `set -o errexit`.
-                        enabled.add({"errexit": "e", "nounset": "u"}[token])
-
-        if "e" not in enabled:
-            missing.append("-e (exit on error)")
-        if "u" not in enabled:
-            missing.append("-u (error on unset variable)")
-        if not is_posix_sh and not has_pipefail and _has_real_pipeline(lines) and not runner_pipes:
-            missing.append("pipefail (a failing command in a pipeline is otherwise ignored)")
+        missing = _missing_shell_gate_options(lines, is_posix_sh, has_pipefail, runner_pipes)
         if missing:
             yield (
                 1,
@@ -626,7 +600,6 @@ def check_shell_script(path: Path, text: str):
 
     for line_no in runner_pipes:
         yield (line_no, _runner_pipe_message(is_posix_sh))
-
 
 def check_makefile(path: Path, text: str):
     """Every recipe line runs in its own shell, so pipefail is never inherited."""
@@ -663,6 +636,45 @@ def _shell_sets_pipefail(shell_value: str) -> bool | None:
     return "pipefail" in value
 
 
+def _mapping_values(node, key):
+    if isinstance(node, yaml.MappingNode):
+        for entry_key, value in node.value:
+            if entry_key.value == key:
+                yield value
+
+
+def _default_run_shell(defaults, inherited_shell):
+    for run_node in _mapping_values(defaults, "run"):
+        for shell_node in _mapping_values(run_node, "shell"):
+            if isinstance(shell_node, yaml.ScalarNode):
+                inherited_shell = shell_node.value
+    return inherited_shell
+
+
+def _step_run(keys, inherited_shell):
+    run_node = keys.get("run")
+    if not isinstance(run_node, yaml.ScalarNode):
+        return None
+    own = keys.get("shell")
+    shell = own.value if isinstance(own, yaml.ScalarNode) else inherited_shell
+    return run_node, shell
+
+
+def _iter_mapping_run_steps(node, inherited_shell):
+    keys = {k.value: v for k, v in node.value if isinstance(k, yaml.ScalarNode)}
+
+    # `defaults: run: shell:` at this level applies to everything below it.
+    shell_here = _default_run_shell(keys.get("defaults"), inherited_shell)
+
+    # A step: `run:` plus optionally its own `shell:`, in any key order.
+    step = _step_run(keys, shell_here)
+    if step is not None:
+        yield step
+
+    for _k, value in node.value:
+        yield from _iter_run_steps(value, shell_here)
+
+
 def _iter_run_steps(node, inherited_shell=None):
     """Yield (run_scalar_node, effective_shell) for every `run:` in a workflow.
 
@@ -678,30 +690,7 @@ def _iter_run_steps(node, inherited_shell=None):
     won over a third round of patches.
     """
     if isinstance(node, yaml.MappingNode):
-        keys = {k.value: v for k, v in node.value if isinstance(k, yaml.ScalarNode)}
-
-        # `defaults: run: shell:` at this level applies to everything below it.
-        shell_here = inherited_shell
-        defaults = keys.get("defaults")
-        if isinstance(defaults, yaml.MappingNode):
-            for dk, dv in defaults.value:
-                if dk.value == "run" and isinstance(dv, yaml.MappingNode):
-                    for rk, rv in dv.value:
-                        if rk.value == "shell" and isinstance(rv, yaml.ScalarNode):
-                            shell_here = rv.value
-
-        # A step: `run:` plus optionally its own `shell:`, in any key order.
-        run_node = keys.get("run")
-        if isinstance(run_node, yaml.ScalarNode):
-            step_shell = shell_here
-            own = keys.get("shell")
-            if isinstance(own, yaml.ScalarNode):
-                step_shell = own.value
-            yield run_node, step_shell
-
-        for _k, value in node.value:
-            yield from _iter_run_steps(value, shell_here)
-
+        yield from _iter_mapping_run_steps(node, inherited_shell)
     elif isinstance(node, yaml.SequenceNode):
         for item in node.value:
             yield from _iter_run_steps(item, inherited_shell)
@@ -745,6 +734,43 @@ def _has_unquoted_redirect(line: str) -> bool:
     return False
 
 
+def _check_workflow_run(run_node, shell_value):
+    pipefail = _shell_sets_pipefail(shell_value) if shell_value else False
+    if pipefail is None:
+        return  # not a shell whose pipeline status we police
+    body = run_node.value
+
+    # For a block scalar (`|`/`>`) the value starts on the line AFTER the
+    # indicator; for an inline value it starts on the mark's own line.
+    block = run_node.style in ("|", ">")
+    first_content_line = run_node.start_mark.line + (1 if block else 0)
+
+    lines = body.split("\n")
+
+    # Rule 7 runs unconditionally per shell run-step — an unquoted `>`/`>=`
+    # on a `pip install` line has nothing to do with pipefail, so it must
+    # not be hidden behind the pipefail early-exit below.
+    for local_no, logical in join_continuations(lines):
+        cleaned = strip_shell_comments(logical)
+        if PIP_INSTALL_RE.search(cleaned) and _has_unquoted_redirect(cleaned):
+            yield (first_content_line + local_no, PIP_INSTALL_REDIRECT_MESSAGE)
+
+    if pipefail or _has_pipefail(body):
+        return
+
+    for local_no, logical in join_continuations(lines):
+        cleaned = strip_shell_comments(logical)
+        if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
+            yield (
+                first_content_line + local_no,
+                "workflow step pipes a test/verification command into a filter "
+                "without `pipefail` — GitHub's default shell is `bash -e`, which "
+                "does not set it, so the step passes even when the runner fails. "
+                "Add `set -o pipefail` at the top of the run block, or declare "
+                "`shell: bash` (which is `-eo pipefail`).",
+            )
+
+
 def check_workflow(path: Path, text: str):
     """GitHub's DEFAULT shell is `bash -e` — pipefail is not set unless asked for."""
     if yaml is None:
@@ -767,40 +793,7 @@ def check_workflow(path: Path, text: str):
         return
 
     for run_node, shell_value in _iter_run_steps(root):
-        pipefail = _shell_sets_pipefail(shell_value) if shell_value else False
-        if pipefail is None:
-            continue  # not a shell whose pipeline status we police
-        body = run_node.value
-
-        # For a block scalar (`|`/`>`) the value starts on the line AFTER the
-        # indicator; for an inline value it starts on the mark's own line.
-        block = run_node.style in ("|", ">")
-        first_content_line = run_node.start_mark.line + (1 if block else 0)
-
-        lines = body.split("\n")
-
-        # Rule 7 runs unconditionally per shell run-step — an unquoted `>`/`>=`
-        # on a `pip install` line has nothing to do with pipefail, so it must
-        # not be hidden behind the pipefail early-exit below.
-        for local_no, logical in join_continuations(lines):
-            cleaned = strip_shell_comments(logical)
-            if PIP_INSTALL_RE.search(cleaned) and _has_unquoted_redirect(cleaned):
-                yield (first_content_line + local_no, PIP_INSTALL_REDIRECT_MESSAGE)
-
-        if pipefail or _has_pipefail(body):
-            continue
-
-        for local_no, logical in join_continuations(lines):
-            cleaned = strip_shell_comments(logical)
-            if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
-                yield (
-                    first_content_line + local_no,
-                    "workflow step pipes a test/verification command into a filter "
-                    "without `pipefail` — GitHub's default shell is `bash -e`, which "
-                    "does not set it, so the step passes even when the runner fails. "
-                    "Add `set -o pipefail` at the top of the run block, or declare "
-                    "`shell: bash` (which is `-eo pipefail`).",
-                )
+        yield from _check_workflow_run(run_node, shell_value)
 
 
 def check_git_hook(path: Path):
@@ -1111,33 +1104,7 @@ def _e2e_ast_payload(path: Path, text: str):
     return None, detail
 
 
-def check_e2e_ast_traps(path: Path, text: str):
-    """Run the TypeScript AST guard and enforce stable legacy wait identities."""
-    node = shutil.which("node")
-    if node is None:
-        yield (
-            1,
-            "cannot check Playwright false-green traps: node is not installed, "
-            "so the TypeScript AST guard cannot run.",
-        )
-        return
-    payload, detail = _e2e_ast_payload(path, text)
-    if payload is None:
-        yield (1, "TypeScript AST guard failed to run: %s" % detail)
-        return
-    if payload.get("parseErrors"):
-        yield (1, "TypeScript AST guard found %d parse error(s); refusing to scan a partial tree."
-               % payload["parseErrors"])
-        return
-    if payload.get("sourceFileCount") != 1 or payload.get("unexpectedHostReads") != 0:
-        yield (
-            1,
-            "TypeScript AST guard escaped its stdin-only boundary: loaded %s source files "
-            "and attempted %s unexpected host read(s)."
-            % (payload.get("sourceFileCount"), payload.get("unexpectedHostReads")),
-        )
-        return
-
+def _e2e_wait_findings(path, payload):
     try:
         relative = path.resolve().relative_to(REPO_ROOT).as_posix()
     except ValueError:
@@ -1176,6 +1143,7 @@ def check_e2e_ast_traps(path: Path, text: str):
             % (identity[0], identity[1], identity[2], expected, actual),
         )
 
+def _e2e_guard_findings(payload):
     for finding in payload.get("findings", []):
         line_no = int(finding["line"])
         kind = finding["kind"]
@@ -1205,6 +1173,37 @@ def check_e2e_ast_traps(path: Path, text: str):
                 "was swallowed as null/undefined; let the wait fail or assert the "
                 "response unconditionally.",
             )
+
+
+def check_e2e_ast_traps(path: Path, text: str):
+    """Run the TypeScript AST guard and enforce stable legacy wait identities."""
+    node = shutil.which("node")
+    if node is None:
+        yield (
+            1,
+            "cannot check Playwright false-green traps: node is not installed, "
+            "so the TypeScript AST guard cannot run.",
+        )
+        return
+    payload, detail = _e2e_ast_payload(path, text)
+    if payload is None:
+        yield (1, "TypeScript AST guard failed to run: %s" % detail)
+        return
+    if payload.get("parseErrors"):
+        yield (1, "TypeScript AST guard found %d parse error(s); refusing to scan a partial tree."
+               % payload["parseErrors"])
+        return
+    if payload.get("sourceFileCount") != 1 or payload.get("unexpectedHostReads") != 0:
+        yield (
+            1,
+            "TypeScript AST guard escaped its stdin-only boundary: loaded %s source files "
+            "and attempted %s unexpected host read(s)."
+            % (payload.get("sourceFileCount"), payload.get("unexpectedHostReads")),
+        )
+        return
+
+    yield from _e2e_wait_findings(path, payload)
+    yield from _e2e_guard_findings(payload)
 
 
 def _is_e2e_spec(path: Path) -> bool:
@@ -1331,44 +1330,49 @@ def _live_region_bindings(source):
     return None
 
 
-def check_live_region_visibility(_path: Path, text: str):
-    """Flag a live region asserted by TEXT but never by VISIBILITY.
+def _valid_live_region_payload(payload):
+    return (isinstance(payload, dict) and not payload.get("parseErrors")
+            and payload.get("sourceFileCount") == 1
+            and payload.get("unexpectedHostReads") == 0)
 
-    Text, accessible-name/description, and value matchers read content without
-    proving it is visible, so a spec that only reads content cannot tell a
-    working announcement from one nobody can see. Found twice on one branch (#311):
-    hiding the device code box, and then the status message beside it, each
-    left every spec green. The axe scans do not cover the gap either, because
-    axe skips hidden subtrees.
 
-    Scoped per ELEMENT and resolved LEXICALLY. Accepting any `toBeVisible`
-    anywhere in the file let one element's assertion cover its neighbour, and
-    a file-wide name map let a rebound variable carry the old element's
-    assertions with it. Both made this rule unable to fail on the code that
-    motivated it.
-    """
-    lines = strip_js_comments(text)
-    if not any(t in "\n".join(lines) for t in _LIVE_REGION_TESTIDS):
-        return
+def _record_ast_live_region_assertion(assertion, text_line, has_visibility):
+    matcher = str(assertion.get("matcher", ""))
+    negative = bool(assertion.get("negative"))
+    for testid in assertion.get("testids", []):
+        if matcher in {"toBeVisible", "toBeHidden"}:
+            has_visibility.add(testid)
+        elif matcher in _CONTENT_MATCHERS and not negative:
+            text_line.setdefault(testid, int(assertion["line"]))
 
+
+def _ast_live_region_assertions(path: Path, text: str):
     if shutil.which("node") is not None:
-        payload, _detail = _e2e_ast_payload(_path, text)
-        if (isinstance(payload, dict) and not payload.get("parseErrors")
-                and payload.get("sourceFileCount") == 1
-                and payload.get("unexpectedHostReads") == 0):
+        payload, _detail = _e2e_ast_payload(path, text)
+        if _valid_live_region_payload(payload):
             text_line = {}
             has_visibility = set()
             for assertion in payload.get("assertions", []):
-                matcher = str(assertion.get("matcher", ""))
-                negative = bool(assertion.get("negative"))
-                for testid in assertion.get("testids", []):
-                    if matcher in {"toBeVisible", "toBeHidden"}:
-                        has_visibility.add(testid)
-                    elif matcher in _CONTENT_MATCHERS and not negative:
-                        text_line.setdefault(testid, int(assertion["line"]))
-            yield from _live_region_findings(text_line, has_visibility)
-            return
+                _record_ast_live_region_assertion(assertion, text_line, has_visibility)
+            return text_line, has_visibility
+    return None
 
+
+def _record_live_region_assertion(source, idx, in_scope, text_line, has_visibility):
+    for var, testids in in_scope.items():
+        if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):
+            continue
+        visible = 'toBeVisible' in source or 'toBeHidden' in source
+        texty = (any(m in source for m in _CONTENT_MATCHERS)
+                 and 'not.' not in source)
+        for testid in testids:
+            if visible:
+                has_visibility.add(testid)
+            elif texty:
+                text_line.setdefault(testid, idx + 1)
+
+
+def _lexical_live_region_assertions(lines):
     in_scope = {}
     text_line = {}
     has_visibility = set()
@@ -1389,17 +1393,35 @@ def check_live_region_visibility(_path: Path, text: str):
             in_scope[var] = found
             continue
 
-        for var, testids in in_scope.items():
-            if not re.search(r"expect\(\s*%s\s*\)" % re.escape(var), source):
-                continue
-            visible = 'toBeVisible' in source or 'toBeHidden' in source
-            texty = (any(m in source for m in _CONTENT_MATCHERS)
-                     and 'not.' not in source)
-            for testid in testids:
-                if visible:
-                    has_visibility.add(testid)
-                elif texty:
-                    text_line.setdefault(testid, idx + 1)
+        _record_live_region_assertion(source, idx, in_scope, text_line, has_visibility)
+
+    return text_line, has_visibility
+
+
+def check_live_region_visibility(_path: Path, text: str):
+    """Flag a live region asserted by TEXT but never by VISIBILITY.
+
+    Text, accessible-name/description, and value matchers read content without
+    proving it is visible, so a spec that only reads content cannot tell a
+    working announcement from one nobody can see. Found twice on one branch (#311):
+    hiding the device code box, and then the status message beside it, each
+    left every spec green. The axe scans do not cover the gap either, because
+    axe skips hidden subtrees.
+
+    Scoped per ELEMENT and resolved LEXICALLY. Accepting any `toBeVisible`
+    anywhere in the file let one element's assertion cover its neighbour, and
+    a file-wide name map let a rebound variable carry the old element's
+    assertions with it. Both made this rule unable to fail on the code that
+    motivated it.
+    """
+    lines = strip_js_comments(text)
+    if not any(t in "\n".join(lines) for t in _LIVE_REGION_TESTIDS):
+        return
+
+    assertions = _ast_live_region_assertions(_path, text)
+    if assertions is None:
+        assertions = _lexical_live_region_assertions(lines)
+    text_line, has_visibility = assertions
 
     yield from _live_region_findings(text_line, has_visibility)
 
@@ -1586,6 +1608,21 @@ def _mask_jinja(body: str) -> str:
     return JINJA_TAG_RE.sub(_sub, body)
 
 
+def _inside_spans(index: int, spans) -> bool:
+    return any(start <= index < end for start, end in spans)
+
+
+def _script_block_kind(attrs, body: str) -> str:
+    if "src" in attrs:
+        return "skip-src"
+    if not body.strip():
+        return "skip-empty"
+    script_type = attrs.get("type", "")
+    if script_type not in JS_SCRIPT_TYPES:
+        return f"skip-type:{script_type}"
+    return "module" if script_type == "module" else "classic"
+
+
 def _iter_script_blocks(text: str):
     """Yield (html_line, kind, body) per `<script>` — html_line is where the
     body starts. `kind` is `"classic"`/`"module"`, or `"skip-*"` (external
@@ -1613,25 +1650,12 @@ def _iter_script_blocks(text: str):
     # node reads that block the way a browser does.
     comment_spans = [m.span() for m in HTML_COMMENT_RE.finditer(text)]
 
-    def _inside_comment(index: int) -> bool:
-        return any(start <= index < end for start, end in comment_spans)
-
     for m in SCRIPT_TAG_RE.finditer(text):
-        if _inside_comment(m.start()):
+        if _inside_spans(m.start(), comment_spans):
             continue
         attrs, body = _parse_attrs(m.group(1)), m.group(2)
         line = text.count("\n", 0, m.start(2)) + 1
-        if "src" in attrs:
-            yield (line, "skip-src", body)
-            continue
-        if not body.strip():
-            yield (line, "skip-empty", body)
-            continue
-        script_type = attrs.get("type", "")
-        if script_type not in JS_SCRIPT_TYPES:
-            yield (line, f"skip-type:{script_type}", body)
-            continue
-        yield (line, "module" if script_type == "module" else "classic", body)
+        yield (line, _script_block_kind(attrs, body), body)
 
     # Every `<script` opener NOT inside a matched element lost its body to a
     # missing or malformed `</script>`. Report it, so an extraction failure is
@@ -1648,7 +1672,7 @@ def _iter_script_blocks(text: str):
     # stay trustworthy.
     element_spans = [m.span() for m in SCRIPT_TAG_RE.finditer(text)]
     for opener in SCRIPT_OPEN_RE.finditer(text):
-        if _inside_comment(opener.start()):
+        if _inside_spans(opener.start(), comment_spans):
             continue
         if any(start <= opener.start() < end for start, end in element_spans):
             continue

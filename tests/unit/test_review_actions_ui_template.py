@@ -27,12 +27,11 @@ from couchpotato.ui import _jinja, _releases_ctx
 
 
 @pytest.fixture(autouse=True)
-def _env():
+def _env(monkeypatch):
     # _releases_ctx() reads Env.get('web_base') to build sort-link URLs; this
     # module renders the template directly rather than through create_app(),
     # so nothing else sets it up.
-    Env.set('web_base', '/')
-    yield
+    monkeypatch.setattr(Env, '_web_base', '/', raising=False)
 
 
 # Distinctive rendered substrings. Each is the visible ``<span>`` label so it

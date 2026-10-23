@@ -685,9 +685,10 @@ mattered: with the cache on, the local image was clean and the bug was
 invisible, so every local reproduction of CI's failure quietly disagreed with
 CI and I trusted the local one.
 
-Still open, and **less blocked than this entry first claimed**:
-`FROM python:3.14-alpine` remains a floating tag. Two corrections to what was
-written here, both found by review and verified:
+Resolved 2026-10-13: both `FROM python:3.14-alpine` stages are pinned to the
+same published multi-platform digest. The existing Docker Dependabot entry can
+raise subsequent base updates. Two corrections to the original assessment,
+both found by review and verified:
 
 - `GITLEAKS_IMAGE` (`Makefile:89`) is `zricethezav/gitleaks:v8.30.1` -- a TAG
   pin, not a digest pin. It was cited here as the digest-pinning example to
@@ -697,9 +698,7 @@ written here, both found by review and verified:
   `package-ecosystem: "docker"`. The prerequisite this entry described as
   needing to land "in the same change" has been in place all along.
 
-So the follow-up is simply: pin the base by digest and let the existing
-Dependabot docker config raise the bumps. It is a small, self-contained PR, not
-the two-part change recorded here before.
+The follow-up was a digest-only base pin, with no new Dependabot configuration.
 
 Worth noting where the wrong version came from: both claims were written from
 memory of what the repo *probably* looked like, in an entry whose own subject
@@ -736,7 +735,7 @@ scope and a reviewer can read the dedent directly against the original.
 5. `diskcache` was replaced with `SQLiteCache` (CVE-2025-69872 — pickle RCE,
    lib abandoned).
 6. Branch protection check names must match exactly — matrix jobs report as
-   `test (3.14)`, not `test`. (The matrix is a single version as of
+   `test (3.15)`, not `test`. (The matrix is a single version as of
    2026-08-09, but it is still a matrix, so the leg name still carries the
    version. No matrix leg is a required context; `test-summary` is, and it
    `needs: [test]`.)

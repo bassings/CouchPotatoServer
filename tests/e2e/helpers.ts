@@ -198,11 +198,13 @@ export async function mockSuggestionsCharts(page: Page): Promise<void> {
         <button type="button"
                 onclick="openMovieModal('tt0137523', this, 'chart')"
                 class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group text-left w-full cursor-pointer hover:border-white/[0.12] transition-colors focus:outline-none focus:ring-2 focus:ring-cp-accent/50 focus:ring-offset-2 focus:ring-offset-cp-bg"
-                data-imdb="tt0137523"
-                aria-label="View details for Example Movie (2026)">
+                data-imdb="tt0137523">
           <div class="relative aspect-[2/3] overflow-hidden bg-white">
             <div class="absolute top-2 left-2">
               <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning text-black backdrop-blur-sm">chart</span>
+            </div>
+            <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <span class="px-3 py-1.5 rounded-md text-[10px] font-medium bg-white/10 text-white backdrop-blur-sm">View Details</span>
             </div>
           </div>
           <div class="p-2.5">
@@ -246,8 +248,13 @@ export async function mockMovieSearch(page: Page): Promise<void> {
   const card = (title: string, year: string, imdb: string) => `
     <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group"
          data-imdb="${imdb}" x-data="{ added: false, adding: false, profile_id: '' }">
-      <button type="button" aria-label="View details for ${title} (${year})">
-        <div class="relative aspect-[2/3] overflow-hidden bg-cp-surface"></div>
+      <button type="button" class="w-full text-left focus:outline-none focus:ring-2 focus:ring-cp-accent/50 focus:ring-inset">
+        <div class="relative aspect-[2/3] overflow-hidden bg-cp-surface">
+          <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <span class="px-3 py-1.5 rounded-md text-[10px] font-medium bg-white/10 text-white backdrop-blur-sm">View Details</span>
+          </div>
+        </div>
+        <span class="sr-only">${title} (${year})</span>
       </button>
       <div class="p-2.5">
         <h3 class="font-medium text-xs truncate" title="${title}">${title}</h3>

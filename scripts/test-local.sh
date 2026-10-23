@@ -8,7 +8,7 @@
 # Enforced by scripts/check_test_traps.py.
 set -euo pipefail
 
-PYTHON_VERSION="${1:-3.14}"
+PYTHON_VERSION="${1:-3.15}"
 IMAGE_NAME="couchpotato-test:${PYTHON_VERSION}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"

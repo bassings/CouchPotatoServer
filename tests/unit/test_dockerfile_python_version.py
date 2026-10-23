@@ -101,6 +101,22 @@ def test_dockerfile_builder_and_runtime_stages_agree():
     )
 
 
+def test_dockerfile_stages_share_a_pinned_base_digest():
+    """Both stages must use the same immutable multi-platform base image."""
+    stage_refs = re.findall(
+        r"^FROM\s+(python:\d+\.\d+-alpine(?:@sha256:[0-9a-f]{64})?)\b",
+        DOCKERFILE.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert len(stage_refs) == 2, f"expected two Python stages, got {stage_refs}"
+    assert all("@sha256:" in ref for ref in stage_refs), (
+        f"both Docker stages need a digest pin: {stage_refs}"
+    )
+    assert stage_refs[0] == stage_refs[1], (
+        f"builder and runtime must use the same base image: {stage_refs}"
+    )
+
+
 def test_ci_matrix_tests_exactly_the_dockerfile_version():
     """CI tests the production interpreter, and ONLY it.
 

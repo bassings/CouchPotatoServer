@@ -30,6 +30,8 @@ import os
 import sys
 import time
 
+ALREADY_PRESENT = 'already present'
+
 # --- sys.path bootstrap -----------------------------------------------------
 # Mirrors scripts/migrate_codernity_to_sqlite.py: this script must be
 # runnable standalone (CI step, or a developer running it directly) without
@@ -871,12 +873,12 @@ def main(argv=None):
         return 1
 
     print('Seeded E2E data at %s:' % args.data_dir)
-    print('  profile %s: %s' % (PROFILE_ID, 'created' if result['profile'] else 'already present'))
+    print('  profile %s: %s' % (PROFILE_ID, 'created' if result['profile'] else ALREADY_PRESENT))
     print('  movie   %s (imdb %s): %s' % (
-        MOVIE_ID, IMDB_ID, 'created' if result['movie'] else 'already present',
+        MOVIE_ID, IMDB_ID, 'created' if result['movie'] else ALREADY_PRESENT,
     ))
     for release_id, inserted in result['releases']:
-        print('  release %s: %s' % (release_id, 'created' if inserted else 'already present'))
+        print('  release %s: %s' % (release_id, 'created' if inserted else ALREADY_PRESENT))
 
     return 0
 

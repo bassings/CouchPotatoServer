@@ -1,13 +1,15 @@
 # CouchPotato Docker Container
 # Multi-stage build for smaller image
 #
-# Base image: python:3.14-alpine (Alpine Linux / musl).
-# Chosen over python:3.14-slim (Debian) because the Alpine base ships with 0
-# known CVEs vs ~106 on Debian 13 — the Debian OS packages (perl, ncurses,
-# libssh2, libcurl) repeatedly carry HIGH/CRITICAL CVEs with no upstream fix.
+# Base image: python:3.15-alpine (Alpine Linux / musl), pinned by digest below.
+# Alpine avoids the Debian OS packages that previously carried unfixed
+# vulnerabilities. Re-scan every rebuilt image; the base alone is not the gate.
+
+# Both stages require patched libc packages for CVE-2026-107891.
+# Minimums keep a future base refresh from silently restoring vulnerable musl.
 
 # Stage 1: Build dependencies
-FROM python:3.14-alpine AS builder
+FROM python:3.15-alpine@sha256:d44b1254cb92329418d164b22b20d86bbd3869d48e80e09e476531a409a728bb AS builder
 
 WORKDIR /build
 
@@ -15,6 +17,8 @@ WORKDIR /build
 # wheel and must compile from source. Lives in the builder stage only and is
 # discarded; the runtime image never sees it.
 RUN apk add --no-cache \
+        "musl>=1.2.6-r3" \
+        "musl-utils>=1.2.6-r3" \
         build-base \
         libffi-dev \
         openssl-dev \
@@ -23,11 +27,11 @@ RUN apk add --no-cache \
         cargo
 
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir --upgrade pip==26.1.1 \
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.2 \
     && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
-FROM python:3.14-alpine
+FROM python:3.15-alpine@sha256:d44b1254cb92329418d164b22b20d86bbd3869d48e80e09e476531a409a728bb
 
 LABEL maintainer="CouchPotato"
 LABEL description="CouchPotato - Automatic Movie Downloader"
@@ -51,25 +55,22 @@ ENV PYTHONUNBUFFERED=1 \
 # - c-ares is pulled in transitively; pin it to the patched version to clear
 #   CVE-2026-33630 (HIGH, use-after-free/double-free) which fails the Trivy gate.
 #   Drop this explicit pin once the base image ships c-ares >= 1.34.8-r0.
-# - libcrypto3/libssl3 arrive with the base image at 3.5.7-r0 and are pinned
-#   for the same reason: CVE-2026-14456 (HIGH, unbounded memory growth in the
-#   QUIC server path) is fixed in 3.5.8-r0, which Alpine v3.24 main already
-#   carries. This is a real finding rather than a number to silence: nothing
-#   here serves QUIC, so the practical exposure is low, but the fix is a
-#   version bump that is already published and costs nothing to take.
-#   Drop this explicit pin once the base image ships openssl >= 3.5.8-r0.
+# - libcrypto3/libssl3 must stay at or above 3.5.8-r0 to avoid
+#   CVE-2026-14456. The pinned base currently ships 3.5.9-r0; keep these
+#   minimums to protect future base refreshes.
 #
 #   libuuid is pinned for the same reason, and the package name is the trap.
 #   Trivy reports CVE-2026-78408, CVE-2026-78409 and CVE-2026-78410 against
 #   "util-linux", which is the SOURCE package. util-linux is not installed
 #   here; the only artefact from that source in the runtime image is
-#   libuuid, at 2.42.1-r0. Pinning "util-linux" would have installed a
-#   package that was not previously present and left libuuid untouched, so
-#   the scan would have kept failing while the change looked correct.
-#   Measured in a python:3.14-alpine container: installed libuuid 2.42.1-r0,
-#   available 2.42.3-r1 in Alpine v3.24 main, and the pin resolves.
-#   Drop this explicit pin once the base image ships libuuid >= 2.42.3-r1.
+#   libuuid. Pinning "util-linux" would install an unrelated package and leave
+#   libuuid untouched. The pinned base currently ships libuuid 2.42.3-r1;
+#   keep the minimum to protect future base refreshes.
+# - zlib must stay at or above 1.3.2-r1 to avoid CVE-2026-85091 (MEDIUM).
+#   The pinned base ships that fix; keep the floor for future base refreshes.
 RUN apk add --no-cache \
+        "musl>=1.2.6-r3" \
+        "musl-utils>=1.2.6-r3" \
         ca-certificates \
         su-exec \
         mediainfo \
@@ -78,7 +79,8 @@ RUN apk add --no-cache \
         "c-ares>=1.34.8-r0" \
         "libcrypto3>=3.5.8-r0" \
         "libssl3>=3.5.8-r0" \
-        "libuuid>=2.42.3-r1"
+        "libuuid>=2.42.3-r1" \
+        "zlib>=1.3.2-r1"
 
 # Create app user
 ARG PUID=1000

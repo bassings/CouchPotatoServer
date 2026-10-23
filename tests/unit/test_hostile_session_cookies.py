@@ -270,7 +270,7 @@ class TestTheHostileCookiesActuallyReachTheServer:
     """
 
     @pytest.mark.parametrize('name', sorted(HOSTILE))
-    def test_the_header_is_sent_verbatim(self, app, name):
+    def test_the_header_is_sent_verbatim(self, app, name, monkeypatch):
         seen = {}
 
         original = TestClient.get
@@ -279,11 +279,8 @@ class TestTheHostileCookiesActuallyReachTheServer:
             seen['cookie'] = (kwargs.get('headers') or {}).get(b'Cookie')
             return original(self, url, **kwargs)
 
-        TestClient.get = capture
-        try:
-            request_with_cookie(app, HOSTILE[name])
-        finally:
-            TestClient.get = original
+        monkeypatch.setattr(TestClient, 'get', capture)
+        request_with_cookie(app, HOSTILE[name])
 
         assert seen['cookie'] == cookie_header(HOSTILE[name])
 

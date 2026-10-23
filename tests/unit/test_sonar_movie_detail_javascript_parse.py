@@ -98,7 +98,6 @@ def test_no_new_component_explicitly_duplicates_alpines_automatic_init():
     # These pre-existing duplicates are a bounded inventory, not examples to
     # copy. Any addition fails until it relies on Alpine's automatic init().
     known_debt = Counter({
-        ("logs.html", "logsPanel"): 1,
         ("settings.html", "settingsPanel"): 1,
         ("wizard.html", "setupWizard"): 1,
         ("partials/movie_releases.html", "releaseDownloader"): 1,
