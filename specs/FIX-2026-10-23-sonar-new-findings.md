@@ -64,3 +64,5 @@ Resolve the 23 records first observed by the exact-master analysis of `7adb683fc
 - Ruff, test-trap and template conformance checks pass. Full gate and independent review are the next delivery steps.
 
 - Independent security review found that JSON serialisation hid `Error.message` in two privacy assertions. Both now use one console-formatting helper. Separate raw-error logging mutations fail, and restoration passes all 15 worker tests.
+
+- The first full gate passed 4,970 Python unit tests but correctly failed the exact-source heading inventory: its original direct `h3[x-text]` site was replaced by the native disclosure structure. Removed only that stale tuple, retained the inventory checker, and added rendered accessible-name checks for ordinary provider headings and the Newznab disclosure heading. Removing both dynamic labels fails the phone browser contract; restoration passes all five cases. Eleven focused heading/poster inventory tests pass. The full gate will be rerun on the final reviewed tree.

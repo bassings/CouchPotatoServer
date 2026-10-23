@@ -6,7 +6,13 @@ for (const theme of ['light', 'dark'] as const) {
       await page.setViewportSize({width, height: 850});
       await page.addInitScript(value => localStorage.setItem('cp-theme', value), theme);
       await page.goto('/settings/');
+      const generalHeadings = page.getByRole('heading', {level: 3});
+      await expect(generalHeadings.first()).toBeVisible();
+      for (const heading of await generalHeadings.all()) {
+        await expect(heading).toHaveAccessibleName(/\S/);
+      }
       await page.getByRole('tab', {name: 'Searchers', exact: true}).click();
+      await expect(page.getByRole('heading', {name: 'Newznab', level: 3, exact: true})).toBeVisible();
       const disclosure = page.getByRole('button', {name: 'Newznab', exact: true});
       await expect(disclosure).toBeVisible();
       await expect(disclosure).toHaveAttribute('aria-expanded', 'true');

@@ -38,11 +38,6 @@ AUDITED_DYNAMIC_HEADINGS = {
         "formState.id ? 'Edit Profile' : 'New Profile'",
     ): "c7207712-0587-439b-b88e-c34e28375115",
     (
-        "partials/settings/provider_card.html",
-        "h3",
-        "group.label || group.name",
-    ): "af8d5d6f-2821-45d1-999e-baaf8ca42dd8",
-    (
         "settings.html",
         "h2",
         "getCategoryLabel(groupIdx)",
