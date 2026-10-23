@@ -1010,7 +1010,8 @@ class TestTorrentPotatoJackettIntegration:
             logger.setLevel(old_level)
             handler.close()
 
-        assert indexers == [] and error is None
+        assert indexers == []
+        assert error is None
         assert 'Fetching Jackett indexers' in stream.getvalue()
         assert 'jackett.private' not in stream.getvalue()
         assert '/internal' not in stream.getvalue()

@@ -153,6 +153,8 @@ export async function runAuditSuite({
   const summary = {completed: 0, warnings: [], errors: [], reports: []};
   let primaryError;
   try {
+    // Audits share one browser. Serial runs avoid competing for CPU and keep
+    // each report write inside its run's failure and cleanup boundary.
     for (const route of POLICY.routes) {
       for (let runNumber = 1; runNumber <= POLICY.runs; runNumber += 1) {
         const url = `${POLICY.baseUrl}${route.path}`;

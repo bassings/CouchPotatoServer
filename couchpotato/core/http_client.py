@@ -315,7 +315,7 @@ class HttpClient:
 
             # An indexer's 400 can be a refusal of that indexer rather than an
             # outage of its shared host. Only the caller can identify it.
-            if not (is_http_400 and ignore_host_failure_on_400):
+            if not is_http_400 or not ignore_host_failure_on_400:
                 self._record_failure(host, status_code)
             raise
 

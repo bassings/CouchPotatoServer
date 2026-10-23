@@ -139,7 +139,7 @@ from couchpotato.core.helpers.encoding import toUnicode, simplifyString"""
         title = simplifyString(title)
 
         for prefix in ['the ', 'an ', 'a ']:
-            if prefix == title[:len(prefix)]:
+            if title.startswith(prefix):
                 title = title[len(prefix):]
                 break
 
@@ -169,7 +169,7 @@ from couchpotato.core.helpers.encoding import toUnicode, simplifyString"""
         title = simplifyString(title)
 
         for prefix in ['the ', 'an ', 'a ']:
-            if prefix == title[:len(prefix)]:
+            if title.startswith(prefix):
                 title = title[len(prefix):]
                 break
 

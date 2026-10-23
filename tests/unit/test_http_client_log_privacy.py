@@ -109,8 +109,10 @@ def test_transport_error_logs_class_without_private_target(emitted_http_logs, er
     stream, use_transport = emitted_http_logs
     use_transport(error)
 
-    with pytest.raises(type(error)):
-        http_client.HttpClient().request(PRIVATE_URL)
+    expected_error = type(error)
+    client = http_client.HttpClient()
+    with pytest.raises(expected_error):
+        client.request(PRIVATE_URL)
 
     assert type(error).__name__ in stream.getvalue()
     _assert_private_values_absent(stream.getvalue())
