@@ -179,6 +179,45 @@ describe('bounded local report paths', () => {
 });
 
 describe('audit orchestration', () => {
+  it('finishes each audit and both report writes before starting the next audit', async () => {
+    const events: string[] = [];
+    let active = 0;
+    let peak = 0;
+    await runAuditSuite({
+      repoRoot: REPO_ROOT,
+      preflight: vi.fn(async () => undefined),
+      launchBrowser: vi.fn(async () => ({port: 9222, close: vi.fn()})),
+      runLighthouse: vi.fn(async (url: string) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        events.push(`audit:${url}`);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        active -= 1;
+        const route = POLICY.routes.find(item => url === `${POLICY.baseUrl}${item.path}`)!;
+        return {lhr: passingLhr(`${POLICY.baseUrl}${route.expectedPath}`), report: ['<html>report</html>', '{}']};
+      }),
+      resetOutput: vi.fn(async () => undefined),
+      writeReport: vi.fn(async (filename: string) => {
+        const name = path.basename(filename);
+        events.push(`start:${name}`);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        events.push(`end:${name}`);
+      }),
+      writeSummary: vi.fn(async () => undefined),
+      log: vi.fn(),
+    });
+    expect(peak).toBe(1);
+    expect(events).toEqual(POLICY.routes.flatMap(route =>
+      Array.from({length: POLICY.runs}, (_, index) => [
+        `audit:${POLICY.baseUrl}${route.path}`,
+        `start:${route.slug}-run-${index + 1}.html`,
+        `end:${route.slug}-run-${index + 1}.html`,
+        `start:${route.slug}-run-${index + 1}.json`,
+        `end:${route.slug}-run-${index + 1}.json`,
+      ]).flat(),
+    ));
+  });
+
   it('clears stale output before preflight without launching Chromium', async () => {
     const events: string[] = [];
     const resetOutput = vi.fn(async () => { events.push('reset'); });

@@ -145,8 +145,7 @@ def rebuild_after_migration(db, db_path):
     # so it works even with stale hash positions.
     print("INFO: Reading all records from id storage...")
     all_id_entries = []
-    for entry in db.all('id'):
-        all_id_entries.append(entry)
+    all_id_entries.extend(db.all('id'))
     print("INFO: Found %d records." % len(all_id_entries))
 
     if not all_id_entries:

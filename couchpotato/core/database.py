@@ -392,7 +392,7 @@ class Database:
         db_path = sp(db.path)
         for f in os.listdir(sp(db.path)):
             for x in ['_compact_buck', '_compact_stor']:
-                if f[-len(x):] == x:
+                if f.endswith(x):
                     os.unlink(os.path.join(db_path, f))
 
         try:

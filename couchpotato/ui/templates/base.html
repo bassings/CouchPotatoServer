@@ -535,7 +535,7 @@ tailwind.config = {
       <span class="font-semibold text-sm tracking-tight">CouchPotato</span>
     </a>
   </div>
-  <button @click="mobileMenu = !mobileMenu" 
+  <button x-ref="mobileMenuToggle" @click="mobileMenu = !mobileMenu"
           class="text-cp-muted hover:text-cp-text" 
           :aria-expanded="mobileMenu.toString()"
           aria-controls="mobile-menu"
@@ -547,7 +547,7 @@ tailwind.config = {
 </header>
 
 <!-- MOBILE MENU OVERLAY -->
-<div x-show="mobileMenu" x-transition.opacity @click="mobileMenu = false" class="lg:hidden fixed inset-0 z-40 bg-black/60" aria-hidden="true"></div>
+<div x-show="mobileMenu" x-transition.opacity @click="mobileMenu = false" @keydown.escape.window="if (mobileMenu) { mobileMenu = false; $refs.mobileMenuToggle.focus(); }" class="lg:hidden fixed inset-0 z-40 bg-black/60" aria-hidden="true"></div>
 <nav x-show="mobileMenu" x-transition id="mobile-menu" aria-label="Mobile menu" class="lg:hidden fixed top-12 right-0 z-50 w-56 bg-cp-card border-l border-b border-white/[0.06] rounded-bl-md p-3 space-y-1 max-h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain">
   {% for id, label, icon in nav_items %}
   <a href="{{ new_base }}{{ id }}/" @click="mobileMenu = false" class="flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}">

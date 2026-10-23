@@ -1,5 +1,4 @@
 // CouchPotato Service Worker
-const CACHE_NAME = 'couchpotato-v1';
 const STATIC_CACHE = 'couchpotato-static-v1';
 const DYNAMIC_CACHE = 'couchpotato-dynamic-v1';
 const SCOPE_PATH = new URL(self.registration.scope).pathname;
@@ -22,36 +21,76 @@ const STATIC_ASSETS = [
   'static/scripts/vendor/new-ui/alpine-3.17.5.min.js'
 ].map(withBase);
 
-// Install event - cache static assets
+async function installAssets() {
+  try {
+    const cache = await caches.open(STATIC_CACHE);
+    await cache.addAll(STATIC_ASSETS);
+  } catch {
+    // Precache failure must not prevent online use or disclose request URLs.
+    console.log('[SW] Some assets could not be cached');
+  }
+  await self.skipWaiting();
+}
+
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then(cache => {
-      console.log('[SW] Caching static assets');
-      return cache.addAll(STATIC_ASSETS).catch(err => {
-        console.log('[SW] Some assets failed to cache:', err);
-        // Continue anyway - some assets might be cross-origin
-      });
-    })
-  );
-  self.skipWaiting();
+  event.waitUntil(installAssets());
 });
 
 // Activate event - clean up old caches
+async function activateCaches() {
+  const keys = await caches.keys();
+  await Promise.all(keys
+    .filter(key => key !== STATIC_CACHE && key !== DYNAMIC_CACHE)
+    .map(key => caches.delete(key)));
+  await self.clients.claim();
+}
+
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys => {
-      return Promise.all(
-        keys
-          .filter(key => key !== STATIC_CACHE && key !== DYNAMIC_CACHE)
-          .map(key => {
-            console.log('[SW] Removing old cache:', key);
-            return caches.delete(key);
-          })
-      );
-    })
-  );
-  self.clients.claim();
+  event.waitUntil(activateCaches());
 });
+
+async function cachedResponse(request) {
+  try {
+    return await caches.match(request);
+  } catch {
+    return undefined;
+  }
+}
+
+function networkResult(response, cacheName) {
+  return {response, cacheName, copy: response.ok && cacheName ? response.clone() : null};
+}
+
+async function staticResponse(request) {
+  const cached = await cachedResponse(request);
+  if (cached) return {response: cached};
+  return networkResult(await fetch(request), STATIC_CACHE);
+}
+
+async function pageResponse(request) {
+  try {
+    return networkResult(await fetch(request), request.mode === 'navigate' ? DYNAMIC_CACHE : null);
+  } catch {
+    const cached = await cachedResponse(request) || await cachedResponse(withBase(''));
+    return {response: cached || new Response('Offline', {
+      status: 503,
+      statusText: 'Service Unavailable',
+      headers: {'Content-Type': 'text/plain'},
+    })};
+  }
+}
+
+async function maintainCache(resultPromise, request) {
+  try {
+    const {copy, cacheName} = await resultPromise;
+    if (!copy) return;
+    const cache = await caches.open(cacheName);
+    await cache.put(request, copy);
+  } catch {
+    // Cache storage is optional. Its failure must not replace a good response.
+    console.log('[SW] Cache update skipped');
+  }
+}
 
 // Fetch event - serve from cache, fallback to network
 self.addEventListener('fetch', event => {
@@ -61,70 +100,22 @@ self.addEventListener('fetch', event => {
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // Skip API calls - always go to network
-  if (url.pathname.startsWith(withBase('api/')) || url.pathname.includes('.')) {
-    // For API calls, network-first with no caching
-    if (url.pathname.startsWith(withBase('api/'))) {
-      return;
-    }
-  }
+  // API requests always go to the network without entering either cache.
+  if (url.pathname.startsWith(withBase('api/'))) return;
 
   // For static assets, use cache-first
-  if (url.pathname.startsWith(withBase('static/')) ||
+  const isStatic = url.pathname.startsWith(withBase('static/')) ||
       url.hostname === 'unpkg.com' || url.hostname.endsWith('.unpkg.com') ||
-      url.hostname === 'jsdelivr.net' || url.hostname.endsWith('.jsdelivr.net')) {
-    event.respondWith(
-      caches.match(request).then(cached => {
-        if (cached) return cached;
-        return fetch(request).then(response => {
-          // Cache successful responses
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(STATIC_CACHE).then(cache => {
-              cache.put(request, clone);
-            });
-          }
-          return response;
-        });
-      })
-    );
-    return;
-  }
-
-  // For pages, use network-first with cache fallback
-  event.respondWith(
-    fetch(request)
-      .then(response => {
-        // Cache successful page responses
-        if (response.ok && request.mode === 'navigate') {
-          const clone = response.clone();
-          caches.open(DYNAMIC_CACHE).then(cache => {
-            cache.put(request, clone);
-          });
-        }
-        return response;
-      })
-      .catch(() => {
-        // Network failed, try cache
-        return caches.match(request).then(cached => {
-          if (cached) return cached;
-          // Return offline page if available
-          return caches.match(withBase('')).then(offline => {
-            if (offline) return offline;
-            return new Response('Offline', {
-              status: 503,
-              statusText: 'Service Unavailable',
-              headers: { 'Content-Type': 'text/plain' }
-            });
-          });
-        });
-      })
-  );
+      url.hostname === 'jsdelivr.net' || url.hostname.endsWith('.jsdelivr.net');
+  const result = isStatic ? staticResponse(request) : pageResponse(request);
+  event.respondWith(result.then(value => value.response));
+  // Register synchronously, and keep writes alive without delaying responses.
+  event.waitUntil(maintainCache(result, request));
 });
 
 // Handle messages from the page
 self.addEventListener('message', event => {
   if (event.data === 'skipWaiting') {
-    self.skipWaiting();
+    event.waitUntil(self.skipWaiting());
   }
 });
