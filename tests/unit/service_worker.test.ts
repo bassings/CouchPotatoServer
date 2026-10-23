@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {format} from 'node:util';
 import {describe, expect, it, vi} from 'vitest';
 
 function worker() {
@@ -41,7 +42,8 @@ function worker() {
   const request = (path: string, mode = 'navigate', method = 'GET') => ({
     url: `https://app.test${path}`, mode, method,
   });
-  return {cache, caches, fetch, self, console, dispatch, request};
+  const loggedText = () => console.log.mock.calls.map(args => format(...args)).join('\n');
+  return {cache, caches, fetch, self, console, loggedText, dispatch, request};
 }
 
 describe('service worker event lifetime and cache failures', () => {
@@ -72,7 +74,7 @@ describe('service worker event lifetime and cache failures', () => {
     const {event, settled} = w.dispatch('fetch', {request: w.request('/wanted/')});
     expect(await (await event.respondWith.mock.calls[0][0]).text()).toBe('online');
     await expect(settled()).resolves.toBeDefined();
-    expect(JSON.stringify(w.console.log.mock.calls)).not.toContain(error.message);
+    expect(w.loggedText()).not.toContain(error.message);
   });
 
   it('serves cached static assets without fetching or rewriting them', async () => {
@@ -131,7 +133,7 @@ describe('service worker event lifetime and cache failures', () => {
     const {settled} = w.dispatch('install');
     await settled();
     expect(w.self.skipWaiting).toHaveBeenCalledOnce();
-    expect(JSON.stringify(w.console.log.mock.calls)).not.toContain('private URL');
+    expect(w.loggedText()).not.toContain('private URL');
   });
 
   it('waits for cache deletion before claiming clients', async () => {

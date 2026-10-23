@@ -62,3 +62,5 @@ Resolve the 23 records first observed by the exact-master analysis of `7adb683fc
 - The first cache-write mutation survived an insufficient microtask-only wait. The lifetime contract now yields a complete event-loop turn before checking premature completion; repeating that mutation fails both static and navigation cases.
 - `make mutation-changed BASE=origin/master` confirms these changed paths are outside the configured mutmut/Stryker scopes. Explicit probes above cover the new behaviour without widening or weakening those scopes.
 - Ruff, test-trap and template conformance checks pass. Full gate and independent review are the next delivery steps.
+
+- Independent security review found that JSON serialisation hid `Error.message` in two privacy assertions. Both now use one console-formatting helper. Separate raw-error logging mutations fail, and restoration passes all 15 worker tests.
