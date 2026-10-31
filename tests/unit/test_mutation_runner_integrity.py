@@ -20,13 +20,31 @@ export default defineConfig({ test: { environment: 'node', include: ['tests/unit
     source = tmp_path / 'couchpotato/static/scripts/ui/canary.js'
     source.parent.mkdir(parents=True)
     source.write_text('export function increment(value) { return value + 1; }\n')
+    # Developer environments and operational state are not JS runner inputs.
+    # Use synthetic markers to test the actual sandbox, without copying any
+    # credentials or personal data into the fixture.
+    private_dirs = ['.venv', 'venv', 'mutants', '.mutmut-cache', '.codex',
+                    '.claude', 'test_data', 'data', 'config', '.config',
+                    '.e2e-w0-data']
+    for directory in private_dirs:
+        marker = tmp_path / directory / 'must-not-copy'
+        marker.parent.mkdir()
+        marker.write_text('synthetic private state')
     test = tmp_path / 'tests/unit/ui/canary.spec.ts'
     test.parent.mkdir(parents=True)
     test.write_text('''
 import { describe, it, expect } from 'vitest';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { increment } from '../../../couchpotato/static/scripts/ui/canary.js';
 describe('increment contract', () => {
   it('adds one', () => { expect(increment(2)).toBe(3); });
+});
+''' + '\n' + 'const privateDirs = ' + json.dumps(private_dirs) + ''';
+it('excludes private state from the actual sandbox', () => {
+  for (const directory of privateDirs) {
+    expect(existsSync(join(process.cwd(), directory, 'must-not-copy')), directory).toBe(false);
+  }
 });
 ''')
     config = json.loads((ROOT / 'stryker.conf.json').read_text())

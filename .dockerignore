@@ -84,6 +84,11 @@ npm-debug.log*
 playwright-report/
 test-results/
 
+# Disposable mutation sandboxes can contain copied development environments.
+**/.stryker-tmp
+**/mutants
+**/.mutmut-cache
+
 # Local-only trees that must never enter a build context. Measured on a local
 # `docker build` from a working tree: test_data/ contributed 71 MB containing
 # 6,455 real library paths (the owner's film index, which AGENTS.md names as

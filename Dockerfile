@@ -9,7 +9,7 @@
 # Minimums keep a future base refresh from silently restoring vulnerable musl.
 
 # Stage 1: Build dependencies
-FROM python:3.15-alpine@sha256:d44b1254cb92329418d164b22b20d86bbd3869d48e80e09e476531a409a728bb AS builder
+FROM python:3.15-alpine@sha256:20a82dbc2783112ddb91d1534603f802d222a3e63e593cd002eb2ac534e70211 AS builder
 
 WORKDIR /build
 
@@ -31,7 +31,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip==26.2.2 \
     && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Stage 2: Runtime
-FROM python:3.15-alpine@sha256:d44b1254cb92329418d164b22b20d86bbd3869d48e80e09e476531a409a728bb
+FROM python:3.15-alpine@sha256:20a82dbc2783112ddb91d1534603f802d222a3e63e593cd002eb2ac534e70211
 
 LABEL maintainer="CouchPotato"
 LABEL description="CouchPotato - Automatic Movie Downloader"
@@ -68,12 +68,15 @@ ENV PYTHONUNBUFFERED=1 \
 #   keep the minimum to protect future base refreshes.
 # - zlib must stay at or above 1.3.2-r1 to avoid CVE-2026-85091 (MEDIUM).
 #   The pinned base ships that fix; keep the floor for future base refreshes.
+# - mediainfo pulls in libcurl; require 8.23.0-r0 to fix the vulnerabilities
+#   reported against 8.22.0-r0 by the full-severity image scan.
 RUN apk add --no-cache \
         "musl>=1.2.6-r3" \
         "musl-utils>=1.2.6-r3" \
         ca-certificates \
         su-exec \
         mediainfo \
+        "libcurl>=8.23.0-r0" \
         libstdc++ \
         7zip \
         "c-ares>=1.34.8-r0" \
