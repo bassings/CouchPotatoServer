@@ -1,4 +1,4 @@
-"""Keep patched libc packages in both build and shipped image stages."""
+"""Keep patched OS packages in the build and shipped image stages."""
 
 import re
 import shlex
@@ -7,9 +7,14 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize('stage', ['builder', 'runtime'])
-@pytest.mark.parametrize('package', ['musl', 'musl-utils'])
-def test_each_stage_requires_patched_musl(stage, package):
+@pytest.mark.parametrize(('stage', 'package', 'fixed_version'), [
+    ('builder', 'musl', '1.2.6-r3'),
+    ('builder', 'musl-utils', '1.2.6-r3'),
+    ('runtime', 'musl', '1.2.6-r3'),
+    ('runtime', 'musl-utils', '1.2.6-r3'),
+    ('runtime', 'libcurl', '8.23.0-r0'),
+])
+def test_stages_require_patched_os_packages(stage, package, fixed_version):
     dockerfile = (Path(__file__).resolve().parents[2] / 'Dockerfile').read_text()
     # Parse executable RUN instructions, excluding comments and other stages.
     stages = re.split(r'^FROM\s+[^\n]+\n', dockerfile, flags=re.MULTILINE)[1:]
@@ -27,6 +32,6 @@ def test_each_stage_requires_patched_musl(stage, package):
         if tokens[:2] == ['apk', 'add']:
             packages.extend(tokens[2:])
 
-    assert f'{package}>=1.2.6-r3' in packages, (
-        f'{stage} must install {package}>=1.2.6-r3 to fix CVE-2026-107891'
+    assert f'{package}>={fixed_version}' in packages, (
+        f'{stage} must install {package}>={fixed_version}'
     )
