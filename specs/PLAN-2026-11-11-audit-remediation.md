@@ -418,8 +418,11 @@ Draft acceptance: id-only projection, set membership, one batched fetch,
 server-side paging at 50; `with_doc=True` reuses the row in hand; the UI pages
 or scrolls incrementally with E2E updated; the budget, which the conductor derives from T18's
 numbers and records in the T19 spec with no further owner answer needed, is
-enforced as a test. If T18 shows the current code already meets the target at
-5,000, this task shrinks to paging only. Effort L. Risk medium.
+enforced as a test. The budget is a per-page statement ceiling that does not
+grow with library size, asserted identically at 500 and 20,000 (AC-QA-28);
+T19's own spec fixes the number. If T18 shows the current code already holds
+a constant per-page statement count at 5,000, this task shrinks to paging
+only. Effort L. Risk medium.
 
 **T20. Make per-route API locks opt-in.** F-P3. (needs: T19)
 Acceptance: `addApiView` takes a flag; only routes that need serialising set
