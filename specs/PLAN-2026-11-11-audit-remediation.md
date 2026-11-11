@@ -146,7 +146,8 @@ contradict, the draft text here. The amendments that change a task's scope:
   the deleted files, but it imports `couchpotato.core.db.sqlite_adapter`,
   which runs `db/__init__.py`, which imports `codernity_adapter` and
   `factory`. Edit `db/__init__.py` in the same change as the deletions, or
-  the migrator fails on import and a legacy install refuses to boot. Effort S. Risk medium: it borders the migration path. **T31**
+  the migrator fails on import, and so does every boot, because
+  `runner.py` imports `sqlite_adapter` on each start. Effort S. Risk medium: it borders the migration path. **T31**
   removes the remaining live CodernityDB imports and index subclasses and
   adds the AST import guard (AC-ARCH-15, the guard in AC-QA-23, the
   `sys.modules` sentence of AC-SEC-25, the grep half of AC-SIMP-8). Effort
@@ -449,7 +450,7 @@ into their own spec as the starting set.
 - **AC-SEC-24:** T11: a Plex `addToLibrary` call with a token configured, logged at DEBUG, leaves no token value in the written log file.
 - **AC-SEC-25:** T31 (first sentence), T30 (second sentence): starting the server process against a SQLite data directory (no legacy `database/` dir) leaves no module whose name starts with `CodernityDB` or `couchpotato.core.db.codernity_adapter` in `sys.modules`, checked in a subprocess after app creation. `couchpotato/core/db/__init__.py` no longer imports `codernity_adapter` or `factory`. (merges AC-OPS-12)
 - **AC-SEC-26:** T19: the paging parameters of `media.list` are validated. Non-integer, negative or above-maximum `limit`/`offset` values (including `1;DROP TABLE media`) are rejected or clamped to a stated maximum. The SQL uses bound parameters only, and a test asserts the media table is intact after the hostile inputs.
-- **AC-SEC-27:** T20: routes that change credentials or auth state (`settings.save`, the T21 rotation route, any password route) keep their serialisation, and a test asserts the lock is in force on each.
+- **AC-SEC-27:** T20: routes that change credentials or auth state (`settings.save`, the T21 rotation route (if T21 has not landed when T20 runs, T21 adds its route to this test), any password route) keep their serialisation, and a test asserts the lock is in force on each.
 - **AC-SEC-28:** T21: within one process and with no restart, after rotation the old key returns 401 via the `X-Api-Key` header, the `/api/<old>/...` URL prefix, `nonblock/` routes and `file.cache/`, and the new key succeeds on each. The api_key captured as a `create_app` argument is no longer what requests are compared against.
 - **AC-SEC-29:** T21: after rotation, a log record containing the new key is redacted by both the console and file PrivacyFilter instances, and the rotation's own log line contains neither the old nor the new key.
 - **AC-SEC-30:** T21: the rotation route is POST-only (GET returns 404 or 405), requires the current session when auth is on or the current api_key, is refused cross-origin through the same check as `ORIGIN_CHECKED_API_ROUTES`, and its response sends `Cache-Control: no-store`.
