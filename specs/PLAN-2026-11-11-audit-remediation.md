@@ -153,12 +153,18 @@ contradict, the draft text here. The amendments that change a task's scope:
   `sys.modules` sentence of AC-SEC-25, the grep half of AC-SIMP-8). Effort
   M. Risk medium. A criterion that names T15 binds whichever of the three
   delivers the behaviour it describes; AC-OPS-19 binds all three and T33.
-- **T7:** verify first, then fix if confirmed: outside dev mode `runHandler`
-  appends `Env.all()` (application and data directories, start-up arguments
-  and options) to its ERROR record and prints the traceback to stdout
-  (`event.py`, `runHandler`). Reported by two reviewers on 2026-11-11 from
-  reading the code; whether `PrivacyFilter` already scrubs those paths is
-  not checked.
+- **T7:** also covers `runHandler` in `couchpotato/core/event.py`, which
+  joins T7's files. Outside dev mode it appends `Env.all()` (application
+  and data directories, start-up arguments and options) to its ERROR
+  record. Measured 2026-11-11 through the real `PrivacyFilter`: Docker and
+  NAS-style paths reach the log unchanged, and under a home directory only
+  the `/home/<user>` or `/Users/<user>` prefix is replaced. It also
+  `print`s the exception message and full traceback to stdout, which never
+  passes through the filter. The dump is directory layout, not credentials;
+  an exception message carrying a URL with a key in it would reach stdout
+  unredacted (read, not reproduced). T7 removes the dump and the prints, or
+  routes both through the filter, with a test for each. T10 edits a
+  different region of the same file.
 - **T16:** three sites, not four. T16 changes nothing in `event.py`
   (AC-ARCH-12): the catch the audit cited there cannot be reached by a
   listener registered through `addEvent`, and the logging improvement is
@@ -181,7 +187,16 @@ contradict, the draft text here. The amendments that change a task's scope:
   wraps each group in its own `except Exception`, so a test driven through
   `scan()` cannot see an exception escaping `_processGroup`. The renamer
   imports `fireEvent` by name, and `fireEventAsync` does not route through
-  that name. The automatic rename path writes no `done` status today.
+  that name. The automatic rename path writes no `done` status itself today.
+  The writer for a renamed file is manage's `renamer.after` listener
+  (`after_rename` in `plugins/manage.py`, priority 110, so it runs after
+  Plex at the default 100), through `scanFilesToLibrary` and `release.add`;
+  it is dead today because the event never fires. Whether T11 writes the
+  status in the renamer before firing (AC-ARCH-9) or leaves it to that
+  listener is for T11's spec, and the choice decides whether AC-QA-18 (a)
+  can be tested separately from (b): if a listener is the writer, a failing
+  Plex listener leaves `done` written through isolation alone, with or
+  without a renamer guard.
 - **T19:** the library page's filter, chips, count and Select All run in the
   browser over the full list today and must keep working under paging
   (AC-DESIGN-9 to AC-DESIGN-15, AC-A11Y-8 to AC-A11Y-11).
@@ -284,7 +299,7 @@ path from inside its own container is refused, not remapped. Effort M. Risk
 medium: a refusal leaves failed downloads on disk, which is the cheap tier.
 
 **T7. Redact URL credentials and tracebacks in logs.** F-S3, part of F-S8.
-Files: `couchpotato/core/logger.py`.
+Files: `couchpotato/core/logger.py`, `couchpotato/core/event.py` (`runHandler` only).
 Acceptance: `scheme://user:pass@host` is redacted in `msg`, `args` and
 `exc_text`; every existing redaction pass also runs over `exc_text`; `p` and
 `u` join the query-string redaction list; a test reproduces the NZBGet
