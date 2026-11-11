@@ -443,10 +443,18 @@ only one of the two return paths. That guard is T1 below.
       The `needs: T6` this entry carried is dropped: T7 merged as #329 while T6
       was still open, so the dependency was never real.
       state: merged #329
-- [ ] T8: five films identified earlier today that are still not added to the
-      library. Data task, no PR, state: queued (needs: T7)
+- [x] T8: five films identified earlier today that are still not added to the
+      library. Data task, no PR, state: dropped 2026-11-11 (needs: T7)
 
 ## Conductor log
+
+- 2026-11-11 T8 dropped and the plan closed. The five titles were never
+  recorded anywhere and the question sat unanswered from 2026-09-10; the
+  owner chose to proceed to the audit remediation plan
+  (`specs/PLAN-2026-11-11-audit-remediation.md`) without supplying them. No
+  work was lost: T8 was a data task with no code. The box is ticked to close
+  the plan, not because the films were added. No `human_wait_started` row
+  exists in the ledger for this plan, so no `human_wait_ended` was appended.
 
 - 2026-09-09 T6 merged as #333 after the owner chose to restructure rather
   than land with each variant guarded. The restructure replaced five pieces
