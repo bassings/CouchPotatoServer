@@ -66,8 +66,9 @@ ENV PYTHONUNBUFFERED=1 \
 #   libuuid. Pinning "util-linux" would install an unrelated package and leave
 #   libuuid untouched. The pinned base currently ships libuuid 2.42.3-r1;
 #   keep the minimum to protect future base refreshes.
-# - zlib must stay at or above 1.3.2-r1 to avoid CVE-2026-85091 (MEDIUM).
-#   The pinned base ships that fix; keep the floor for future base refreshes.
+# - zlib must stay at or above 1.4-r0 to avoid CVE-2026-4738 (MEDIUM).
+#   The pinned base image still ships 1.3.2-r1, so this floor is what pulls
+#   the fix in from the Alpine repository; keep it for future base refreshes.
 # - mediainfo pulls in libcurl; require 8.23.0-r0 to fix the vulnerabilities
 #   reported against 8.22.0-r0 by the full-severity image scan.
 RUN apk add --no-cache \
@@ -83,7 +84,7 @@ RUN apk add --no-cache \
         "libcrypto3>=3.5.8-r0" \
         "libssl3>=3.5.8-r0" \
         "libuuid>=2.42.3-r1" \
-        "zlib>=1.3.2-r1"
+        "zlib>=1.4-r0"
 
 # Create app user
 ARG PUID=1000
