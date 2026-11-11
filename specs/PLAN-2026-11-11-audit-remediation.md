@@ -80,7 +80,7 @@ Finding ids are prefixed `F-` to keep them distinct from task ids.
 | F-S9 | Medium | `deleteFolder` can target the watch folder itself; "junk only" is a substring test | T3, T6 |
 | F-Q1 | Medium | About 40 handlers catch CodernityDB `RecordNotFound`/`RecordDeleted`, which `SQLiteAdapter` never raises | T15, T31 |
 | F-Q2 | Medium | `release/main.py:701` treats any read error as "absent" and inserts; identifier index is non-unique | T8 |
-| F-Q3 | Medium | Broad `except Exception` on data paths hides failures (`core/event.py:379`, `core/media/_base/searcher/main.py:204`, `core/loader.py:117`, `core/media/_base/media/main.py:892`) | T16 |
+| F-Q3 | Medium | Broad `except Exception` on data paths hides failures (`core/media/_base/searcher/main.py:204`, `core/loader.py:117`, `core/media/_base/media/main.py:892`; the audit also cited `core/event.py`, where the handler-failure logging is T11's under AC-OPS-10) | T16, T11 |
 | F-P2 | Medium | `with_doc=True` reads each document twice | T19 |
 | F-P3 | Medium | One lock per API route serialises same-route calls | T20 |
 | F-P4 | Medium | `fix_release_quality` runs ungated on every boot | T17 |
@@ -153,9 +153,35 @@ contradict, the draft text here. The amendments that change a task's scope:
   `sys.modules` sentence of AC-SEC-25, the grep half of AC-SIMP-8). Effort
   M. Risk medium. A criterion that names T15 binds whichever of the three
   delivers the behaviour it describes; AC-OPS-19 binds all three and T33.
-- **T16:** at `event.py` the change is logging only. Narrowing the catch there
-  would remove the isolation between a failing listener and a completed move
-  (AC-ARCH-12).
+- **T7:** verify first, then fix if confirmed: outside dev mode `runHandler`
+  appends `Env.all()` (application and data directories, start-up arguments
+  and options) to its ERROR record and prints the traceback to stdout
+  (`event.py`, `runHandler`). Reported by two reviewers on 2026-11-11 from
+  reading the code; whether `PrivacyFilter` already scrubs those paths is
+  not checked.
+- **T16:** three sites, not four. T16 changes nothing in `event.py`
+  (AC-ARCH-12): the catch the audit cited there cannot be reached by a
+  listener registered through `addEvent`, and the logging improvement is
+  T11's (AC-OPS-10).
+- **Event dispatch, as measured (2026-11-11), for T11's spec.** Two reviewers
+  independently removed catches from in-memory copies of `event.py` with two
+  listeners registered through `addEvent`, the first raising:
+
+  | Catches removed | Second listener runs | Exception reaches the caller |
+  |---|---|---|
+  | none | yes | no |
+  | `createHandle`'s only | yes | no |
+  | `fireEvent`'s dispatch-loop only | yes | no |
+  | both of the above | no | no |
+  | both, and `fireEvent`'s outer catch | no | yes |
+
+  Also measured or read: `runHandler` logs and re-raises, and `createHandle`
+  catches, so a failure produces two ERROR records today and the second
+  already contains the event name and the handler's repr. `Renamer.scan()`
+  wraps each group in its own `except Exception`, so a test driven through
+  `scan()` cannot see an exception escaping `_processGroup`. The renamer
+  imports `fireEvent` by name, and `fireEventAsync` does not route through
+  that name. The automatic rename path writes no `done` status today.
 - **T19:** the library page's filter, chips, count and Select All run in the
   browser over the full list today and must keep working under paging
   (AC-DESIGN-9 to AC-DESIGN-15, AC-A11Y-8 to AC-A11Y-11).
@@ -327,8 +353,8 @@ with their tests after confirming `scripts/migrate_codernity_to_sqlite.py`
 does not use them; `media.get` on a missing id takes its not-found branch.
 Effort M. Risk medium.
 
-**T16. Narrow the four data-path catch-alls.** F-Q3.
-Acceptance: `event.py:379`, `searcher/main.py:204`, `loader.py:117` and
+**T16. Narrow the three data-path catch-alls.** F-Q3.
+Acceptance: `searcher/main.py:204`, `loader.py:117` and
 `media/main.py:892` each catch named exceptions or log at error and re-raise;
 each has a test showing a real failure is now visible. One PR per site if any
 changes behaviour a caller depends on. Effort M. Risk medium.
@@ -478,11 +504,11 @@ into their own spec as the starting set.
 - **AC-QA-12:** T7: the tests feed the real PrivacyFilter through a real logging.Logger and handler, and assert on the formatted output string. Hostile inputs beyond AC-SEC-12: a password containing `@` and `:`; a user with no password; schemes scgi and http+xmlrpc. Non-cases that must be left alone: `?top=5` and `?up=1` are not redacted, because the `p`/`u` match is on the whole parameter name.
 - **AC-QA-13:** T8: with a real SQLiteAdapter on tmp_path, (a) a missing identifier inserts exactly one release; (b) an existing identifier inserts none and updates quality; (c) `sqlite3.OperationalError` injected at the adapter's connection (not by mocking `db.get`) propagates, or is logged at error, and the release count is unchanged. Restoring `except Exception` makes (c) fail.
 - **AC-QA-17:** T11: the probe `renamer.after` listener asserts at call time that the destination file exists and the source is gone. Moving the fireEvent call above `_moveRenamedFiles` makes the test fail. The event fires exactly once per successfully moved group; it fires zero times for a group whose move fails, for a group skipped for no media_info, and on a second scan of an already-processed folder.
-- **AC-QA-18:** T11: two separate tests, stated as outcomes; the T11 spec fixes the mechanism. Measured on 2026-11-11: a listener exception passes three catches in `couchpotato/core/event.py`, `createHandle`'s (around `:290`, which is the one that fires for any listener registered through `addEvent`), the dispatch loop's in `fireEvent` (around `:379`) and `fireEvent`'s outer one (around `:416`); and `Renamer.scan()` has its own per-group catch (`renamer/main.py`, around `:602`). Line numbers move as T11 and T14 edit the file, so the functions are the reference. (a) Caller safety: when dispatch of `renamer.after` raises into the renamer, the move is complete, the release reaches `status: done` read back from a real `SQLiteAdapter`, and `_processGroup` still returns the group's outcomes. The test calls `_processGroup` directly, because `scan()`'s per-group catch would absorb the exception and pass the test with no guard. The stand-in dispatcher raises only for the `renamer.after` name and delegates every other event to the real one, on whichever dispatch function the fire site calls. Deleting the renamer's guard is proven to fail the test. If T11 dispatches asynchronously, (a) is replaced by a test that the fire site cannot raise into `_processGroup`, and the spec records why. (b) Listener isolation: a second listener registered through `addEvent` after a raising one is still called. This belongs to the dispatcher, not the renamer. Removing both handler-level catches, `createHandle`'s and the dispatch loop's, is proven to fail the test; removing either one alone does not, which the test records so a later change that collapses the two layers is noticed. Shared with AC-ARCH-12.
+- **AC-QA-18:** T11: two outcomes are the contract. (a) Caller safety: a failing `renamer.after` listener never undoes, masks or interrupts a completed move; the release still reaches its final status and the rest of that group's processing still runs. (b) Listener isolation: one failing listener never stops the listeners registered after it. How each is tested and proven load-bearing is designed in T11's own spec and planning cycle, against the facts in "Event dispatch, as measured" under Task detail. Three attempts to prescribe the mutation here each produced a test that could not fail, so this plan prescribes none.
 - **AC-QA-20:** T12: with three notification providers registered, two enabled and one disabled, a single completed rename produces exactly one call to each enabled provider and zero calls to the disabled one. The script notifier, given each of a nonexistent path, a non-executable file and a relative path, never reaches the subprocess boundary (a stub that raises if called).
 - **AC-QA-22:** T14: a fixture folder holds a movie plus `.srt`, `.en.srt`, `.forced.en.srt` and a subtitle belonging to a different movie in the same folder. The first three arrive beside the placed movie and the fourth does not move. `renamer.before` is observed before the source file is removed.
 - **AC-QA-23:** T15: `media.get` on a missing id takes its not-found branch on a real adapter. The import guard is AST-based and fails on `import CodernityDB`, `from CodernityDB...`, `from libs.CodernityDB...` and an `importlib.import_module('CodernityDB...')` string anywhere in `couchpotato/` (proven by adding each form to a scratch module). The only permitted importer outside `libs/` is `scripts/migrate_codernity_to_sqlite.py`. (merges AC-ARCH-14)
-- **AC-QA-25:** T16: for each site T16 changes, a test injects a real failure at that site and asserts, via caplog, an ERROR record containing the exception type, and asserts the documented outcome (re-raised or handled). Restoring the original catch-all makes that test fail.
+- **AC-QA-25:** T16: for each site T16 changes, a test injects a real failure at that site and asserts, via caplog, an ERROR record containing the exception type, and asserts the documented outcome (re-raised or handled). Restoring the original catch-all makes that test fail. This binds the three sites T16 changes; `event.py` is not one of them (AC-ARCH-12).
 - **AC-QA-27:** T18: the benchmark records media.list wall time (median of 5) and SQL statement count (via `sqlite3.Connection.set_trace_callback`) at 500, 5,000 and 20,000 seeded movies, with the seed, the machine and the commit stated in the conductor log.
 - **AC-QA-28:** T19: the enforced budget is a statement-count ceiling per page request, which is deterministic. Any wall-time threshold is informational only. Paging tests cover: page 1, the last partial page, a page past the end (empty with a correct total), page 0 or negative and a limit above the maximum (rejected or clamped, as the spec decides), and that concatenating all pages yields every id exactly once.
 - **AC-QA-29:** T20: overlap is proven without sleeps. Two concurrent `media.list` calls each block on a `threading.Barrier(2)` inside the handler and both complete. A route that keeps its lock deadlocks the same barrier test, which is caught by a bounded timeout and asserted as serialised. Both directions are tested.
@@ -609,7 +635,7 @@ into their own spec as the starting set.
 - **AC-ARCH-9:** T11: `renamer.after` is fired only after the move and the release's status write have committed, and the decision whether it is dispatched synchronously or via fireEventAsync is recorded in the T11 spec with the reason. If synchronous, a test shows a listener that sleeps does not hold the renamer's scan lock or delay the next group's move.
 - **AC-ARCH-10:** T11: the slice gate that keeps the non-Plex, non-manage `renamer.after` listeners dormant is a single named structure in one module. No listener file gains a slice-specific conditional. The gated listeners (Script, Synoindex, metadata, trailers, subtitles and the other notification providers) are registered, and a test asserts they are not called when `renamer.after` fires. (merges AC-QA-19)
 - **AC-ARCH-11:** T14 (removal): the T11 slice gate structure is deleted (grep for its name returns nothing). `renamer.before` and `renamer.after` are absent from UNFIRED_EVENTS. No comment under `couchpotato/` still asserts the chain is never fired.
-- **AC-ARCH-12:** T16 does not remove fireEvent's per-handler isolation: a test registers two handlers on one event, the first raising, and asserts the second still runs and the exception does not propagate to the fireEvent caller. Handler isolation is two catches, `createHandle`'s and the dispatch loop's in `fireEvent`; the test is proven by removing both (AC-QA-18 b). Any T16 change at either catch is limited to how the failure is logged or surfaced. (overrides the draft's "catch named exceptions or re-raise" for that one site)
+- **AC-ARCH-12:** T16 changes nothing in `couchpotato/core/event.py`. Listener isolation there (AC-QA-18 b) is kept, and its test is delivered by T11. (overrides the draft's "catch named exceptions or re-raise" for `event.py`)
 - **AC-ARCH-13:** T15: DocumentNotFound is defined in a backend-neutral module under `couchpotato/core/db/`, and no caller outside `couchpotato/core/db/` imports it from sqlite_adapter.
 - **AC-ARCH-15:** T15 (removal): `couchpotato/core/db/__init__.py` no longer exports CodernityDBAdapter, create_adapter or get_backend. Every index class that subclasses a CodernityDB index is deleted or no longer subclasses CodernityDB, and `Database.setupIndex` no longer instantiates CodernityDB index objects.
 - **AC-ARCH-17:** T19: paging uses the existing limit_offset parameter of `media.list`. No new list route or second paging parameter is added. The with_doc row reuse is implemented inside SQLiteAdapter, not as a caller-side special case in `media/main.py`.
@@ -629,9 +655,9 @@ into their own spec as the starting set.
 - **AC-OPS-7:** T6: every containment refusal logs at WARNING through PrivacyFilter, naming the caller (nzbget removeFailed, rtorrent removal, or renamer deleteFolder), the release or download identifier, and which rule refused (target is root, ancestor of root, outside root, or symlink). The record reaches the handler the in-app Logs page reads. A refusal never raises out of the downloader's status-check loop, which continues to the next item. (merges AC-PROD-12)
 - **AC-OPS-8:** T10: a non-Docker, non-git install logs one INFO line at startup naming the updater mode as notify-only, and `updater.info` still returns version and update_version for that install.
 - **AC-OPS-9:** T10: the outcome of checking whether release-to-prod.yml keeps attaching source archives is written into the conductor log as keep or remove, with the reason. If removed, the "Build source archives" step and both source-archive release assets are gone from release-to-prod.yml.
-- **AC-OPS-10:** T11: when a `renamer.after` listener raises, the ERROR record names the event and the handler's qualified name, not only a traceback. The release still reaches status done, and the moved file is not touched. The record a listener registered through `addEvent` produces today comes from `runHandler` and `createHandle`, not from the dispatch loop's catch, so that is where the change lands. It applies to handler-failure logging generally, so every later slice inherits it.
+- **AC-OPS-10:** T11: when a `renamer.after` listener raises, exactly one ERROR record is written for that failure, and it names the event and the handler's qualified name as its own text, not only inside an object repr or a traceback. The test is shown failing against the code as it stood before T11. The release still reaches status done, and the moved file is not touched. This applies to handler-failure logging generally, so every later slice inherits it. Where the change lands is for T11's spec, from the measured facts under Task detail.
 - **AC-OPS-13:** T15: the upgrade path for an install that still has a legacy `database` directory under data_dir is unchanged. `_open_or_create_database` still runs `scripts/migrate_codernity_to_sqlite.py` as a subprocess and opens the result. A non-zero exit still raises the "refusing to create a fresh database" RuntimeError rather than creating an empty database.
-- **AC-OPS-14:** T16: the settings-load failure in `loader.py` logs at WARNING or above, naming the plugin. Each of the narrowed sites leaves an ERROR or WARNING record naming the item (event name, plugin name, media id or search target) when a real failure occurs, checked with the logger at INFO. None of them logs a data-path failure at DEBUG.
+- **AC-OPS-14:** T16: the settings-load failure in `loader.py` logs at WARNING or above, naming the plugin. Each of the narrowed sites leaves an ERROR or WARNING record naming the item (event name, plugin name, media id or search target) when a real failure occurs, checked with the logger at INFO. None of them logs a data-path failure at DEBUG. The event-name half is delivered by T11 under AC-OPS-10, not by T16.
 - **AC-OPS-15:** T17: a failed `fix_release_quality` run logs at WARNING that it will retry on the next boot. A second boot after success logs nothing about it.
 - **AC-OPS-17:** T26: the Dockerfile HEALTHCHECK no longer fetches `/`; it fetches `/healthz`, asserted by a Dockerfile parse test. `/healthz` returns 200 when the database read succeeds and the scheduler is running, and 503 when the database read fails or the scheduler is not running, each proven by a test. It answers within the HEALTHCHECK's 5-second client timeout under normal load. A successful probe writes no log line at INFO or above. (merges AC-QA-34)
 - **AC-OPS-19:** Rollback: for each of T5, T15, T30, T31, T33, T17, T21 and T28, the PR body states what the previous beta image does when started against data written by the new one (new config.ini key, property marker, rotated api_key, recreated index). For T28 this is tested, as AC-DATA-28 requires.
@@ -680,8 +706,7 @@ detail", the edge below wins. The reasons (AC-SIMP-14):
   (AC-SEC-19).
 - **T13 needs T32:** T13 makes the metadata and artwork writes live, and T32
   makes both write paths atomic.
-- **T16 needs T14:** both edit `core/event.py`, and the chain has priority.
-- **T15, T19 and T22 need T14:** no file overlap is claimed by the chain's
+- **T15, T16, T19 and T22 need T14:** no file overlap is claimed by the chain's
   file lists. This is milestone order only, as for T28 and T30 below.
 - **T31 needs T15 and T30:** the AST guard and the grep-zero check pass only
   once T15 has converted the handlers and T30 has deleted the adapter files.
@@ -721,7 +746,7 @@ detail", the edge below wins. The reasons (AC-SIMP-14):
 - [ ] T15: First-party DocumentNotFound; convert the not-found handlers — state: queued (needs: T8, T14)
 - [ ] T30: Delete the dead second migration path — state: queued (needs: T33, T14)
 - [ ] T31: Remove the remaining live CodernityDB imports, with an AST import guard — state: queued (needs: T15, T30)
-- [ ] T16: Narrow the data-path catch-alls (logging only at event.py) — state: queued (needs: T7, T14)
+- [ ] T16: Narrow the data-path catch-alls (no change in event.py) — state: queued (needs: T7, T14)
 - [ ] T19: Rewrite the library list with paging — state: queued (needs: T18, T14)
 - [ ] T20: Tested opt-out from per-route API serialisation, only if T18 shows queuing — state: queued (needs: T19)
 - [ ] T22: Authentication hardening (login bucket, constant-time compare, /getkey) — state: queued (needs: T5, T14)
