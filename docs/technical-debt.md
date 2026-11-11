@@ -308,6 +308,27 @@ result. Getting it wrong the other way files a bug against working code.
   evidence was in the application's own log, which nothing kept until this
   branch made the harness retain it. That is the lesson, not the SQLite detail.
 
+- **Three intermittent tests, logged only (2026-11-12).** Each failed once on
+  2026-11-12 and passed on re-run, and none was caused by the change under test.
+  The owner's decision is to log them and not fix them now. Handling rule: one
+  re-run is allowed for a failure that is provably unrelated to the change; a
+  second failure stops the work and gets investigated rather than re-run again.
+  1. `tests/e2e/trakt-device-auth.spec.ts:212` ("starting authorisation
+     displays the code and URL inside a persistent live region"):
+     `[data-testid="trakt-user-code"]` was not visible within 8s in a full local
+     gate run. In isolation it passed 78/78 with `--repeat-each=6`, so the
+     trigger is load during the full run rather than the test in itself.
+  2. `tests/e2e/settings.spec.ts:107` ("visual option captions match their
+     control accessible names"): failed twice, then passed on retry, in CI run
+     43091127303 (PR #579). `--fail-on-flaky-tests` turned that into a failed
+     job. It passed on one re-run.
+  3. `tests/unit/test_sonar_scan.py::test_real_timeout_terminates_the_entire_subprocess_group`:
+     under the full coverage run it raised "Command failed: process tree"
+     instead of "Command timed out: process tree". The likely cause is its 0.2s
+     timeout racing subprocess start-up under load, which is an inference, not a
+     measurement. It passed 6/6 alone, with and without `--cov`, and it blocked
+     one `make sonar` run.
+
 ### Deferred at PR 1's review (2026-08-06)
 
 Raised by the multi-lens review of `m0-safety-net`, investigated, and
