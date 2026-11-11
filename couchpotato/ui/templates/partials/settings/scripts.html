@@ -50,6 +50,8 @@ function logsPanel() {
           if (force) this.clearError = '';
         }
       } catch (e) {
+        // `e` is deliberately not logged or shown: a failed load can carry
+        // server response text. The visible error state below is the handling.
         if (isCurrent()) {
           this.loadError = 'Unable to load logs. Refresh to retry.';
           console.error('Failed to load logs');
