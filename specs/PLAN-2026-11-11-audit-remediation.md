@@ -19,8 +19,9 @@ Production deployment is outside this plan. Betas publish per merge as usual.
    DNS-rebinding exposure and is not optional.
 4. The source-archive self-updater is **deleted**, not repaired.
 5. **SonarQube-driven sweeps are paused until M1 is merged.** Narrowed by
-   decision 14: a scan runs after every merge and its new findings are acted
-   on; the backlog sweep stays paused.
+   decision 14: a scan runs after every merge, and new findings plus backlog
+   findings in the files that merge touched are acted on; the wider backlog
+   sweep stays paused.
 6. Library-size target: 5,000 movies, paged 50 per request, measured at
    500 / 5,000 / 20,000. **Confirmed by Scott 2026-11-12.** T18 records the
    baseline; T19 no longer waits on an owner answer.
@@ -38,8 +39,11 @@ Decisions taken 2026-11-12 (Scott), numbered after the list below:
 14. After every merge to `master`, `make sonar` runs from the merged tree.
     Findings the merge introduced are fixed in code, as are backlog findings
     in files the merge touched. Nothing is resolved, accepted or dismissed to
-    move a number; a false positive is marked only with a recorded reason.
-    The scan stays reporting only and never gates a merge.
+    move a number; a false positive is marked only with a recorded reason
+    and what would make that judgement expire.
+    The scan stays reporting only and never gates a merge. Fixes land as
+    their own PRs under the standing criteria and are noted in the conductor
+    log; they are not plan tasks.
 15. Dependabot PRs are triaged by the orchestrator, which merges the ones it
     takes, closes the ones it rejects with evidence, and leaves held ones
     open with the condition for revisiting.
@@ -260,12 +264,14 @@ contradict, the draft text here. The amendments that change a task's scope:
 
 ### M0: safety net
 
-**T1. Restore the nightly build and alert on failure.** F-T1.
-Files: `Dockerfile`, `.github/workflows/ci.yml`, `mutation.yml`, `codeql.yml`.
-Acceptance: the Trivy step passes on the rebuilt image; the scheduled run has
-a step that notifies on failure, proven by a deliberately failed dry run on a
-branch; `specs/` records the digest bump decision. Re-verify the cause first
-(reported: zlib CVE-2026-4738, fix 1.4-r0). Effort S. Risk low.
+**T1. Alert on scheduled-workflow failure.** F-T1 (closed by #579 and by
+this task's PR together).
+Files: `.github/workflows/ci.yml`, `mutation.yml`, `codeql.yml`.
+Acceptance: each scheduled workflow has a step that notifies on failure,
+proven the way AC-QA-11 and AC-OPS-1 state; the conductor log records the URL
+of the first green scheduled `ci.yml` run on or after `4f488f9e4`, which is
+what shows the baseline is green again. The zlib remedy shipped in #579 and
+is not repeated. Effort S. Risk low.
 
 **T2. Mount `/data` in the shipped compose file.** F-T2.
 Files: `docker-compose.yml`, a unit test that parses it.
@@ -410,7 +416,8 @@ these numbers set T19's budget against it. Effort S. Risk low.
 **T19. Rewrite the library list.** F-P1, F-P2. **Needs spec.** (needs: T18)
 Draft acceptance: id-only projection, set membership, one batched fetch,
 server-side paging at 50; `with_doc=True` reuses the row in hand; the UI pages
-or scrolls incrementally with E2E updated; the confirmed budget from T18 is
+or scrolls incrementally with E2E updated; the budget, which the conductor derives from T18's
+numbers and records in the T19 spec with no further owner answer needed, is
 enforced as a test. If T18 shows the current code already meets the target at
 5,000, this task shrinks to paging only. Effort L. Risk medium.
 
@@ -504,7 +511,7 @@ into their own spec as the starting set.
 - **AC-SEC-14:** T7: `?p=`, `&p=`, `?u=` and `&u=` values are redacted in msg and exc_text, and NZBGet's `xmlrpc.client.ProtocolError` with a credentialled URL, logged through the real `removeFailed` error path, leaves no password in the written log file.
 - **AC-SEC-15:** T9: a unit test parses every `.github/workflows/*.yml` and every `action.yml` under `.github/` as YAML. It fails on any `uses:` whose ref is not exactly 40 lowercase hex characters, and that includes first-party `actions/*` and `github/*`. It excludes only local `./` actions and requires `@sha256:` on any `docker://` reference. Fixtures that must fail: `@v4`, `@main`, a 7-character short SHA, and a 40-character ref containing a non-hex character; a SHA followed by a version comment passes. Changing one real pin back to a tag is proven to make the test fail. (merges AC-QA-15)
 - **AC-SEC-16:** T9: each pinned SHA carries a `# vX.Y.Z` comment, and at review `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` (peeled) resolves to exactly that SHA in the upstream repository. No pin points at a fork-network commit that the named tag does not reference.
-- **AC-SEC-17:** T1: the fixable Trivy finding is cleared by shipping the fixed package: raise the version floor in the runtime `apk add` line (the existing idiom for `c-ares` and `libcrypto3`; zlib already has a floor there, `>=1.3.2-r1`, which rises to `>=1.4-r0`, and the stale comment beside it is corrected), or bump the base image digest if, and only if, the new base is shown to carry the fixed version. The image is inspected to confirm the fixed version is installed. No `.trivyignore` entry, `ignore-unfixed`, severity or exit-code change is added. Both `FROM` lines remain `@sha256:` pinned and identical. The failure-alert job declares job-level `permissions` limited to what it uses.
+- **AC-SEC-17:** T1: the fixable Trivy finding is cleared by shipping the fixed package, not by suppressing it. **Satisfied ahead of T1 by #579 (`4f488f9e4`):** the runtime `apk add` floor is `zlib>=1.4-r0` with its comment corrected, pinned by `tests/unit/test_dockerfile_security.py`; the image built from that commit was inspected (`apk info -v` reports `zlib-1.4-r0`) and passed Trivy with CI's flags, and the `docker` check is green. Still binding on T1: no `.trivyignore` entry, `ignore-unfixed`, severity or exit-code change is added; both `FROM` lines remain `@sha256:` pinned and identical; the failure-alert job declares job-level `permissions` limited to what it uses.
 - **AC-SEC-18:** T10 (removal): the `zipfile` and `tarfile` imports and both `extractall` calls are gone from `couchpotato/core/_base/updater/main.py`. On an install with no `.git` outside Docker, on tmp_path, the notify-only updater is selected, and a POST to `updater.update` with the HTTP boundary patched to raise makes no network call and writes no file. (merges the behaviour half of AC-QA-16)
 - **AC-SEC-19:** T12: T12 declares `needs: T5` in the Tasks list and does not merge before T5 is on master, because re-enabling `renamer.after` makes the settings-controlled `script.path` executable on unauthenticated installs.
 - **AC-SEC-20:** T12: the script notifier executes only when `script.path` is an absolute path to a regular file (checked with lstat, so not a symlink) that is executable, owned by the process user or root, and not group- or world-writable. Otherwise it logs a WARNING and runs nothing. Popen keeps `shell=False` with list argv. A destination_dir containing spaces, `;` and `$(id)` reaches the script as one literal argv element.
@@ -709,7 +716,7 @@ supplied the criterion the requirement traces to.
 Sustained (the requirement or criterion is dropped):
 
 - Dropped `AC-ARCH-16` (one shared run-once function for the boot migrations): vetoed by `AC-SIMP-9`. Two call sites do not justify a generic helper; the fail-open it was meant to fix is closed by `AC-DATA-22`.
-- Dropped `AC-ARCH-23` and `AC-QA-33` (pyright pinned, and proven to run): the pyright half of T25 is vetoed by `AC-SIMP-11`. An informational report nothing acts on, a new dependency and a slower gate; decision 5 already pauses acting on the other informational reporter. No lens supplied a criterion that needs it. Consequence: the type-checker half of F-O1 has no task and wants a "Not fixing" row.
+- Dropped `AC-ARCH-23` and `AC-QA-33` (pyright pinned, and proven to run): the pyright half of T25 is vetoed by `AC-SIMP-11`. An informational report nothing acts on, a new dependency and a slower gate; when this veto was applied, decision 5 paused acting on the other informational reporter (since narrowed by decision 14; the veto stands on the remaining grounds). No lens supplied a criterion that needs it. Consequence: the type-checker half of F-O1 has no task and wants a "Not fixing" row.
 - Dropped requirement, T3 "regenerate coverage and record the lowest-covered files": vetoed by `AC-SIMP-5`. Nothing consumes the result. Consequence: F-T5 has no task and wants a "Not fixing" row.
 - Dropped requirement, T9 "Dependabot is configured to update SHA pins": vetoed by `AC-SIMP-3`. Already true in `.github/dependabot.yml`.
 - Dropped requirement, T23 "review narratives moved to `docs/` history" and "test count corrected": vetoed by `AC-SIMP-10`. Git history is the archive, and a corrected count drifts again within a week; both are deleted instead.
