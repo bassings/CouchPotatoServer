@@ -80,7 +80,7 @@ Finding ids are prefixed `F-` to keep them distinct from task ids.
 | F-S9 | Medium | `deleteFolder` can target the watch folder itself; "junk only" is a substring test | T3, T6 |
 | F-Q1 | Medium | About 40 handlers catch CodernityDB `RecordNotFound`/`RecordDeleted`, which `SQLiteAdapter` never raises | T15, T31 |
 | F-Q2 | Medium | `release/main.py:701` treats any read error as "absent" and inserts; identifier index is non-unique | T8 |
-| F-Q3 | Medium | Broad `except Exception` on data paths hides failures (`core/event.py:379`, `core/media/_base/searcher/main.py:203`, `core/loader.py:117`, `core/media/_base/media/main.py:891`) | T16 |
+| F-Q3 | Medium | Broad `except Exception` on data paths hides failures (`core/event.py:379`, `core/media/_base/searcher/main.py:204`, `core/loader.py:117`, `core/media/_base/media/main.py:892`) | T16 |
 | F-P2 | Medium | `with_doc=True` reads each document twice | T19 |
 | F-P3 | Medium | One lock per API route serialises same-route calls | T20 |
 | F-P4 | Medium | `fix_release_quality` runs ungated on every boot | T17 |
@@ -115,7 +115,7 @@ Finding ids are prefixed `F-` to keep them distinct from task ids.
 | CSRF, api_key in URL | Already recorded as accepted debt. T5 and T21 reduce the exposure; neither is re-opened here. |
 | F-T5: stale `coverage.xml` | Regeneration vetoed at planning (AC-SIMP-5): nothing consumes the output. The coverage gap that mattered, the delete paths, is closed by T3's tests. Decision 8. |
 | F-O1 / F-Q5, type-checker half | Vetoed at planning (AC-SIMP-11): an informational report nothing acts on. The ruff target half stays in T25. Decision 8. |
-| F-A2: `couchpotato/__init__.py` god module | T29 cut (decision 10): XL, no behaviour change, and the same re-export breakage class as the #148 regression. The core-imports-web-layer edge it causes stays open as recorded debt. |
+| F-A2: `couchpotato/__init__.py` god module | T29 cut (decision 10): XL, no behaviour change, and the same re-export breakage class as the #148 regression. The core-imports-web-layer edge it causes stays open; T23 adds it to the live items in `docs/technical-debt.md`. |
 
 ## Task detail
 
@@ -142,9 +142,11 @@ contradict, the draft text here. The amendments that change a task's scope:
   deletes `db/factory.py`, `codernity_adapter.py` and `db/migrate.py` with
   their tests, and the stale `db/__main__.py` (the `db/__init__.py` sentence
   of AC-SEC-25, AC-DATA-13, AC-PROD-10, AC-OPS-13, the file half of
-  AC-SIMP-8, the T15 clause of AC-QA-37). Precondition, true on 2026-11-11:
-  `scripts/migrate_codernity_to_sqlite.py` imports none of the deleted
-  files. Effort S. Risk medium: it borders the migration path. **T31**
+  AC-SIMP-8, the T15 clause of AC-QA-37). The migration script names none of
+  the deleted files, but it imports `couchpotato.core.db.sqlite_adapter`,
+  which runs `db/__init__.py`, which imports `codernity_adapter` and
+  `factory`. Edit `db/__init__.py` in the same change as the deletions, or
+  the migrator fails on import and a legacy install refuses to boot. Effort S. Risk medium: it borders the migration path. **T31**
   removes the remaining live CodernityDB imports and index subclasses and
   adds the AST import guard (AC-ARCH-15, the guard in AC-QA-23, the
   `sys.modules` sentence of AC-SEC-25, the grep half of AC-SIMP-8). Effort
@@ -156,11 +158,15 @@ contradict, the draft text here. The amendments that change a task's scope:
 - **T19:** the library page's filter, chips, count and Select All run in the
   browser over the full list today and must keep working under paging
   (AC-DESIGN-9 to AC-DESIGN-15, AC-A11Y-8 to AC-A11Y-11).
+  Before delegating T19 the conductor raises the decision 6 confirmation
+  through `.claude/blocked-on-human`; T19 starts only once the conductor log
+  records the owner's answer.
 - **T20:** reversed. Serialised stays the default with a tested opt-out
   (AC-DATA-25), and the task runs only if T18 shows same-route queuing is a
   real cost; otherwise it closes with the measurement and no code change.
 - **T23:** delete the review narratives and the test count instead of moving
-  or correcting them (AC-SIMP-10).
+  or correcting them (AC-SIMP-10). Also records the F-A2 core-imports-web-layer
+  edge as a live item in `docs/technical-debt.md`.
 - **T25:** ruff target only. The type checker is vetoed (AC-SIMP-11).
 - **T28:** must change the index on existing installs, not only in
   `schema.sql` (AC-DATA-28).
@@ -170,9 +176,12 @@ contradict, the draft text here. The amendments that change a task's scope:
   AC-DATA-29 and AC-ARCH-24 are lapsed.
 - **T32 (new).** `Plugin.createFile` writes to a temp file in the same
   directory and `os.replace`s it; a failed write leaves a pre-existing file
-  byte-identical and never unlinks the destination (the atomic-write
-  sentences of AC-DATA-18; its user-created-sidecar sentence stays with
-  T13). Files:
+  byte-identical and never unlinks the destination. The artwork path does
+  not use `createFile`: `metadata/base.py:120-130` copies with
+  `shutil.copy2` and `shutil.copyfile` straight onto the destination, so T32
+  makes that copy atomic too (the atomic-write sentences of AC-DATA-18,
+  which cover metadata and artwork; its user-created-sidecar sentence stays
+  with T13). Files: `couchpotato/core/media/movie/providers/metadata/base.py`,
   `couchpotato/core/plugins/base.py`, tests. Lands before T13. Effort S.
   Risk low.
 - **T33 (new).** A CodernityDB migration killed after the SQLite database is
@@ -318,7 +327,7 @@ does not use them; `media.get` on a missing id takes its not-found branch.
 Effort M. Risk medium.
 
 **T16. Narrow the four data-path catch-alls.** F-Q3.
-Acceptance: `event.py:367`, `searcher/main.py:204`, `loader.py:119` and
+Acceptance: `event.py:379`, `searcher/main.py:204`, `loader.py:117` and
 `media/main.py:892` each catch named exceptions or log at error and re-raise;
 each has a test showing a real failure is now visible. One PR per site if any
 changes behaviour a caller depends on. Effort M. Risk medium.
@@ -430,7 +439,7 @@ into their own spec as the starting set.
 - **AC-SEC-14:** T7: `?p=`, `&p=`, `?u=` and `&u=` values are redacted in msg and exc_text, and NZBGet's `xmlrpc.client.ProtocolError` with a credentialled URL, logged through the real `removeFailed` error path, leaves no password in the written log file.
 - **AC-SEC-15:** T9: a unit test parses every `.github/workflows/*.yml` and every `action.yml` under `.github/` as YAML. It fails on any `uses:` whose ref is not exactly 40 lowercase hex characters, and that includes first-party `actions/*` and `github/*`. It excludes only local `./` actions and requires `@sha256:` on any `docker://` reference. Fixtures that must fail: `@v4`, `@main`, a 7-character short SHA, and a 40-character ref containing a non-hex character; a SHA followed by a version comment passes. Changing one real pin back to a tag is proven to make the test fail. (merges AC-QA-15)
 - **AC-SEC-16:** T9: each pinned SHA carries a `# vX.Y.Z` comment, and at review `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` (peeled) resolves to exactly that SHA in the upstream repository. No pin points at a fork-network commit that the named tag does not reference.
-- **AC-SEC-17:** T1: the fixable Trivy finding is cleared by shipping the fixed package: raise the version floor in the runtime `apk add` line (the existing idiom for `c-ares` and `libcrypto3`), or bump the base image digest if, and only if, the new base is shown to carry the fixed version. The image is inspected to confirm the fixed version is installed. No `.trivyignore` entry, `ignore-unfixed`, severity or exit-code change is added. Both `FROM` lines remain `@sha256:` pinned and identical. The failure-alert job declares job-level `permissions` limited to what it uses.
+- **AC-SEC-17:** T1: the fixable Trivy finding is cleared by shipping the fixed package: raise the version floor in the runtime `apk add` line (the existing idiom for `c-ares` and `libcrypto3`; zlib already has a floor there, `>=1.3.2-r1`, which rises to `>=1.4-r0`, and the stale comment beside it is corrected), or bump the base image digest if, and only if, the new base is shown to carry the fixed version. The image is inspected to confirm the fixed version is installed. No `.trivyignore` entry, `ignore-unfixed`, severity or exit-code change is added. Both `FROM` lines remain `@sha256:` pinned and identical. The failure-alert job declares job-level `permissions` limited to what it uses.
 - **AC-SEC-18:** T10 (removal): the `zipfile` and `tarfile` imports and both `extractall` calls are gone from `couchpotato/core/_base/updater/main.py`. On an install with no `.git` outside Docker, on tmp_path, the notify-only updater is selected, and a POST to `updater.update` with the HTTP boundary patched to raise makes no network call and writes no file. (merges the behaviour half of AC-QA-16)
 - **AC-SEC-19:** T12: T12 declares `needs: T5` in the Tasks list and does not merge before T5 is on master, because re-enabling `renamer.after` makes the settings-controlled `script.path` executable on unauthenticated installs.
 - **AC-SEC-20:** T12: the script notifier executes only when `script.path` is an absolute path to a regular file (checked with lstat, so not a symlink) that is executable, owned by the process user or root, and not group- or world-writable. Otherwise it logs a WARNING and runs nothing. Popen keeps `shell=False` with list argv. A destination_dir containing spaces, `;` and `$(id)` reaches the script as one literal argv element.
@@ -668,10 +677,13 @@ detail", the edge below wins. The reasons (AC-SIMP-14):
 - **T12 needs T5:** the script notifier runs operator-supplied commands and
   must not go live on installs with no password before the host check
   (AC-SEC-19).
-- **T13 needs T32:** metadata writes go through `Plugin.createFile`.
-- **T15, T16, T19 and T22 need T14:** each edits files the rename chain also
-  edits (`core/media/_base/media/main.py`, `core/event.py`, the notification
-  base, `couchpotato/__init__.py`), and the chain has priority.
+- **T13 needs T32:** T13 makes the metadata and artwork writes live, and T32
+  makes both write paths atomic.
+- **T16 needs T14:** both edit `core/event.py`, and the chain has priority.
+- **T15, T19 and T22 need T14:** no file overlap is claimed by the chain's
+  file lists. This is milestone order only, as for T28 and T30 below.
+- **T31 needs T15 and T30:** the AST guard and the grep-zero check pass only
+  once T15 has converted the handlers and T30 has deleted the adapter files.
 - **T23 and T27 need T14:** the documentation and the mutation scope describe
   the renamer as it stands after the chain lands.
 - **T28 and T30 need T14:** no file overlap. This is milestone order only:
@@ -709,7 +721,7 @@ detail", the edge below wins. The reasons (AC-SIMP-14):
 - [ ] T30: Delete the dead second migration path — state: queued (needs: T33, T14)
 - [ ] T31: Remove the remaining live CodernityDB imports, with an AST import guard — state: queued (needs: T15, T30)
 - [ ] T16: Narrow the data-path catch-alls (logging only at event.py) — state: queued (needs: T7, T14)
-- [ ] T19: Rewrite the library list with paging — state: queued (needs: T18, T14; blocked on owner: confirm the decision 6 library-size target)
+- [ ] T19: Rewrite the library list with paging — state: queued (needs: T18, T14)
 - [ ] T20: Tested opt-out from per-route API serialisation, only if T18 shows queuing — state: queued (needs: T19)
 - [ ] T22: Authentication hardening (login bucket, constant-time compare, /getkey) — state: queued (needs: T5, T14)
 - [ ] T21: api_key rotation and cache hygiene — state: queued (needs: T22)

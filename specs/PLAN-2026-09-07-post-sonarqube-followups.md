@@ -452,8 +452,8 @@ only one of the two return paths. That guard is T1 below.
   recorded anywhere and the question sat unanswered from 2026-09-10; the
   owner chose to proceed to the audit remediation plan
   (`specs/PLAN-2026-11-11-audit-remediation.md`) without supplying them. No
-  work was lost: T8 was a data task with no code. The box is marked `[~]`, this
-  file's mark for work removed from the plan, not ticked as delivered. T5 is
+  work was lost: T8 was a data task with no code. The box is marked `[~]`, the
+  mark T3 uses for work removed from the plan, not ticked as delivered. T5 is
   ticked on the same date: its work merged as #334 and the line was never
   updated. No `human_wait_started` row
   exists in the ledger for this plan, so no `human_wait_ended` was appended.
