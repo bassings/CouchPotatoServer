@@ -325,7 +325,8 @@ def test_stale_login_cannot_create_secret_after_auth_is_disabled(
         if disabler.ident is not None:
             disabler.join(5)
 
-    assert not worker.is_alive() and not disabler.is_alive()
+    assert not worker.is_alive()
+    assert not disabler.is_alive()
     assert not failures, failures
     assert responses[0].status_code == 302
     assert SESSION_COOKIE_NAME in responses[0].cookies
@@ -444,7 +445,8 @@ def test_legacy_credential_route_cannot_overwrite_new_password(
         if writer.ident is not None:
             writer.join(5)
 
-    assert not reader.is_alive() and not writer.is_alive()
+    assert not reader.is_alive()
+    assert not writer.is_alive()
     assert not failures, failures
     assert Env.setting('password') == 'new-password-hash'
 
