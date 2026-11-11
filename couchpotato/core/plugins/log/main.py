@@ -228,8 +228,8 @@ class Logging(Plugin):
             try:
                 # Keep the active file in place for existing logging handlers.
                 if x == 0:
-                    with open(path, 'w'):
-                        pass
+                    with open(path, 'w') as active_log:
+                        active_log.truncate(0)
                 else:
                     os.remove(path)
             except Exception as exc:
