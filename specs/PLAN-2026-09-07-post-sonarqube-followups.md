@@ -389,7 +389,7 @@ only one of the two return paths. That guard is T1 below.
       to make the number green rather than the code better,
       state: merged #328
 
-- [~] T5: IN PROGRESS on `fix/T5-event-wiring-reverse-guard`. Issue #312, event wiring is guarded in one direction only.
+- [x] T5: merged as #334 (`9bc353739`), closing issue #312. Issue #312, event wiring is guarded in one direction only.
       `test_event_wiring.py` catches an event fired with no listener, and
       nothing catches a listener with no sender, which is the direction that
       has actually cost this project. 38 registered names are never fired.
@@ -410,7 +410,7 @@ only one of the two return paths. That guard is T1 below.
       dispatch: `media.mark_watched`, and
       `app.test`, which has four listeners including a 12-case path-safety
       table for `isSubFolder` that has not run since the FastAPI migration,
-      state: queued (needs: T1)
+      state: merged #334
 - [x] T6: DONE, merged as #333. Issue #311, the Trakt OAuth device flow has no reachable UI.
       `automation.trakt.device_code` and `automation.trakt.poll_token` are
       registered API views whose only caller is `trakt.js`, which nothing
@@ -443,7 +443,7 @@ only one of the two return paths. That guard is T1 below.
       The `needs: T6` this entry carried is dropped: T7 merged as #329 while T6
       was still open, so the dependency was never real.
       state: merged #329
-- [x] T8: five films identified earlier today that are still not added to the
+- [~] T8: five films identified earlier today that are still not added to the
       library. Data task, no PR, state: dropped 2026-11-11 (needs: T7)
 
 ## Conductor log
@@ -452,8 +452,10 @@ only one of the two return paths. That guard is T1 below.
   recorded anywhere and the question sat unanswered from 2026-09-10; the
   owner chose to proceed to the audit remediation plan
   (`specs/PLAN-2026-11-11-audit-remediation.md`) without supplying them. No
-  work was lost: T8 was a data task with no code. The box is ticked to close
-  the plan, not because the films were added. No `human_wait_started` row
+  work was lost: T8 was a data task with no code. The box is marked `[~]`, this
+  file's mark for work removed from the plan, not ticked as delivered. T5 is
+  ticked on the same date: its work merged as #334 and the line was never
+  updated. No `human_wait_started` row
   exists in the ledger for this plan, so no `human_wait_ended` was appended.
 
 - 2026-09-09 T6 merged as #333 after the owner chose to restructure rather

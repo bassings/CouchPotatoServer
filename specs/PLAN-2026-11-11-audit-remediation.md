@@ -2,8 +2,8 @@
 
 ## Objective
 
-Resolve every finding from the whole-repository audit of 2026-11-11 (local
-`master` at `1454367d1`, one commit behind `origin/master`), in the order the
+Resolve every finding from the whole-repository audit of 2026-11-11 (audited at
+`1454367d1`; claims re-checked against `0b6b9a478` on 2026-11-11), in the order the
 audit recommends: safety net, then critical security and correctness, then
 high-leverage improvements, then polish. Every finding is either mapped to a
 task below or listed under "Not fixing" with the reason.
@@ -71,7 +71,7 @@ Finding ids are prefixed `F-` to keep them distinct from task ids.
 | F-T1 | High | Nightly CI red four nights (Trivy, fixable zlib finding); no alert | T1 |
 | F-T2 | High | `docker-compose.yml` omits the `/data` mount; the database lands in an anonymous volume | T2 |
 | F-S1 | High | Auth off by default, binds `0.0.0.0`, no `Host` validation, api_key embedded in pages | T5 |
-| F-S2 | High | `nzbget.removeFailed` runs `shutil.rmtree` on a path from the downloader response with no containment; same shape reported in `rtorrent_.py:552` | T3, T6 |
+| F-S2 | High | `nzbget.removeFailed` runs `shutil.rmtree` on a path from the downloader response with no containment; per-file `os.unlink`/`os.rmdir` on downloader-supplied paths at `rtorrent_.py:553` | T3, T6 |
 | F-A1 | High | `renamer.before` / `renamer.after` have no fire site; seven listeners plus every notification provider's rename hook are dead | T4, T11 to T14 |
 | F-P1 | High | `Media.list` parses the whole library several times and issues several reads per movie; UI requests it unpaginated | T18, T19 |
 | F-S3 | Medium | `PrivacyFilter` misses URL-embedded credentials; `exc_text` gets path scrubbing only | T7 |
@@ -80,7 +80,7 @@ Finding ids are prefixed `F-` to keep them distinct from task ids.
 | F-S9 | Medium | `deleteFolder` can target the watch folder itself; "junk only" is a substring test | T3, T6 |
 | F-Q1 | Medium | About 40 handlers catch CodernityDB `RecordNotFound`/`RecordDeleted`, which `SQLiteAdapter` never raises | T15, T31 |
 | F-Q2 | Medium | `release/main.py:701` treats any read error as "absent" and inserts; identifier index is non-unique | T8 |
-| F-Q3 | Medium | Broad `except Exception` on data paths hides failures (`event.py:367`, `searcher/main.py:204`, `loader.py:119`, `media/main.py:892`) | T16 |
+| F-Q3 | Medium | Broad `except Exception` on data paths hides failures (`core/event.py:379`, `core/media/_base/searcher/main.py:203`, `core/loader.py:117`, `core/media/_base/media/main.py:891`) | T16 |
 | F-P2 | Medium | `with_doc=True` reads each document twice | T19 |
 | F-P3 | Medium | One lock per API route serialises same-route calls | T20 |
 | F-P4 | Medium | `fix_release_quality` runs ungated on every boot | T17 |
@@ -109,13 +109,13 @@ Finding ids are prefixed `F-` to keep them distinct from task ids.
 
 | Finding | Reason |
 |---|---|
-| F-A3: `Env` global state, import-time registries | Inherited design; `tests/unit/test_event_wiring.py` contains the risk. A rewrite costs more than it returns. Revisit only if T29 forces it. |
+| F-A3: `Env` global state, import-time registries | Inherited design; `tests/unit/test_event_wiring.py` contains the risk. A rewrite costs more than it returns. |
 | F-T6: source-reading and mock-heavy tests | Rewriting working tests buys nothing. New tests are behavioural; existing ones stay. |
 | F-S10: shipped public TMDB / fanart.tv keys | Deliberate, recorded in `docs/technical-debt.md`; reversing it broke users on 2026-07-31. |
 | CSRF, api_key in URL | Already recorded as accepted debt. T5 and T21 reduce the exposure; neither is re-opened here. |
 | F-T5: stale `coverage.xml` | Regeneration vetoed at planning (AC-SIMP-5): nothing consumes the output. The coverage gap that mattered, the delete paths, is closed by T3's tests. Decision 8. |
 | F-O1 / F-Q5, type-checker half | Vetoed at planning (AC-SIMP-11): an informational report nothing acts on. The ruff target half stays in T25. Decision 8. |
-| F-A2: `couchpotato/__init__.py` god module | T29 cut (decision 10): XL, no behaviour change, and the same re-export breakage class as the #148 regression. T15, T30 and T31 remove the worst coupling it caused. |
+| F-A2: `couchpotato/__init__.py` god module | T29 cut (decision 10): XL, no behaviour change, and the same re-export breakage class as the #148 regression. The core-imports-web-layer edge it causes stays open as recorded debt. |
 
 ## Task detail
 
@@ -125,7 +125,10 @@ contradict, the draft text here. The amendments that change a task's scope:
 
 - **T1:** the alert cannot be proven by a branch run, which never takes the
   schedule-only path (AC-QA-11, AC-OPS-1). Prove it the way those criteria
-  state.
+  state. The alert covers `ci.yml`, `mutation.yml` and `codeql.yml`. Checked
+  2026-11-11: the current upstream `python:3.15-alpine` (amd64) still ships
+  `zlib-1.3.2-r1`, so a digest bump alone does not clear the finding; the
+  remedy is the runtime `apk` version floor (AC-SEC-17).
 - **T2:** also fixes `scripts/backup.sh` for the corrected layout (AC-DATA-3).
 - **T3:** "regenerate coverage" is vetoed (AC-SIMP-5). Tests only.
 - **T5:** bare LAN hostnames and `.local` names are in scope for the
@@ -135,13 +138,18 @@ contradict, the draft text here. The amendments that change a task's scope:
   (AC-SIMP-3).
 - **T15** is split. T15 keeps the first-party `DocumentNotFound` and the
   handler conversion (AC-QA-23 first sentence, AC-DATA-11, AC-DATA-12,
-  AC-ARCH-13, the `RecordNotFound`/`RecordDeleted` half of AC-SIMP-8). **T30**
+  AC-ARCH-13). **T30**
   deletes `db/factory.py`, `codernity_adapter.py` and `db/migrate.py` with
-  their tests (AC-SEC-25, AC-DATA-13, AC-PROD-10, AC-OPS-13, the file half of
-  AC-SIMP-8, the T15 clause of AC-QA-37). **T31** removes the remaining live
-  CodernityDB imports and index subclasses and adds the AST import guard
-  (AC-ARCH-15, the guard in AC-QA-23). A criterion that names T15 binds
-  whichever of the three delivers the behaviour it describes.
+  their tests, and the stale `db/__main__.py` (the `db/__init__.py` sentence
+  of AC-SEC-25, AC-DATA-13, AC-PROD-10, AC-OPS-13, the file half of
+  AC-SIMP-8, the T15 clause of AC-QA-37). Precondition, true on 2026-11-11:
+  `scripts/migrate_codernity_to_sqlite.py` imports none of the deleted
+  files. Effort S. Risk medium: it borders the migration path. **T31**
+  removes the remaining live CodernityDB imports and index subclasses and
+  adds the AST import guard (AC-ARCH-15, the guard in AC-QA-23, the
+  `sys.modules` sentence of AC-SEC-25, the grep half of AC-SIMP-8). Effort
+  M. Risk medium. A criterion that names T15 binds whichever of the three
+  delivers the behaviour it describes; AC-OPS-19 binds all three and T33.
 - **T16:** at `event.py` the change is logging only. Narrowing the catch there
   would remove the isolation between a failing listener and a completed move
   (AC-ARCH-12).
@@ -156,23 +164,30 @@ contradict, the draft text here. The amendments that change a task's scope:
 - **T25:** ruff target only. The type checker is vetoed (AC-SIMP-11).
 - **T28:** must change the index on existing installs, not only in
   `schema.sql` (AC-DATA-28).
+- **T26:** `/healthz` is not exempt from the host check; AC-SEC-36 and
+  AC-SEC-4 override the "loopback only" wording below.
 - **T29:** cut (decision 10). Its text below is retained as a record only.
+  AC-DATA-29 and AC-ARCH-24 are lapsed.
 - **T32 (new).** `Plugin.createFile` writes to a temp file in the same
   directory and `os.replace`s it; a failed write leaves a pre-existing file
-  byte-identical and never unlinks the destination (AC-DATA-18). Files:
+  byte-identical and never unlinks the destination (the atomic-write
+  sentences of AC-DATA-18; its user-created-sidecar sentence stays with
+  T13). Files:
   `couchpotato/core/plugins/base.py`, tests. Lands before T13. Effort S.
   Risk low.
 - **T33 (new).** A CodernityDB migration killed after the SQLite database is
   created and before the rename is retried into a fresh destination or
   refused at the next boot; the partial database is never opened as complete
-  (AC-DATA-14). Re-verify the defect with a real interrupted run first.
+  (AC-DATA-14). The same state follows an ordinary exception in the
+  migration script, which returns non-zero without removing the partial
+  file, so a forced exception is enough to reproduce it; do that first.
   Files: `couchpotato/runner.py`, `scripts/migrate_codernity_to_sqlite.py`,
   tests. Effort M. Risk medium: this is the irreplaceable tier.
 
 ### M0: safety net
 
 **T1. Restore the nightly build and alert on failure.** F-T1.
-Files: `Dockerfile` (both `FROM` digests), `.github/workflows/ci.yml`.
+Files: `Dockerfile`, `.github/workflows/ci.yml`, `mutation.yml`, `codeql.yml`.
 Acceptance: the Trivy step passes on the rebuilt image; the scheduled run has
 a step that notifies on failure, proven by a deliberately failed dry run on a
 branch; `specs/` records the digest bump decision. Re-verify the cause first
@@ -415,7 +430,7 @@ into their own spec as the starting set.
 - **AC-SEC-14:** T7: `?p=`, `&p=`, `?u=` and `&u=` values are redacted in msg and exc_text, and NZBGet's `xmlrpc.client.ProtocolError` with a credentialled URL, logged through the real `removeFailed` error path, leaves no password in the written log file.
 - **AC-SEC-15:** T9: a unit test parses every `.github/workflows/*.yml` and every `action.yml` under `.github/` as YAML. It fails on any `uses:` whose ref is not exactly 40 lowercase hex characters, and that includes first-party `actions/*` and `github/*`. It excludes only local `./` actions and requires `@sha256:` on any `docker://` reference. Fixtures that must fail: `@v4`, `@main`, a 7-character short SHA, and a 40-character ref containing a non-hex character; a SHA followed by a version comment passes. Changing one real pin back to a tag is proven to make the test fail. (merges AC-QA-15)
 - **AC-SEC-16:** T9: each pinned SHA carries a `# vX.Y.Z` comment, and at review `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` (peeled) resolves to exactly that SHA in the upstream repository. No pin points at a fork-network commit that the named tag does not reference.
-- **AC-SEC-17:** T1: the fixable Trivy finding is cleared by bumping the base image digest. No `.trivyignore` entry, `ignore-unfixed`, severity or exit-code change is added. Both `FROM` lines remain `@sha256:` pinned and identical. The failure-alert job declares job-level `permissions` limited to what it uses.
+- **AC-SEC-17:** T1: the fixable Trivy finding is cleared by shipping the fixed package: raise the version floor in the runtime `apk add` line (the existing idiom for `c-ares` and `libcrypto3`), or bump the base image digest if, and only if, the new base is shown to carry the fixed version. The image is inspected to confirm the fixed version is installed. No `.trivyignore` entry, `ignore-unfixed`, severity or exit-code change is added. Both `FROM` lines remain `@sha256:` pinned and identical. The failure-alert job declares job-level `permissions` limited to what it uses.
 - **AC-SEC-18:** T10 (removal): the `zipfile` and `tarfile` imports and both `extractall` calls are gone from `couchpotato/core/_base/updater/main.py`. On an install with no `.git` outside Docker, on tmp_path, the notify-only updater is selected, and a POST to `updater.update` with the HTTP boundary patched to raise makes no network call and writes no file. (merges the behaviour half of AC-QA-16)
 - **AC-SEC-19:** T12: T12 declares `needs: T5` in the Tasks list and does not merge before T5 is on master, because re-enabling `renamer.after` makes the settings-controlled `script.path` executable on unauthenticated installs.
 - **AC-SEC-20:** T12: the script notifier executes only when `script.path` is an absolute path to a regular file (checked with lstat, so not a symlink) that is executable, owned by the process user or root, and not group- or world-writable. Otherwise it logs a WARNING and runs nothing. Popen keeps `shell=False` with list argv. A destination_dir containing spaces, `;` and `$(id)` reaches the script as one literal argv element.
@@ -423,7 +438,7 @@ into their own spec as the starting set.
 - **AC-SEC-22:** T13/T14: every .nfo, artwork, trailer and subtitle file is written or moved only inside the placed movie's resolved directory, using the T6 containment predicate. A pre-existing symlink at the target name pointing outside that directory is not followed, and a destination folder that is a symlink escaping the library root results in no write outside the root: the outside file's hash is unchanged after the rename. (merges AC-QA-21)
 - **AC-SEC-23:** T13/T14: with the metadata, trailer and subtitle providers disabled, a completed rename makes zero outbound HTTP requests. This is tested with the HTTP client patched to fail on any call.
 - **AC-SEC-24:** T11: a Plex `addToLibrary` call with a token configured, logged at DEBUG, leaves no token value in the written log file.
-- **AC-SEC-25:** T15 (removal): starting the server process against a SQLite data directory (no legacy `database/` dir) leaves no module whose name starts with `CodernityDB` or `couchpotato.core.db.codernity_adapter` in `sys.modules`, checked in a subprocess after app creation. `couchpotato/core/db/__init__.py` no longer imports `codernity_adapter` or `factory`. (merges AC-OPS-12)
+- **AC-SEC-25:** T31 (first sentence), T30 (second sentence): starting the server process against a SQLite data directory (no legacy `database/` dir) leaves no module whose name starts with `CodernityDB` or `couchpotato.core.db.codernity_adapter` in `sys.modules`, checked in a subprocess after app creation. `couchpotato/core/db/__init__.py` no longer imports `codernity_adapter` or `factory`. (merges AC-OPS-12)
 - **AC-SEC-26:** T19: the paging parameters of `media.list` are validated. Non-integer, negative or above-maximum `limit`/`offset` values (including `1;DROP TABLE media`) are rejected or clamped to a stated maximum. The SQL uses bound parameters only, and a test asserts the media table is intact after the hostile inputs.
 - **AC-SEC-27:** T20: routes that change credentials or auth state (`settings.save`, the T21 rotation route, any password route) keep their serialisation, and a test asserts the lock is in force on each.
 - **AC-SEC-28:** T21: within one process and with no restart, after rotation the old key returns 401 via the `X-Api-Key` header, the `/api/<old>/...` URL prefix, `nonblock/` routes and `file.cache/`, and the new key succeeds on each. The api_key captured as a `create_app` argument is no longer what requests are compared against.
@@ -474,7 +489,7 @@ into their own spec as the starting set.
 - **AC-SIMP-4:** T1: the failure notification uses only the workflow's built-in `GITHUB_TOKEN`. The T1 diff adds no `secrets.*` reference other than `GITHUB_TOKEN` and no new third-party `uses:` action.
 - **AC-SIMP-5:** T3: the diff touches only paths under `tests/unit/`. Regenerating coverage and recording the lowest-covered files is not part of T3's acceptance.
 - **AC-SIMP-7:** T10: `grep -rn 'SourceUpdater' couchpotato/` and `grep -n 'cp.source_url' couchpotato/core/event.py` both return no matches, and the T10 diff deletes more lines than it adds under `couchpotato/`.
-- **AC-SIMP-8:** T15: `grep -rlE 'RecordNotFound|RecordDeleted' couchpotato/` returns no files (today it returns 20, including `couchpotato/core/migration/fix_release_quality.py`). The files `couchpotato/core/db/factory.py`, `couchpotato/core/db/codernity_adapter.py` and `couchpotato/core/db/migrate.py` do not exist.
+- **AC-SIMP-8:** T31: `git grep -lE 'RecordNotFound|RecordDeleted' -- couchpotato/` returns no files (on 2026-11-11 it returns 15 tracked files, including `couchpotato/core/migration/fix_release_quality.py`; `git grep` so stale bytecode cannot match). T30: The files `couchpotato/core/db/factory.py`, `couchpotato/core/db/codernity_adapter.py` and `couchpotato/core/db/migrate.py` do not exist.
 - **AC-SIMP-9:** T17 adds no new module and no generic run-once helper: the gate is an inline stored-property check of the same shape as `_run_orphan_cleanup`. The diff touches only `couchpotato/runner.py`, `couchpotato/core/migration/fix_release_quality.py` (to signal completion, as AC-DATA-22 requires) and test files. (file scope widened from the lens's wording to admit AC-DATA-22)
 - **AC-SIMP-10:** T23: README.md contains no literal test count (no match for `[0-9]+ tests`). The review narratives removed from `docs/technical-debt.md` are deleted outright rather than moved, so T23 creates no new file under `docs/`.
 - **AC-SIMP-11:** T25 is limited to the ruff target: `pyproject.toml` has `target-version = "py315"`. No pyright or mypy entry appears in `requirements*.txt`, `pyproject.toml`, `package.json` or the `Makefile`.
@@ -491,7 +506,7 @@ into their own spec as the starting set.
 - **AC-PROD-6:** T12: a user with an enabled notification provider gets one rename notification for each completed rename. For a release under a manual-confirmation profile, the "downloaded, awaiting review" message and the rename message are two separate messages with different text, and neither is sent twice.
 - **AC-PROD-7:** T11 to T14: each rename-chain slice that turns a dormant listener back on ships with a CHANGELOG or release-note line naming the behaviour that will start again (for example that configured post-rename scripts will run again after each rename), in the same beta as the code.
 - **AC-PROD-8:** T13/T14: after a completed rename with the feature enabled, the movie's library folder contains the subtitle files fetched for it (T14) and the .nfo and artwork (T13). With each feature disabled, none of those files appear.
-- **AC-PROD-10:** T15: no document in the repo tells users to run a command that no longer exists. `docs/reference/DATABASE_SCHEMA.md` stops citing `python -m couchpotato.core.db.migrate` and points at the surviving migrator, a grep of the repo for that invocation returns nothing, and every migration command documented in README.md, UPGRADING.md and `docs/` is executed once and runs. (merges AC-PROD-20; the first-start migration half is AC-DATA-13)
+- **AC-PROD-10:** T30: no document in the repo tells users to run a command that no longer exists. `docs/reference/DATABASE_SCHEMA.md` stops citing `python -m couchpotato.core.db.migrate` and points at the surviving migrator, a grep of the repo for that invocation returns nothing, and every migration command documented in README.md, UPGRADING.md and `docs/` is executed once and runs. (merges AC-PROD-20; the first-start migration half is AC-DATA-13)
 - **AC-PROD-11:** T10: on an install with no .git directory and not running in Docker, when a newer version exists the user sees an "update available" message that says where to get it. No "update now" or "install update" control or menu entry is offered. (merges AC-PROD-19)
 - **AC-PROD-14:** T22: the `/getkey` decision record names the external clients checked for use of `/getkey` (searched outside this repo, with sources) and what they send. If the endpoint changes method or is removed, the CHANGELOG names the affected clients.
 - **AC-PROD-15:** T11 to T14: each completed rename writes exactly one INFO record, visible on the in-app Logs page without debug enabled, containing only the event name, the media's internal id, and one outcome per listener (ok, failed or disabled). It contains no title, path, host or credential. A raising listener shows as failed. (merges AC-OPS-11; the media id replaces that criterion's release name, on privacy grounds)
@@ -552,12 +567,12 @@ into their own spec as the starting set.
 - **AC-DATA-10:** T8: with an injected `sqlite3.OperationalError` on the release_identifier lookup, the documents table holds the same count of release rows before and after. Two concurrent calls that add the same new release_identifier, synchronised by a barrier at the lookup, leave exactly one release row; otherwise the spec records the check-then-insert race as an accepted, named residual with the test written as strict xfail. A lookup against a database already holding two rows with the same identifier returns a deterministic one (ORDER BY on a stated column), asserted with a two-row fixture. (merges AC-QA-14)
 - **AC-DATA-11:** T15: no code path translates `sqlite3.OperationalError`, `sqlite3.DatabaseError` or ConflictError into DocumentNotFound. A test injects each of them into `adapter.get` and asserts it surfaces as itself.
 - **AC-DATA-12:** T15: every except-RecordNotFound/RecordDeleted handler that becomes live under DocumentNotFound is listed in the PR. Each one whose not-found branch inserts, updates or deletes has a test with two documents differing only in the key, proving the branch acts on the right document and only when that key is absent.
-- **AC-DATA-13:** T15: after `db/factory.py`, `codernity_adapter.py` and `db/migrate.py` are deleted, `runner._open_or_create_database` migrates a real CodernityDB fixture with M documents, end to end through `scripts/migrate_codernity_to_sqlite.py`, to an SQLite database with M documents and renames the source to database.bak. Every behaviour pinned by TestMigrationDataIntegrity, TestMigrationIsRepeatable and TestMigrationFailureModes in `tests/integration/test_migration.py` is either re-pinned against the live script or recorded as not applicable, before those tests are deleted. (merges AC-QA-24 and the migration half of AC-PROD-10)
-- **AC-DATA-14:** T15 (or an added task): a CodernityDB migration killed after the SQLite database is created and before the rename does not leave a `database_v2/couchpotato.db` that the next boot opens as complete. Test: with `database/` present, `database.bak` absent and a leftover `database_v2/couchpotato.db`, the next boot either retries the migration into a fresh destination or refuses to start. It does not open the partial database.
+- **AC-DATA-13:** T30: after `db/factory.py`, `codernity_adapter.py` and `db/migrate.py` are deleted, `runner._open_or_create_database` migrates a real CodernityDB fixture with M documents, end to end through `scripts/migrate_codernity_to_sqlite.py`, to an SQLite database with M documents and renames the source to database.bak. Every behaviour pinned by TestMigrationDataIntegrity, TestMigrationIsRepeatable and TestMigrationFailureModes in `tests/integration/test_migration.py` is either re-pinned against the live script or recorded as not applicable, before those tests are deleted. (merges AC-QA-24 and the migration half of AC-PROD-10)
+- **AC-DATA-14:** T33: a CodernityDB migration killed after the SQLite database is created and before the rename does not leave a `database_v2/couchpotato.db` that the next boot opens as complete. Test: with `database/` present, `database.bak` absent and a leftover `database_v2/couchpotato.db`, the next boot either retries the migration into a fresh destination or refuses to start. It does not open the partial database.
 - **AC-DATA-15:** T11: a completed move followed by a `renamer.after` listener that raises leaves the placed file byte-identical at its destination and the source folder state unchanged relative to the no-listener run. The release status is the same as with no listener. Asserted with a real file in tmp_path and a hash.
 - **AC-DATA-16:** T11: `renamer.after` does not fire for a group whose move left `skipped` true. A test with one of two files failing to move asserts no `renamer.after` listener runs and the source folder survives.
 - **AC-DATA-17:** T11: a movie that reaches status done through the rename chain while a full `manage.updateLibrary` is between its directory walk and its cleanup pass is not passed to `media.delete`. Test: interleave a rename completion after the scan's walk, then assert the media document and its releases still exist.
-- **AC-DATA-18:** T13: a metadata or artwork write over an existing sidecar file is atomic: temp file in the same directory, then `os.replace`. When the write fails mid-way, the pre-existing file is byte-identical afterwards, and `Plugin.createFile` never unlinks the destination on failure. A sidecar the user created is not overwritten unless the spec names a setting that allows it. This lands before, or with, the first slice that makes metadata writes live.
+- **AC-DATA-18:** T32 (atomic write), T13 (user-created sidecar): a metadata or artwork write over an existing sidecar file is atomic: temp file in the same directory, then `os.replace`. When the write fails mid-way, the pre-existing file is byte-identical afterwards, and `Plugin.createFile` never unlinks the destination on failure. A sidecar the user created is not overwritten unless the spec names a setting that allows it. This lands before, or with, the first slice that makes metadata writes live.
 - **AC-DATA-19:** T13: the trailer listener's destination can never equal any path in the group's movie files. The under-1 MB `os.unlink` in `trailer.py` removes only a file this call created. Test: a trailer name pattern resolving to the movie's own filename and extension leaves the movie file byte-identical.
 - **AC-DATA-20:** T14: when a subtitle file in a group fails to move, the source folder is retained and the movie file at its destination is unaffected. Test: a two-file group (movie plus .srt) with the .srt move forced to fail.
 - **AC-DATA-21:** T10: after the deletion, no updater code path removes or moves files under app_dir except removePyc. A no-.git, non-Docker install never constructs an object that walks app_dir for deletion.
@@ -568,7 +583,7 @@ into their own spec as the starting set.
 - **AC-DATA-26:** T21: after an api_key rotation, config.ini differs from its pre-rotation bytes only in the api_key value. No masked value is written back. A rotation concurrent with a `settings.save` of a different key keeps both changes.
 - **AC-DATA-27:** T26: `/healthz` performs no database write. sqlite3 `total_changes` and the property table row count are identical before and after 100 calls. A healthz call during an open write transaction returns within its timeout without raising "database is locked" in the writer.
 - **AC-DATA-28:** T28: the predicate change reaches existing installs, not only fresh ones, through an `_ensure_*` step in `SQLiteAdapter.open()` that drops and recreates the same-named index. On a database created from the pre-change schema.sql, opening with the new code leaves sqlite_master holding the new predicate for `idx_notification_unread` and no index with the old predicate. Opening twice is idempotent. A failure to recreate logs at WARNING and does not stop startup. Opening the resulting database with the previous beta's open logic still succeeds and returns the same unread notifications. (merges AC-OPS-16)
-- **AC-DATA-29:** T29: after the split there is exactly one SQLiteAdapter instance per process. `Env.get('db')`, `get_db()` at its new location and `Database().getDB()` return the same object (identity), so no second connection or second lock exists over the same file.
+- **AC-DATA-29:** Lapsed, T29 cut (decision 10). Was T29: after the split there is exactly one SQLiteAdapter instance per process. `Env.get('db')`, `get_db()` at its new location and `Database().getDB()` return the same object (identity), so no second connection or second lock exists over the same file.
 - **AC-DATA-30:** Removal list for the data area: the ignore-errors `rmtree` call in nzbget is gone (T6); `db/factory.py`, `codernity_adapter.py` and `db/migrate.py` are gone (AC-DATA-13); the old unread-index predicate is gone (AC-DATA-28); SourceUpdater's app_dir deletion is gone (AC-DATA-21); the docker-compose.yml `/config` comment no longer claims it stores the database (T2). Nothing else in the data area is replaced.
 
 ### lens-architecture
@@ -591,12 +606,12 @@ into their own spec as the starting set.
 - **AC-ARCH-20:** T22: the auth rate-limit bucket is added inside the existing middleware in `couchpotato/core/rate_limit.py` (or a second class in that module), not as a second, independently configured limiter elsewhere.
 - **AC-ARCH-21:** T26: the exemption of `/healthz` from auth, rate limiting and any Host-check exemption is expressed through each mechanism's own exemption list, not by a path check inside the health handler. The handler reads the database through the adapter interface, not a raw sqlite3 connection. The route is defined outside the `create_app` body except for its registration.
 - **AC-ARCH-22:** T24: one file is the input for direct runtime dependencies and the hashed lock is generated from it. The Dockerfile installs only from the lock. A test fails if a direct pin in the input disagrees with the lock. The lock generator is a dev-only dependency in requirements-dev.txt and absent from the image.
-- **AC-ARCH-24:** T29: `get_db` is defined in a module under `couchpotato/core/` and re-exported from `couchpotato/__init__.py`. An AST test fails if any module under `couchpotato/core/` imports from the `couchpotato` package root, with any remaining edge listed in that test's allow-list with a reason. `test_plugin_import_sweep.py` stays green.
+- **AC-ARCH-24:** Lapsed, T29 cut (decision 10). Was T29: `get_db` is defined in a module under `couchpotato/core/` and re-exported from `couchpotato/__init__.py`. An AST test fails if any module under `couchpotato/core/` imports from the `couchpotato` package root, with any remaining edge listed in that test's allow-list with a reason. `test_plugin_import_sweep.py` stays green.
 - **AC-ARCH-25:** Removal scope: T1, T2, T3, T4, T7, T8, T9, T18, T21, T23, T27 and T28 replace nothing in the architecture area. Their removals, where any, are owned by other lenses.
 
 ### lens-operability
 
-- **AC-OPS-1:** T1: every scheduled workflow (ci.yml, mutation.yml, codeql.yml) has a step that runs only on a scheduled run's failure and opens a GitHub issue, or comments on an already-open one, titled with the workflow name. The body links the failed run and names the failed job. A later green scheduled run of the same workflow closes that issue, so repeated nightly failures produce one open issue, not one per night. Both proving run URLs are recorded in the conductor log.
+- **AC-OPS-1:** T1: every scheduled workflow (ci.yml, mutation.yml, codeql.yml) has a step that runs only when a scheduled run fails, or a manually dispatched run used as the proof under AC-QA-11 fails, and opens a GitHub issue, or comments on an already-open one, titled with the workflow name. The body links the failed run and names the failed job. A later green scheduled run of the same workflow closes that issue, so repeated nightly failures produce one open issue, not one per night. Both proving run URLs are recorded in the conductor log.
 - **AC-OPS-2:** T1: the alert step's own failure is visible. If issue creation fails (for example a missing permission), the job still ends red and the step log names the API error. The workflow declares `issues: write` explicitly at job level.
 - **AC-OPS-3:** T2: when the app creates a fresh database, it logs at WARNING (not INFO) the database directory it is creating, plus one sentence saying an existing library from a container without a /data mount may be in an anonymous Docker volume and pointing to UPGRADING.md. Opening an existing database does not emit this line.
 - **AC-OPS-5:** T5: a refused request is logged at WARNING with the refused Host value (sanitised and truncated to 255 characters) and the setting name allowed_hosts. Logging is rate-limited to at most one line per distinct Host per 10 minutes, plus a periodic count of suppressed refusals, so a flood of hostile Host headers cannot push earlier diagnostics out of the rotating log. (merges AC-PROD-16)
@@ -609,7 +624,7 @@ into their own spec as the starting set.
 - **AC-OPS-14:** T16: the settings-load failure in `loader.py` logs at WARNING or above, naming the plugin. Each of the narrowed sites leaves an ERROR or WARNING record naming the item (event name, plugin name, media id or search target) when a real failure occurs, checked with the logger at INFO. None of them logs a data-path failure at DEBUG.
 - **AC-OPS-15:** T17: a failed `fix_release_quality` run logs at WARNING that it will retry on the next boot. A second boot after success logs nothing about it.
 - **AC-OPS-17:** T26: the Dockerfile HEALTHCHECK no longer fetches `/`; it fetches `/healthz`, asserted by a Dockerfile parse test. `/healthz` returns 200 when the database read succeeds and the scheduler is running, and 503 when the database read fails or the scheduler is not running, each proven by a test. It answers within the HEALTHCHECK's 5-second client timeout under normal load. A successful probe writes no log line at INFO or above. (merges AC-QA-34)
-- **AC-OPS-19:** Rollback: for each of T5, T15, T17, T21 and T28, the PR body states what the previous beta image does when started against data written by the new one (new config.ini key, property marker, rotated api_key, recreated index). For T28 this is tested, as AC-DATA-28 requires.
+- **AC-OPS-19:** Rollback: for each of T5, T15, T30, T31, T33, T17, T21 and T28, the PR body states what the previous beta image does when started against data written by the new one (new config.ini key, property marker, rotated api_key, recreated index). For T28 this is tested, as AC-DATA-28 requires.
 
 ### Vetoed at planning
 
@@ -630,7 +645,7 @@ Not sustained (the simplicity criterion is dropped, the requirement stays):
 - Dropped `AC-SIMP-1` (T5 reads the Host header only, no trusted-proxy setting): overridden by security. `AC-SEC-3` and `AC-SEC-35` need an explicit trusted-proxy setting, default empty; the lens deferred to security in its own finding.
 - Dropped `AC-SIMP-2` (T5 refusal is plain text or JSON, no template): overridden by the accessibility floor. `AC-A11Y-3` needs a titled HTML document with a language, a heading and a main landmark, which a plain-text body cannot carry; the lens deferred to accessibility and product in its own finding.
 - Dropped `AC-SIMP-6` (one helper function, called from the rmtree sites only, no write path): overridden by data loss and security. The rTorrent deletes are `os.unlink` and `os.rmdir`, not rmtree (`AC-SEC-9`, `AC-QA-7`), and `AC-SEC-22` needs the same predicate for T13 writes. `AC-ARCH-5` keeps the intent: no further inline containment copies.
-- Dropped `AC-SIMP-12` (remove T29): not applied. T29 traces to finding F-A2, and the owning lens supplied `AC-ARCH-24`. T29 needs its own spec and plan cycle, where the veto can be raised again against a real design. Recorded for the owner as a recommendation to cut or shrink.
+- Dropped `AC-SIMP-12` (remove T29): not applied by the planning cycle, because T29 traced to finding F-A2 and the owning lens supplied `AC-ARCH-24`. The owner then cut T29 (decision 10), so the veto's outcome stands and `AC-ARCH-24` is lapsed.
 - Dropped `AC-SIMP-13` (remove T20, T26 and T28 unless the owning lens supplies a criterion): lapsed on its own condition. The owning lenses supplied `AC-DATA-25` (T20), `AC-OPS-17` and `AC-SEC-36` (T26), and `AC-DATA-28` (T28). The lens's point that T20 has no measured contention behind it stands as a recommendation: gate T20 on T18's numbers.
 
 Dropped on precedence, not by veto:
@@ -639,9 +654,39 @@ Dropped on precedence, not by veto:
 
 Merged as duplicates (the surviving criterion carries a note): AC-SEC-10, AC-SEC-11, AC-QA-9, AC-QA-14, AC-QA-15, AC-QA-16, AC-QA-19, AC-QA-21, AC-QA-24, AC-QA-26, AC-QA-34, AC-PROD-2, AC-PROD-9, AC-PROD-12, AC-PROD-13, AC-PROD-16, AC-PROD-19, AC-PROD-20, AC-DESIGN-3, AC-DESIGN-6, AC-DESIGN-10, AC-DATA-6, AC-DATA-7, AC-ARCH-14, AC-OPS-4, AC-OPS-11, AC-OPS-12, AC-OPS-16, AC-OPS-18.
 
+## Dependency reasons
+
+Where a `(needs: ...)` edge below differs from the draft text under "Task
+detail", the edge below wins. The reasons (AC-SIMP-14):
+
+- **T1 before everything except T2, T3 and T4:** a pull request cannot be
+  told apart from a red baseline while the nightly build is red.
+- **T6 needs T10:** the updater holds one of the three `rmtree` call sites;
+  deleting it first leaves two to guard.
+- **T11 needs T6 and T7:** making the rename chain live exercises the delete
+  paths and logs downloader URLs.
+- **T12 needs T5:** the script notifier runs operator-supplied commands and
+  must not go live on installs with no password before the host check
+  (AC-SEC-19).
+- **T13 needs T32:** metadata writes go through `Plugin.createFile`.
+- **T15, T16, T19 and T22 need T14:** each edits files the rename chain also
+  edits (`core/media/_base/media/main.py`, `core/event.py`, the notification
+  base, `couchpotato/__init__.py`), and the chain has priority.
+- **T23 and T27 need T14:** the documentation and the mutation scope describe
+  the renamer as it stands after the chain lands.
+- **T28 and T30 need T14:** no file overlap. This is milestone order only:
+  M1 lands before M2 and M3 work so review attention stays on M1.
+- **T30 needs T33:** the partial-migration guard is proven against the live
+  migrator before the second path and its tests are deleted.
+- **T16 needs T7:** widening what is logged must follow the log scrubbing.
+- **T25 needs T31:** the newer ruff target raises findings in files T31
+  deletes or rewrites.
+- **T21 needs T22, T26 needs T5, T20 needs T19:** each builds on the code the
+  earlier task introduces.
+
 ## Tasks
 
-- [ ] T1: Restore the nightly build (base digest bump) and alert on scheduled failure — state: queued
+- [ ] T1: Restore the nightly build (ship the fixed zlib) and alert on scheduled failure — state: queued
 - [ ] T2: Mount /data in docker-compose.yml, with a guard test, upgrade note and backup.sh fix — state: queued
 - [ ] T3: Characterisation tests for destructive deletes — state: queued
 - [ ] T4: Strict-xfail contract test for the rename-completion chain — state: queued
@@ -664,7 +709,7 @@ Merged as duplicates (the surviving criterion carries a note): AC-SEC-10, AC-SEC
 - [ ] T30: Delete the dead second migration path — state: queued (needs: T33, T14)
 - [ ] T31: Remove the remaining live CodernityDB imports, with an AST import guard — state: queued (needs: T15, T30)
 - [ ] T16: Narrow the data-path catch-alls (logging only at event.py) — state: queued (needs: T7, T14)
-- [ ] T19: Rewrite the library list with paging — state: queued (needs: T18, T14)
+- [ ] T19: Rewrite the library list with paging — state: queued (needs: T18, T14; blocked on owner: confirm the decision 6 library-size target)
 - [ ] T20: Tested opt-out from per-route API serialisation, only if T18 shows queuing — state: queued (needs: T19)
 - [ ] T22: Authentication hardening (login bucket, constant-time compare, /getkey) — state: queued (needs: T5, T14)
 - [ ] T21: api_key rotation and cache hygiene — state: queued (needs: T22)
