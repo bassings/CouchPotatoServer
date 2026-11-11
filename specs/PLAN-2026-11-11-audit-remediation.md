@@ -18,11 +18,31 @@ Production deployment is outside this plan. Betas publish per merge as usual.
    mandatory password. The `Host` allow-list (T5) is therefore the fix for the
    DNS-rebinding exposure and is not optional.
 4. The source-archive self-updater is **deleted**, not repaired.
-5. **SonarQube-driven sweeps are paused until M1 is merged.** `make sonar`
-   may still run after merges as reporting; nothing acts on it.
-6. Library-size target: recommended 5,000 movies, paged 50 per request,
-   measured at 500 / 5,000 / 20,000. **Not yet confirmed by Scott**; T18
-   records the baseline and T19 does not start until the target is confirmed.
+5. **SonarQube-driven sweeps are paused until M1 is merged.** Narrowed by
+   decision 14: a scan runs after every merge and its new findings are acted
+   on; the backlog sweep stays paused.
+6. Library-size target: 5,000 movies, paged 50 per request, measured at
+   500 / 5,000 / 20,000. **Confirmed by Scott 2026-11-12.** T18 records the
+   baseline; T19 no longer waits on an owner answer.
+
+Decisions taken 2026-11-12 (Scott), numbered after the list below:
+
+13. The orchestrator merges this plan's pull requests itself once every
+    required check is green, the cloud reviews have no open findings and
+    every review thread is resolved, and reports after each merge. Promotion
+    to production is not covered and still needs explicit agreement. A
+    required check that fails on a test provably unrelated to the change is
+    re-run once: if it passes the PR merges and the test is logged in
+    `docs/technical-debt.md`; if it fails again, work stops and the failure
+    is investigated.
+14. After every merge to `master`, `make sonar` runs from the merged tree.
+    Findings the merge introduced are fixed in code, as are backlog findings
+    in files the merge touched. Nothing is resolved, accepted or dismissed to
+    move a number; a false positive is marked only with a recorded reason.
+    The scan stays reporting only and never gates a merge.
+15. Dependabot PRs are triaged by the orchestrator, which merges the ones it
+    takes, closes the ones it rejects with evidence, and leaves held ones
+    open with the condition for revisiting.
 
 Decisions taken after the planning cycle (Scott, 2026-11-11):
 
@@ -128,7 +148,11 @@ contradict, the draft text here. The amendments that change a task's scope:
   state. The alert covers `ci.yml`, `mutation.yml` and `codeql.yml`. Checked
   2026-11-11: the current upstream `python:3.15-alpine` (amd64) still ships
   `zlib-1.3.2-r1`, so a digest bump alone does not clear the finding; the
-  remedy is the runtime `apk` version floor (AC-SEC-17).
+  remedy is the runtime `apk` version floor (AC-SEC-17). That half shipped
+  ahead of this plan as #579 (`4f488f9e4`): the floor is `zlib>=1.4-r0`,
+  pinned by `tests/unit/test_dockerfile_security.py`, and the `docker` check
+  is green. `Dockerfile` is therefore unchanged by T1 unless the cause has
+  recurred; T1's remaining work is the scheduled-failure alert.
 - **T2:** also fixes `scripts/backup.sh` for the corrected layout (AC-DATA-3).
 - **T3:** "regenerate coverage" is vetoed (AC-SIMP-5). Tests only.
 - **T5:** bare LAN hostnames and `.local` names are in scope for the
@@ -200,9 +224,8 @@ contradict, the draft text here. The amendments that change a task's scope:
 - **T19:** the library page's filter, chips, count and Select All run in the
   browser over the full list today and must keep working under paging
   (AC-DESIGN-9 to AC-DESIGN-15, AC-A11Y-8 to AC-A11Y-11).
-  Before delegating T19 the conductor raises the decision 6 confirmation
-  through `.claude/blocked-on-human`; T19 starts only once the conductor log
-  records the owner's answer.
+  Decision 6 was confirmed on 2026-11-12, so T19 needs no owner answer
+  before it is delegated; its budget is still set from T18's numbers.
 - **T20:** reversed. Serialised stays the default with a tested opt-out
   (AC-DATA-25), and the task runs only if T18 shows same-route queuing is a
   real cost; otherwise it closes with the measurement and no code change.
@@ -381,8 +404,8 @@ Acceptance: gated by a stored property in the same manner as
 **T18. Measure the library list.** F-P1.
 Acceptance: a seeded benchmark at 500, 5,000 and 20,000 movies records
 `media.list` wall time and statement count on the current code, in the
-conductor log. No production change. Scott confirms or amends the target in
-decision 6 from these numbers. Effort S. Risk low.
+conductor log. No production change. The target in decision 6 is confirmed;
+these numbers set T19's budget against it. Effort S. Risk low.
 
 **T19. Rewrite the library list.** F-P1, F-P2. **Needs spec.** (needs: T18)
 Draft acceptance: id-only projection, set membership, one batched fetch,
@@ -739,7 +762,7 @@ detail", the edge below wins. The reasons (AC-SIMP-14):
 
 ## Tasks
 
-- [ ] T1: Restore the nightly build (ship the fixed zlib) and alert on scheduled failure — state: queued
+- [ ] T1: Alert on scheduled-workflow failure (the fixed zlib shipped in #579) — state: queued
 - [ ] T2: Mount /data in docker-compose.yml, with a guard test, upgrade note and backup.sh fix — state: queued
 - [ ] T3: Characterisation tests for destructive deletes — state: queued
 - [ ] T4: Strict-xfail contract test for the rename-completion chain — state: queued
