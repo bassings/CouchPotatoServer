@@ -70,6 +70,7 @@ test('a second keyboard activation cannot start a conflicting restart request', 
   let firstStarted!: () => void;
   let releaseFirst!: () => void;
   const started = new Promise<void>(resolve => { firstStarted = resolve; });
+  await page.route('**/__restart-barrier', route => route.fulfill({ status: 204 }));
   await page.route('**/app.restart/**', async route => {
     requests += 1;
     if (requests === 1) {
@@ -89,8 +90,11 @@ test('a second keyboard activation cannot start a conflicting restart request', 
   await expect(banner.locator('button')).toHaveText('Requesting restart…');
   await expect(banner.locator('button')).toBeFocused();
   await page.keyboard.press('Enter');
-  // Give a second request time to reach the route while the first stays pending.
-  await page.waitForTimeout(250); // wait-for-timeout-ok: forbidden-event=duplicate-restart-request
+  // Prove the duplicate did NOT happen without a fixed wait: route events reach
+  // the test in the order the browser issued the requests, so once a barrier
+  // request sent AFTER the second Enter has been answered, a duplicate restart
+  // request (issued synchronously by that Enter) would already have been counted.
+  await page.evaluate(async () => { await fetch('/__restart-barrier'); });
   expect(requests).toBe(1);
   releaseFirst();
   await expect(banner).toBeHidden();
