@@ -356,10 +356,14 @@ result. Getting it wrong the other way files a bug against working code.
   noted, not fixed now).** `couchpotato/ui/templates/logs.html` (line 73) and
   `couchpotato/ui/templates/partials/settings/scripts.html` (line 17) each
   define `logsPanel()`. Diffing the two function bodies, measured: 97 lines in
-  `logs.html` and 93 in `scripts.html`, with 88 lines identical in both (about
-  91% and 95%). The differences are cosmetic or a rename: `loading` versus
-  `logLoading`, a "Scroll to bottom" comment, and an `if/else` written on one
-  line versus five. SonarQube's new-code duplication measure flagged it after
+  `logs.html` and 93 in `scripts.html`, with 87 lines identical in both (about
+  90% and 94%). One difference is behavioural: the standalone page's flag is
+  `loading`, starting `true`, while the settings tab's is `logLoading`,
+  starting `false`, so only the standalone page shows a spinner straight
+  away. The rename is needed because the settings tab sits inside
+  `settingsPanel()`, which has its own `loading` flag. The rest are cosmetic:
+  a "Scroll to bottom" comment, and an `if/else` written on one line versus
+  five. A shared component has to carry both facts. SonarQube's new-code duplication measure flagged it after
   #580 added the same two-line comment to both (25% of 16 new lines), which
   turned the reporting-only quality status red. That should clear as more new
   code lands, and it is not a reason to change anything on its own. The
