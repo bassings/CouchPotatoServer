@@ -232,10 +232,15 @@ test.describe('a busy control ignores a second activation', () => {
     await page.keyboard.press('Space');                       // and the other activation key
 
     held.release();
-    await expect(heading(page, 2)).toBeFocused();
+    // The request count is asserted BEFORE anything about focus, so that removing the re-entry guard
+    // fails on the extra requests it sends (it would otherwise also fail on the heading, which the
+    // second activation's extra step change moves on).
+    await expect(page.locator('[x-text="steps[currentStep]"]')).not.toHaveText('Security');
+    await expect(nextButton(page)).toHaveAttribute('aria-disabled', 'false');
     expect(held.saves.sort(), 'a second activation while busy sent a second set of saves').toEqual([
       'core.password=placeholder-secret', 'core.username=admin',
     ]);
+    await expect(heading(page, 2)).toBeFocused();
   });
 
   test('pressing Enter twice on a busy Sync sends one set of requests', async ({ page }) => {
@@ -288,6 +293,28 @@ test.describe('a busy control ignores a second activation', () => {
     held.release();
     await expect(heading(page, 2)).toBeFocused();
     await expect(page.locator('[x-text="steps[currentStep]"]')).toHaveText('Providers');
+  });
+
+  test('Back, Skip and the reachable step buttons say they are busy while a save is in flight, and say it no longer once it ends', async ({ page }) => {
+    const held = await holdSaves(page);
+    await openWizard(page);
+    await mountStep(page, 1, 'state.formData.username = "admin";');
+    const reachable = [backButton(page), skipButton(page), page.locator('[x-data="setupWizard()"] .mb-8 button').nth(0), page.locator('[x-data="setupWizard()"] .mb-8 button').nth(1)];
+    for (const control of reachable) await expect(control).toHaveAttribute('aria-disabled', 'false');
+
+    await tabTo(page, nextButton(page));
+    await page.keyboard.press('Enter');
+    await expect.poll(() => held.saves.length).toBe(1);
+    for (const control of reachable) {
+      await expect(control, 'an inert control during a save is not exposed as aria-disabled').toHaveAttribute('aria-disabled', 'true');
+    }
+    // Still focusable, never natively disabled: they must not drop focus either.
+    expect(await backButton(page).evaluate((el) => el.hasAttribute('disabled'))).toBe(false);
+
+    held.release();
+    await expect(heading(page, 2)).toBeFocused();
+    await expect(backButton(page)).toHaveAttribute('aria-disabled', 'false');
+    await expect(page.locator('[x-data="setupWizard()"] .mb-8 button').nth(0)).toHaveAttribute('aria-disabled', 'false');
   });
 });
 
@@ -638,6 +665,74 @@ test.describe('the folder browser is a modal dialog', () => {
     await page.evaluate(() => new Promise<void>((resolve) => { setTimeout(resolve, 0); }));
     await page.evaluate(() => new Promise<void>((resolve) => { setTimeout(resolve, 0); }));
     await expect(browse, `after a quick open and close, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+  });
+});
+
+test.describe('Browse is inert while a save is in flight', () => {
+  test.use({ viewport: PHONE });
+
+  for (const opener of OPENERS) {
+    test(`pressing Browse ("${opener.label}") during a held save does not open the dialog and says it is busy`, async ({ page }) => {
+      const held = await holdSaves(page);
+      let listings = 0;
+      await page.route('**/directory.list/**', (route) => {
+        listings += 1;
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(directoryListing) });
+      });
+      await openWizard(page);
+      await mountStep(page, opener.step, opener.scene);
+      const browse = browseButtonFor(page, opener.field);
+      await expect(browse).toHaveAttribute('aria-disabled', 'false');
+
+      await tabTo(page, nextButton(page));
+      await page.keyboard.press('Enter');
+      await expect.poll(() => held.saves.length).toBeGreaterThan(0);
+      await expect(browse, 'Browse is not exposed as busy during a save').toHaveAttribute('aria-disabled', 'true');
+      expect(await browse.evaluate((el) => el.hasAttribute('disabled'))).toBe(false);
+
+      await browse.focus();                                    // scene: the control is reachable
+      await page.keyboard.press('Enter');
+      // The component's own state first: it is set in the click handler itself, so unlike the rendered
+      // dialog (shown by Alpine a moment later) it cannot be read too early.
+      const opened = await page.evaluate(() => (window as any).Alpine.$data(document.querySelector('[x-data="setupWizard()"]')).browserOpen);
+      expect(opened, 'the folder browser opened during a save').toBe(false);
+      await expect(folderDialog(page), 'the folder browser is showing during a save').toBeHidden();
+      expect(listings, 'a listing was requested during a save').toBe(0);
+
+      held.release();
+      await expect(heading(page, opener.step + 1)).toBeFocused();
+      await expect(folderDialog(page)).toBeHidden();
+    });
+  }
+});
+
+test.describe('step headings are focus targets, not tab stops', () => {
+  test.use({ viewport: PHONE });
+
+  test('every step heading has tabindex -1', async ({ page }) => {
+    await openWizard(page);
+    for (let step = 0; step < STEP_HEADINGS.length; step += 1) {
+      await expect(page.locator(`#wizard-step-heading-${step}`), `heading of step ${step + 1}`).toHaveAttribute('tabindex', '-1');
+    }
+  });
+
+  test('Tab through each step never stops on its heading', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    for (let step = 0; step < STEP_HEADINGS.length; step += 1) {
+      await mountStep(page, step);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      // Step 6 has no Continue: its last control is the Start Searching link.
+      const last = step < 5 ? nextButton(page) : page.getByRole('link', { name: 'Start Searching' });
+      const stops: string[] = [];
+      for (let i = 0; i < 150; i += 1) {
+        await page.keyboard.press('Tab');
+        stops.push(await page.evaluate(() => document.activeElement?.id || ''));
+        if (await last.evaluate((el) => el === document.activeElement)) break;
+      }
+      expect(await last.evaluate((el) => el === document.activeElement), `Tab never reached the end of step ${step + 1}`).toBe(true);
+      expect(stops.filter((id) => id.startsWith('wizard-step-heading')), `Tab stopped on the heading of step ${step + 1}`).toEqual([]);
+    }
   });
 });
 
