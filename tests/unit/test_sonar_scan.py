@@ -1074,8 +1074,9 @@ def test_a_genuine_eperm_on_the_grace_period_sigkill_fails_promptly(tmp_path, mo
 
 
 def test_eperm_from_the_initial_sigterm_is_not_swallowed(tmp_path, monkeypatch):
-    # Only the two SIGKILL calls tolerate EPERM. A PermissionError from the
-    # first SIGTERM could be a real refusal to signal a group, so it must still
+    # The two SIGKILL calls tolerate EPERM (the grace-period one only once the
+    # leader has exited). A PermissionError from the first SIGTERM could be a
+    # real refusal to signal a group, so it must still
     # surface as a failure. The patched SIGTERM sends nothing, so the command is
     # stopped for real in the cleanup.
     real_killpg = os.killpg

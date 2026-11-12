@@ -167,7 +167,10 @@ def playwright_commands(script_text: str) -> list[str]:
     line-based guard saw is lost, whatever form `--project` takes).
     """
     npm_names = _playwright_npm_scripts()
-    joined = re.sub(r'\\[ \t]*\n', ' ', script_text)
+    # Whole-line comments go BEFORE continuations are joined: bash does not
+    # continue a comment, so `# note \` must not swallow the command after it.
+    uncommented = re.sub(r'(?m)^[ \t]*#.*$', '', script_text)
+    joined = re.sub(r'\\[ \t]*\n', ' ', uncommented)
     commands = []
     for line in joined.splitlines():
         code = re.sub(r'(^|\s)#.*$', '', line)
@@ -231,8 +234,15 @@ def test_the_real_gate_has_exactly_the_four_playwright_commands():
     """Pins the selection itself: a selector that quietly matched more or fewer
     commands would make both guards above vacuous or noisy."""
     verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
-    projects = [re.search(r'--project=(\S+)', c).group(1) for c in playwright_commands(verify)]
-    assert projects == ['chromium', 'isolation', 'mobile-chrome', 'accessibility']
+    commands = playwright_commands(verify)
+    projects = [
+        match.group(1) if (match := re.search(r'--project=(\S+)', c)) else f'<no --project=: {c}>'
+        for c in commands
+    ]
+    assert projects == ['chromium', 'isolation', 'mobile-chrome', 'accessibility'], (
+        'verify.sh should run exactly these four Playwright projects, in this order; '
+        'selected commands: %s' % commands
+    )
 
 
 T = '--trace=retain-on-failure'
@@ -260,6 +270,7 @@ TRACE_GUARD_CASES = [
     ('two commands on one line, only the first has it', f'npx playwright test --project=a {T} && npx playwright test --project=b', False),
     ('two commands on one line, both have it', f'npx playwright test --project=a {T} && npx playwright test --project=b {T}', True),
     ('wrapper that passes --project without saying playwright', f'./run-e2e.sh --project=a {F}', False),
+    ('comment ending in a backslash does not swallow the next command', f'npx playwright test --project=a {T} {F}\n# note \\\nnpx playwright test --project=b', False),
     ('unrelated npm script', 'npm run lint', False),
 ]
 
@@ -275,6 +286,7 @@ FLAKY_GUARD_CASES = [
     ('space form of --project', 'npx playwright test --project mobile-chrome', False),
     ('no --project at all', 'npx playwright test', False),
     ('wrapper that passes --project without saying playwright', f'./run-e2e.sh --project=a {T}', False),
+    ('comment ending in a backslash does not swallow the next command', f'npx playwright test --project=a {T} {F}\n# note \\\nnpx playwright test --project=b', False),
 ]
 
 
@@ -301,6 +313,11 @@ def test_every_case_script_is_selected_rather_than_ignored(script):
     """A not-ok case that selects nothing is rejected as "vacuous", which looks
     like the guard working while testing nothing about the shape it names."""
     assert playwright_commands(script) != []
+
+
+def test_a_comment_ending_in_a_backslash_does_not_hide_the_next_command():
+    script = f'npx playwright test --project=a {T} {F}\n# note \\\nnpx playwright test --project=b'
+    assert len(playwright_commands(script)) == 2
 
 
 @pytest.mark.parametrize('guard', [trace_problems, flaky_problems])
