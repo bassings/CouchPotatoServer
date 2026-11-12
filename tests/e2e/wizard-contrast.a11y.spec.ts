@@ -13,7 +13,7 @@ import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
  * was not (`opacity-60` on 10px text). The two button states have different
  * foreground and background colours, so each is scanned on its own, and the
  * rest of the wizard is scanned in the richest state the user can reach (every
- * provider on, clients chosen, folders filled in, results and a toast showing)
+ * provider on, clients chosen, folders filled in, Jackett sync results showing)
  * because axe only measures text that is on screen.
  *
  * NOT covered, deliberately and openly: the wizard's own visual toast

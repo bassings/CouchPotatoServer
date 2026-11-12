@@ -87,11 +87,19 @@ PR #584 and none was reached by a test before it:
   `aria-current="step"`, and it is the current one. Each indicator button's
   accessible name includes the step's name and, for a finished step, that it
   is complete, not only "✓" or a number.
-- **AC-A11Y-6 (selected source):** The Usenet/Torrents/Both buttons expose
-  selection through `aria-pressed`, consistent with what is highlighted,
-  including that choosing Both shows all three as highlighted today. If the
-  exposed state and the highlight cannot both be truthful, the highlight
-  logic is left alone and the mismatch is reported, not papered over.
+- **AC-A11Y-6 (selected source):** *(Owner decision 2026-11-13: a pick-one
+  group, not three toggles.)* The Usenet/Torrents/Both buttons are a
+  `role="radiogroup"` named by text already on the page (`aria-labelledby` to
+  the existing question), with `role="radio"` and `aria-checked` on each
+  button. Only the actual choice is checked: choosing Both checks only Both.
+  `aria-pressed` is not used on them. The visual highlight is unchanged (Both
+  still lights all three); that mismatch is deliberate and recorded in
+  `docs/technical-debt.md`. The APG radio-group keyboard pattern applies: one
+  tab stop (roving tabindex on the checked radio), Arrow keys move and choose
+  with wrap, Space chooses. Their focus ring is painted and their targets are
+  at least 24x24 CSS px. The Usenet and Torrent download-client buttons, which
+  are true toggles shown by colour, expose `aria-pressed` bound to their real
+  state.
 - **AC-A11Y-7 (busy and result announced):** One persistent, visually hidden
   polite status region exists in the wizard from first render. Its text is set
   when a save, sync or connection test starts and when it finishes ("Saving…",
@@ -151,4 +159,11 @@ PR #584 and none was reached by a test before it:
 
 ## Spec gaps found at review
 
-*(none yet)*
+- The folder dialog dropped focus to `<body>` when a folder row was opened (the keyed list removes the focused button) and when Retry was pressed (its container hides); AC-A11Y-4 only covered open and close.
+- A focus callback queued on open could run after the dialog had been closed (Enter then Escape), leaving focus on `<body>`; no criterion covered a close that races the open.
+- Back, Skip and the step buttons were inert but unannounced during a save; AC-A11Y-2 covered only the controls that bind `disabled`.
+- Browse stayed usable during a save, so a dialog could open behind a step change and write a folder into a field that had already been saved.
+- The download-client buttons are true toggles shown by colour alone; AC-A11Y-6 named only the source buttons.
+- AC-A11Y-1 required step headings out of the tab order, but nothing tested it (a surviving mutation).
+- `aria-pressed` was chosen for a single-choice control; a pick-one group is a radio group (owner decision 2026-11-13). A criterion naming an ARIA pattern should say whether the control is one-of-many or independent.
+- AC-QA-8 required `wizard-provider-saves.spec.ts` to stay unchanged, but changing the source buttons to radios necessarily changes that spec's `getByRole('button', ...)` selector to `getByRole('radio', ...)` (one word; five other specs changed the same way).
