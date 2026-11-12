@@ -319,9 +319,13 @@ result. Getting it wrong the other way files a bug against working code.
      was wrong. The cause is in `_stop_process_group`: on macOS `os.killpg`
      raises `PermissionError` (EPERM), not `ProcessLookupError`, when the group
      holds only a not-yet-reaped zombie, and the final SIGKILL sweep caught only
-     the latter (about 3% of local runs). The sweep now tolerates EPERM; the
-     earlier signals stay strict. Pinned deterministically by
-     `test_timeout_is_still_a_timeout_when_the_final_group_sweep_gets_eperm`.
+     the latter (measured locally at 2 of 60, 5 of 80 under CPU load, and 1 of
+     150 in three separate samples). The grace-period SIGKILL has the same
+     exposure. Both SIGKILL calls now tolerate EPERM; the initial SIGTERM stays
+     strict. Pinned deterministically by
+     `test_timeout_is_still_a_timeout_when_the_final_group_sweep_gets_eperm`,
+     `..._the_grace_period_sigkill_gets_eperm` and
+     `test_eperm_from_the_initial_sigterm_is_not_swallowed`.
   2. FIXED: `tests/e2e/settings.spec.ts` "visual option captions match their
      control accessible names" (failed twice, then passed on retry, in CI run
      43091127303, PR #579). After a tab switch the page reuses settings cards
@@ -349,9 +353,11 @@ result. Getting it wrong the other way files a bug against working code.
   passes `--trace=retain-on-failure` to every Playwright invocation (traces
   land in the gitignored `test-results/`), so the next occurrence of 3 or 4
   leaves evidence. Also fixed on that branch: `wizard-credential-mask.spec.ts`
-  failed on Playwright 1.65 / Chromium 158 because `setContent()` ran the
-  deferred Alpine script before the inline `setupWizard()` definition; it now
-  navigates to the rendered HTML served from a same-origin route.
+  failed on Playwright 1.65.0 / Chromium 158 (observed in Dependabot PR
+  #570's CI run and reproduced in a scratch clone; not on this lockfile, which
+  pins 1.64.1 / Chromium 156) because `setContent()` ran the deferred Alpine
+  script before the inline `setupWizard()` definition; it now navigates to the
+  rendered HTML served from a same-origin route, and passes on both versions.
 
 - **Settings cards are keyed by position, not identity (2026-11-12, open,
   optional product fix).** `settings.html` keys the card loop with
