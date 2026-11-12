@@ -237,7 +237,7 @@ class FolderScannerMixin:
         for file_path in list(group['unsorted_files']):
             ext = getExt(file_path)
             wo_ext = file_path[:-(len(ext) + 1)]
-            found_files = set([item for item in leftovers if wo_ext in item])
+            found_files = {item for item in leftovers if wo_ext in item}
             group['unsorted_files'].extend(found_files)
             leftovers = leftovers - found_files
             has_ignored += 1 if ext in self.ignored_extensions else 0

@@ -64,7 +64,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                 tag_files = release_download.get('files', [])
             else:
                 for root, folders, names in os.walk(folder):
-                    tag_files.extend([sp(os.path.join(root, name)) for name in names if not os.path.splitext(name)[1] == _IGNORE_EXTENSION])
+                    tag_files.extend([sp(os.path.join(root, name)) for name in names if os.path.splitext(name)[1] != _IGNORE_EXTENSION])
 
         if not folder:
             return False
@@ -96,7 +96,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
             tag_files = release_download.get('files', [])
         else:
             for root, folders, names in os.walk(folder):
-                tag_files.extend([sp(os.path.join(root, name)) for name in names if not os.path.splitext(name)[1] == _IGNORE_EXTENSION])
+                tag_files.extend([sp(os.path.join(root, name)) for name in names if os.path.splitext(name)[1] != _IGNORE_EXTENSION])
 
         for root, dirnames, filenames in os.walk(folder):
             ignore_files.extend(fnmatch.filter([sp(os.path.join(root, filename)) for filename in filenames], '*%s.ignore' % tag))

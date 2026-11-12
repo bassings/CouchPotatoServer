@@ -427,7 +427,8 @@ class TestConcurrentPasswordCommits:
             if clear.ident is not None:
                 clear.join(5)
 
-        assert not auth.is_alive() and not clear.is_alive()
+        assert not auth.is_alive()
+        assert not clear.is_alive()
         assert not failures, failures
         on_disk = Settings()
         on_disk.setFile(str(env.settings.file))
@@ -494,7 +495,8 @@ class TestConcurrentPasswordCommits:
             if writer.ident is not None:
                 writer.join(5)
 
-        assert not reader.is_alive() and not writer.is_alive()
+        assert not reader.is_alive()
+        assert not writer.is_alive()
         assert not failures, failures
         assert results == [True]
         assert str(env.settings.get('session_rotation_pending')) == '1'
@@ -568,7 +570,8 @@ class TestConcurrentPasswordCommits:
             if b.ident is not None:
                 b.join(5)
 
-        assert not a.is_alive() and not b.is_alive()
+        assert not a.is_alive()
+        assert not b.is_alive()
         assert not failures, failures
         on_disk = Settings()
         on_disk.setFile(str(env.settings.file))
@@ -633,7 +636,8 @@ class TestConcurrentPasswordCommits:
             if runtime.ident is not None:
                 runtime.join(5)
 
-        assert not password.is_alive() and not runtime.is_alive()
+        assert not password.is_alive()
+        assert not runtime.is_alive()
         assert not failures, failures
         on_disk = Settings()
         on_disk.setFile(str(env.settings.file))
