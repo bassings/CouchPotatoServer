@@ -23,18 +23,6 @@ import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
 
 const GRAPHIC_ROLES = new Set(['graphics-document', 'graphics-symbol', 'img', 'image']);
 const PHONE = { width: 375, height: 812 };
-/**
- * Known, pre-existing, and NOT part of this change: the three 10px hint lines
- * on the Providers step's source cards ("NZB indexers", "Torrent trackers",
- * "Maximum coverage") fail 1.4.3 (2.34:1 light, 3.21:1 dark) because of
- * `opacity-60`. No wizard axe scan reached that step before this file, and
- * fixing it means changing a colour, which this icon change must not do.
- * Excluded by exact selector rather than by disabling the rule, so every other
- * node on every step is still checked for contrast. The exclusion can expire:
- * 'the contrast exclusion still matches exactly the failing hints' fails when
- * the selector matches a different number of nodes or the nodes stop failing.
- */
-const KNOWN_CONTRAST_DEBT = 'button > span.text-\\[10px\\].opacity-60';
 const directoryListing = {
   success: true, dirs: ['/movies/', '/shows/'], parent: '/', home: '/', is_root: false, platform: 'posix',
 };
@@ -304,7 +292,6 @@ for (const theme of ['light', 'dark'] as const) {
       );
       await expectVisualTransitionsToSettle(page, `wizard step ${step} (${theme})`);
       const results = await new AxeBuilder({ page })
-        .exclude(KNOWN_CONTRAST_DEBT)
         .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
         .analyze();
       const detail = results.violations
@@ -326,33 +313,5 @@ for (const theme of ['light', 'dark'] as const) {
       .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html} — ${n.failureSummary}`))
       .join('\n');
     expect(results.violations.length, `directory browser/${theme}:\n${detail}`).toBe(0);
-  });
-}
-
-for (const theme of ['light', 'dark'] as const) {
-  test(`the contrast exclusion still matches exactly the failing hints in the ${theme} theme`, async ({ page }) => {
-    await page.setViewportSize(PHONE);
-    await openWizard(page, theme);
-    await wizardState(page, 'state.formData.searchType = "both"; state.currentStep = 2;');
-    await expect(page.locator('[x-text="steps[currentStep]"]')).toHaveText('Providers');
-    await expectVisualTransitionsToSettle(page, `Providers step (${theme})`);
-
-    const matched = page.locator(KNOWN_CONTRAST_DEBT);
-    await expect(
-      matched,
-      'KNOWN_CONTRAST_DEBT no longer matches exactly the three hints: either the markup changed (update the ' +
-      'selector and this count) or a new span picked up the classes and is silently excluded from the contrast scan',
-    ).toHaveCount(3);
-
-    const results = await new AxeBuilder({ page })
-      .include(KNOWN_CONTRAST_DEBT)
-      .withRules(['color-contrast'])
-      .analyze();
-    const failing = results.violations.flatMap((v) => v.nodes).length;
-    expect(
-      failing,
-      `the ${theme} theme's three hints no longer all fail color-contrast (${failing} do): the debt looks fixed. ` +
-      'Delete KNOWN_CONTRAST_DEBT, its .exclude(...) call and this test.',
-    ).toBe(3);
   });
 }

@@ -126,19 +126,19 @@
                   :class="formData.searchType === 'usenet' || formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Usenet</span>
-            <span class="text-[10px] opacity-60">NZB indexers</span>
+            <span class="text-[10px]">NZB indexers</span>
           </button>
           <button @click="formData.searchType = 'torrents'"
                   :class="formData.searchType === 'torrents' || formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Torrents</span>
-            <span class="text-[10px] opacity-60">Torrent trackers</span>
+            <span class="text-[10px]">Torrent trackers</span>
           </button>
           <button @click="formData.searchType = 'both'"
                   :class="formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Both</span>
-            <span class="text-[10px] opacity-60">Maximum coverage</span>
+            <span class="text-[10px]">Maximum coverage</span>
           </button>
         </div>
 
