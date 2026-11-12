@@ -976,12 +976,13 @@ def test_timeout_is_still_a_timeout_when_the_final_group_sweep_gets_eperm(tmp_pa
 
     monkeypatch.setattr(sonar_scan.os, "killpg", killpg)
 
+    safe_env = sonar_scan._safe_env()
     with pytest.raises(sonar_scan.ScanError, match="Command timed out: sleeper"):
         sonar_scan._command(
             subprocess.run,
             [sys.executable, "-c", "import time; time.sleep(30)"],
             tmp_path,
-            env=sonar_scan._safe_env(),
+            env=safe_env,
             timeout=0.3,
             description="sleeper",
         )
@@ -1012,13 +1013,14 @@ def test_timeout_is_still_a_timeout_when_the_grace_period_sigkill_gets_eperm(tmp
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
     )
 
+    safe_env = sonar_scan._safe_env()
     try:
         with pytest.raises(sonar_scan.ScanError, match="Command timed out: stubborn"):
             sonar_scan._command(
                 subprocess.run,
                 [sys.executable, "-c", ignore_sigterm],
                 tmp_path,
-                env=sonar_scan._safe_env(),
+                env=safe_env,
                 timeout=0.3,
                 description="stubborn",
             )
@@ -1051,13 +1053,14 @@ def test_a_genuine_eperm_on_the_grace_period_sigkill_fails_promptly(tmp_path, mo
     )
 
     started = time.monotonic()
+    safe_env = sonar_scan._safe_env()
     try:
         with pytest.raises(sonar_scan.ScanError, match="Command failed: unkillable"):
             sonar_scan._command(
                 subprocess.run,
                 [sys.executable, "-c", ignore_sigterm],
                 tmp_path,
-                env=sonar_scan._safe_env(),
+                env=safe_env,
                 timeout=0.3,
                 description="unkillable",
             )
@@ -1090,13 +1093,14 @@ def test_eperm_from_the_initial_sigterm_is_not_swallowed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sonar_scan.os, "killpg", killpg)
 
+    safe_env = sonar_scan._safe_env()
     try:
         with pytest.raises(sonar_scan.ScanError, match="Command failed: refused"):
             sonar_scan._command(
                 subprocess.run,
                 [sys.executable, "-c", "import time; time.sleep(30)"],
                 tmp_path,
-                env=sonar_scan._safe_env(),
+                env=safe_env,
                 timeout=0.3,
                 description="refused",
             )

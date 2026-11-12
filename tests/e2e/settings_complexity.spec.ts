@@ -186,3 +186,67 @@ test('a successful secret save never copies the submitted secret into display st
   expect(state.message).not.toContain(secret);
   await expect(page.getByText(secret)).toHaveCount(0);
 });
+
+test('saveSingle serialises booleans as 1/0 and everything else with String()', async ({ page }) => {
+  const posted: string[] = [];
+  await page.route('**/settings.save/**', route => {
+    posted.push(new URLSearchParams(route.request().postData() || '').get('value') ?? '<absent>');
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true }),
+    });
+  });
+
+  await page.evaluate(async () => {
+    const root = document.querySelector('[x-data="settingsPanel()"]');
+    if (!root) throw new Error('Settings panel is absent');
+    const panel = (window as any).Alpine.$data(root);
+    for (const value of [true, false, 'on', '', 0, 7, null, undefined]) {
+      await panel.saveSingle('core', 'probe', value);
+    }
+  });
+
+  expect(posted).toEqual(['1', '0', 'on', '', '0', '7', 'null', 'undefined']);
+});
+
+test('computeOpenGroups opens groups with no enabler and groups whose enabler is on', async ({ page }) => {
+  const open = await page.evaluate(() => {
+    const panel = (window as any).settingsPanel();
+    const groups = [
+      { section: 'plain', name: 'plain', options: [{ name: 'x', type: 'string' }] },
+      { section: 'on', name: 'on', options: [{ name: 'enabled', type: 'enabler' }] },
+      { section: 'off', name: 'off', options: [{ name: 'enabled', type: 'enabler' }] },
+    ];
+    const values: Record<string, boolean> = { on: true, off: false };
+    panel.tabOrder = ['t'];
+    panel.getTabGroups = () => groups;
+    panel.getVal = (section: string) => values[section];
+    panel.openGroups = {};
+    panel.computeOpenGroups();
+    return groups.map((g, i) => [g.name, panel.openGroups[panel.groupKey(g, i)] === true]);
+  });
+
+  expect(open).toEqual([['plain', true], ['on', true], ['off', false]]);
+});
+
+test('a swallowed version-info failure leaves only a fixed debug note, never the error text', async ({ page }) => {
+  const logged = await page.evaluate(async () => {
+    const panel = (window as any).settingsPanel();
+    const calls: unknown[][] = [];
+    const originalDebug = console.debug;
+    const originalFetch = window.fetch;
+    console.debug = (...args: unknown[]) => { calls.push(args); };
+    window.fetch = (async () => { throw new TypeError('secret-token-in-url /private/library/path'); }) as typeof window.fetch;
+    try {
+      await panel.loadVersionInfo();
+      return { calls, version: panel.version, updateAvailable: panel.updateAvailable };
+    } finally {
+      console.debug = originalDebug;
+      window.fetch = originalFetch;
+    }
+  });
+
+  expect(logged.calls).toEqual([['Version info unavailable', 'TypeError']]);
+  expect(JSON.stringify(logged.calls)).not.toContain('secret');
+});

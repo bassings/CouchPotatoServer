@@ -140,6 +140,7 @@ function logsPanel() {
         this.logs = [];
         this.loadError = '';
       } catch (e) {
+        console.debug('Log clear failed', e?.name);
         this.clearError = 'Unable to clear all logs. Some entries may remain. Refresh to check.';
       } finally {
         this.clearingLogs = false;
