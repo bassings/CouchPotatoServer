@@ -308,7 +308,7 @@ result. Getting it wrong the other way files a bug against working code.
   evidence was in the application's own log, which nothing kept until this
   branch made the harness retain it. That is the lesson, not the SQLite detail.
 
-- **Three intermittent tests, logged only (2026-11-12).** Each failed once on
+- **Four intermittent tests, logged only (2026-11-12).** Each failed once on
   2026-11-12 and passed on re-run, and none was caused by the change under test.
   The owner's decision is to log them and not fix them now. Handling rule: one
   re-run is allowed for a failure that is provably unrelated to the change; a
@@ -329,6 +329,11 @@ result. Getting it wrong the other way files a bug against working code.
      timeout racing subprocess start-up under load, which is an inference, not a
      measurement. It passed 6/6 alone, with and without `--cov`, and it blocked
      one `make sonar` run.
+  4. `tests/e2e/settings.spec.ts:399` ("focus then blur WITHOUT typing saves
+     nothing"): timed out after 35.5s with "locator.blur: Target page, context
+     or browser has been closed" in a full local gate run on the branch that
+     added this entry, whose only change to the settings templates is a
+     comment. The other 236 tests in that run passed.
 
 - **Restart-duplicate E2E test can leave an orphan server (2026-11-12,
   pre-existing).** `tests/e2e/settings_restart_failure.spec.ts` "a second
