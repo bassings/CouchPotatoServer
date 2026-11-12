@@ -29,7 +29,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
         tag_files = []
 
         if isinstance(group, dict):
-            tag_files = [sorted(list(group['files']['movie']))[0]]
+            tag_files = [min(group['files']['movie'])]
         elif isinstance(release_download, dict):
             if release_download.get('files', []):
                 tag_files = [filename for filename in release_download.get('files', []) if os.path.exists(filename)]
@@ -52,7 +52,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
         folder = None
 
         if isinstance(group, dict):
-            tag_files = [sorted(list(group['files']['movie']))[0]]
+            tag_files = [min(group['files']['movie'])]
             folder = sp(group['parentdir'])
             if not group.get('dirname') or not os.path.isdir(folder):
                 return False
