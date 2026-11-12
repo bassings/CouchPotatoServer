@@ -143,6 +143,24 @@ def test_the_local_gate_keeps_fail_on_flaky_tests_too(ci_workflow):
     )
 
 
+def test_the_local_gate_retains_a_trace_for_every_failed_e2e_test():
+    """Locally `retries` is 0, so the config's `trace: 'on-first-retry'` never
+    records anything and a one-off local failure leaves no evidence behind.
+    `--trace=retain-on-failure` on each invocation is what keeps one."""
+    verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
+    invocations = [
+        line.strip()
+        for line in verify.splitlines()
+        if '--project=' in line and not line.lstrip().startswith('#')
+    ]
+    assert invocations, 'no Playwright invocations found; the guard would be vacuous'
+    untraced = [line for line in invocations if '--trace=retain-on-failure' not in line]
+    assert not untraced, (
+        'these verify.sh Playwright invocations record no trace on a local failure: %s'
+        % untraced
+    )
+
+
 def test_the_guard_can_actually_fail():
     """Prove the matcher is not vacuous, without mutating the real workflow.
 

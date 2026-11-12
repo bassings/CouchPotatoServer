@@ -163,19 +163,19 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # line ran chromium + accessibility + mobile-chrome, 158 tests, and the
   # three separate steps below then re-ran two of them. The gate must name
   # exactly what each step runs.
-  npx playwright test --project=chromium --fail-on-flaky-tests \
+  npx playwright test --project=chromium --trace=retain-on-failure --fail-on-flaky-tests \
     || fail "E2E tests failed"
   # AC-QA-50's isolation proof, pinned to 2 workers because it only
   # demonstrates anything when the mutating and asserting specs land on
   # different workers. The chromium project above runs at workers: 1
   # (AC-SIMP-12), so this cannot ride along with it.
-  npx playwright test --project=isolation --workers=2 --fail-on-flaky-tests \
+  npx playwright test --project=isolation --workers=2 --trace=retain-on-failure --fail-on-flaky-tests \
     || fail "E2E worker-isolation proof failed"
   # Small-screen coverage. AGENTS.md treats a mobile layout regression that
   # blocks a core flow as high-priority, and the mobile-chrome project existed
   # for a long time without anything running it. Scoped by testMatch to
   # *.mobile.spec.ts, so this adds seconds, not minutes.
-  npx playwright test --project=mobile-chrome --fail-on-flaky-tests \
+  npx playwright test --project=mobile-chrome --trace=retain-on-failure --fail-on-flaky-tests \
     || fail "Mobile E2E tests failed"
   # Accessibility. These have their own project (testMatch *.a11y.spec.ts) and
   # the chromium project now testIgnores them -- previously they rode along in
@@ -183,7 +183,7 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # SILENTLY DROPPED a11y from the local gate. CI has always run them as a
   # separate job (.github/workflows/ci.yml, `test:a11y`); this makes the local
   # gate mirror it, which is the whole contract of this script.
-  npx playwright test --project=accessibility --fail-on-flaky-tests \
+  npx playwright test --project=accessibility --trace=retain-on-failure --fail-on-flaky-tests \
     || fail "Accessibility tests failed"
 else
   step "7/7 E2E tests: SKIPPED (--no-e2e)"
