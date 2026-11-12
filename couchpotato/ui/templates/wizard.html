@@ -431,7 +431,7 @@
                 <div class="flex gap-2">
                   <input id="wizard-blackhole-nzb-dir" type="text" x-model="formData.downloaderConfig.blackhole.nzb_directory" placeholder="/path/to/nzb/watch"
                          class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                  <button @click="browseDirectory('blackhole_nzb')" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
+                  <button @click="browseDirectory('blackhole_nzb', $event.currentTarget)" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
                 </div>
               </div>
               <div>
@@ -439,7 +439,7 @@
                 <div class="flex gap-2">
                   <input id="wizard-blackhole-torrent-dir" type="text" x-model="formData.downloaderConfig.blackhole.torrent_directory" placeholder="/path/to/torrent/watch"
                          class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                  <button @click="browseDirectory('blackhole_torrent')" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
+                  <button @click="browseDirectory('blackhole_torrent', $event.currentTarget)" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
                 </div>
               </div>
             </div>
@@ -707,7 +707,7 @@
             <div class="flex gap-2">
               <input id="wizard-renamer-from" type="text" x-model="formData.renamer.from" placeholder="/path/to/downloads/complete"
                      class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
-              <button @click="browseDirectory('renamer_from')" type="button"
+              <button @click="browseDirectory('renamer_from', $event.currentTarget)" type="button"
                       class="px-4 py-2 rounded-md text-sm bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
                 Browse
               </button>
@@ -720,7 +720,7 @@
             <div class="flex gap-2">
               <input id="wizard-renamer-to" type="text" x-model="formData.renamer.to" placeholder="/path/to/movies"
                      class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
-              <button @click="browseDirectory('renamer_to')" type="button"
+              <button @click="browseDirectory('renamer_to', $event.currentTarget)" type="button"
                       class="px-4 py-2 rounded-md text-sm bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
                 Browse
               </button>
@@ -894,12 +894,20 @@
       </div>
     </div>
 
-    <!-- Directory Browser Modal -->
-    <div x-show="browserOpen" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    {#- Directory Browser Modal. Same dialog semantics and Escape handling as
+        partials/settings/modals.html, plus what that twin lacks and a keyboard
+        user needs: focus moves in on open, returns to the Browse button that
+        opened it on close, and Tab cannot reach the page behind (the trap is
+        on window, so it also catches Tab pressed with nothing focused). -#}
+    <div id="wizard-browser-dialog" x-show="browserOpen" x-transition
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+         role="dialog" aria-modal="true" aria-labelledby="wizard-browser-title"
+         @keydown.escape.window="if (browserOpen) closeBrowser()"
+         @keydown.tab.window="trapBrowserFocus($event)">
       <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
         <div class="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
-          <h3 class="text-sm font-medium">Browse Folders</h3>
-          <button @click="browserOpen = false" aria-label="Close directory browser" class="text-cp-muted hover:text-cp-text">
+          <h3 id="wizard-browser-title" class="text-sm font-medium">Browse Folders</h3>
+          <button @click="closeBrowser()" aria-label="Close directory browser" class="text-cp-muted hover:text-cp-text">
             <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
@@ -939,7 +947,7 @@
         </div>
         
         <div class="px-4 py-3 border-t border-white/[0.04] flex justify-end gap-2">
-          <button @click="browserOpen = false" class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">Cancel</button>
+          <button @click="closeBrowser()" class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">Cancel</button>
           <button @click="confirmDirectory()" :aria-disabled="(browserLoading || !browserValid).toString()" :class="browserLoading || !browserValid ? 'opacity-50 cursor-not-allowed' : ''" class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover">Select This Folder</button>
         </div>
       </div>
@@ -1064,6 +1072,8 @@ function setupWizard() {
     browserRequestedPath: '/',
     browserRequestId: 0,
     browserTarget: null,
+    // The Browse button that opened the dialog; focus goes back to it on close.
+    browserOpener: null,
     browserParent: '/',
     browserIsRoot: true,
 
@@ -1536,11 +1546,51 @@ function setupWizard() {
     },
 
     // Directory browser
-    async browseDirectory(target) {
+    async browseDirectory(target, opener) {
       this.browserTarget = target;
+      // Passed in by the click, because Safari does not focus a button on click
+      // and document.activeElement would then be <body>.
+      this.browserOpener = opener || document.activeElement;
       this.browserOpen = true;
       this.browserPath = '/';
+      this.$nextTick(() => this.focusBrowserEntry());
       await this.loadDirectories('/');
+    },
+
+    // The close button is the dialog's first control and is present whatever
+    // the listing is doing, so focus never waits on the network.
+    focusBrowserEntry() {
+      const first = document.querySelector('#wizard-browser-dialog button');
+      if (first) first.focus();
+    },
+
+    closeBrowser() {
+      this.browserOpen = false;
+      const opener = this.browserOpener;
+      this.browserOpener = null;
+      if (opener) opener.focus();
+    },
+
+    // Cyclic focus trap (cf. trapFocus in partials/settings/scripts.html), on
+    // window so it also holds when focus is on <body>. Hidden controls (the
+    // Retry button while there is no error) are not tab stops and are skipped.
+    trapBrowserFocus(event) {
+      if (!this.browserOpen) return;
+      const dialog = document.getElementById('wizard-browser-dialog');
+      const stops = Array.from(dialog.querySelectorAll('button:not([disabled])'))
+        .filter((el) => el.getClientRects().length > 0);
+      if (stops.length === 0) return;
+      const first = stops[0];
+      const last = stops[stops.length - 1];
+      const active = document.activeElement;
+      let target = null;
+      if (!dialog.contains(active)) target = event.shiftKey ? last : first;
+      else if (event.shiftKey && active === first) target = last;
+      else if (!event.shiftKey && active === last) target = first;
+      if (target) {
+        event.preventDefault();
+        target.focus();
+      }
     },
 
     async loadDirectories(path) {
@@ -1597,7 +1647,7 @@ function setupWizard() {
           this.formData.renamer.to = path;
           break;
       }
-      this.browserOpen = false;
+      this.closeBrowser();
     },
 
     getConfiguredClients() {

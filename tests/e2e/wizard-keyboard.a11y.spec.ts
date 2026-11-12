@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { expectDialogNamedByUniqueHeading } from './helpers';
 
 /**
  * The setup wizard for keyboard and screen-reader users (WCAG 2.2 AA: 2.1.1
@@ -285,5 +286,164 @@ test.describe('a busy control ignores a second activation', () => {
     held.release();
     await expect(heading(page, 2)).toBeFocused();
     await expect(page.locator('[x-text="steps[currentStep]"]')).toHaveText('Providers');
+  });
+});
+
+const directoryListing = {
+  success: true, dirs: ['/movies/', '/shows/'], parent: '/', home: '/', is_root: false, platform: 'posix',
+};
+
+/** The four places the wizard opens the folder browser from, each a "Browse" button beside its own input. */
+const OPENERS = [
+  { label: 'Download Folder', step: 4, scene: '', field: '#wizard-renamer-from' },
+  { label: 'Movie Library', step: 4, scene: '', field: '#wizard-renamer-to' },
+  { label: 'NZB Watch Folder', step: 3, scene: 'state.formData.blackholeEnabled = true;', field: '#wizard-blackhole-nzb-dir' },
+  { label: 'Torrent Watch Folder', step: 3, scene: 'state.formData.blackholeEnabled = true;', field: '#wizard-blackhole-torrent-dir' },
+] as const;
+
+const browseButtonFor = (page: Page, field: string) => page.locator(field).locator('xpath=..').getByRole('button', { name: 'Browse', exact: true });
+// Located by its x-show, not its role, so the behaviour tests below fail for the behaviour
+// they name and only the first test fails for a missing role.
+const folderDialog = (page: Page) => page.locator('[x-show="browserOpen"]');
+
+/** True when the focused element is inside the dialog; the failure message names where focus is instead. */
+async function expectFocusInDialog(page: Page, context: string) {
+  const inside = await folderDialog(page).evaluate((el) => el.contains(document.activeElement));
+  expect(inside, `${context}: focus is on ${await whereIsFocus(page)}, outside the dialog`).toBe(true);
+}
+
+async function openFolderBrowser(page: Page, opener: (typeof OPENERS)[number]) {
+  await page.route('**/directory.list/**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(directoryListing),
+  }));
+  await acceptSaves(page);
+  await openWizard(page);
+  await mountStep(page, opener.step, opener.scene);
+  const browse = browseButtonFor(page, opener.field);
+  await tabTo(page, browse);
+  await page.keyboard.press('Enter');
+  return browse;
+}
+
+test.describe('the folder browser is a modal dialog', () => {
+  test.use({ viewport: PHONE });
+
+  test('it is exposed as a modal dialog named "Browse Folders"', async ({ page }) => {
+    await openFolderBrowser(page, OPENERS[0]);
+    const dialog = page.getByRole('dialog', { name: 'Browse Folders' });
+    await expect(dialog, 'the folder browser has no role="dialog"').toBeVisible();
+    await expect(dialog).toHaveAttribute('aria-modal', 'true');
+    await expect(dialog).toHaveJSProperty('tagName', 'DIV');
+    await expectDialogNamedByUniqueHeading(page, dialog, 'Browse Folders', 3);
+  });
+
+  for (const opener of OPENERS) {
+    test(`opening it from "${opener.label}" moves focus in, Escape closes it and focus returns to that Browse button`, async ({ page }) => {
+      const browse = await openFolderBrowser(page, opener);
+      await expect(folderDialog(page)).toBeVisible();
+      await expect.poll(() => folderDialog(page).evaluate((el) => el.contains(document.activeElement)), {
+        message: 'opening the folder browser did not move focus into it',
+      }).toBe(true);
+
+      await page.keyboard.press('Escape');
+      await expect(folderDialog(page)).toBeHidden();
+      // This button, not "a" Browse button: the four are identical to a screen reader.
+      await expect(browse, `focus is on ${await whereIsFocus(page)}, not the Browse button that opened the dialog`).toBeFocused();
+    });
+  }
+
+  for (const opener of OPENERS) {
+    // Safari does not focus a button on click, so document.activeElement is <body> when the
+    // handler runs. Chromium is made to behave the same by cancelling the mousedown default.
+    test(`opening it by a click that does not focus the button ("${opener.label}") still returns focus to that button`, async ({ page }) => {
+      await page.route('**/directory.list/**', (route) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(directoryListing),
+      }));
+      await acceptSaves(page);
+      await openWizard(page);
+      await mountStep(page, opener.step, opener.scene);
+      const browse = browseButtonFor(page, opener.field);
+      await browse.evaluate((el) => el.addEventListener('mousedown', (e) => e.preventDefault()));
+      await browse.click();
+      expect(await browse.evaluate((el) => el === document.activeElement), 'the click focused the button, so this is not the Safari case').toBe(false);
+
+      await expect(folderDialog(page).getByRole('button', { name: 'movies', exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(folderDialog(page)).toBeHidden();
+      await expect(browse, `focus is on ${await whereIsFocus(page)}, not the Browse button that opened the dialog`).toBeFocused();
+    });
+  }
+
+  test('Cancel, the close button and Select This Folder each return focus to the Browse button', async ({ page }) => {
+    const opener = OPENERS[1];                                // Movie Library: not the first Browse on the page
+    const browse = await openFolderBrowser(page, opener);
+    const dialog = folderDialog(page);
+    await expect(dialog.getByRole('button', { name: 'movies', exact: true })).toBeVisible();
+
+    await tabTo(page, dialog.getByRole('button', { name: 'Cancel', exact: true }));
+    await page.keyboard.press('Enter');
+    await expect(dialog).toBeHidden();
+    await expect(browse, `after Cancel, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+
+    await page.keyboard.press('Enter');                       // reopen from the focused Browse button
+    await expect(dialog.getByRole('button', { name: 'movies', exact: true })).toBeVisible();
+    await tabTo(page, dialog.getByRole('button', { name: 'Close directory browser', exact: true }));
+    await page.keyboard.press('Enter');
+    await expect(dialog).toBeHidden();
+    await expect(browse, `after the close button, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await expect(dialog.getByRole('button', { name: 'movies', exact: true })).toBeVisible();
+    await tabTo(page, dialog.getByRole('button', { name: 'Select This Folder', exact: true }));
+    await page.keyboard.press('Enter');
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(opener.field), 'Select This Folder did not fill the field it was opened for').toHaveValue('/');
+    await expect(page.locator('#wizard-renamer-from')).toHaveValue('');
+    await expect(browse, `after Select, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+  });
+
+  test('Tab and Shift+Tab cycle inside the dialog and never reach the page behind it', async ({ page }) => {
+    await openFolderBrowser(page, OPENERS[0]);
+    const dialog = folderDialog(page);
+    await expect(dialog.getByRole('button', { name: 'shows', exact: true })).toBeVisible();
+    const stops = await dialog.getByRole('button').count();  // Close, Up, 2 folders, Cancel, Select
+    expect(stops).toBeGreaterThanOrEqual(5);
+
+    const seen = new Set<string>();
+    for (let i = 0; i < stops * 2 + 1; i += 1) {
+      await page.keyboard.press('Tab');
+      await expectFocusInDialog(page, `Tab press ${i + 1}`);
+      seen.add(await page.evaluate(() => (document.activeElement?.textContent || document.activeElement?.getAttribute('aria-label') || '').trim()));
+    }
+    expect(seen.size, 'Tab did not visit every control in the dialog').toBeGreaterThanOrEqual(stops);
+
+    for (let i = 0; i < stops * 2 + 1; i += 1) {
+      await page.keyboard.press('Shift+Tab');
+      await expectFocusInDialog(page, `Shift+Tab press ${i + 1}`);
+    }
+  });
+
+  test('Tab from the last control wraps to the first, and Shift+Tab from the first wraps to the last', async ({ page }) => {
+    await openFolderBrowser(page, OPENERS[0]);
+    const dialog = folderDialog(page);
+    const first = dialog.getByRole('button', { name: 'Close directory browser', exact: true });
+    const last = dialog.getByRole('button', { name: 'Select This Folder', exact: true });
+    await expect(dialog.getByRole('button', { name: 'shows', exact: true })).toBeVisible();
+
+    await last.focus();
+    await page.keyboard.press('Tab');
+    await expect(first, `focus is on ${await whereIsFocus(page)}`).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(last, `focus is on ${await whereIsFocus(page)}`).toBeFocused();
+  });
+
+  test('Tab pressed with nothing focused still lands inside the dialog, not on the page behind', async ({ page }) => {
+    await openFolderBrowser(page, OPENERS[0]);
+    await expect(folderDialog(page).getByRole('button', { name: 'shows', exact: true })).toBeVisible();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());   // e.g. after a click on the backdrop
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+
+    await page.keyboard.press('Tab');
+    await expectFocusInDialog(page, 'Tab from <body>');
   });
 });
