@@ -9,11 +9,20 @@ type Tracker = {
 test('wizard renders every tracker credential as a password input', async ({ page }) => {
   // Use the server's Jinja-rendered markup, including its real tracker data,
   // but mount it directly so step-navigation cannot make the test vacuous.
+  // Served from a same-origin route rather than injected with setContent():
+  // on Playwright 1.65.0 / Chromium 158 (Dependabot PR #570 in CI; reproduced
+  // in a scratch clone, not on this repo's pinned 1.64.1 / Chromium 156) the
+  // deferred Alpine script then runs before the inline
+  // script that defines setupWizard(), so Alpine evaluates the component
+  // before it exists. A real navigation parses the document in order, and the
+  // same origin keeps the relative vendor script URLs resolving against the app.
   const response = await page.request.get('/wizard/');
   expect(response.ok()).toBeTruthy();
   const wizardHtml = await response.text();
-  await page.goto('/'); // Give relative vendor script URLs the app's origin.
-  await page.setContent(wizardHtml);
+  await page.route('**/__wizard-credential-mask/', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: wizardHtml }),
+  );
+  await page.goto('/__wizard-credential-mask/');
 
   const wizard = page.locator('[x-data="setupWizard()"]');
   await expect(page.locator('[x-text="steps[currentStep]"]')).toHaveText('Welcome');

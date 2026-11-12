@@ -308,32 +308,85 @@ result. Getting it wrong the other way files a bug against working code.
   evidence was in the application's own log, which nothing kept until this
   branch made the harness retain it. That is the lesson, not the SQLite detail.
 
-- **Four intermittent tests, logged only (2026-11-12).** Each failed once on
-  2026-11-12 and passed on re-run, and none was caused by the change under test.
-  The owner's decision is to log them and not fix them now. Handling rule: one
-  re-run is allowed for a failure that is provably unrelated to the change; a
-  second failure stops the work and gets investigated rather than re-run again.
-  1. `tests/e2e/trakt-device-auth.spec.ts:212` ("starting authorisation
-     displays the code and URL inside a persistent live region"):
-     `[data-testid="trakt-user-code"]` was not visible within 8s in a full local
-     gate run. In isolation the spec file passed 78/78 (this test 6/6) with
-     `--repeat-each=6`, so the
-     trigger is load during the full run rather than the test in itself.
-  2. `tests/e2e/settings.spec.ts:107` ("visual option captions match their
-     control accessible names"): failed twice, then passed on retry, in CI run
-     43091127303 (PR #579). `--fail-on-flaky-tests` turned that into a failed
-     job. It passed on one re-run.
-  3. `tests/unit/test_sonar_scan.py::test_real_timeout_terminates_the_entire_subprocess_group`:
-     under the full coverage run it raised "Command failed: process tree"
-     instead of "Command timed out: process tree". The likely cause is its 0.2s
-     timeout racing subprocess start-up under load, which is an inference, not a
-     measurement. It passed 6/6 alone, with and without `--cov`, and it blocked
-     one `make sonar` run.
-  4. `tests/e2e/settings.spec.ts:399` ("focus then blur WITHOUT typing saves
-     nothing"): timed out after 35.5s with "locator.blur: Target page, context
-     or browser has been closed" in a full local gate run on the branch that
-     added this entry, whose only change to the settings templates is a
-     comment. The other 236 tests in that run passed.
+- **Four intermittent tests (logged 2026-11-12; two fixed, two unexplained).**
+  Each failed once on 2026-11-12 and passed on re-run, and none was caused by
+  the change under test. Handling rule: one re-run is allowed for a failure that
+  is provably unrelated to the change; a second failure stops the work and gets
+  investigated rather than re-run again.
+  1. FIXED: `tests/unit/test_sonar_scan.py::test_real_timeout_terminates_the_entire_subprocess_group`
+     reported "Command failed: process tree" instead of "Command timed out".
+     The first entry blamed the 0.2s timeout racing start-up; that inference
+     was wrong. The cause is in `_stop_process_group`: on macOS `os.killpg`
+     raises `PermissionError` (EPERM), not `ProcessLookupError`, when the group
+     holds only a not-yet-reaped zombie, and the final SIGKILL sweep caught only
+     the latter (measured locally at 2 of 60, 5 of 80 under CPU load, and 1 of
+     150 in three separate samples). The grace-period SIGKILL after the 1s
+     SIGTERM wait has the same exposure, but there EPERM is tolerated only when
+     the leader has exited (`process.poll()` is not `None`, which is what the
+     zombie explanation predicts). With a live leader a PermissionError is
+     genuine and re-raises at once, because swallowing it fell through to an
+     untimed `communicate()` that blocked for the survivor's lifetime and then
+     reported the group as stopped. The final sweep tolerates it
+     unconditionally (the leader is already reaped by then), and the initial
+     SIGTERM does not tolerate it at all. Pinned by
+     `test_timeout_is_still_a_timeout_when_the_final_group_sweep_gets_eperm`,
+     `test_timeout_is_still_a_timeout_when_the_grace_period_sigkill_gets_eperm`,
+     `test_a_genuine_eperm_on_the_grace_period_sigkill_fails_promptly` and
+     `test_eperm_from_the_initial_sigterm_is_not_swallowed`.
+  2. FIXED: `tests/e2e/settings.spec.ts` "visual option captions match their
+     control accessible names" (failed twice, then passed on retry, in CI run
+     43091127303, PR #579). After a tab switch the page reuses settings cards
+     by index (`settings.html`, `x-for ... :key="groupIdx"`), so the General
+     tab's provider panel stays visible for about 80-100ms while it fades out
+     (`provider_card.html`, `x-transition`). On the seeded config the settled
+     Searchers tab has no visible provider caption, so the "provider settings"
+     case passed only by winning that race. The test now checks provider
+     settings on General (the `core.basics` group) before any tab switch, and
+     combined settings on Searchers, each in a settled state.
+  3. UNEXPLAINED: `tests/e2e/trakt-device-auth.spec.ts:212` ("starting
+     authorisation displays the code and URL inside a persistent live
+     region"): `[data-testid="trakt-user-code"]` was not visible within 8s in a
+     full local gate run. Not reproduced: 9 of 9 passes in isolation,
+     replicas 10/10 and 300/300, and CPU load alone was not sufficient to
+     trigger it.
+  4. UNEXPLAINED: `tests/e2e/settings.spec.ts:399` ("focus then blur WITHOUT
+     typing saves nothing"): timed out after 35.5s with "locator.blur: Target
+     page, context or browser has been closed" in a full local gate run on a
+     branch whose only change to the settings templates was a comment. Not
+     reproduced (replicas 10/10 and 300/300).
+
+  Local Playwright runs had `retries: 0`, so `trace: 'on-first-retry'` never
+  recorded anything and a local failure left no trace. `scripts/verify.sh` now
+  passes `--trace=retain-on-failure` to every Playwright invocation (traces
+  land in the gitignored `test-results/`), so the next occurrence of 3 or 4
+  leaves evidence. Also fixed on that branch: `wizard-credential-mask.spec.ts`
+  failed on Playwright 1.65.0 / Chromium 158 (observed in Dependabot PR
+  #570's CI run and reproduced in a scratch clone; not on this lockfile, which
+  pins 1.64.1 / Chromium 156) because `setContent()` ran the deferred Alpine
+  script before the inline `setupWizard()` definition; it now navigates to the
+  rendered HTML served from a same-origin route, and passes on both versions.
+
+- **Limits of the Playwright flag guards, deliberately not fixed (2026-11-12).**
+  `playwright_commands` in `tests/unit/test_ci_required_contexts.py` backs the
+  `--trace=retain-on-failure` and `--fail-on-flaky-tests` guards on
+  `scripts/verify.sh`. It is a regex, not a shell parser, so: a ` #` inside
+  quotes is treated as a comment (on the real file only the exactly-four-commands
+  pin catches the damage), and a quoted `|` or `;` gives a false red. A
+  shell-level retry loop around a correctly flagged command
+  (`for ...; do npx playwright test ... && break; done`) is not detected by any
+  version of the guard. Prefixed forms such as `env X=1 npm run test:e2e`,
+  `npm --prefix . run ...`, `yarn ...` and `npm t` are selected only if they also
+  carry `--project`. Accepted because `verify.sh` is a small file reviewed by
+  hand; revisit if it grows beyond the four plain invocations.
+
+- **Settings cards are keyed by position, not identity (2026-11-12, open,
+  optional product fix).** `settings.html` keys the card loop with
+  `:key="groupIdx"`, so switching tabs reuses and re-renders cards in place
+  instead of replacing them, which is what produced the fade-out window in
+  entry 2 above. Keying by group identity would remove it. Medium risk: the
+  Trakt component teardown at `partials/settings/scripts.html:1039` relies on
+  the current re-keying, so that has to be re-verified (and its tests kept)
+  before changing the key.
 
 - **Restart-duplicate E2E test can leave an orphan server (2026-11-12,
   pre-existing).** `tests/e2e/settings_restart_failure.spec.ts` "a second

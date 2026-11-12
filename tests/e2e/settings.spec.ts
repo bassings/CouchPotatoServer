@@ -1,3 +1,5 @@
+import type { Locator } from '@playwright/test';
+
 import { test, expect } from './fixtures';
 
 /**
@@ -105,23 +107,17 @@ test.describe('Settings', () => {
   });
 
   test('visual option captions match their control accessible names', async ({ page }) => {
-    const searcherTab = page.getByRole('tab', { name: /searcher/i });
-    await expect(searcherTab).toBeVisible();
-    await searcherTab.click();
-
     const captionExpression = "opt.label || opt.name.replace(/_/g, ' ')";
-    const cases = [
-      {
-        source: 'combined settings',
-        caption: page.locator(`span[aria-hidden="true"][x-text="${captionExpression}"]:not([x-show]):visible`).first(),
-      },
-      {
-        source: 'provider settings',
-        caption: page.locator(`span[aria-hidden="true"][x-text="${captionExpression}"][x-show]:visible`).first(),
-      },
-    ];
 
-    for (const { source, caption } of cases) {
+    // Each case is asserted in a SETTLED state. After a tab switch the page
+    // reuses cards by index (settings.html `:key="groupIdx"`), so the previous
+    // tab's provider panel stays visible for ~100ms while it fades out
+    // (provider_card.html `x-transition`). The Searchers tab has no open
+    // provider panel once settled, so a provider caption found there is only
+    // the fading General panel. The provider case therefore runs on General,
+    // where the always-open `core.basics` group (Username, Password, Port)
+    // gives it a caption that is still there after the page has settled.
+    const assertCaptionMatchesControl = async (source: string, caption: Locator) => {
       await expect(caption, `${source} did not render a visual option caption`).toBeVisible();
       const visibleText = (await caption.textContent())?.trim() || '';
       expect(visibleText, `${source} rendered an empty visual caption`).not.toBe('');
@@ -129,7 +125,23 @@ test.describe('Settings', () => {
       const control = caption.locator('..').locator('input:visible, select:visible, textarea:visible, button:visible').first();
       await expect(control, `${source} caption had no rendered control`).toBeVisible();
       await expect(control, `${source} control name drifted from its visible caption`).toHaveAccessibleName(visibleText);
-    }
+    };
+
+    const generalTab = page.getByRole('tab', { name: /general/i });
+    await expect(generalTab).toHaveAttribute('aria-selected', 'true');
+    await assertCaptionMatchesControl(
+      'provider settings',
+      page.locator(`span[aria-hidden="true"][x-text="${captionExpression}"][x-show]:visible`).first(),
+    );
+
+    const searcherTab = page.getByRole('tab', { name: /searcher/i });
+    await expect(searcherTab).toBeVisible();
+    await searcherTab.click();
+    await expect(searcherTab).toHaveAttribute('aria-selected', 'true');
+    await assertCaptionMatchesControl(
+      'combined settings',
+      page.locator(`span[aria-hidden="true"][x-text="${captionExpression}"]:not([x-show]):visible`).first(),
+    );
   });
 
   test('Jackett sync button should have description (DEF-003)', async ({ page }) => {

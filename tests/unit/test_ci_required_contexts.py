@@ -28,6 +28,8 @@ The reported check-run name is the job's `name:` when it has one, and the job
 key otherwise -- that fallback is why a bare rename of a key is enough to break
 this, and why the test resolves the name the same way GitHub does.
 """
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -125,22 +127,205 @@ def test_every_playwright_invocation_in_ci_keeps_fail_on_flaky_tests(ci_workflow
     )
 
 
+NO_INVOCATIONS = 'no Playwright invocations found; the guard would be vacuous'
+
+
+def _playwright_npm_scripts() -> set[str]:
+    """Names of package.json scripts that reach Playwright, directly or through
+    another script. Derived, so a new script cannot slip past by being new."""
+    scripts = json.loads((REPO / 'package.json').read_text(encoding='utf-8'))['scripts']
+    # `_comment:*` keys are prose that happens to mention Playwright, not scripts.
+    scripts = {
+        name: body
+        for name, body in scripts.items()
+        if isinstance(body, str) and not name.startswith('_')
+    }
+    names = {name for name, body in scripts.items() if 'playwright test' in body}
+    changed = True
+    while changed:
+        changed = False
+        for name, body in scripts.items():
+            if name in names:
+                continue
+            called = re.findall(r'npm (?:run(?:-script)? )?([\w:.-]+)', body)
+            if any(c in names for c in called):
+                names.add(name)
+                changed = True
+    return names
+
+
+def playwright_commands(script_text: str) -> list[str]:
+    """The shell command segments in a script that run Playwright.
+
+    Backslash continuations are joined first, so a flag on a continuation line
+    belongs to its command; whole-line and trailing comments are dropped, so a
+    flag that only appears in prose does not count. Each logical line is then
+    split on `&&`, `||`, `;` and `|`, and every segment is judged on its own, so
+    `cmd --flag || cmd` cannot hide an unflagged retry behind a flagged first
+    half. A segment is selected if it runs `playwright test`, runs an npm script
+    that package.json maps to Playwright, or mentions `--project` (so nothing a
+    line-based guard saw is lost, whatever form `--project` takes).
+    """
+    npm_names = _playwright_npm_scripts()
+    # Whole-line comments go BEFORE continuations are joined: bash does not
+    # continue a comment, so `# note \` must not swallow the command after it.
+    uncommented = re.sub(r'(?m)^[ \t]*#.*$', '', script_text)
+    joined = re.sub(r'\\[ \t]*\n', ' ', uncommented)
+    commands = []
+    for line in joined.splitlines():
+        code = re.sub(r'(^|\s)#.*$', '', line)
+        for segment in re.split(r'&&|\|\||;|\|', code):
+            segment = segment.strip()
+            npm_call = re.match(r'npm (?:run(?:-script)? )?([\w:.-]+)', segment)
+            if (
+                'playwright test' in segment
+                or '--project' in segment
+                or (npm_call and npm_call.group(1) in npm_names)
+            ):
+                commands.append(segment)
+    return commands
+
+
+def trace_problems(script_text: str) -> list[str]:
+    """Commands that do not record a trace on failure, or contradict that."""
+    commands = playwright_commands(script_text)
+    if not commands:
+        return [NO_INVOCATIONS]
+    return [
+        command
+        for command in commands
+        if set(re.findall(r'--trace\S*', command)) != {'--trace=retain-on-failure'}
+    ]
+
+
+def flaky_problems(script_text: str) -> list[str]:
+    """Commands that can retry a failure into green."""
+    commands = playwright_commands(script_text)
+    if not commands:
+        return [NO_INVOCATIONS]
+    return [c for c in commands if '--fail-on-flaky-tests' not in c]
+
+
 def test_the_local_gate_keeps_fail_on_flaky_tests_too(ci_workflow):
     """`scripts/verify.sh` is the gate the pre-push hook runs, so it must not
     drift from CI: a local run that retries into green is how untested code
     reaches a push."""
     verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
-    unguarded = [
-        line.strip()
-        for line in verify.splitlines()
-        if '--project=' in line
-        and not line.lstrip().startswith('#')  # prose, not an invocation
-        and '--fail-on-flaky-tests' not in line
-    ]
-    assert not unguarded, (
+    problems = flaky_problems(verify)
+    assert not problems, (
         'these verify.sh Playwright invocations can retry a failure into green: %s'
-        % unguarded
+        % problems
     )
+
+
+def test_the_local_gate_retains_a_trace_for_every_failed_e2e_test():
+    """Locally `retries` is 0, so the config's `trace: 'on-first-retry'` never
+    records anything and a one-off local failure leaves no evidence behind.
+    `--trace=retain-on-failure` on each invocation is what keeps one."""
+    verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
+    problems = trace_problems(verify)
+    assert not problems, (
+        'these verify.sh Playwright invocations record no trace on a local failure: %s'
+        % problems
+    )
+
+
+def test_the_real_gate_has_exactly_the_four_playwright_commands():
+    """Pins the selection itself: a selector that quietly matched more or fewer
+    commands would make both guards above vacuous or noisy."""
+    verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
+    commands = playwright_commands(verify)
+    projects = [
+        match.group(1) if (match := re.search(r'--project=(\S+)', c)) else f'<no --project=: {c}>'
+        for c in commands
+    ]
+    assert projects == ['chromium', 'isolation', 'mobile-chrome', 'accessibility'], (
+        'verify.sh should run exactly these four Playwright projects, in this order; '
+        'selected commands: %s' % commands
+    )
+
+
+T = '--trace=retain-on-failure'
+F = '--fail-on-flaky-tests'
+
+# Each shape slipped past an earlier version of the guard (or the old line-based
+# one). `ok` is whether the script is acceptable to that guard.
+TRACE_GUARD_CASES = [
+    ('plain', f'npx playwright test --project=a {T}', True),
+    ('continued', f'npx playwright test --project=a \\\n  {T} \\\n  || fail x', True),
+    ('flag on a continuation line only', f'npx playwright test --project=a \\\n  {T}', True),
+    ('missing', f'npx playwright test --project=a {F}', False),
+    ('flag only in a trailing comment', f'npx playwright test --project=a # TODO: {T}', False),
+    ('flag only in a comment line, real invocation without it', f'# npx playwright test {T}\nnpx playwright test --project=a', False),
+    ('space form of --project', 'npx playwright test --project mobile-chrome', False),
+    ('no --project at all', 'npx playwright test', False),
+    ('contradicted by a later --trace', f'npx playwright test --project=a {T} --trace=off', False),
+    ('contradicted by an earlier --trace', f'npx playwright test --trace=off {T}', False),
+    ('space-form trace value', 'npx playwright test --trace off', False),
+    ('continuation hides a bad invocation', 'npx playwright test --project=a \\\n  --workers=2', False),
+    ('shell retry into green via ||', f'npx playwright test --project=a {T} {F} \\\n  || npx playwright test --project=a || fail x', False),
+    ('npm script with --project', 'npm run test:e2e -- --project=mobile-chrome', False),
+    ('npm script with no --project', 'npm run test:e2e', False),
+    ('npm script reaching Playwright through another script', 'npm test', False),
+    ('two commands on one line, only the first has it', f'npx playwright test --project=a {T} && npx playwright test --project=b', False),
+    ('two commands on one line, both have it', f'npx playwright test --project=a {T} && npx playwright test --project=b {T}', True),
+    ('wrapper that passes --project without saying playwright', f'./run-e2e.sh --project=a {F}', False),
+    ('comment ending in a backslash does not swallow the next command', f'npx playwright test --project=a {T} {F}\n# note \\\nnpx playwright test --project=b', False),
+    ('unrelated npm script', 'npm run lint', False),
+]
+
+FLAKY_GUARD_CASES = [
+    ('plain', f'npx playwright test --project=a {F}', True),
+    ('continued', f'npx playwright test --project=a \\\n  {F} \\\n  || fail x', True),
+    ('missing', f'npx playwright test --project=a {T}', False),
+    ('flag only in a trailing comment', f'npx playwright test --project=a # {F}', False),
+    ('flag only in a comment line, real invocation without it', f'# npx playwright test {F}\nnpx playwright test --project=a', False),
+    ('missing in the second segment', f'npx playwright test --project=a {F} && npx playwright test --project=b', False),
+    ('shell retry into green via ||', f'npx playwright test --project=a {F} || npx playwright test --project=a', False),
+    ('npm script form', 'npm run test:e2e -- --project=mobile-chrome', False),
+    ('space form of --project', 'npx playwright test --project mobile-chrome', False),
+    ('no --project at all', 'npx playwright test', False),
+    ('wrapper that passes --project without saying playwright', f'./run-e2e.sh --project=a {T}', False),
+    ('comment ending in a backslash does not swallow the next command', f'npx playwright test --project=a {T} {F}\n# note \\\nnpx playwright test --project=b', False),
+]
+
+
+def _ids(cases):
+    return [c[0] for c in cases]
+
+
+@pytest.mark.parametrize('script,ok', [(c[1], c[2]) for c in TRACE_GUARD_CASES], ids=_ids(TRACE_GUARD_CASES))
+def test_the_trace_guard_can_actually_fail(script, ok):
+    """Feed the matcher the shapes that fooled it, without mutating verify.sh."""
+    assert (not trace_problems(script)) is ok
+
+
+@pytest.mark.parametrize('script,ok', [(c[1], c[2]) for c in FLAKY_GUARD_CASES], ids=_ids(FLAKY_GUARD_CASES))
+def test_the_flaky_guard_can_actually_fail(script, ok):
+    assert (not flaky_problems(script)) is ok
+
+
+@pytest.mark.parametrize(
+    'script',
+    [c[1] for c in TRACE_GUARD_CASES + FLAKY_GUARD_CASES if c[0] != 'unrelated npm script'],
+)
+def test_every_case_script_is_selected_rather_than_ignored(script):
+    """A not-ok case that selects nothing is rejected as "vacuous", which looks
+    like the guard working while testing nothing about the shape it names."""
+    assert playwright_commands(script) != []
+
+
+def test_a_comment_ending_in_a_backslash_does_not_hide_the_next_command():
+    script = f'npx playwright test --project=a {T} {F}\n# note \\\nnpx playwright test --project=b'
+    assert len(playwright_commands(script)) == 2
+
+
+@pytest.mark.parametrize('guard', [trace_problems, flaky_problems])
+def test_a_script_with_only_comments_reports_no_invocations(guard):
+    """Proves comment stripping is load-bearing: this script mentions a full
+    Playwright command and both flags, but only in prose."""
+    script = f'# npx playwright test --project=a {T} {F}\necho done  # npx playwright test {T}\n'
+    assert guard(script) == [NO_INVOCATIONS]
 
 
 def test_the_guard_can_actually_fail():
