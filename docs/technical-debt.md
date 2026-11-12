@@ -366,6 +366,19 @@ result. Getting it wrong the other way files a bug against working code.
   script before the inline `setupWizard()` definition; it now navigates to the
   rendered HTML served from a same-origin route, and passes on both versions.
 
+- **Limits of the Playwright flag guards, deliberately not fixed (2026-11-12).**
+  `playwright_commands` in `tests/unit/test_ci_required_contexts.py` backs the
+  `--trace=retain-on-failure` and `--fail-on-flaky-tests` guards on
+  `scripts/verify.sh`. It is a regex, not a shell parser, so: a ` #` inside
+  quotes is treated as a comment (on the real file only the exactly-four-commands
+  pin catches the damage), and a quoted `|` or `;` gives a false red. A
+  shell-level retry loop around a correctly flagged command
+  (`for ...; do npx playwright test ... && break; done`) is not detected by any
+  version of the guard. Prefixed forms such as `env X=1 npm run test:e2e`,
+  `npm --prefix . run ...`, `yarn ...` and `npm t` are selected only if they also
+  carry `--project`. Accepted because `verify.sh` is a small file reviewed by
+  hand; revisit if it grows beyond the four plain invocations.
+
 - **Settings cards are keyed by position, not identity (2026-11-12, open,
   optional product fix).** `settings.html` keys the card loop with
   `:key="groupIdx"`, so switching tabs reuses and re-renders cards in place
