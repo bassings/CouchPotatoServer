@@ -766,9 +766,9 @@ test.describe('Accessibility', () => {
     await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
 
     // Step 3: Providers -> choose a search type so the provider toggles render.
-    // Each source button's accessible name is "<Type> <hint>" (e.g. "Both
+    // Each source radio's accessible name is "<Type> <hint>" (e.g. "Both
     // Maximum coverage"), so match on a name starting with the type.
-    await page.getByRole('button', { name: new RegExp('^' + searchType) }).click();
+    await page.getByRole('radio', { name: new RegExp('^' + searchType) }).click();
     await expect(page.locator('button[role="switch"]:visible').first()).toBeVisible();
   }
 
