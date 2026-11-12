@@ -316,7 +316,8 @@ result. Getting it wrong the other way files a bug against working code.
   1. `tests/e2e/trakt-device-auth.spec.ts:212` ("starting authorisation
      displays the code and URL inside a persistent live region"):
      `[data-testid="trakt-user-code"]` was not visible within 8s in a full local
-     gate run. In isolation it passed 78/78 with `--repeat-each=6`, so the
+     gate run. In isolation the spec file passed 78/78 (this test 6/6) with
+     `--repeat-each=6`, so the
      trigger is load during the full run rather than the test in itself.
   2. `tests/e2e/settings.spec.ts:107` ("visual option captions match their
      control accessible names"): failed twice, then passed on retry, in CI run
@@ -328,6 +329,24 @@ result. Getting it wrong the other way files a bug against working code.
      timeout racing subprocess start-up under load, which is an inference, not a
      measurement. It passed 6/6 alone, with and without `--cov`, and it blocked
      one `make sonar` run.
+
+- **Restart-duplicate E2E test can leave an orphan server (2026-11-12,
+  pre-existing).** `tests/e2e/settings_restart_failure.spec.ts` "a second
+  keyboard activation cannot start a conflicting restart request": when its
+  assertion fails, `releaseFirst()` is never called, so the held `/app.restart/`
+  request reaches the real server at teardown. CouchPotato then relaunches as an
+  untracked process (parent PID 1) that keeps port 5150 and `.e2e-w0-data`, and
+  later tests fail with "port 5150 is ALREADY SERVING" or "`.e2e-w0-data`
+  already exists". Measured 2026-11-12: 11 of 13 failing runs left an orphan.
+  Suggested fix: release or abort the held route in a `finally`.
+- **Restart-duplicate E2E test keeps its fixed 250ms wait (2026-11-12,
+  typescript:S2925 left open).** An ordered barrier request was tried and
+  rejected: it only detects a synchronous duplicate and passed with the guard
+  removed when the duplicate was delayed 10ms, 30ms or 100ms. A measured
+  stronger alternative exists and is not adopted: `page.clock.install()` at the
+  start of the test and `page.clock.runFor(4000)` before the assertion caught
+  delayed duplicates at 100ms and 2000ms and passed 5/5 unmutated. Recorded as
+  an option for whoever next touches the test.
 
 ### Deferred at PR 1's review (2026-08-06)
 
