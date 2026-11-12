@@ -28,6 +28,7 @@ The reported check-run name is the job's `name:` when it has one, and the job
 key otherwise -- that fallback is why a bare rename of a key is enough to break
 this, and why the test resolves the name the same way GitHub does.
 """
+import re
 from pathlib import Path
 
 import pytest
@@ -125,22 +126,73 @@ def test_every_playwright_invocation_in_ci_keeps_fail_on_flaky_tests(ci_workflow
     )
 
 
+def playwright_commands(script_text: str) -> list[str]:
+    """The logical `playwright test` commands in a shell script.
+
+    Backslash continuations are joined first, so a flag on a continuation line
+    belongs to its command; whole-line and trailing comments are dropped, so a
+    flag that only appears in prose does not count. Every command mentioning
+    `playwright test` is selected, whatever form its `--project` takes (or
+    whether it has one).
+    """
+    joined = re.sub(r'\\[ \t]*\n', ' ', script_text)
+    commands = []
+    for line in joined.splitlines():
+        code = re.sub(r'(^|\s)#.*$', '', line).strip()
+        if 'playwright test' in code:
+            commands.append(code)
+    return commands
+
+
+def trace_problems(script_text: str) -> list[str]:
+    """Commands that do not record a trace on failure, or contradict that."""
+    commands = playwright_commands(script_text)
+    if not commands:
+        return ['no Playwright invocations found; the guard would be vacuous']
+    return [
+        command
+        for command in commands
+        if set(re.findall(r'--trace\S*', command)) != {'--trace=retain-on-failure'}
+    ]
+
+
 def test_the_local_gate_keeps_fail_on_flaky_tests_too(ci_workflow):
     """`scripts/verify.sh` is the gate the pre-push hook runs, so it must not
     drift from CI: a local run that retries into green is how untested code
     reaches a push."""
     verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
-    unguarded = [
-        line.strip()
-        for line in verify.splitlines()
-        if '--project=' in line
-        and not line.lstrip().startswith('#')  # prose, not an invocation
-        and '--fail-on-flaky-tests' not in line
-    ]
+    commands = playwright_commands(verify)
+    assert commands, 'no Playwright invocations found; the guard would be vacuous'
+    unguarded = [c for c in commands if '--fail-on-flaky-tests' not in c]
     assert not unguarded, (
         'these verify.sh Playwright invocations can retry a failure into green: %s'
         % unguarded
     )
+
+
+# Each shape was confirmed to slip past a line-based guard. `ok` is whether the
+# script is acceptable.
+TRACE_GUARD_CASES = [
+    ('plain', 'npx playwright test --project=a --trace=retain-on-failure', True),
+    ('continued', 'npx playwright test --project=a \\\n  --trace=retain-on-failure \\\n  || fail x', True),
+    ('flag on a continuation line only', 'npx playwright test --project=a \\\n  --trace=retain-on-failure', True),
+    ('missing', 'npx playwright test --project=a --fail-on-flaky-tests', False),
+    ('flag only in a trailing comment', 'npx playwright test --project=a # TODO: --trace=retain-on-failure', False),
+    ('flag only in a comment line', '# --trace=retain-on-failure\nnpx playwright test --project=a', False),
+    ('space form of --project', 'npx playwright test --project mobile-chrome', False),
+    ('no --project at all', 'npx playwright test', False),
+    ('contradicted by a later --trace', 'npx playwright test --project=a --trace=retain-on-failure --trace=off', False),
+    ('contradicted by an earlier --trace', 'npx playwright test --trace=off --trace=retain-on-failure', False),
+    ('space-form trace value', 'npx playwright test --trace off', False),
+    ('continuation hides a bad invocation', 'npx playwright test --project=a \\\n  --workers=2', False),
+    ('no invocations at all', 'echo hello', False),
+]
+
+
+@pytest.mark.parametrize('script,ok', [(c[1], c[2]) for c in TRACE_GUARD_CASES], ids=[c[0] for c in TRACE_GUARD_CASES])
+def test_the_trace_guard_can_actually_fail(script, ok):
+    """Feed the matcher the shapes that fooled it, without mutating verify.sh."""
+    assert (not trace_problems(script)) is ok
 
 
 def test_the_local_gate_retains_a_trace_for_every_failed_e2e_test():
@@ -148,16 +200,10 @@ def test_the_local_gate_retains_a_trace_for_every_failed_e2e_test():
     records anything and a one-off local failure leaves no evidence behind.
     `--trace=retain-on-failure` on each invocation is what keeps one."""
     verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
-    invocations = [
-        line.strip()
-        for line in verify.splitlines()
-        if '--project=' in line and not line.lstrip().startswith('#')
-    ]
-    assert invocations, 'no Playwright invocations found; the guard would be vacuous'
-    untraced = [line for line in invocations if '--trace=retain-on-failure' not in line]
-    assert not untraced, (
+    problems = trace_problems(verify)
+    assert not problems, (
         'these verify.sh Playwright invocations record no trace on a local failure: %s'
-        % untraced
+        % problems
     )
 
 
