@@ -78,8 +78,11 @@ def test_tag_does_not_mutate_the_callers_collection(tmp_path):
 
 
 def test_tag_with_no_movie_files_raises_and_writes_nothing(tmp_path):
+    cleanup = _Cleanup()
+    group = _group(tmp_path, set())
+
     with pytest.raises((IndexError, ValueError)):
-        _Cleanup().tagRelease('hold', group=_group(tmp_path, set()))
+        cleanup.tagRelease('hold', group=group)
 
     assert list(tmp_path.iterdir()) == []
 
@@ -87,8 +90,11 @@ def test_tag_with_no_movie_files_raises_and_writes_nothing(tmp_path):
 def test_tag_with_unorderable_mixed_types_raises_and_writes_nothing(tmp_path):
     paths = _movies(tmp_path, ['a.mkv'])
 
+    cleanup = _Cleanup()
+    group = _group(tmp_path, [paths[0], 7])
+
     with pytest.raises(TypeError):
-        _Cleanup().tagRelease('hold', group=_group(tmp_path, [paths[0], 7]))
+        cleanup.tagRelease('hold', group=group)
 
     assert _markers(tmp_path) == []
 
@@ -131,9 +137,11 @@ def test_untag_does_not_mutate_the_callers_collection(tmp_path):
 def test_untag_with_no_movie_files_raises_and_removes_nothing(tmp_path):
     (tmp_path / 'a.hold.ignore').write_text('tag')
 
+    cleanup = _Cleanup()
+    group = _group(tmp_path, set())
+
     with pytest.raises((IndexError, ValueError)):
-        _Cleanup().untagRelease(group=_group(tmp_path, set()),
-                                release_download={'folder': str(tmp_path), 'files': []}, tag='hold')
+        cleanup.untagRelease(group=group, release_download={'folder': str(tmp_path), 'files': []}, tag='hold')
 
     assert _markers(tmp_path) == ['a.hold.ignore']
 
@@ -142,9 +150,11 @@ def test_untag_with_unorderable_mixed_types_raises_and_removes_nothing(tmp_path)
     paths = _movies(tmp_path, ['a.mkv'])
     (tmp_path / 'a.hold.ignore').write_text('tag')
 
+    cleanup = _Cleanup()
+    group = _group(tmp_path, [paths[0], 7])
+
     with pytest.raises(TypeError):
-        _Cleanup().untagRelease(group=_group(tmp_path, [paths[0], 7]),
-                                release_download={'folder': str(tmp_path), 'files': []}, tag='hold')
+        cleanup.untagRelease(group=group, release_download={'folder': str(tmp_path), 'files': []}, tag='hold')
 
     assert _markers(tmp_path) == ['a.hold.ignore']
 
