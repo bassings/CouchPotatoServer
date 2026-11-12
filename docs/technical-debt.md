@@ -453,6 +453,49 @@ result. Getting it wrong the other way files a bug against working code.
   apply and nothing is transmitted; the exposure is an error message containing
   a URL or path being visible in a console someone screenshots into a bug
   report. Not assessed call by call.
+- **Setup wizard accessibility gaps found while hiding its decorative icons
+  (2026-11-12; owner decision: fixed in a dedicated PR straight after the
+  SonarQube batch that found them).** All pre-existing, none reached by a test
+  before `tests/e2e/wizard-icons.a11y.spec.ts`:
+  1. Focus loss on every step. The Continue/Finish button binds `:disabled` to
+     `saving`, and `nextStep()` sets `saving = true`, so the control the user
+     just activated is disabled, the browser drops focus to `<body>`, and
+     nothing restores it. The Jackett sync button has the same `:disabled`
+     shape. The project rule is `aria-disabled` plus a re-entry guard.
+  2. Contrast. The three 10px hint lines on the Providers step source cards
+     ("NZB indexers", "Torrent trackers", "Maximum coverage") measure 2.34:1 in
+     the light theme and 3.21:1 in the dark theme (`opacity-60`), against
+     4.5:1. The axe scan excludes exactly those three nodes through
+     `KNOWN_CONTRAST_DEBT`, and a companion test fails when they stop failing
+     or when the selector matches anything else, so the exclusion cannot
+     outlive the fix.
+  3. The directory browser is not a dialog: no `role="dialog"`, `aria-modal`,
+     label, Escape handling or focus trap, and `browseDirectory()` never moves
+     focus into it. The settings twin in `partials/settings/modals.html` has
+     all of these.
+  4. State by colour alone: the step indicator has no `aria-current`, and the
+     Usenet/Torrents/Both source buttons have no `aria-pressed`
+     (`wanted.html` shows the repo's pattern).
+- **Status regions that appear together with their text (2026-11-12).** The
+  wizard folder-browser loading indicator, the settings one it copies
+  (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are
+  revealed by `x-show` already containing their text. Whether a screen reader
+  announces a live region that appears with its content depends on the
+  screen-reader and browser pairing; a persistent visually hidden region whose
+  text is set on change announces reliably. The tests prove the text is
+  exposed with role `status`, not that it is spoken. No screen-reader run
+  exists for any of these. `modals.html` also still uses `div role="status"`
+  where the wizard and log viewers now use `<output>`.
+- **Icons with neither a name nor `aria-hidden` outside the wizard
+  (2026-11-12).** Seen in `wanted.html`, `detail.html`, `suggestions.html`,
+  `movie_detail.html` and `base.html`; not audited one by one. The audit in
+  `wizard-icons.a11y.spec.ts` (every svg is hidden from the accessibility tree
+  or named) is the pattern to extend.
+- **A time-based wait inside an E2E route handler (2026-11-12).** The settings
+  Library folder-browser sweep in `tests/e2e/accessibility.a11y.spec.ts` uses
+  `setTimeout(resolve, 750)` in its route handler. The trap guard only looks
+  for `waitForTimeout`, so it is accepted; a gate the test releases would
+  remove the dependence on time.
 
 ### Deferred at PR 1's review (2026-08-06)
 

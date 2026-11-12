@@ -31,17 +31,17 @@
   <p x-show="clearError || loadError" x-text="clearError || loadError" role="alert" class="mb-4 text-xs text-cp-danger"></p>
 
   <!-- Loading -->
-  <div x-show="loading && logs.length === 0" class="flex items-center justify-center py-20" role="status" aria-live="polite">
-    <div class="flex items-center gap-3 text-cp-muted text-sm">
+  <output x-show="loading && logs.length === 0" class="flex items-center justify-center py-20" aria-live="polite">
+    <span class="flex items-center gap-3 text-cp-muted text-sm">
       <svg aria-hidden="true" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
       <span>Loading logs…</span>
-    </div>
-  </div>
+    </span>
+  </output>
 
   <!-- Log entries -->
   <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden font-mono text-[11px] leading-relaxed">
-    <div class="max-h-[calc(100vh-200px)] overflow-y-auto" id="log-container"
-         tabindex="0" role="region" aria-label="Application logs">
+    <section class="max-h-[calc(100vh-200px)] overflow-y-auto focus-visible:outline-offset-[-2px]" id="log-container"
+         tabindex="0" aria-label="Application logs">
       <template x-if="logs.length === 0 && !loading && !clearError && !loadError">
         <div class="px-4 py-8 text-center text-cp-muted text-xs">No log entries found.</div>
       </template>
@@ -65,7 +65,7 @@
           <span x-text="entry.message"></span>
         </div>
       </template>
-    </div>
+    </section>
   </div>
 </div>
 

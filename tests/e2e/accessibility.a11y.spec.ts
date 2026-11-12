@@ -88,7 +88,10 @@ async function openSettingsInMode(page: any, mode: SettingsDisplayMode) {
 }
 
 async function waitForFolderBrowserContent(dialog: any) {
-  await expect(dialog.getByRole('status', { name: 'Loading folders…' }),
+  // Filtered by text, not `{ name }`: a status role takes its name from the
+  // author, never from its content, so a name query matched nothing and this
+  // `toBeHidden()` passed whether or not the spinner was still showing.
+  await expect(dialog.getByRole('status').filter({ hasText: 'Loading folders…' }),
     'the folder browser request never finished').toBeHidden();
   const entries = dialog.locator('button.w-full.px-4.py-2.text-left');
   const emptyState = dialog.getByText('Empty folder', { exact: true });
