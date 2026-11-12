@@ -40,7 +40,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5"/>
             </svg>
           </div>
-          <h1 class="text-2xl font-semibold tracking-tight mb-2">Welcome to CouchPotato</h1>
+          <h1 id="wizard-step-heading-0" tabindex="-1" class="text-2xl font-semibold tracking-tight mb-2">Welcome to CouchPotato</h1>
           <p class="text-cp-muted text-sm">Let's get you set up. This will take about 5 minutes.</p>
         </div>
         
@@ -89,7 +89,7 @@
       <!-- ==================== STEP 2: Security ==================== -->
       <div x-show="currentStep === 1" x-transition class="p-6 lg:p-8">
         <div class="mb-6">
-          <h2 class="text-xl font-semibold tracking-tight mb-1">Server Security</h2>
+          <h2 id="wizard-step-heading-1" tabindex="-1" class="text-xl font-semibold tracking-tight mb-1">Server Security</h2>
           <p class="text-sm text-cp-muted">Protect your CouchPotato with a login. Leave blank for no authentication.</p>
         </div>
         
@@ -116,7 +116,7 @@
       <!-- ==================== STEP 3: Search Providers ==================== -->
       <div x-show="currentStep === 2" x-transition class="p-6 lg:p-8">
         <div class="mb-6">
-          <h2 class="text-xl font-semibold tracking-tight mb-1">Where to Search</h2>
+          <h2 id="wizard-step-heading-2" tabindex="-1" class="text-xl font-semibold tracking-tight mb-1">Where to Search</h2>
           <p class="text-sm text-cp-muted">Choose how you want to find movies.</p>
         </div>
         
@@ -269,8 +269,13 @@
                   <input id="wizard-jackett-api-key" type="password" x-model="formData.torrentpotato.jackett_api_key" placeholder="Your Jackett API key"
                          class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                 </div>
-                <button @click="syncJackett()" :disabled="jackettSyncing"
-                        class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors disabled:opacity-50">
+                {#- aria-disabled plus the guard in syncJackett(), not `disabled`:
+                    a natively disabled button drops keyboard focus to <body>.
+                    The opacity-50 is the look `disabled:` used to give it. -#}
+                <button @click="syncJackett()" type="button"
+                        :aria-disabled="jackettSyncing.toString()"
+                        :class="jackettSyncing ? 'opacity-50 cursor-default' : ''"
+                        class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors">
                   <span x-show="!jackettSyncing">Sync Trackers from Jackett</span>
                   <span x-show="jackettSyncing" class="flex items-center gap-2">
                     <svg aria-hidden="true" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -348,7 +353,7 @@
       <!-- ==================== STEP 4: Downloader ==================== -->
       <div x-show="currentStep === 3" x-transition class="p-6 lg:p-8">
         <div class="mb-6">
-          <h2 class="text-xl font-semibold tracking-tight mb-1">Download Clients</h2>
+          <h2 id="wizard-step-heading-3" tabindex="-1" class="text-xl font-semibold tracking-tight mb-1">Download Clients</h2>
           <p class="text-sm text-cp-muted">Configure your download clients. You can set up one Usenet client and one Torrent client.</p>
         </div>
         
@@ -677,7 +682,7 @@
       <!-- ==================== STEP 5: Library ==================== -->
       <div x-show="currentStep === 4" x-transition class="p-6 lg:p-8">
         <div class="mb-6">
-          <h2 class="text-xl font-semibold tracking-tight mb-1">Movie Library</h2>
+          <h2 id="wizard-step-heading-4" tabindex="-1" class="text-xl font-semibold tracking-tight mb-1">Movie Library</h2>
           <p class="text-sm text-cp-muted">Set up automatic organization of your downloaded movies.</p>
         </div>
         
@@ -775,7 +780,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
           </div>
-          <h2 class="text-2xl font-semibold tracking-tight mb-2">You're All Set!</h2>
+          <h2 id="wizard-step-heading-5" tabindex="-1" class="text-2xl font-semibold tracking-tight mb-2">You're All Set!</h2>
           <p class="text-sm text-cp-muted">CouchPotato is ready to start searching for movies.</p>
         </div>
         
@@ -871,8 +876,14 @@
                   class="px-4 py-2 rounded-md text-sm font-medium text-cp-muted hover:text-cp-text transition-colors">
             Skip
           </button>
-          <button @click="nextStep()" :disabled="saving"
-                  class="px-6 py-2 rounded-md text-sm font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-50">
+          {#- aria-disabled plus the guard in nextStep(), not `disabled`: a
+              natively disabled button drops keyboard focus to <body>, and a
+              keyboard user then restarts from the top of the page on every
+              step. The opacity-50 is the look `disabled:` used to give it. -#}
+          <button @click="nextStep()" type="button"
+                  :aria-disabled="saving.toString()"
+                  :class="saving ? 'opacity-50 cursor-default' : ''"
+                  class="px-6 py-2 rounded-md text-sm font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors">
             <span x-show="!saving" x-text="currentStep === 4 ? 'Finish Setup' : 'Continue'"></span>
             <span x-show="saving" class="flex items-center gap-2">
               <svg aria-hidden="true" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
@@ -1131,9 +1142,25 @@ function setupWizard() {
       }
     },
 
+    // Every step change goes through here so focus follows the content. The
+    // step's own heading is made focusable (tabindex="-1", not in the tab
+    // order) and focused once Alpine has shown it: the control that was
+    // activated is usually gone (Back on step 1, Skip, Finish Setup), and where
+    // it is not, it now sits under different content.
+    enterStep(idx) {
+      this.currentStep = idx;
+      this.$nextTick(() => this.focusStepHeading());
+    },
+
+    focusStepHeading() {
+      const heading = document.getElementById('wizard-step-heading-' + this.currentStep);
+      if (heading) heading.focus();
+    },
+
     goToStep(idx) {
-      if (idx <= this.currentStep) {
-        this.currentStep = idx;
+      // Not while a save is in flight: its own advance would land on the wrong step.
+      if (!this.saving && idx < this.currentStep) {
+        this.enterStep(idx);
       }
     },
 
@@ -1155,20 +1182,23 @@ function setupWizard() {
       // save succeeded, the credential exists and the summary must say so.
       // Where no save happened, the flag was never set and nothing needs
       // clearing.
-      this.currentStep++;
+      if (!this.saving) this.enterStep(this.currentStep + 1);
     },
 
     async prevStep() {
-      if (this.currentStep > 0) {
-        this.currentStep--;
+      if (!this.saving && this.currentStep > 0) {
+        this.enterStep(this.currentStep - 1);
       }
     },
 
     async nextStep() {
+      // Re-entry guard. The button is aria-disabled, not disabled, so the
+      // browser no longer swallows a second Enter or Space while it is busy.
+      if (this.saving) return;
       this.saving = true;
       try {
         await this.saveCurrentStep();
-        this.currentStep++;
+        this.enterStep(this.currentStep + 1);
       } catch (e) {
         this.toast('Failed to save: ' + e.message, 'error');
       }
@@ -1385,6 +1415,7 @@ function setupWizard() {
     },
 
     async syncJackett() {
+      if (this.jackettSyncing) return;   // re-entry guard: the button is aria-disabled, not disabled
       this.jackettSyncing = true;
       this.jackettSyncResult = '';
       
