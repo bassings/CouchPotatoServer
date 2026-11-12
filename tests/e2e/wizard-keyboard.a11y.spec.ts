@@ -80,6 +80,8 @@ async function mountStep(page: Page, step: number, extra = '') {
 
 /** Press Tab until `target` has focus; fails (does not hang) if it is never reached. */
 async function tabTo(page: Page, target: Locator, limit = 120) {
+  // Say so at once if there is nothing to reach, rather than waiting out the test timeout on `evaluate`.
+  await expect(target, `there is nothing matching ${target} to Tab to`).toHaveCount(1);
   for (let i = 0; i < limit; i += 1) {
     if (await target.evaluate((el) => el === document.activeElement)) return;
     await page.keyboard.press('Tab');
@@ -496,34 +498,156 @@ test.describe('the step indicator names each step and marks the current one', ()
   });
 });
 
-test.describe('the source buttons expose which source is selected', () => {
+// Owner decision 2026-11-13: Usenet / Torrents / Both is a pick-one group (a radio group), not three
+// toggles. Only the actual choice is checked, so choosing Both checks ONLY Both. The highlight is
+// deliberately left as it was (Both still tints all three), and that mismatch is recorded as debt.
+const SOURCE_TRUTH = {
+  usenet: { Usenet: 'true', Torrents: 'false', Both: 'false' },
+  torrents: { Usenet: 'false', Torrents: 'true', Both: 'false' },
+  both: { Usenet: 'false', Torrents: 'false', Both: 'true' },
+} as const;
+const sourceGroup = (page: Page) => page.getByRole('radiogroup');
+const sourceRadio = (page: Page, name: string) => sourceGroup(page).getByRole('radio', { name: new RegExp(`^${name}`) });
+const checkedSource = (page: Page) => sourceGroup(page).locator('[role="radio"][aria-checked="true"]');
+
+/** Reach `target` the way a keyboard user does: Tab to the group's one tab stop, then Arrow to the radio. */
+async function focusSourceRadio(page: Page, target: Locator) {
+  await tabTo(page, checkedSource(page));
+  for (let i = 0; i < 3; i += 1) {
+    if (await target.evaluate((el) => el === document.activeElement)) return;
+    await page.keyboard.press('ArrowRight');
+  }
+  await expect(target, 'Arrow keys never reached the radio').toBeFocused();
+}
+
+test.describe('the source choice is a radio group', () => {
   test.use({ viewport: PHONE });
 
-  // Choosing Both highlights all three buttons today, so aria-pressed reports the
-  // same: each button is pressed when its source is searched.
-  const TRUTH = {
-    usenet: { Usenet: 'true', Torrents: 'false', Both: 'false' },
-    torrents: { Usenet: 'false', Torrents: 'true', Both: 'false' },
-    both: { Usenet: 'true', Torrents: 'true', Both: 'true' },
-  } as const;
-
-  test('aria-pressed matches the highlight for Usenet, Torrents and Both', async ({ page }) => {
+  test('the group is named by the question already on the page, and the three radios carry no aria-pressed', async ({ page }) => {
     await acceptSaves(page);
     await openWizard(page);
     await mountStep(page, 2);
-    const button = (name: string) => page.getByRole('button', { name: new RegExp(`^${name}`) });
+    const group = sourceGroup(page);
+    await expect(group, 'the three source buttons are not a radiogroup').toHaveCount(1);
+    await expect(group).toHaveAccessibleName('Choose how you want to find movies.');
+    await expect(group).not.toHaveAttribute('aria-label', /.*/);
+    const labelledby = await group.getAttribute('aria-labelledby');
+    expect(labelledby, 'the group is named by something other than text already on the page').toBeTruthy();
+    await expect(page.locator(`[id="${labelledby}"]`)).toHaveText('Choose how you want to find movies.');
+    await expect(group.getByRole('radio')).toHaveCount(3);
+    await expect(group.locator('[aria-pressed]'), 'a pick-one choice still carries aria-pressed').toHaveCount(0);
+  });
 
+  test('aria-checked is true only for the actual choice, and Both checks only Both while all three stay highlighted', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2);
+    // Start is "torrents". Arrow to each choice in turn: Usenet, then Torrents, then Both.
     for (const choice of ['usenet', 'torrents', 'both'] as const) {
       const pick = choice === 'usenet' ? 'Usenet' : choice === 'torrents' ? 'Torrents' : 'Both';
-      await tabTo(page, button(pick));
+      await focusSourceRadio(page, sourceRadio(page, pick));
       await page.keyboard.press('Space');
-      for (const [name, pressed] of Object.entries(TRUTH[choice])) {
-        await expect(button(name), `${name} after choosing ${choice}`).toHaveAttribute('aria-pressed', pressed);
-        // And it is what the eye sees: the accent tint is exactly the pressed state.
-        if (pressed === 'true') await expect(button(name), `${name} is pressed but not highlighted`).toHaveClass(/bg-cp-accent\/20/);
-        else await expect(button(name), `${name} is highlighted but not pressed`).not.toHaveClass(/bg-cp-accent\/20/);
+      for (const [name, checked] of Object.entries(SOURCE_TRUTH[choice])) {
+        await expect(sourceRadio(page, name), `${name} after choosing ${choice}`).toHaveAttribute('aria-checked', checked);
+      }
+      // The look is unchanged on purpose: Both tints all three, otherwise only the chosen one.
+      for (const name of ['Usenet', 'Torrents', 'Both']) {
+        const lit = choice === 'both' || SOURCE_TRUTH[choice][name as 'Usenet'] === 'true';
+        if (lit) await expect(sourceRadio(page, name), `${name} should be tinted for ${choice}`).toHaveClass(/bg-cp-accent\/20/);
+        else await expect(sourceRadio(page, name), `${name} should not be tinted for ${choice}`).not.toHaveClass(/bg-cp-accent\/20/);
       }
     }
+  });
+
+  test('the group is a single tab stop that follows the choice', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2);
+    const stops = () => sourceGroup(page).locator('[role="radio"][tabindex="0"]');
+    await expect(stops(), 'more or fewer than one radio is in the tab order').toHaveCount(1);
+    await expect(checkedSource(page).first()).toHaveAttribute('tabindex', '0');
+
+    // Tab in, Tab out: the next stop is not another radio of the group.
+    await tabTo(page, checkedSource(page));
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() => !!document.activeElement?.closest('[role="radiogroup"]')), 'Tab moved to a second radio in the group').toBe(false);
+    await page.keyboard.press('Shift+Tab');
+    await expect(checkedSource(page)).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    expect(await page.evaluate(() => !!document.activeElement?.closest('[role="radiogroup"]')), 'Shift+Tab moved to a second radio in the group').toBe(false);
+
+    // The stop follows the choice.
+    await tabTo(page, checkedSource(page));
+    await page.keyboard.press('ArrowRight');
+    await expect(sourceRadio(page, 'Both')).toHaveAttribute('tabindex', '0');
+    await expect(stops()).toHaveCount(1);
+    await expect(sourceRadio(page, 'Torrents')).toHaveAttribute('tabindex', '-1');
+  });
+
+  test('arrow keys move focus and the choice together, wrapping at both ends', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2);
+    await tabTo(page, checkedSource(page));                    // Torrents
+    const expectOn = async (name: string, why: string) => {
+      await expect(sourceRadio(page, name), `${why}: focus`).toBeFocused();
+      await expect(sourceRadio(page, name), `${why}: choice`).toHaveAttribute('aria-checked', 'true');
+      await expect(checkedSource(page), `${why}: exactly one checked`).toHaveCount(1);
+    };
+    await page.keyboard.press('ArrowRight');
+    await expectOn('Both', 'Right from Torrents');
+    await page.keyboard.press('ArrowRight');
+    await expectOn('Usenet', 'Right from the last wraps to the first');
+    await page.keyboard.press('ArrowLeft');
+    await expectOn('Both', 'Left from the first wraps to the last');
+    await page.keyboard.press('ArrowUp');
+    await expectOn('Torrents', 'Up is Left');
+    await page.keyboard.press('ArrowDown');
+    await expectOn('Both', 'Down is Right');
+  });
+
+  test('Space on a focused radio chooses it', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2);
+    await expect(sourceRadio(page, 'Usenet'), 'there is no Usenet radio').toHaveCount(1);
+    await sourceRadio(page, 'Usenet').focus();                 // scene: focus a radio that is not the choice
+    await page.keyboard.press('Space');
+    await expect(sourceRadio(page, 'Usenet')).toHaveAttribute('aria-checked', 'true');
+    await expect(sourceRadio(page, 'Torrents')).toHaveAttribute('aria-checked', 'false');
+  });
+});
+
+test.describe('the download client buttons are toggles and say so', () => {
+  test.use({ viewport: PHONE });
+
+  test('aria-pressed follows the real state of each usenet and torrent client button', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 3, 'state.formData.searchType = "both";');
+    const client = (name: string) => page.getByRole('button', { name, exact: true });
+
+    for (const name of ['SABnzbd', 'NZBGet', 'qBittorrent', 'Transmission']) {
+      await expect(client(name), `${name} before any choice`).toHaveAttribute('aria-pressed', 'false');
+    }
+    await tabTo(page, client('SABnzbd'));
+    await page.keyboard.press('Space');
+    await expect(client('SABnzbd')).toHaveAttribute('aria-pressed', 'true');
+    await expect(client('NZBGet')).toHaveAttribute('aria-pressed', 'false');
+
+    await tabTo(page, client('NZBGet'));
+    await page.keyboard.press('Space');                        // choosing the other replaces it
+    await expect(client('NZBGet')).toHaveAttribute('aria-pressed', 'true');
+    await expect(client('SABnzbd')).toHaveAttribute('aria-pressed', 'false');
+    await page.keyboard.press('Space');                        // and pressing the chosen one clears it
+    await expect(client('NZBGet')).toHaveAttribute('aria-pressed', 'false');
+
+    await tabTo(page, client('qBittorrent'));
+    await page.keyboard.press('Space');
+    await expect(client('qBittorrent')).toHaveAttribute('aria-pressed', 'true');
+    await expect(client('Transmission')).toHaveAttribute('aria-pressed', 'false');
+    await page.keyboard.press('Space');
+    await expect(client('qBittorrent')).toHaveAttribute('aria-pressed', 'false');
   });
 });
 
@@ -761,16 +885,16 @@ async function measureFocusRing(page: Page, target: Locator, corner = 8, recente
   return result;
 }
 
-type Probe = { name: string; target: Locator; corner?: number };
+type Probe = { name: string; target: Locator; corner?: number; reach?: () => Promise<void> };
 
 /** Focus each control with the keyboard, then require a visible ring on all four sides and a target of 24x24 or more. */
 async function expectVisibleFocusAndSize(page: Page, probes: Probe[]) {
   const problems: string[] = [];
-  for (const { name, target, corner } of probes) {
-    await tabTo(page, target);
+  for (const { name, target, corner, reach } of probes) {
+    await (reach ? reach() : tabTo(page, target));
     // An entering dialog is scaled to 95% until its transition ends: measure the settled size.
     await expectVisualTransitionsToSettle(page, name);
-    const size =await target.evaluate((el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; });
+    const size = await target.evaluate((el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; });
     if (size.w < 24 || size.h < 24) problems.push(`${name}: target ${size.w.toFixed(1)}x${size.h.toFixed(1)}px is below 24x24 (WCAG 2.5.8)`);
     const ring = await measureFocusRing(page, target, corner);
     const sides = Object.entries(ring.coverage).filter(([, share]) => share < 0.9).map(([side, share]) => `${side} ${(share * 100).toFixed(0)}%`);
@@ -800,13 +924,26 @@ for (const theme of ['light', 'dark'] as const) {
       await acceptSaves(page);
       await openWizard(page, theme);
       await mountStep(page, 2, 'state.formData.torrentpotato.enabled = true;');
-      const source = (name: string) => page.getByRole('button', { name: new RegExp(`^${name}`) });
+      // Radios are one tab stop: each is reached by Tab to the group, then Arrow.
+      const radio = (name: string) => {
+        const target = sourceRadio(page, name);
+        return { name, target, reach: () => focusSourceRadio(page, target) };
+      };
       await expectVisibleFocusAndSize(page, [
-        { name: 'Usenet', target: source('Usenet') },
-        { name: 'Torrents', target: source('Torrents') },
-        { name: 'Both', target: source('Both') },
+        radio('Usenet'),
+        radio('Torrents'),
+        radio('Both'),
         { name: 'Sync Trackers from Jackett', target: page.getByRole('button', { name: 'Sync Trackers from Jackett' }) },
       ]);
+    });
+
+    test('the download client toggle buttons', async ({ page }) => {
+      await acceptSaves(page);
+      await openWizard(page, theme);
+      await mountStep(page, 3, 'state.formData.searchType = "both";');
+      await expectVisibleFocusAndSize(page, ['SABnzbd', 'NZBGet', 'qBittorrent'].map((name) => ({
+        name, target: page.getByRole('button', { name, exact: true }),
+      })));
     });
 
     test('the four Browse buttons and Finish Setup', async ({ page }) => {

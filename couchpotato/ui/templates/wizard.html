@@ -131,27 +131,37 @@
       <div x-show="currentStep === 2" x-transition class="p-6 lg:p-8">
         <div class="mb-6">
           <h2 id="wizard-step-heading-2" tabindex="-1" class="text-xl font-semibold tracking-tight mb-1">Where to Search</h2>
-          <p class="text-sm text-cp-muted">Choose how you want to find movies.</p>
+          <p id="wizard-source-question" class="text-sm text-cp-muted">Choose how you want to find movies.</p>
         </div>
-        
-        <!-- Source selection -->
-        <div class="flex gap-3 mb-6">
-          <button @click="formData.searchType = 'usenet'" type="button"
-                  :aria-pressed="sourceSelected('usenet').toString()"
+
+        {#- Source selection: a pick-one group, so a radio group, not three
+            toggles (owner decision 2026-11-13). Only the real choice is
+            aria-checked, so choosing Both checks ONLY Both. The tint is
+            unchanged and still lights all three for Both (sourceSelected());
+            that mismatch between look and state is deliberate and recorded in
+            docs/technical-debt.md. APG radio group keyboard pattern: one tab
+            stop (roving tabindex), Arrow keys move and choose with wrap. -#}
+        <div class="flex gap-3 mb-6" role="radiogroup" aria-labelledby="wizard-source-question"
+             @keydown="sourceKeydown($event)">
+          <button @click="formData.searchType = 'usenet'" type="button" id="wizard-source-usenet"
+                  role="radio" :aria-checked="(formData.searchType === 'usenet').toString()"
+                  :tabindex="sourceTabStop('usenet') ? 0 : -1"
                   :class="sourceSelected('usenet') ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Usenet</span>
             <span class="text-[10px]">NZB indexers</span>
           </button>
-          <button @click="formData.searchType = 'torrents'" type="button"
-                  :aria-pressed="sourceSelected('torrents').toString()"
+          <button @click="formData.searchType = 'torrents'" type="button" id="wizard-source-torrents"
+                  role="radio" :aria-checked="(formData.searchType === 'torrents').toString()"
+                  :tabindex="sourceTabStop('torrents') ? 0 : -1"
                   :class="sourceSelected('torrents') ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Torrents</span>
             <span class="text-[10px]">Torrent trackers</span>
           </button>
-          <button @click="formData.searchType = 'both'" type="button"
-                  :aria-pressed="sourceSelected('both').toString()"
+          <button @click="formData.searchType = 'both'" type="button" id="wizard-source-both"
+                  role="radio" :aria-checked="(formData.searchType === 'both').toString()"
+                  :tabindex="sourceTabStop('both') ? 0 : -1"
                   :class="sourceSelected('both') ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Both</span>
@@ -382,7 +392,8 @@
           </h3>
           <div class="grid grid-cols-2 gap-3 mb-4">
             <template x-for="dl in usenetDownloaders" :key="dl.id">
-              <button @click="formData.usenetClient = formData.usenetClient === dl.id ? null : dl.id"
+              <button @click="formData.usenetClient = formData.usenetClient === dl.id ? null : dl.id" type="button"
+                      :aria-pressed="(formData.usenetClient === dl.id).toString()"
                       :class="formData.usenetClient === dl.id ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text hover:border-white/[0.1]'"
                       class="py-3 px-3 rounded-lg border transition-all text-center">
                 <span class="block text-sm font-medium" x-text="dl.name"></span>
@@ -407,7 +418,8 @@
           </h3>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
             <template x-for="dl in torrentDownloaders" :key="dl.id">
-              <button @click="formData.torrentClient = formData.torrentClient === dl.id ? null : dl.id"
+              <button @click="formData.torrentClient = formData.torrentClient === dl.id ? null : dl.id" type="button"
+                      :aria-pressed="(formData.torrentClient === dl.id).toString()"
                       :class="formData.torrentClient === dl.id ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text hover:border-white/[0.1]'"
                       class="py-3 px-3 rounded-lg border transition-all text-center">
                 <span class="block text-sm font-medium" x-text="dl.name"></span>
@@ -988,6 +1000,7 @@ function setupWizard() {
     steps: ['Welcome', 'Security', 'Providers', 'Downloader', 'Library', 'Done'],
     saving: false,
     statusText: '',
+    sourceOrder: ['usenet', 'torrents', 'both'],
     message: '',
     messageType: 'success',
     
@@ -1210,12 +1223,32 @@ function setupWizard() {
       return 'Step ' + (idx + 1) + ' of ' + this.steps.length + ': ' + this.steps[idx] + done;
     },
 
-    // One definition for what is highlighted AND what aria-pressed reports, so
-    // they cannot drift apart. "Both" searches both sources, so all three read
-    // as selected when it is chosen.
+    // What is TINTED. "Both" searches both sources, so all three are tinted
+    // when it is chosen. This is NOT what is checked: aria-checked reports the
+    // actual single choice (formData.searchType === kind), on purpose.
     sourceSelected(kind) {
       const type = this.formData.searchType;
       return kind === 'both' ? type === 'both' : type === kind || type === 'both';
+    },
+
+    // Roving tabindex: the checked radio is the group's one tab stop, or the
+    // first if (impossibly) none is checked.
+    sourceTabStop(kind) {
+      const known = this.sourceOrder.includes(this.formData.searchType);
+      return known ? this.formData.searchType === kind : kind === this.sourceOrder[0];
+    },
+
+    // APG radio group: Arrow keys move focus AND choose, wrapping at the ends.
+    // Space/Enter on a focused radio is the button's own click.
+    sourceKeydown(event) {
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      const n = this.sourceOrder.length;
+      const at = this.sourceOrder.indexOf(this.formData.searchType);
+      const next = this.sourceOrder[(at + step + n) % n];
+      this.formData.searchType = next;
+      document.getElementById('wizard-source-' + next).focus();
     },
 
     canSkip() {

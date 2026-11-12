@@ -84,7 +84,7 @@ test('spacing guard detects a crowded switch and clears after restoration', asyn
   await page.goto('/wizard/');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Skip' }).click();
-  await page.getByRole('button', { name: /^Both/ }).click();
+  await page.getByRole('radio', { name: /^Both/ }).click();
   const toggle = page.getByRole('switch', { name: 'Enable BinSearch' });
   await toggle.evaluate((element) => element.scrollIntoView({ block: 'center' }));
   await toggle.evaluate((element) => {
@@ -174,7 +174,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.getByRole('heading', { name: 'Server Security' })).toBeVisible();
       await page.getByRole('button', { name: 'Skip' }).click();
       await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
-      await page.getByRole('button', { name: /^Both/ }).click();
+      await page.getByRole('radio', { name: /^Both/ }).click();
       await page.getByRole('button', { name: /Private Trackers/ }).click();
       const providers = page.locator('[x-show="currentStep === 2"]');
       await assertSwitchTargets(providers, [

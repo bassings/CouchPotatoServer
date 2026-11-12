@@ -540,7 +540,7 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('heading', { name: 'Server Security' })).toBeVisible();
     await page.getByRole('button', { name: 'Skip' }).click();
     await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
-    await page.getByRole('button', { name: /^Both/ }).click();
+    await page.getByRole('radio', { name: /^Both/ }).click();
     // Wait for EVERY expected toggle by name, not just the first one to
     // appear -- see waitForToggleNames.
     await waitForToggleNames(providersStep, PROVIDERS_STEP_TOGGLE_NAMES);

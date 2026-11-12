@@ -435,7 +435,7 @@ test.describe('Wizard: clicking a label focuses its field (AC-A11Y-3)', () => {
     await page.goto('/wizard/');
     await page.getByRole('button', { name: /Continue/i }).click(); // Welcome -> Security
     await page.getByRole('button', { name: /^Skip$/i }).click(); // Security -> Providers
-    await page.getByRole('button', { name: /^Torrents/ }).click();
+    await page.getByRole('radio', { name: /^Torrents/ }).click();
     await page.getByRole('button', { name: /Private Trackers/ }).click();
     await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
     await page.getByRole('switch', { name: 'Enable HDBits' }).click();

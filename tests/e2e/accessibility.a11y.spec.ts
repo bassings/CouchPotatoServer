@@ -815,7 +815,7 @@ test.describe('Accessibility', () => {
     // together; enabling Newznab and Jackett reveals their credential
     // fields, and expanding + enabling one private tracker reveals the
     // `x-for` field loop (AC-A11Y-2's bound-id case).
-    await page.getByRole('button', { name: /^Both/ }).click();
+    await page.getByRole('radio', { name: /^Both/ }).click();
     await expect(page.getByRole('switch', { name: 'Enable Newznab Indexers' })).toBeVisible();
     await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
     await page.getByRole('switch', { name: 'Enable Jackett / TorrentPotato' }).click();
