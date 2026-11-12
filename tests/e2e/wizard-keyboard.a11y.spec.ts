@@ -314,6 +314,17 @@ async function expectFocusInDialog(page: Page, context: string) {
   expect(inside, `${context}: focus is on ${await whereIsFocus(page)}, outside the dialog`).toBe(true);
 }
 
+/**
+ * Wait until the dialog has taken focus. Its move-in is released by Alpine's timer-based $nextTick, so
+ * a key pressed before it lands races that timer (seen as "focus is on <body>" after a close path).
+ * Every test that opens the dialog waits here before its next key press.
+ */
+async function waitForFocusInDialog(page: Page) {
+  await expect.poll(() => folderDialog(page).evaluate((el) => el.contains(document.activeElement)), {
+    message: 'opening the folder browser did not move focus into it',
+  }).toBe(true);
+}
+
 async function openFolderBrowser(page: Page, opener: (typeof OPENERS)[number]) {
   await page.route('**/directory.list/**', (route) => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify(directoryListing),
@@ -324,8 +335,55 @@ async function openFolderBrowser(page: Page, opener: (typeof OPENERS)[number]) {
   const browse = browseButtonFor(page, opener.field);
   await tabTo(page, browse);
   await page.keyboard.press('Enter');
+  await waitForFocusInDialog(page);
   return browse;
 }
+
+type Listing = { dirs: string[]; fail?: boolean };
+
+/**
+ * Serve a different listing per path, with the answers the test can change and hold. `hold(path)` makes
+ * the next request for that path wait until the returned function is called.
+ */
+async function routeListings(page: Page, listings: Record<string, Listing>) {
+  const holds = new Map<string, Promise<void>>();
+  await page.route('**/directory.list/**', async (route) => {
+    const path = decodeURIComponent(new URL(route.request().url()).searchParams.get('path') || '/');
+    const held = holds.get(path);
+    if (held) { holds.delete(path); await held; }
+    const entry = listings[path];
+    if (!entry || entry.fail) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false }) });
+      return;
+    }
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ success: true, dirs: entry.dirs, parent: '/', home: '/', is_root: path === '/', platform: 'posix' }),
+    });
+  });
+  return {
+    hold(path: string) {
+      let release!: () => void;
+      holds.set(path, new Promise<void>((resolve) => { release = resolve; }));
+      return release;
+    },
+  };
+}
+
+/** Open the dialog from "Download Folder" with `listings` served; returns the Browse button. */
+async function openWithListings(page: Page, listings: Record<string, Listing>) {
+  const served = await routeListings(page, listings);
+  await acceptSaves(page);
+  await openWizard(page);
+  await mountStep(page, 4);
+  const browse = browseButtonFor(page, '#wizard-renamer-from');
+  await tabTo(page, browse);
+  await page.keyboard.press('Enter');
+  await waitForFocusInDialog(page);
+  return { browse, served };
+}
+
+const folderRow = (page: Page, name: string) => folderDialog(page).getByRole('button', { name, exact: true });
 
 test.describe('the folder browser is a modal dialog', () => {
   test.use({ viewport: PHONE });
@@ -370,6 +428,7 @@ test.describe('the folder browser is a modal dialog', () => {
       expect(await browse.evaluate((el) => el === document.activeElement), 'the click focused the button, so this is not the Safari case').toBe(false);
 
       await expect(folderDialog(page).getByRole('button', { name: 'movies', exact: true })).toBeVisible();
+      await waitForFocusInDialog(page);
       await page.keyboard.press('Escape');
       await expect(folderDialog(page)).toBeHidden();
       await expect(browse, `focus is on ${await whereIsFocus(page)}, not the Browse button that opened the dialog`).toBeFocused();
@@ -389,6 +448,7 @@ test.describe('the folder browser is a modal dialog', () => {
 
     await page.keyboard.press('Enter');                       // reopen from the focused Browse button
     await expect(dialog.getByRole('button', { name: 'movies', exact: true })).toBeVisible();
+    await waitForFocusInDialog(page);
     await tabTo(page, dialog.getByRole('button', { name: 'Close directory browser', exact: true }));
     await page.keyboard.press('Enter');
     await expect(dialog).toBeHidden();
@@ -396,6 +456,7 @@ test.describe('the folder browser is a modal dialog', () => {
 
     await page.keyboard.press('Enter');
     await expect(dialog.getByRole('button', { name: 'movies', exact: true })).toBeVisible();
+    await waitForFocusInDialog(page);
     await tabTo(page, dialog.getByRole('button', { name: 'Select This Folder', exact: true }));
     await page.keyboard.press('Enter');
     await expect(dialog).toBeHidden();
@@ -450,6 +511,133 @@ test.describe('the folder browser is a modal dialog', () => {
 
     await page.keyboard.press('Tab');
     await expectFocusInDialog(page, 'Tab from <body>');
+  });
+
+  test('opening a folder row by keyboard, two levels deep, keeps focus in the dialog and lands on the first row', async ({ page }) => {
+    const { served } = await openWithListings(page, {
+      '/': { dirs: ['/a/', '/b/'] },
+      '/a/': { dirs: ['/a/x/', '/a/y/'] },
+      '/a/x/': { dirs: ['/a/x/deep/'] },
+      '/a/x/deep/': { dirs: [] },
+    });
+    await expect(folderRow(page, 'a')).toBeVisible();
+
+    // Level one: the focused row is removed while the next listing loads. Hold it to look at that moment.
+    const releaseA = served.hold('/a/');
+    await tabTo(page, folderRow(page, 'a'));
+    await page.keyboard.press('Enter');
+    await expectFocusInDialog(page, 'while /a/ is loading');
+    releaseA();
+    await expect(folderRow(page, 'x')).toBeVisible();
+    await expect(folderRow(page, 'x'), `after /a/ loaded, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+
+    // Level two.
+    const releaseX = served.hold('/a/x/');
+    await page.keyboard.press('Enter');
+    await expectFocusInDialog(page, 'while /a/x/ is loading');
+    releaseX();
+    await expect(folderRow(page, 'deep')).toBeVisible();
+    await expect(folderRow(page, 'deep'), `after /a/x/ loaded, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+  });
+
+  test('opening a folder that turns out to be empty puts focus on Up, inside the dialog', async ({ page }) => {
+    const { served } = await openWithListings(page, {
+      '/': { dirs: ['/empty/'] },
+      '/empty/': { dirs: [] },
+    });
+    await expect(folderRow(page, 'empty')).toBeVisible();
+    const release = served.hold('/empty/');
+    await tabTo(page, folderRow(page, 'empty'));
+    await page.keyboard.press('Enter');
+    await expectFocusInDialog(page, 'while /empty/ is loading');
+    release();
+    await expect(folderDialog(page).getByText('Empty folder')).toBeVisible();
+    await expect(folderDialog(page).getByRole('button', { name: /Up$/ }), `focus is on ${await whereIsFocus(page)}`).toBeFocused();
+  });
+
+  test('a failed listing puts focus on Retry, a second failure keeps it there, and a success moves it to the first row', async ({ page }) => {
+    const listings: Record<string, Listing> = {
+      '/': { dirs: ['/bad/'] },
+      '/bad/': { dirs: [], fail: true },
+    };
+    const { served } = await openWithListings(page, listings);
+    await expect(folderRow(page, 'bad')).toBeVisible();
+    const retry = folderDialog(page).getByRole('button', { name: 'Retry', exact: true });
+
+    await tabTo(page, folderRow(page, 'bad'));
+    await page.keyboard.press('Enter');
+    await expect(folderDialog(page).getByRole('alert')).toContainText('Unable to list directory');
+    await expect(retry, `after the failed load, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+
+    // Retry fails again. Retry's own container is hidden while it loads: focus must not fall out.
+    const release = served.hold('/bad/');
+    await page.keyboard.press('Enter');
+    await expectFocusInDialog(page, 'while Retry is loading');
+    release();
+    await expect(folderDialog(page).getByRole('alert')).toContainText('Unable to list directory');
+    await expect(retry, `after the second failure, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+
+    // Now it works.
+    listings['/bad/'] = { dirs: ['/bad/ok/'] };
+    await page.keyboard.press('Enter');
+    await expect(folderRow(page, 'ok')).toBeVisible();
+    await expect(folderRow(page, 'ok'), `after the successful retry, focus is on ${await whereIsFocus(page)}`).toBeFocused();
+  });
+
+  test('focus the user has already moved elsewhere is not pulled back when a listing arrives', async ({ page }) => {
+    const { served } = await openWithListings(page, {
+      '/': { dirs: ['/a/'] },
+      '/a/': { dirs: ['/a/x/'] },
+    });
+    await expect(folderRow(page, 'a')).toBeVisible();
+    const release = served.hold('/a/');
+    await tabTo(page, folderRow(page, 'a'));
+    await page.keyboard.press('Enter');
+    const cancel = folderDialog(page).getByRole('button', { name: 'Cancel', exact: true });
+    await tabTo(page, cancel);                                // the user moves on while it loads
+    release();
+    await expect(folderRow(page, 'x')).toBeVisible();
+    await expect(cancel, `a late listing pulled focus to ${await whereIsFocus(page)}`).toBeFocused();
+  });
+
+  test('a listing still in flight when the dialog is closed does not move focus when the dialog is opened again', async ({ page }) => {
+    const { browse, served } = await openWithListings(page, {
+      '/': { dirs: ['/a/'] },
+      '/a/': { dirs: ['/a/x/'] },
+    });
+    await expect(folderRow(page, 'a')).toBeVisible();
+    served.hold('/a/');                                       // never released: the old request stays in flight
+    await tabTo(page, folderRow(page, 'a'));
+    await page.keyboard.press('Enter');                       // focus is parked on Up while it loads
+    await page.keyboard.press('Escape');
+    await expect(folderDialog(page)).toBeHidden();
+    await expect(browse).toBeFocused();
+
+    const releaseRoot = served.hold('/');
+    await page.keyboard.press('Enter');                       // open again; its own listing is held
+    await waitForFocusInDialog(page);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    releaseRoot();
+    await expect(folderRow(page, 'a')).toBeVisible();
+    expect(await page.evaluate(() => document.activeElement === document.body), `a stale park moved focus to ${await whereIsFocus(page)}`).toBe(true);
+  });
+
+  test('Enter then Escape with no wait between leaves focus on the Browse button, not <body>', async ({ page }) => {
+    await page.route('**/directory.list/**', (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify(directoryListing),
+    }));
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 4);
+    const browse = browseButtonFor(page, '#wizard-renamer-from');
+    await tabTo(page, browse);
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Escape');                      // no wait: the dialog's focus timer is still pending
+    await expect(folderDialog(page)).toBeHidden();
+    // Let the timers queued before this one run (the dialog's own move-in is among them), then look again.
+    await page.evaluate(() => new Promise<void>((resolve) => { setTimeout(resolve, 0); }));
+    await page.evaluate(() => new Promise<void>((resolve) => { setTimeout(resolve, 0); }));
+    await expect(browse, `after a quick open and close, focus is on ${await whereIsFocus(page)}`).toBeFocused();
   });
 });
 

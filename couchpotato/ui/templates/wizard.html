@@ -944,7 +944,7 @@
         
         <div class="px-4 py-2 border-b border-white/[0.04] bg-white/[0.02]">
           <div class="flex items-center gap-2 text-xs">
-            <button @click="if (!browserLoading && browserValid && !browserIsRoot) loadDirectories(browserParent)" :aria-disabled="(browserIsRoot || browserLoading || !browserValid).toString()"
+            <button id="wizard-browser-up" @click="if (!browserLoading && browserValid && !browserIsRoot) loadDirectories(browserParent)" :aria-disabled="(browserIsRoot || browserLoading || !browserValid).toString()"
                     :class="browserIsRoot || browserLoading || !browserValid ? 'opacity-30 cursor-not-allowed' : ''"
                     class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06]">
               ↑ Up
@@ -958,15 +958,16 @@
             <svg aria-hidden="true" class="w-4 h-4 animate-spin text-cp-muted" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             <span class="sr-only">Loading folders…</span>
           </output>
-          <div x-show="!browserLoading && browserError" class="py-8 text-center text-xs text-cp-danger" role="alert">
+          {#- :hidden, not x-show: Alpine reveals an x-show without a transition from its own timer, after $nextTick, so Retry could not be focused when the load fails. A bound attribute is applied in the same flush. -#}
+          <div :hidden="browserLoading || !browserError" class="py-8 text-center text-xs text-cp-danger" role="alert">
             <span x-text="browserError"></span>
-            <button @click="loadDirectories(browserRequestedPath)" class="block mx-auto mt-3 px-3 py-2 rounded-md border border-cp-danger text-cp-text">Retry</button>
+            <button id="wizard-browser-retry" @click="loadDirectories(browserRequestedPath)" class="block mx-auto mt-3 px-3 py-2 rounded-md border border-cp-danger text-cp-text">Retry</button>
           </div>
           <div x-show="!browserLoading && !browserError && browserDirs.length === 0" class="py-8 text-center text-xs text-cp-muted">
             Empty folder
           </div>
           <template x-for="dir in browserDirs" :key="dir">
-            <button @click="selectDirectory(dir)" 
+            <button @click="selectDirectory(dir)" data-folder-row
                     class="w-full px-4 py-2 text-left text-xs hover:bg-white/[0.04] flex items-center gap-2 border-b border-white/[0.02] focus-visible:outline-offset-[-2px]">
               <svg aria-hidden="true" class="w-4 h-4 text-cp-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
@@ -1106,6 +1107,9 @@ function setupWizard() {
     browserTarget: null,
     // The Browse button that opened the dialog; focus goes back to it on close.
     browserOpener: null,
+    // True while focus was moved to Up because the row or Retry it was on is
+    // being removed or hidden by a listing that is loading.
+    browserFocusParked: false,
     browserParent: '/',
     browserIsRoot: true,
 
@@ -1650,12 +1654,47 @@ function setupWizard() {
     // The close button is the dialog's first control and is present whatever
     // the listing is doing, so focus never waits on the network.
     focusBrowserEntry() {
+      // The timer that calls this can fire after the dialog has already been
+      // closed (Enter then Escape): focusing into the closing dialog would then
+      // drop focus to <body> when it finishes hiding.
+      if (!this.browserOpen) return;
       const first = document.querySelector('#wizard-browser-dialog button');
       if (first) first.focus();
     },
 
+    // Opening a folder row removes the focused button (the x-for is keyed by
+    // path) and Retry's container hides while it loads, so focus would fall to
+    // <body>. Park it on Up, which is always there, until the listing is in.
+    parkBrowserFocus() {
+      const active = document.activeElement;
+      const onResult = active && (active.hasAttribute('data-folder-row') || active.id === 'wizard-browser-retry');
+      if (!onResult) return;
+      this.browserFocusParked = true;
+      document.getElementById('wizard-browser-up').focus();
+    },
+
+    // After a listing loads or fails: first folder row, else Up for an empty
+    // folder, else Retry for a failed load. Only if focus is still where it was
+    // parked, so a user who has moved on is not pulled back.
+    restoreBrowserFocus() {
+      if (!this.browserFocusParked) return;
+      this.browserFocusParked = false;
+      this.$nextTick(() => this.focusBrowserResult());
+    },
+
+    focusBrowserResult() {
+      if (!this.browserOpen) return;
+      const up = document.getElementById('wizard-browser-up');
+      if (document.activeElement !== up && document.activeElement !== document.body) return;
+      const target = this.browserError
+        ? document.getElementById('wizard-browser-retry')
+        : document.querySelector('#wizard-browser-dialog [data-folder-row]') || up;
+      target.focus();
+    },
+
     closeBrowser() {
       this.browserOpen = false;
+      this.browserFocusParked = false;
       const opener = this.browserOpener;
       this.browserOpener = null;
       if (opener) opener.focus();
@@ -1685,6 +1724,7 @@ function setupWizard() {
 
     async loadDirectories(path) {
       const requestId = ++this.browserRequestId;
+      this.parkBrowserFocus();
       this.browserLoading = true;
       this.browserValid = false;
       this.browserError = '';
@@ -1711,7 +1751,10 @@ function setupWizard() {
         this.browserDirs = [];
         this.browserError = 'Unable to list directory';
       } finally {
-        if (requestId === this.browserRequestId) this.browserLoading = false;
+        if (requestId === this.browserRequestId) {
+          this.browserLoading = false;
+          this.restoreBrowserFocus();
+        }
       }
     },
 
