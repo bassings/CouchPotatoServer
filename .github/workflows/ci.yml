@@ -131,7 +131,7 @@ jobs:
         python-version: '3.15'
 
     - name: Install ruff
-      run: pip install 'ruff==0.17.3'
+      run: pip install 'ruff==0.17.4'
 
     - name: Install TypeScript AST guard dependency
       run: npm ci --ignore-scripts
@@ -233,7 +233,7 @@ jobs:
         python-version: '3.15'
 
     - name: Install ruff
-      run: pip install 'ruff==0.17.3'
+      run: pip install 'ruff==0.17.4'
 
     - name: ruff security lint (bandit S rules)
       continue-on-error: true
