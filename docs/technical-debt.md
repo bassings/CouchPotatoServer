@@ -352,6 +352,21 @@ result. Getting it wrong the other way files a bug against working code.
   start of the test and `page.clock.runFor(4000)` before the assertion caught
   delayed duplicates at 100ms and 2000ms and passed 5/5 unmutated. Recorded as
   an option for whoever next touches the test.
+- **`logsPanel()` Alpine component exists twice (2026-11-12, owner decision:
+  noted, not fixed now).** `couchpotato/ui/templates/logs.html` (line 73) and
+  `couchpotato/ui/templates/partials/settings/scripts.html` (line 17) each
+  define `logsPanel()`. Diffing the two function bodies, measured: 97 lines in
+  `logs.html` and 93 in `scripts.html`, with 88 lines identical in both (about
+  91% and 95%). The differences are cosmetic or a rename: `loading` versus
+  `logLoading`, a "Scroll to bottom" comment, and an `if/else` written on one
+  line versus five. SonarQube's new-code duplication measure flagged it after
+  #580 added the same two-line comment to both (25% of 16 new lines), which
+  turned the reporting-only quality status red. That should clear as more new
+  code lands, and it is not a reason to change anything on its own. The
+  underlying fix is one shared component loaded by both pages. That is a UI
+  change and needs E2E cover (`log_refresh_failure.spec.ts`,
+  `log_clear_failure.spec.ts` and the settings logs tab), so it is filed
+  rather than bundled into a lint-clean-up.
 
 ### Deferred at PR 1's review (2026-08-06)
 
