@@ -1526,8 +1526,8 @@ function setupWizard() {
         this.browserParent = data.parent;
         this.browserIsRoot = data.is_root;
         this.browserValid = true;
-      } catch (e) {
-        // `e` is deliberately not logged or shown: a failed listing can carry
+      } catch {
+        // The error is deliberately not logged or shown: a failed listing can carry
         // server paths. The visible error state below is the handling.
         if (requestId !== this.browserRequestId) return;
         this.browserDirs = [];
