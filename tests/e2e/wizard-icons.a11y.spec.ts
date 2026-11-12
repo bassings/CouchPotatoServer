@@ -30,7 +30,9 @@ const PHONE = { width: 375, height: 812 };
  * `opacity-60`. No wizard axe scan reached that step before this file, and
  * fixing it means changing a colour, which this icon change must not do.
  * Excluded by exact selector rather than by disabling the rule, so every other
- * node on every step is still checked for contrast.
+ * node on every step is still checked for contrast. The exclusion can expire:
+ * 'the contrast exclusion still matches exactly the failing hints' fails when
+ * the selector matches a different number of nodes or the nodes stop failing.
  */
 const KNOWN_CONTRAST_DEBT = 'button > span.text-\\[10px\\].opacity-60';
 const directoryListing = {
@@ -39,15 +41,25 @@ const directoryListing = {
 
 type SvgAudit = { total: number; exposed: string[] };
 
-async function auditSvgs(page: Page): Promise<SvgAudit> {
-  return page.evaluate(() => {
+/**
+ * Audits every svg under the wizard root, including <template> content.
+ * With `servedHtml` it audits the server's markup parsed inert (no Alpine, so
+ * the count is exactly what the template source contains); without it, the
+ * live DOM, which also holds the clones Alpine has rendered.
+ */
+async function auditSvgs(page: Page, servedHtml?: string): Promise<SvgAudit> {
+  return page.evaluate((html) => {
+    const doc = html === undefined ? document : new DOMParser().parseFromString(html, 'text/html');
     // Scoped to the wizard: base.html carries icons of its own.
-    const wizard = document.querySelector('[x-data="setupWizard()"]') as HTMLElement;
-    const roots: ParentNode[] = [wizard];
+    const wizard = doc.querySelector('[x-data="setupWizard()"]') as Element;
+    const roots: { root: ParentNode; where: string }[] = [{ root: wizard, where: 'page' }];
     for (let i = 0; i < roots.length; i += 1) {
-      roots[i].querySelectorAll('template').forEach((t) => roots.push(t.content));
+      roots[i].root.querySelectorAll('template').forEach((t, n) => roots.push({
+        root: t.content,
+        where: `${roots[i].where} > template#${n} (${t.getAttribute('x-for') || t.getAttribute('x-if') || 'anonymous'})`.slice(0, 110),
+      }));
     }
-    const svgs = roots.flatMap((root) => Array.from(root.querySelectorAll('svg')));
+    const svgs = roots.flatMap(({ root, where }) => Array.from(root.querySelectorAll('svg')).map((svg) => ({ svg, where })));
 
     const hasName = (svg: Element): boolean => {
       if ((svg.getAttribute('aria-label') || '').trim()) return true;
@@ -66,16 +78,22 @@ async function auditSvgs(page: Page): Promise<SvgAudit> {
       }
       return false;
     };
+    // Nearest enclosing text, so a failure names the icon, plus its path data
+    // and where in the template tree it lives.
+    const describe = ({ svg, where }: { svg: Element; where: string }): string => {
+      let text = '';
+      for (let el: Element | null = svg.parentElement, up = 0; el && !text && up < 6; el = el.parentElement, up += 1) {
+        text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      }
+      const d = (svg.querySelector('path')?.getAttribute('d') || '').slice(0, 24);
+      return `svg[class="${svg.getAttribute('class')}"] path d="${d}…" in ${where}; nearest text "${text.slice(0, 60)}"`;
+    };
 
-    const exposed = svgs
-      .filter((svg) => !hidden(svg) && !hasName(svg))
-      .map((svg) => {
-        const host = svg.closest('button, h2, h3, div') || svg.parentElement;
-        const context = (host?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 50);
-        return `${svg.outerHTML.slice(0, 70)} (near "${context}")`;
-      });
-    return { total: svgs.length, exposed };
-  });
+    return {
+      total: svgs.length,
+      exposed: svgs.filter((entry) => !hidden(entry.svg) && !hasName(entry.svg)).map(describe),
+    };
+  }, servedHtml);
 }
 
 /** Graphics inside the wizard that Chromium actually exposes, from the real accessibility tree. */
@@ -121,19 +139,36 @@ async function openWizard(page: Page, theme: 'light' | 'dark' = 'light') {
   ).toBe(theme === 'light');
 }
 
-test('every wizard svg is hidden from assistive technology or carries a text alternative', async ({ page }) => {
-  await openWizard(page);
-  const { total, exposed } = await auditSvgs(page);
-
-  // The audit must have seen the icons, including those that only exist
-  // inside <template> content. 17 is the number SonarQube reports.
-  expect(total, 'the audit found too few svgs, so it is not reading the template content').toBeGreaterThanOrEqual(17);
+function expectNoExposedSvg(exposed: string[]) {
   expect(
     exposed,
     `${exposed.length} wizard svg(s) are exposed to assistive technology with no name. ` +
     'Icons beside text or inside a named control are decorative: add aria-hidden="true".\n' +
     exposed.join('\n'),
   ).toEqual([]);
+}
+
+test('every svg in the served wizard markup is hidden from assistive technology or has a text alternative', async ({ page }) => {
+  await openWizard(page);
+  const served = await (await page.request.get('/wizard/')).text();
+
+  // The expected count comes from the served HTML itself, not from a literal:
+  // the audit must have seen every <svg> the template emits (three of them are
+  // never in the live DOM, so only the inert parse can see them), and a new
+  // icon with no aria-hidden must fail here rather than be missed.
+  const start = served.indexOf('x-data="setupWizard()"');
+  const end = served.indexOf('function setupWizard()');
+  expect(start, 'the wizard root is missing from the served HTML').toBeGreaterThan(-1);
+  expect(end, 'the wizard script is missing from the served HTML').toBeGreaterThan(start);
+  const inSource = (served.slice(start, end).match(/<svg\b/g) || []).length;
+  expect(inSource, 'no <svg> found in the served wizard markup').toBeGreaterThan(0);
+
+  const parsed = await auditSvgs(page, served);
+  expect(parsed.total, 'the audit and the source disagree on how many svgs the wizard has').toBe(inSource);
+  expectNoExposedSvg(parsed.exposed);
+
+  // And the live DOM, which also holds what Alpine has rendered from x-for.
+  expectNoExposedSvg((await auditSvgs(page)).exposed);
 });
 
 test('the real accessibility tree exposes no graphic from any wizard step', async ({ page }) => {
@@ -192,18 +227,39 @@ test('spinner buttons are named by their visible text alone', async ({ page }) =
   await expect(page.getByRole('button', { name: 'Saving…', exact: true })).toBeVisible();
 });
 
-test('the Private Trackers disclosure exposes its expanded state, not only a rotated chevron', async ({ page }) => {
+test('the Private Trackers disclosure exposes its expanded state and reveals reachable content', async ({ page }) => {
   await openWizard(page);
   await wizardState(page, 'state.currentStep = 2; state.formData.searchType = "torrents";');
-  const toggle = page.getByRole('button', { name: /^Private Trackers/ });
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-  await toggle.click();
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  const name = /^Private Trackers/;
+  const disclosure = page.locator('[x-data="{ expanded: false }"]');
+  const hiddenSwitch = page.getByRole('switch', { name: 'Enable PassThePopcorn' });
+
+  // Collapsed: the state is exposed, and the content is not in the way.
+  const collapsed = page.getByRole('button', { name, expanded: false });
+  await expect(collapsed).toBeVisible();
+  await expect(page.getByRole('button', { name, expanded: true })).toHaveCount(0);
+  await expect(hiddenSwitch).toBeHidden();
+
+  await collapsed.click();
+  const expanded = page.getByRole('button', { name, expanded: true });
+  await expect(expanded).toBeVisible();
+  await expect(page.getByRole('button', { name, expanded: false })).toHaveCount(0);
+  await expect(hiddenSwitch).toBeVisible();
+
+  // Reachable from the control that revealed it: the next Tab stop is inside.
+  await expanded.focus();
+  await page.keyboard.press('Tab');
+  await expect(disclosure.getByRole('switch').first(), 'Tab from the expanded disclosure does not enter the revealed content').toBeFocused();
+
+  // And it collapses again.
+  await expanded.press('Enter');
+  await expect(page.getByRole('button', { name, expanded: false })).toBeVisible();
+  await expect(hiddenSwitch).toBeHidden();
 });
 
-test('the folder browser announces its loading state in words, not only a spinner', async ({ page }) => {
+// What is checked is the exposed role and its text; whether a screen reader
+// actually announces it cannot be automated.
+test('the folder browser exposes its loading state as a status with text, not only a spinner', async ({ page }) => {
   await openWizard(page);
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -218,6 +274,8 @@ test('the folder browser announces its loading state in words, not only a spinne
   // content, so matching on the text is the honest query.
   const loading: Locator = browser.getByRole('status').filter({ hasText: 'Loading folders…' });
   await expect(loading, 'the loading spinner has no text alternative').toBeVisible();
+  await expect(loading, 'Sonar S6819: use the native <output>, not role=status on a div').toHaveJSProperty('tagName', 'OUTPUT');
+  await expect(browser.locator('div[role="status"]')).toHaveCount(0);
 
   release();
   await expect(loading).toBeHidden();
@@ -268,5 +326,33 @@ for (const theme of ['light', 'dark'] as const) {
       .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html} — ${n.failureSummary}`))
       .join('\n');
     expect(results.violations.length, `directory browser/${theme}:\n${detail}`).toBe(0);
+  });
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`the contrast exclusion still matches exactly the failing hints in the ${theme} theme`, async ({ page }) => {
+    await page.setViewportSize(PHONE);
+    await openWizard(page, theme);
+    await wizardState(page, 'state.formData.searchType = "both"; state.currentStep = 2;');
+    await expect(page.locator('[x-text="steps[currentStep]"]')).toHaveText('Providers');
+    await expectVisualTransitionsToSettle(page, `Providers step (${theme})`);
+
+    const matched = page.locator(KNOWN_CONTRAST_DEBT);
+    await expect(
+      matched,
+      'KNOWN_CONTRAST_DEBT no longer matches exactly the three hints: either the markup changed (update the ' +
+      'selector and this count) or a new span picked up the classes and is silently excluded from the contrast scan',
+    ).toHaveCount(3);
+
+    const results = await new AxeBuilder({ page })
+      .include(KNOWN_CONTRAST_DEBT)
+      .withRules(['color-contrast'])
+      .analyze();
+    const failing = results.violations.flatMap((v) => v.nodes).length;
+    expect(
+      failing,
+      `the ${theme} theme's three hints no longer all fail color-contrast (${failing} do): the debt looks fixed. ` +
+      'Delete KNOWN_CONTRAST_DEBT, its .exclude(...) call and this test.',
+    ).toBe(3);
   });
 }
