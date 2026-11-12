@@ -201,6 +201,11 @@ def _run_isolated_process(
 def _stop_process_group(process: subprocess.Popen) -> tuple[str | None, str | None]:
     """Stop and reap a command group without leaving detached child work."""
 
+    # EPERM handling: macOS raises PermissionError rather than ProcessLookupError
+    # from killpg when the group holds only a zombie that has not been reaped
+    # yet, meaning nothing is left to kill. The two SIGKILL calls below tolerate
+    # it for that reason. The initial SIGTERM does NOT: a PermissionError there
+    # is not explained by a zombie and surfaces as a failure.
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -210,7 +215,7 @@ def _stop_process_group(process: subprocess.Popen) -> tuple[str | None, str | No
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         return process.communicate()
 
@@ -221,10 +226,8 @@ def _stop_process_group(process: subprocess.Popen) -> tuple[str | None, str | No
     except ProcessLookupError:
         pass
     except PermissionError:
-        # macOS reports EPERM rather than ESRCH when the group holds only a
-        # zombie that has not been reaped yet. That means nothing is left to
-        # kill. The cost of swallowing it here is hiding a genuine EPERM from
-        # a descendant running as another user; the earlier signals stay strict.
+        # See the EPERM note at the top. What this hides is a genuine EPERM
+        # from a descendant running as another user.
         pass
     return stdout, stderr
 

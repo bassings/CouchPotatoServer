@@ -989,6 +989,80 @@ def test_timeout_is_still_a_timeout_when_the_final_group_sweep_gets_eperm(tmp_pa
     assert sweeps, "the final sweep was never reached, so the test proves nothing"
 
 
+def test_timeout_is_still_a_timeout_when_the_grace_period_sigkill_gets_eperm(tmp_path, monkeypatch):
+    # The command ignores SIGTERM, so the 1s grace period really expires and the
+    # inner SIGKILL runs. On macOS that SIGKILL can raise EPERM if the leader
+    # exits just as the grace expires and is an unreaped zombie. The wrapper
+    # delivers the kill for real (so nothing survives and communicate() can
+    # return) and then raises the error.
+    real_killpg = os.killpg
+    kills = []
+
+    def killpg(pgid, sig):
+        real_killpg(pgid, sig)
+        if sig == signal.SIGKILL:
+            kills.append(pgid)
+            raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(sonar_scan.os, "killpg", killpg)
+    ignore_sigterm = (
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+    )
+
+    try:
+        with pytest.raises(sonar_scan.ScanError, match="Command timed out: stubborn"):
+            sonar_scan._command(
+                subprocess.run,
+                [sys.executable, "-c", ignore_sigterm],
+                tmp_path,
+                env=sonar_scan._safe_env(),
+                timeout=0.3,
+                description="stubborn",
+            )
+        assert kills, "the grace-period SIGKILL was never reached, so the test proves nothing"
+    finally:
+        for pgid in kills:
+            try:
+                real_killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
+def test_eperm_from_the_initial_sigterm_is_not_swallowed(tmp_path, monkeypatch):
+    # Only the two SIGKILL calls tolerate EPERM. A PermissionError from the
+    # first SIGTERM could be a real refusal to signal a group, so it must still
+    # surface as a failure. The patched SIGTERM sends nothing, so the command is
+    # stopped for real in the cleanup.
+    real_killpg = os.killpg
+    refused = []
+
+    def killpg(pgid, sig):
+        if sig == signal.SIGTERM:
+            refused.append(pgid)
+            raise PermissionError(1, "Operation not permitted")
+        return real_killpg(pgid, sig)
+
+    monkeypatch.setattr(sonar_scan.os, "killpg", killpg)
+
+    try:
+        with pytest.raises(sonar_scan.ScanError, match="Command failed: refused"):
+            sonar_scan._command(
+                subprocess.run,
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                tmp_path,
+                env=sonar_scan._safe_env(),
+                timeout=0.3,
+                description="refused",
+            )
+        assert refused, "the SIGTERM was never reached, so the test proves nothing"
+    finally:
+        for pgid in refused:
+            try:
+                real_killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
 def test_keyboard_interrupt_terminates_the_entire_subprocess_group(tmp_path):
     process_ids_file = tmp_path / "process-ids"
     child_marker = tmp_path / "cancelled-child-finished"
