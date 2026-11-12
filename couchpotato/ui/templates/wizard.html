@@ -1201,12 +1201,14 @@ function setupWizard() {
             // Newznab
             saves.push(this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0'));
             if (this.formData.newznab.enabled) {
-              const hosts = this.formData.newznab.entries.map(e => e.host).filter(h => h).join(',');
-              const keys = this.formData.newznab.entries.map(e => e.api_key).filter(k => k).join(',');
+              const hosts = this.formData.newznab.entries.map(e => e.host).filter(Boolean).join(',');
+              const keys = this.formData.newznab.entries.map(e => e.api_key).filter(Boolean).join(',');
               const use = this.formData.newznab.entries.map((e, i) => e.host ? '1' : '0').join(',');
-              saves.push(this.saveSetting('newznab', 'host', hosts));
-              saves.push(this.saveSetting('newznab', 'api_key', keys));
-              saves.push(this.saveSetting('newznab', 'use', use));
+              saves.push(
+                this.saveSetting('newznab', 'host', hosts),
+                this.saveSetting('newznab', 'api_key', keys),
+                this.saveSetting('newznab', 'use', use),
+              );
             }
             // BinSearch
             saves.push(this.saveSetting('binsearch', 'enabled', this.formData.binsearch.enabled ? '1' : '0'));
@@ -1214,12 +1216,16 @@ function setupWizard() {
           
           // Torrent providers
           if (this.formData.searchType === 'torrents' || this.formData.searchType === 'both') {
-            saves.push(this.saveSetting('thepiratebay', 'enabled', this.formData.thepiratebay.enabled ? '1' : '0'));
-            saves.push(this.saveSetting('yts', 'enabled', this.formData.yts.enabled ? '1' : '0'));
-            saves.push(this.saveSetting('torrentpotato', 'enabled', this.formData.torrentpotato.enabled ? '1' : '0'));
+            saves.push(
+              this.saveSetting('thepiratebay', 'enabled', this.formData.thepiratebay.enabled ? '1' : '0'),
+              this.saveSetting('yts', 'enabled', this.formData.yts.enabled ? '1' : '0'),
+              this.saveSetting('torrentpotato', 'enabled', this.formData.torrentpotato.enabled ? '1' : '0'),
+            );
             if (this.formData.torrentpotato.enabled) {
-              saves.push(this.saveSetting('torrentpotato', 'jackett_url', this.formData.torrentpotato.jackett_url));
-              saves.push(this.saveSetting('torrentpotato', 'jackett_api_key', this.formData.torrentpotato.jackett_api_key));
+              saves.push(
+                this.saveSetting('torrentpotato', 'jackett_url', this.formData.torrentpotato.jackett_url),
+                this.saveSetting('torrentpotato', 'jackett_api_key', this.formData.torrentpotato.jackett_api_key),
+              );
             }
             
             // Private trackers

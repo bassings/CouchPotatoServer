@@ -83,6 +83,7 @@ function logsPanel() {
         this.logs = [];
         this.loadError = '';
       } catch (e) {
+        console.debug('Log clear failed', e?.name);
         this.clearError = 'Unable to clear all logs. Some entries may remain. Refresh to check.';
       } finally {
         this.clearingLogs = false;
@@ -293,7 +294,9 @@ function settingsPanel() {
         const vData = await vResp.json();
         if (vData.version) this.version = vData.version.repr || vData.version.hash?.substring(0,7) || '';
         if (vData.update_version) this.updateAvailable = vData.update_version;
-      } catch (e) {}
+      } catch (e) {
+        console.debug('Version info unavailable', e?.name);
+      }
     },
 
     computeTabOrder() {
@@ -321,8 +324,7 @@ function settingsPanel() {
         groups.forEach((group, idx) => {
           const key = this.groupKey(group, idx);
           const enabler = this.getEnabler(group);
-          if (!enabler) this.openGroups[key] = true;
-          else if (this.isEnabled(group)) this.openGroups[key] = true;
+          if (!enabler || this.isEnabled(group)) this.openGroups[key] = true;
         });
       }
     },
@@ -502,7 +504,9 @@ function settingsPanel() {
         const params = new URLSearchParams();
         params.append('section', section);
         params.append('name', name);
-        params.append('value', typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
+        let serialised = String(value);
+        if (typeof value === 'boolean') serialised = value ? '1' : '0';
+        params.append('value', serialised);
         const resp = await fetch(CP.apiBase + '/settings.save/', {
           method: 'POST',
           body: params
@@ -651,6 +655,7 @@ function settingsPanel() {
           this.testResult[group.section] = data.success ? 'success' : (msg || 'failed');
         }
       } catch (e) {
+        console.debug('Provider test failed', e?.name);
         this.testResult[group.section] = 'error';
       }
       this.testing = null;
@@ -668,6 +673,7 @@ function settingsPanel() {
         this.needsRestart = false;
         setTimeout(() => location.reload(), 5000);
       } catch (e) {
+        console.debug('Restart not confirmed', e?.name);
         this.restartPending = false;
         this.toast('Could not confirm restart. Check server status before retrying.', 'error');
       } finally {
@@ -749,6 +755,7 @@ function settingsPanel() {
         this.browserIsRoot = data.is_root;
         this.browserValid = true;
       } catch (e) {
+        console.debug('Directory listing failed', e?.name);
         if (requestId !== this.browserRequestId) return;
         this.browserDirs = [];
         this.browserError = 'Unable to list directory';
@@ -1213,6 +1220,7 @@ function profileEditor() {
         this.profiles = this.sortProfiles(pData.list || []);
         this.qualities = qData.list || [];
       } catch (e) {
+        console.debug('Profile list load failed', e?.name);
         this.loadError = 'Failed to load profiles. Check the server logs.';
         this.loaded = false; // allow a retry on next tab activation
       }
@@ -1431,6 +1439,7 @@ function profileEditor() {
         const data = await resp.json();
         if (!data.success) throw new Error(data.message || 'Reorder failed');
       } catch (e) {
+        console.debug('Profile reorder failed', e?.name);
         this.profiles = snapshot; // roll back the optimistic move
         this.toast('Failed to save order.', 'error');
       } finally {
