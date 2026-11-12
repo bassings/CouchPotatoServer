@@ -320,11 +320,18 @@ result. Getting it wrong the other way files a bug against working code.
      raises `PermissionError` (EPERM), not `ProcessLookupError`, when the group
      holds only a not-yet-reaped zombie, and the final SIGKILL sweep caught only
      the latter (measured locally at 2 of 60, 5 of 80 under CPU load, and 1 of
-     150 in three separate samples). The grace-period SIGKILL has the same
-     exposure. Both SIGKILL calls now tolerate EPERM; the initial SIGTERM stays
-     strict. Pinned deterministically by
+     150 in three separate samples). The grace-period SIGKILL after the 1s
+     SIGTERM wait has the same exposure, but there EPERM is tolerated only when
+     the leader has exited (`process.poll()` is not `None`, which is what the
+     zombie explanation predicts). With a live leader a PermissionError is
+     genuine and re-raises at once, because swallowing it fell through to an
+     untimed `communicate()` that blocked for the survivor's lifetime and then
+     reported the group as stopped. The final sweep tolerates it
+     unconditionally (the leader is already reaped by then), and the initial
+     SIGTERM does not tolerate it at all. Pinned by
      `test_timeout_is_still_a_timeout_when_the_final_group_sweep_gets_eperm`,
-     `..._the_grace_period_sigkill_gets_eperm` and
+     `test_timeout_is_still_a_timeout_when_the_grace_period_sigkill_gets_eperm`,
+     `test_a_genuine_eperm_on_the_grace_period_sigkill_fails_promptly` and
      `test_eperm_from_the_initial_sigterm_is_not_swallowed`.
   2. FIXED: `tests/e2e/settings.spec.ts` "visual option captions match their
      control accessible names" (failed twice, then passed on retry, in CI run
