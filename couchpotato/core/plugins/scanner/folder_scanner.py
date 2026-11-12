@@ -246,7 +246,7 @@ class FolderScannerMixin:
     def _group_has_ignored_extension(self, group):
         """Check sidecars attached after the first extension pass."""
         has_ignored = 0
-        for file_path in list(group['unsorted_files']):
+        for file_path in group['unsorted_files']:
             ext = getExt(file_path)
             has_ignored += 1 if ext in self.ignored_extensions else 0
         return has_ignored
@@ -287,7 +287,7 @@ class FolderScannerMixin:
                 if group:
                     group['unsorted_files'].extend([ff])
                     delete_identifiers.append(identifier)
-                    leftovers -= leftovers - set([ff])
+                    leftovers -= leftovers - {ff}
             if self.shuttingDown():
                 break
 
@@ -791,9 +791,9 @@ class FolderScannerMixin:
     def getCPImdb(self, string):
         try:
             m = re.search(self.cp_imdb, string.lower())
-            id = m.group('id')
-            if id:
-                return id
+            imdb_id = m.group('id')
+            if imdb_id:
+                return imdb_id
         except AttributeError:
             pass
         return False
@@ -836,7 +836,7 @@ class FolderScannerMixin:
 
         out = []
         for word in identifier.split():
-            if not word in out:
+            if word not in out:
                 out.append(word)
 
         identifier = ' '.join(out)
@@ -864,11 +864,11 @@ class FolderScannerMixin:
         return 1
 
     def findYear(self, text):
-        matches = re.findall(r'(\(|\[)(?P<year>19[0-9]{2}|20[0-9]{2})(\]|\))', text)
+        matches = re.findall(r'([(\[])(?P<year>19\d{2}|20\d{2})([\])])', text, re.ASCII)
         if matches:
             return matches[-1][1]
 
-        matches = re.findall('(?P<year>19[0-9]{2}|20[0-9]{2})', text)
+        matches = re.findall(r'(?P<year>19\d{2}|20\d{2})', text, re.ASCII)
         if matches:
             return matches[-1]
         return ''
@@ -882,10 +882,7 @@ class FolderScannerMixin:
         year = self._first_release_year(file_name, release_name, cleaned)
         cp_guess = self._cleaned_name_year(cleaned, year)
 
-        if cp_guess.get('year') == guess.get('year') and len(cp_guess.get('name', '')) > len(guess.get('name', '')):
-            cp_guess['other'] = guess
-            return cp_guess
-        elif guess == {}:
+        if (cp_guess.get('year') == guess.get('year') and len(cp_guess.get('name', '')) > len(guess.get('name', ''))) or guess == {}:
             cp_guess['other'] = guess
             return cp_guess
 
