@@ -424,6 +424,35 @@ result. Getting it wrong the other way files a bug against working code.
   change and needs E2E cover (`log_refresh_failure.spec.ts`,
   `log_clear_failure.spec.ts` and the settings logs tab), so it is filed
   rather than bundled into a lint-clean-up.
+- **Scanner: `leftovers -= leftovers - {ff}` reduces the caller's set to one
+  file (2026-11-12, found while characterising the SonarQube backlog
+  clean-up).** In `couchpotato/core/plugins/scanner/folder_scanner.py`,
+  `_attach_leftovers_by_folder` mutates `leftovers` in place so that only the file
+  just attached remains, which reads like an inverted "remove this file from
+  the leftovers". It is harmless today: the caller discards the return value
+  and uses `leftovers` only in a debug log afterwards. The current behaviour is
+  pinned by
+  `test_leftovers_by_folder_reduces_the_callers_set_to_the_attached_file` so a
+  fix is a deliberate change, not an accident.
+- **Renamer: an empty `group['files']['movie']` raises `ValueError`, formerly
+  `IndexError` (2026-11-12).** `tagRelease`/`untagRelease` in
+  `couchpotato/core/plugins/renamer/cleanup.py` now pick the tag file with
+  `min()`. No caller passes `group=` today (all five call sites pass
+  `release_download=`), and the error is raised before any file is written or
+  removed. Whoever ports the rename chain (plan tasks T6/T11) and starts
+  passing `group=` should decide what an empty group means and handle it
+  explicitly rather than catching either exception.
+- **Templates that log a whole exception to the browser console
+  (2026-11-12).** The eight `console.debug` notes added in the SonarQube
+  clean-up log only `e?.name` and are guarded by
+  `tests/unit/test_template_debug_logging_guard.py`. Older calls pass the whole
+  exception: `partials/settings/scripts.html` (`Failed to load settings`),
+  `base.html` (service-worker registration), `wanted.html` (two),
+  `movie_detail.html` (six) and `movie_info_modal.html` (one). This is the
+  user's own browser console, not a server log, so `PrivacyFilter` does not
+  apply and nothing is transmitted; the exposure is an error message containing
+  a URL or path being visible in a console someone screenshots into a bug
+  report. Not assessed call by call.
 
 ### Deferred at PR 1's review (2026-08-06)
 
