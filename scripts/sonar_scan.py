@@ -220,6 +220,12 @@ def _stop_process_group(process: subprocess.Popen) -> tuple[str | None, str | No
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # macOS reports EPERM rather than ESRCH when the group holds only a
+        # zombie that has not been reaped yet. That means nothing is left to
+        # kill. The cost of swallowing it here is hiding a genuine EPERM from
+        # a descendant running as another user; the earlier signals stay strict.
+        pass
     return stdout, stderr
 
 

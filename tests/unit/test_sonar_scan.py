@@ -961,6 +961,34 @@ def test_real_timeout_terminates_the_entire_subprocess_group(tmp_path):
     assert not child_marker.exists(), "timed-out descendant continued doing work"
 
 
+def test_timeout_is_still_a_timeout_when_the_final_group_sweep_gets_eperm(tmp_path, monkeypatch):
+    # macOS killpg raises EPERM, not ESRCH, when the group holds only a
+    # not-yet-reaped zombie. Only the final sweep is made to fail here; the
+    # SIGTERM that stops the command is real, so the leader is reaped first.
+    real_killpg = os.killpg
+    sweeps = []
+
+    def killpg(pgid, sig):
+        if sig == signal.SIGKILL:
+            sweeps.append(pgid)
+            raise PermissionError(1, "Operation not permitted")
+        return real_killpg(pgid, sig)
+
+    monkeypatch.setattr(sonar_scan.os, "killpg", killpg)
+
+    with pytest.raises(sonar_scan.ScanError, match="Command timed out: sleeper"):
+        sonar_scan._command(
+            subprocess.run,
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            tmp_path,
+            env=sonar_scan._safe_env(),
+            timeout=0.3,
+            description="sleeper",
+        )
+
+    assert sweeps, "the final sweep was never reached, so the test proves nothing"
+
+
 def test_keyboard_interrupt_terminates_the_entire_subprocess_group(tmp_path):
     process_ids_file = tmp_path / "process-ids"
     child_marker = tmp_path / "cancelled-child-finished"
