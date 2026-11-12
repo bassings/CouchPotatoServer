@@ -2,6 +2,14 @@
 {% block title %}Setup Wizard — CouchPotato{% endblock %}
 {% block content %}
 <div class="min-h-screen flex items-center justify-center p-4 lg:p-8 fade-in" x-data="setupWizard()" x-init="init()">
+  {#- ONE persistent, visually hidden polite status region, present from first
+      render with its text bound. A screen reader announces a CHANGE to an
+      element already in the accessibility tree, not the arrival of a new one,
+      so this must never be created, shown or hidden with its text (the same
+      rule base.html states for its toast announcers). <output> is the native
+      status role. Failures are NOT written here: toast() already announces
+      them assertively, and repeating them would read them twice. -#}
+  <output class="sr-only" data-testid="wizard-status" aria-live="polite" aria-atomic="true" x-text="statusText"></output>
   <div class="w-full max-w-2xl">
     
     <!-- Progress bar -->
@@ -978,6 +986,7 @@ function setupWizard() {
     passwordStored: false,
     steps: ['Welcome', 'Security', 'Providers', 'Downloader', 'Library', 'Done'],
     saving: false,
+    statusText: '',
     message: '',
     messageType: 'success',
     
@@ -1171,6 +1180,12 @@ function setupWizard() {
       this.$nextTick(() => this.focusStepHeading());
     },
 
+    // Cleared by the caller before the next message, so an identical one still
+    // changes the region and is announced again.
+    announce(text) {
+      this.statusText = text;
+    },
+
     focusStepHeading() {
       const heading = document.getElementById('wizard-step-heading-' + this.currentStep);
       if (heading) heading.focus();
@@ -1228,6 +1243,7 @@ function setupWizard() {
       // browser no longer swallows a second Enter or Space while it is busy.
       if (this.saving) return;
       this.saving = true;
+      this.announce('Saving…');
       try {
         await this.saveCurrentStep();
         this.enterStep(this.currentStep + 1);
@@ -1235,6 +1251,9 @@ function setupWizard() {
         this.toast('Failed to save: ' + e.message, 'error');
       }
       this.saving = false;
+      // Cleared, not filled in: success moves focus to the next heading and a
+      // failure is announced by toast(); a message here would repeat them.
+      this.announce('');
     },
 
     async saveCurrentStep() {
@@ -1418,9 +1437,10 @@ function setupWizard() {
     },
 
     async testDownloader() {
-      if (!this.formData.downloader) return;
+      if (!this.formData.downloader || this.testingDownloader) return;
       
       this.testingDownloader = true;
+      this.announce('Testing…');
       this.downloaderTestResult = '';
       
       // First save the config
@@ -1444,11 +1464,13 @@ function setupWizard() {
       }
       
       this.testingDownloader = false;
+      this.announce(this.downloaderTestResult);
     },
 
     async syncJackett() {
       if (this.jackettSyncing) return;   // re-entry guard: the button is aria-disabled, not disabled
       this.jackettSyncing = true;
+      this.announce('Syncing…');
       this.jackettSyncResult = '';
       
       try {
@@ -1468,6 +1490,8 @@ function setupWizard() {
       }
       
       this.jackettSyncing = false;
+      // The visible result line is not a live region, so this is its announcement.
+      this.announce(this.jackettSyncResult);
     },
 
     getDownloaderHelp(id) {

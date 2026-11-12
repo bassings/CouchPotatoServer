@@ -208,7 +208,7 @@ test.describe('keyboard focus is kept through every wizard action', () => {
     held.release();
     await expect.poll(() => syncRequests).toBe(1);
     releaseSync();
-    await expect(page.getByText('Synced 3 trackers')).toBeVisible();
+    await expect(page.locator('p[x-text="jackettSyncResult"]')).toHaveText('Synced 3 trackers');
     await expect(sync, `focus is on ${await whereIsFocus(page)} once the sync finished`).toBeFocused();
     await expect(sync).toHaveAttribute('aria-disabled', 'false');
   });
@@ -260,7 +260,7 @@ test.describe('a busy control ignores a second activation', () => {
     held.release();
     await expect.poll(() => syncRequests).toBe(1);
     releaseSync();
-    await expect(page.getByText('Synced', { exact: true })).toBeVisible();
+    await expect(page.locator('p[x-text="jackettSyncResult"]')).toHaveText('Synced');
     expect(held.saves, 'a second activation while syncing repeated the saves').toHaveLength(3);
     expect(syncRequests, 'a second activation while syncing started a second sync').toBe(1);
   });
@@ -521,5 +521,135 @@ test.describe('the source buttons expose which source is selected', () => {
         else await expect(button(name), `${name} is highlighted but not pressed`).not.toHaveClass(/bg-cp-accent\/20/);
       }
     }
+  });
+});
+
+const statusRegion = (page: Page) => page.getByTestId('wizard-status');
+
+/** Record every text the status region is given, in order, from now on. */
+async function recordStatusTexts(page: Page) {
+  await expect(statusRegion(page), 'there is no wizard status region').toHaveCount(1);
+  await statusRegion(page).evaluate((region) => {
+    const seen: string[] = [];
+    (window as any).__statusTexts = seen;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type !== 'childList') continue;
+        seen.push(Array.from(record.addedNodes).map((n) => n.textContent).join(''));
+      }
+    }).observe(region, { childList: true, characterData: true, subtree: true });
+  });
+}
+const statusTexts = (page: Page): Promise<string[]> => page.evaluate(() => (window as any).__statusTexts);
+
+test.describe('busy states and results are announced through one persistent status region', () => {
+  test.use({ viewport: PHONE });
+
+  test('the region exists on first render as a visually hidden polite status that is never hidden or templated', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    const region = statusRegion(page);
+    await expect(region, 'there is no wizard status region').toHaveCount(1);
+    await expect(region).toHaveJSProperty('tagName', 'OUTPUT');
+    await expect(region).toHaveAttribute('aria-live', 'polite');
+    await expect(region).toHaveText('');
+    await expect(region).toHaveClass(/\bsr-only\b/);
+
+    // It must be in the accessibility tree from the start, not created or revealed with its text.
+    const placement = await region.evaluate((el) => ({
+      hiddenAncestor: !!el.closest('[x-show], [x-if], template, [hidden], [aria-hidden="true"]'),
+      display: getComputedStyle(el).display,
+    }));
+    expect(placement.hiddenAncestor, 'the status region sits inside something that is shown or hidden, so it is not persistent').toBe(false);
+    expect(placement.display).not.toBe('none');
+  });
+
+  test('a save announces "Saving…" while it runs and clears afterwards, in the same element throughout', async ({ page }) => {
+    const held = await holdSaves(page);
+    await openWizard(page);
+    await mountStep(page, 1, 'state.formData.username = "admin";');
+    await expect(statusRegion(page), 'there is no wizard status region').toHaveCount(1);
+    await statusRegion(page).evaluate((el) => { (el as any).__persistent = true; });
+    await recordStatusTexts(page);
+
+    await tabTo(page, nextButton(page));
+    await page.keyboard.press('Enter');
+    await expect.poll(() => held.saves.length).toBe(1);
+    await expect(statusRegion(page), 'a running save is not announced').toHaveText('Saving…');
+
+    held.release();
+    await expect(heading(page, 2)).toBeFocused();
+    await expect(statusRegion(page)).toHaveText('');
+    expect(await statusRegion(page).evaluate((el) => (el as any).__persistent === true), 'the region was recreated instead of updated').toBe(true);
+    // The success itself is carried by the focus move to the new heading: nothing else is said.
+    expect(await statusTexts(page)).toEqual(['Saving…', '']);
+  });
+
+  test('a failed save is announced once, by the existing alert, and the status region does not repeat it', async ({ page }) => {
+    await refuseSaves(page);
+    await openWizard(page);
+    await mountStep(page, 1, 'state.formData.username = "admin";');
+    await recordStatusTexts(page);
+    await tabTo(page, nextButton(page));
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByTestId('toast-announcer-assertive')).toContainText(/Failed to save/);
+    await expect(nextButton(page)).toHaveAttribute('aria-disabled', 'false');
+    await expect(statusRegion(page)).toHaveText('');
+    const texts = await statusTexts(page);
+    expect(texts.filter((t) => /fail|refus|error/i.test(t)), 'the failure was announced by the status region as well as the alert').toEqual([]);
+  });
+
+  test('a Jackett sync announces "Syncing…" then its result, and announces an identical second result again', async ({ page }) => {
+    await acceptSaves(page);
+    let calls = 0;
+    await page.route('**/provider.torrentpotato.jackett_sync/**', (route) => {
+      calls += 1;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'Jackett refused the key' }) });
+    });
+    await openWizard(page);
+    await mountStep(page, 2, 'state.formData.torrentpotato.enabled = true;');
+    await recordStatusTexts(page);
+    const sync = page.getByRole('button', { name: /^(Sync Trackers from Jackett|Syncing…)$/ });
+
+    await tabTo(page, sync);
+    await page.keyboard.press('Enter');
+    await expect.poll(() => calls).toBe(1);
+    await expect(statusRegion(page)).toHaveText('Jackett refused the key');
+    await page.keyboard.press('Enter');                       // the same failure again
+    await expect.poll(() => calls).toBe(2);
+    await expect.poll(() => statusTexts(page)).toEqual([
+      'Syncing…', 'Jackett refused the key', 'Syncing…', 'Jackett refused the key',
+    ]);
+
+    // The visible result line is not a live region as well, or it would be read twice.
+    const resultLine = page.locator('p[x-text="jackettSyncResult"]');
+    await expect(resultLine).toHaveText('Jackett refused the key');
+    const live = await resultLine.evaluate((el) => !!el.closest('[aria-live], [role="status"], [role="alert"], output'));
+    expect(live, 'the sync result is live as well as the status region, so it is announced twice').toBe(false);
+  });
+
+  // The legacy downloader test button is dead markup (`x-if="false && ..."`), so no user can reach
+  // this; the method is still announced so reviving the button cannot reintroduce a silent busy state.
+  test('testDownloader() announces "Testing…" and its result', async ({ page }) => {
+    await acceptSaves(page);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/download.sabnzbd.test/**', async (route) => {
+      await gate;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
+    });
+    await openWizard(page);
+    await mountStep(page, 3);
+    await recordStatusTexts(page);
+    await page.evaluate(() => {
+      const state = (window as any).Alpine.$data(document.querySelector('[x-data="setupWizard()"]'));
+      state.formData.downloader = 'sabnzbd';
+      (window as any).__test = state.testDownloader();
+    });
+    await expect(statusRegion(page)).toHaveText('Testing…');
+    release();
+    await page.evaluate(() => (window as any).__test);
+    await expect(statusRegion(page)).toHaveText('Connected!');
   });
 });
