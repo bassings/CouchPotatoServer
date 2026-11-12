@@ -117,6 +117,17 @@ def test_untag_tie_on_equal_paths_removes_that_marker_only(tmp_path):
     assert _markers(tmp_path) == ['b.hold.ignore']
 
 
+def test_untag_does_not_mutate_the_callers_collection(tmp_path):
+    paths = _movies(tmp_path, ['b.mkv', 'a.mkv'])
+    movies = [paths[0], paths[1]]
+    (tmp_path / 'a.hold.ignore').write_text('tag')
+
+    _Cleanup().untagRelease(group=_group(tmp_path, movies),
+                            release_download={'folder': str(tmp_path), 'files': []}, tag='hold')
+
+    assert movies == paths
+
+
 def test_untag_with_no_movie_files_raises_and_removes_nothing(tmp_path):
     (tmp_path / 'a.hold.ignore').write_text('tag')
 

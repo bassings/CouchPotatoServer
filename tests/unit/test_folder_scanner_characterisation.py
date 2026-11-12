@@ -44,6 +44,10 @@ def scanner():
     ('{1999} 2005', '2005'),
     (')1999( 2005', '2005'),            # closing before opening is not bracketed
     ('|1999) 2005', '2005'),            # '|' is not an opening bracket
+    ('{1999) 2005', '2005'),
+    ('\\1999) 2005', '2005'),
+    ('(1999\\ 2005', '2005'),
+    ('(1999{ 2005', '2005'),
     ('(1999| 2005', '2005'),            # '|' is not a closing bracket
     ('(1999', '1999'),                  # falls through to the bare pattern
     ('1999)', '1999'),
@@ -151,6 +155,17 @@ def test_release_name_year_returns_guess_when_neither_condition_holds(scanner, m
     assert result is guess
     assert result['other']['name'] == 'short'
     assert result['other']['year'] == 2020
+
+
+def test_release_name_year_returns_guess_when_years_and_name_lengths_are_equal(scanner, monkeypatch):
+    guess = {'name': 'Same Len', 'year': 2020}   # same length as the cleaned 'same len'
+    _stub_guess(scanner, monkeypatch, guess)
+
+    result = scanner.getReleaseNameYear('Same.Len.2020', 'file.mkv')
+
+    assert result is guess
+    assert result['name'] == 'Same Len'
+    assert result['other'] == {'name': 'same len', 'year': 2020}
 
 
 def test_release_name_year_returns_guess_when_years_differ(scanner, monkeypatch):
