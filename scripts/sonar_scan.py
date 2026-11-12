@@ -203,9 +203,18 @@ def _stop_process_group(process: subprocess.Popen) -> tuple[str | None, str | No
 
     # EPERM handling: macOS raises PermissionError rather than ProcessLookupError
     # from killpg when the group holds only a zombie that has not been reaped
-    # yet, meaning nothing is left to kill. The two SIGKILL calls below tolerate
-    # it for that reason. The initial SIGTERM does NOT: a PermissionError there
-    # is not explained by a zombie and surfaces as a failure.
+    # yet, meaning nothing is left to kill.
+    #   - Initial SIGTERM: NOT tolerated. A zombie does not explain it, so it
+    #     surfaces as a failure.
+    #   - Grace-period SIGKILL: tolerated only if the leader has exited
+    #     (`poll()` is not None, which is what the zombie explanation predicts).
+    #     With a live leader the EPERM is genuine, and swallowing it would fall
+    #     through to an untimed communicate() that blocks for the survivor's
+    #     whole lifetime and then claims the group was stopped.
+    #   - Final sweep: tolerated unconditionally. communicate() has already
+    #     returned, so the leader is reaped and a zombie-only group is the one
+    #     case left. What this hides is a genuine EPERM from a descendant
+    #     running as another user.
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -215,19 +224,18 @@ def _stop_process_group(process: subprocess.Popen) -> tuple[str | None, str | No
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
             pass
+        except PermissionError:
+            if process.poll() is None:
+                raise
         return process.communicate()
 
     # The group leader may have exited while a descendant that closed its
     # inherited pipes kept running. Ensure no such work survives.
     try:
         os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        # See the EPERM note at the top. What this hides is a genuine EPERM
-        # from a descendant running as another user.
+    except (ProcessLookupError, PermissionError):
         pass
     return stdout, stderr
 

@@ -993,8 +993,8 @@ def test_timeout_is_still_a_timeout_when_the_grace_period_sigkill_gets_eperm(tmp
     # The command ignores SIGTERM, so the 1s grace period really expires and the
     # inner SIGKILL runs. On macOS that SIGKILL can raise EPERM if the leader
     # exits just as the grace expires and is an unreaped zombie. The wrapper
-    # delivers the kill for real (so nothing survives and communicate() can
-    # return) and then raises the error.
+    # delivers the kill for real (so nothing survives), waits until the leader
+    # is a zombie, and then raises the error.
     real_killpg = os.killpg
     kills = []
 
@@ -1002,6 +1002,9 @@ def test_timeout_is_still_a_timeout_when_the_grace_period_sigkill_gets_eperm(tmp
         real_killpg(pgid, sig)
         if sig == signal.SIGKILL:
             kills.append(pgid)
+            # Leave the leader a verifiable, unreaped zombie before raising:
+            # the state the macOS EPERM is explained by. WNOWAIT does not reap.
+            os.waitid(os.P_PID, pgid, os.WEXITED | os.WNOWAIT)
             raise PermissionError(1, "Operation not permitted")
 
     monkeypatch.setattr(sonar_scan.os, "killpg", killpg)
@@ -1026,6 +1029,48 @@ def test_timeout_is_still_a_timeout_when_the_grace_period_sigkill_gets_eperm(tmp
                 real_killpg(pgid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
+
+
+def test_a_genuine_eperm_on_the_grace_period_sigkill_fails_promptly(tmp_path, monkeypatch):
+    # The leader is still alive (it ignores SIGTERM) and the patched SIGKILL
+    # refuses without delivering anything: a real EPERM, not the zombie case.
+    # Swallowing it would fall through to an untimed communicate() that blocks
+    # for the child's whole lifetime and then claims the group was stopped.
+    real_killpg = os.killpg
+    refused = []
+
+    def killpg(pgid, sig):
+        if sig == signal.SIGKILL:
+            refused.append(pgid)
+            raise PermissionError(1, "Operation not permitted")
+        return real_killpg(pgid, sig)
+
+    monkeypatch.setattr(sonar_scan.os, "killpg", killpg)
+    ignore_sigterm = (
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+    )
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(sonar_scan.ScanError, match="Command failed: unkillable"):
+            sonar_scan._command(
+                subprocess.run,
+                [sys.executable, "-c", ignore_sigterm],
+                tmp_path,
+                env=sonar_scan._safe_env(),
+                timeout=0.3,
+                description="unkillable",
+            )
+        elapsed = time.monotonic() - started
+    finally:
+        for pgid in refused:
+            try:
+                real_killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    assert refused, "the grace-period SIGKILL was never reached, so the test proves nothing"
+    assert elapsed < 5, f"blocked {elapsed:.1f}s waiting on a child that could not be killed"
 
 
 def test_eperm_from_the_initial_sigterm_is_not_swallowed(tmp_path, monkeypatch):
