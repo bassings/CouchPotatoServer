@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { expectDialogNamedByUniqueHeading } from './helpers';
+import { expectDialogNamedByUniqueHeading, expectVisualTransitionsToSettle } from './helpers';
 
 /**
  * The setup wizard for keyboard and screen-reader users (WCAG 2.2 AA: 2.1.1
@@ -440,8 +440,11 @@ test.describe('the folder browser is a modal dialog', () => {
   test('Tab pressed with nothing focused still lands inside the dialog, not on the page behind', async ({ page }) => {
     await openFolderBrowser(page, OPENERS[0]);
     await expect(folderDialog(page).getByRole('button', { name: 'shows', exact: true })).toBeVisible();
+    // Wait for the dialog to have taken focus first: its move-in is released by a timer, and blurring
+    // before it lands is a race with that timer (seen 2 in 40 runs under CPU load), not the scene.
+    await expect.poll(() => folderDialog(page).evaluate((el) => el.contains(document.activeElement))).toBe(true);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());   // e.g. after a click on the backdrop
-    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+    expect(await page.evaluate(() => document.activeElement === document.body), `focus is on ${await whereIsFocus(page)} after blur`).toBe(true);
 
     await page.keyboard.press('Tab');
     await expectFocusInDialog(page, 'Tab from <body>');
@@ -653,3 +656,214 @@ test.describe('busy states and results are announced through one persistent stat
     await expect(statusRegion(page)).toHaveText('Connected!');
   });
 });
+
+type Ring = { coverage: Record<'top' | 'right' | 'bottom' | 'left', number>; minContrast: number };
+
+/**
+ * What a keyboard user SEES when `target` has focus: the pixels in the 1-5px band just OUTSIDE its box,
+ * with and without focus, decoded in the page. `getComputedStyle(el).outlineStyle` is not evidence: the
+ * global `:focus-visible` ring is drawn outside the border box, so an ancestor with `overflow-hidden`
+ * (or a `w-full` row in a scroll container) can clip it to nothing while the style stays valid.
+ *
+ * The band runs from 4px inside the edge to 5px outside it, so a ring drawn inwards (needed where an
+ * ancestor clips the outward one) counts as well as the default outward one.
+ *
+ * Coverage is the share of each edge (corners excluded) where a pixel in the band CHANGED and is at least
+ * 3:1 against what it replaced, the surface the ring sits on (WCAG 1.4.11). The caller must already have
+ * focused `target` with the keyboard, so `:focus-visible` really applies.
+ */
+async function measureFocusRing(page: Page, target: Locator, corner = 8, recenter = true): Promise<Ring> {
+  await page.mouse.move(0, 0);
+  await expect(target, 'the control is not focused, so there is no ring to measure').toBeFocused();
+  // Settle FIRST, then centre: a step fading out is still in the layout while it runs, and when it
+  // goes the document shrinks and the browser clamps the scroll, leaving the control under the fixed
+  // phone header (measured: a button at y=18 with scrollY 243).
+  await expectVisualTransitionsToSettle(page, 'focus ring');
+  // Not for a control whose position after a step change is itself under test.
+  if (recenter) await target.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+  const reading = () => target.evaluate((el) => JSON.stringify({ r: el.getBoundingClientRect().toJSON(), y: window.scrollY }));
+  const first = await reading();
+  const box = JSON.parse(first).r;
+  // The whole viewport, cropped in the page. NOT `clip`: Chromium renders a clipped capture as if the
+  // viewport were the clip, so the fixed phone header and bottom bar jump to the clip's edges and
+  // cover the control (intermittently), which reads as a missing ring.
+  const focused = (await page.screenshot()).toString('base64');
+  const second = await reading();
+  await target.evaluate((el) => (el as HTMLElement).blur());
+  await expectVisualTransitionsToSettle(page, 'focus ring removed');
+  const unfocused = (await page.screenshot()).toString('base64');
+  const third = await reading();
+  expect(
+    [second, third],
+    'the control moved while its focus ring was being captured, so the two pictures do not frame the same pixels',
+  ).toEqual([first, first]);
+  const result = await page.evaluate(async ({ a, b, geo, edge }) => {
+    const decode = async (data: string) => {
+      const bitmap = await createImageBitmap(await (await fetch(`data:image/png;base64,${data}`)).blob());
+      const ctx = new OffscreenCanvas(bitmap.width, bitmap.height).getContext('2d')!;
+      ctx.drawImage(bitmap, 0, 0);
+      return { w: bitmap.width, h: bitmap.height, px: ctx.getImageData(0, 0, bitmap.width, bitmap.height).data };
+    };
+    const A = await decode(a);   // focused
+    const B = await decode(b);   // unfocused
+    const at = (img: { w: number; px: Uint8ClampedArray }, px: number, py: number) => {
+      const i = (py * img.w + px) * 4;
+      return [img.px[i], img.px[i + 1], img.px[i + 2]];
+    };
+    const lum = (c: number[]) => {
+      const [r, g, bl] = c.map((v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const contrast = (c1: number[], c2: number[]) => {
+      const [hi, lo] = [lum(c1), lum(c2)].sort((p, q) => q - p);
+      return (hi + 0.05) / (lo + 0.05);
+    };
+    const x0 = Math.round(geo.bx);
+    const y0 = Math.round(geo.by);
+    const x1 = Math.round(geo.bx + geo.bw);
+    const y1 = Math.round(geo.by + geo.bh);
+    const inside = (px: number, py: number) => px >= 0 && py >= 0 && px < A.w && py < A.h;
+    let minContrast = Infinity;
+    const hit = (px: number, py: number) => {
+      if (!inside(px, py)) return false;
+      const f = at(A, px, py);
+      const u = at(B, px, py);
+      if (f.every((v, k) => v === u[k])) return false;
+      const ratio = contrast(f, u);
+      if (ratio < 3) return false;
+      minContrast = Math.min(minContrast, ratio);
+      return true;
+    };
+    // Per edge: for each position along it, is ANY pixel 1..5px out changed with >= 3:1?
+    const along = (from: number, to: number, probe: (i: number, d: number) => boolean) => {
+      let n = 0;
+      let ok = 0;
+      for (let i = from; i < to; i += 1) {
+        n += 1;
+        if ([-4, -3, -2, -1, 0, 1, 2, 3, 4, 5].some((d) => probe(i, d))) ok += 1;
+      }
+      return n === 0 ? 0 : ok / n;
+    };
+    // The corner allowance is capped at a quarter of the edge so a 16px control still has a middle to sample.
+    const cw = Math.min(edge, Math.floor((x1 - x0) / 4));
+    const ch = Math.min(edge, Math.floor((y1 - y0) / 4));
+    const coverage = {
+      top: along(x0 + cw, x1 - cw, (i, d) => hit(i, y0 - d)),
+      bottom: along(x0 + cw, x1 - cw, (i, d) => hit(i, y1 + d - 1)),
+      left: along(y0 + ch, y1 - ch, (i, d) => hit(x0 - d, i)),
+      right: along(y0 + ch, y1 - ch, (i, d) => hit(x1 + d - 1, i)),
+    };
+    return { coverage, minContrast: Number.isFinite(minContrast) ? minContrast : 0 };
+  }, {
+    a: focused, b: unfocused, edge: corner,
+    geo: { bx: box.x, by: box.y, bw: box.width, bh: box.height },
+  });
+  return result;
+}
+
+type Probe = { name: string; target: Locator; corner?: number };
+
+/** Focus each control with the keyboard, then require a visible ring on all four sides and a target of 24x24 or more. */
+async function expectVisibleFocusAndSize(page: Page, probes: Probe[]) {
+  const problems: string[] = [];
+  for (const { name, target, corner } of probes) {
+    await tabTo(page, target);
+    // An entering dialog is scaled to 95% until its transition ends: measure the settled size.
+    await expectVisualTransitionsToSettle(page, name);
+    const size =await target.evaluate((el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; });
+    if (size.w < 24 || size.h < 24) problems.push(`${name}: target ${size.w.toFixed(1)}x${size.h.toFixed(1)}px is below 24x24 (WCAG 2.5.8)`);
+    const ring = await measureFocusRing(page, target, corner);
+    const sides = Object.entries(ring.coverage).filter(([, share]) => share < 0.9).map(([side, share]) => `${side} ${(share * 100).toFixed(0)}%`);
+    if (sides.length) problems.push(`${name}: focus ring missing or under 3:1 on ${sides.join(', ')} (min contrast ${ring.minContrast.toFixed(2)})`);
+  }
+  expect(problems, `controls without a visible focus indicator or with a small target:\n${problems.join('\n')}`).toEqual([]);
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test.describe(`every touched control shows a focus ring and has a 24px target (${theme} theme, 375px)`, () => {
+    test.use({ viewport: PHONE });
+
+    test('the step indicator and the navigation buttons', async ({ page }) => {
+      await acceptSaves(page);
+      await openWizard(page, theme);
+      await mountStep(page, 1);
+      await expectVisibleFocusAndSize(page, [
+        { name: 'step 1 button (completed)', target: indicators(page).nth(0), corner: 12 },
+        { name: 'step 2 button (current)', target: indicators(page).nth(1), corner: 12 },
+        { name: 'Back', target: backButton(page) },
+        { name: 'Skip', target: skipButton(page) },
+        { name: 'Continue', target: nextButton(page) },
+      ]);
+    });
+
+    test('the source buttons and Sync Trackers from Jackett', async ({ page }) => {
+      await acceptSaves(page);
+      await openWizard(page, theme);
+      await mountStep(page, 2, 'state.formData.torrentpotato.enabled = true;');
+      const source = (name: string) => page.getByRole('button', { name: new RegExp(`^${name}`) });
+      await expectVisibleFocusAndSize(page, [
+        { name: 'Usenet', target: source('Usenet') },
+        { name: 'Torrents', target: source('Torrents') },
+        { name: 'Both', target: source('Both') },
+        { name: 'Sync Trackers from Jackett', target: page.getByRole('button', { name: 'Sync Trackers from Jackett' }) },
+      ]);
+    });
+
+    test('the four Browse buttons and Finish Setup', async ({ page }) => {
+      await acceptSaves(page);
+      await openWizard(page, theme);
+      await mountStep(page, 3, 'state.formData.blackholeEnabled = true;');
+      await expectVisibleFocusAndSize(page, OPENERS.filter((o) => o.step === 3).map((o) => ({ name: `Browse (${o.label})`, target: browseButtonFor(page, o.field) })));
+      await mountStep(page, 4);
+      await expectVisibleFocusAndSize(page, [
+        ...OPENERS.filter((o) => o.step === 4).map((o) => ({ name: `Browse (${o.label})`, target: browseButtonFor(page, o.field) })),
+        { name: 'Finish Setup', target: nextButton(page) },
+      ]);
+    });
+
+    test('each step heading that takes focus on a step change', async ({ page }) => {
+      await acceptSaves(page);
+      await openWizard(page, theme);
+      const problems: string[] = [];
+      for (let step = 0; step <= 5; step += 1) {
+        // Arrive by the keyboard, the way a user does: the code moves focus, the last input was a key.
+        if (step === 0) {
+          await mountStep(page, 1);
+          await tabTo(page, backButton(page));
+        } else {
+          await mountStep(page, step - 1);
+          await tabTo(page, nextButton(page));
+        }
+        await page.keyboard.press('Enter');
+        await expect(heading(page, step)).toBeFocused();
+        const size = await heading(page, step).evaluate((el) => el.getBoundingClientRect().height);
+        expect(size).toBeGreaterThanOrEqual(24);
+        // WCAG 2.4.11: where the step change left the heading is what a user gets, so it is NOT re-centred
+        // here, and the fixed phone header (48px) must not be on top of it.
+        const covered = await heading(page, step).evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          const top = document.elementFromPoint(r.x + r.width / 2, r.y + 2);
+          return top !== null && !el.contains(top) ? top.tagName.toLowerCase() + ' ' + (top.className || '').toString().slice(0, 40) : '';
+        });
+        if (covered) problems.push(`heading of step ${step + 1}: covered by <${covered}> after the step change`);
+        const ring = await measureFocusRing(page, heading(page, step), 8, false);
+        const sides = Object.entries(ring.coverage).filter(([, share]) => share < 0.9).map(([side, share]) => `${side} ${(share * 100).toFixed(0)}%`);
+        if (sides.length) problems.push(`heading of step ${step + 1}: ring missing on ${sides.join(', ')} (min contrast ${ring.minContrast.toFixed(2)})`);
+      }
+      expect(problems, `a heading that takes focus shows no ring:\n${problems.join('\n')}`).toEqual([]);
+    });
+
+    test('the folder browser controls', async ({ page }) => {
+      await openFolderBrowser(page, OPENERS[0]);
+      const dialog = folderDialog(page);
+      await expect(dialog.getByRole('button', { name: 'movies', exact: true })).toBeVisible();
+      await expectVisibleFocusAndSize(page, [
+        { name: 'Close directory browser', target: dialog.getByRole('button', { name: 'Close directory browser', exact: true }) },
+        { name: 'Up', target: dialog.getByRole('button', { name: /Up$/ }) },
+        { name: 'folder row "movies"', target: dialog.getByRole('button', { name: 'movies', exact: true }) },
+        { name: 'Cancel', target: dialog.getByRole('button', { name: 'Cancel', exact: true }) },
+        { name: 'Select This Folder', target: dialog.getByRole('button', { name: 'Select This Folder', exact: true }) },
+      ]);
+    });
+  });
+}

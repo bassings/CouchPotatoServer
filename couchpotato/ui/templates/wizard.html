@@ -924,7 +924,8 @@
       <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
         <div class="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
           <h3 id="wizard-browser-title" class="text-sm font-medium">Browse Folders</h3>
-          <button @click="closeBrowser()" aria-label="Close directory browser" class="text-cp-muted hover:text-cp-text">
+          {#- 24x24 hit area (WCAG 2.5.8) around the 16px icon; the -m-1 keeps the header layout exactly as it was. -#}
+          <button @click="closeBrowser()" aria-label="Close directory browser" class="inline-flex items-center justify-center w-6 h-6 -m-1 text-cp-muted hover:text-cp-text">
             <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
@@ -954,7 +955,7 @@
           </div>
           <template x-for="dir in browserDirs" :key="dir">
             <button @click="selectDirectory(dir)" 
-                    class="w-full px-4 py-2 text-left text-xs hover:bg-white/[0.04] flex items-center gap-2 border-b border-white/[0.02]">
+                    class="w-full px-4 py-2 text-left text-xs hover:bg-white/[0.04] flex items-center gap-2 border-b border-white/[0.02] focus-visible:outline-offset-[-2px]">
               <svg aria-hidden="true" class="w-4 h-4 text-cp-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
               </svg>
@@ -1188,7 +1189,13 @@ function setupWizard() {
 
     focusStepHeading() {
       const heading = document.getElementById('wizard-step-heading-' + this.currentStep);
-      if (heading) heading.focus();
+      if (!heading) return;
+      // preventScroll + scroll to the top: the leaving step is still in the
+      // layout when this runs, so the browser's own scroll-into-view lands
+      // before the document shrinks, and the clamp afterwards left the heading
+      // under the fixed 48px phone header (WCAG 2.4.11 Focus Not Obscured).
+      heading.focus({ preventScroll: true });
+      window.scrollTo(0, 0);
     },
 
     goToStep(idx) {
@@ -1599,6 +1606,10 @@ function setupWizard() {
       this.browserOpener = opener || document.activeElement;
       this.browserOpen = true;
       this.browserPath = '/';
+      // $nextTick, not a microtask: the dialog must be displayed before it can
+      // take focus, and a microtask here runs before Alpine has shown it
+      // (measured: focus never moved). $nextTick is released by a timer, so
+      // under heavy load it can in principle fire late.
       this.$nextTick(() => this.focusBrowserEntry());
       await this.loadDirectories('/');
     },
