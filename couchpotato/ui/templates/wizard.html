@@ -9,8 +9,14 @@
       <div class="flex items-center justify-between mb-2">
         <template x-for="(stepName, idx) in steps" :key="idx">
           <div class="flex items-center" :class="idx < steps.length - 1 ? 'flex-1' : ''">
-            <button @click="goToStep(idx)"
+            {#- The glyph is the whole visible content, so the name carries the
+                step, its position and whether it is finished; aria-current marks
+                where the user is. Steps not yet reached stay natively disabled:
+                they cannot hold focus at the moment they become disabled. -#}
+            <button @click="goToStep(idx)" type="button"
                     :disabled="idx > currentStep"
+                    :aria-label="stepLabel(idx)"
+                    :aria-current="idx === currentStep ? 'step' : null"
                     class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all"
                     :class="idx < currentStep ? 'bg-cp-success text-white' : 
                             idx === currentStep ? 'bg-cp-accent text-black ring-2 ring-cp-accent/30' : 
@@ -122,20 +128,23 @@
         
         <!-- Source selection -->
         <div class="flex gap-3 mb-6">
-          <button @click="formData.searchType = 'usenet'" 
-                  :class="formData.searchType === 'usenet' || formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
+          <button @click="formData.searchType = 'usenet'" type="button"
+                  :aria-pressed="sourceSelected('usenet').toString()"
+                  :class="sourceSelected('usenet') ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Usenet</span>
             <span class="text-[10px]">NZB indexers</span>
           </button>
-          <button @click="formData.searchType = 'torrents'"
-                  :class="formData.searchType === 'torrents' || formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
+          <button @click="formData.searchType = 'torrents'" type="button"
+                  :aria-pressed="sourceSelected('torrents').toString()"
+                  :class="sourceSelected('torrents') ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Torrents</span>
             <span class="text-[10px]">Torrent trackers</span>
           </button>
-          <button @click="formData.searchType = 'both'"
-                  :class="formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
+          <button @click="formData.searchType = 'both'" type="button"
+                  :aria-pressed="sourceSelected('both').toString()"
+                  :class="sourceSelected('both') ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
                   class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
             <span class="block">Both</span>
             <span class="text-[10px]">Maximum coverage</span>
@@ -1172,6 +1181,19 @@ function setupWizard() {
       if (!this.saving && idx < this.currentStep) {
         this.enterStep(idx);
       }
+    },
+
+    stepLabel(idx) {
+      const done = idx < this.currentStep ? ', completed' : '';
+      return 'Step ' + (idx + 1) + ' of ' + this.steps.length + ': ' + this.steps[idx] + done;
+    },
+
+    // One definition for what is highlighted AND what aria-pressed reports, so
+    // they cannot drift apart. "Both" searches both sources, so all three read
+    // as selected when it is chosen.
+    sourceSelected(kind) {
+      const type = this.formData.searchType;
+      return kind === 'both' ? type === 'both' : type === kind || type === 'both';
     },
 
     canSkip() {

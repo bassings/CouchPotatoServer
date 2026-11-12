@@ -447,3 +447,79 @@ test.describe('the folder browser is a modal dialog', () => {
     await expectFocusInDialog(page, 'Tab from <body>');
   });
 });
+
+const STEP_NAMES = ['Welcome', 'Security', 'Providers', 'Downloader', 'Library', 'Done'];
+const indicators = (page: Page) => page.locator('[x-data="setupWizard()"] .mb-8 button');
+
+test.describe('the step indicator names each step and marks the current one', () => {
+  test.use({ viewport: PHONE });
+
+  test('every step button has a name with its position, its step and whether it is complete, and only the current one is aria-current', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await expect(indicators(page)).toHaveCount(6);
+
+    for (let current = 0; current < 6; current += 1) {
+      for (let idx = 0; idx < 6; idx += 1) {
+        const done = idx < current ? ', completed' : '';
+        await expect(
+          indicators(page).nth(idx),
+          `step button ${idx + 1} on step ${current + 1} is named by its glyph alone`,
+        ).toHaveAccessibleName(`Step ${idx + 1} of 6: ${STEP_NAMES[idx]}${done}`);
+      }
+      // Exactly one is current, and it is the right one.
+      await expect(page.locator('[x-data="setupWizard()"] .mb-8 button[aria-current]'), `step ${current + 1}: not exactly one aria-current`).toHaveCount(1);
+      await expect(indicators(page).nth(current), `aria-current is not on step ${current + 1}`).toHaveAttribute('aria-current', 'step');
+
+      if (current < 5) {
+        await tabTo(page, nextButton(page));
+        await page.keyboard.press('Enter');
+        await expect(heading(page, current + 1)).toBeFocused();
+      }
+    }
+  });
+
+  test('going back moves aria-current and clears "completed" from the steps ahead', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 3);
+    await tabTo(page, backButton(page));
+    await page.keyboard.press('Enter');
+    await expect(heading(page, 2)).toBeFocused();
+
+    await expect(indicators(page).nth(2)).toHaveAttribute('aria-current', 'step');
+    await expect(indicators(page).nth(3)).not.toHaveAttribute('aria-current', /.*/);
+    await expect(indicators(page).nth(3)).toHaveAccessibleName('Step 4 of 6: Downloader');
+  });
+});
+
+test.describe('the source buttons expose which source is selected', () => {
+  test.use({ viewport: PHONE });
+
+  // Choosing Both highlights all three buttons today, so aria-pressed reports the
+  // same: each button is pressed when its source is searched.
+  const TRUTH = {
+    usenet: { Usenet: 'true', Torrents: 'false', Both: 'false' },
+    torrents: { Usenet: 'false', Torrents: 'true', Both: 'false' },
+    both: { Usenet: 'true', Torrents: 'true', Both: 'true' },
+  } as const;
+
+  test('aria-pressed matches the highlight for Usenet, Torrents and Both', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2);
+    const button = (name: string) => page.getByRole('button', { name: new RegExp(`^${name}`) });
+
+    for (const choice of ['usenet', 'torrents', 'both'] as const) {
+      const pick = choice === 'usenet' ? 'Usenet' : choice === 'torrents' ? 'Torrents' : 'Both';
+      await tabTo(page, button(pick));
+      await page.keyboard.press('Space');
+      for (const [name, pressed] of Object.entries(TRUTH[choice])) {
+        await expect(button(name), `${name} after choosing ${choice}`).toHaveAttribute('aria-pressed', pressed);
+        // And it is what the eye sees: the accent tint is exactly the pressed state.
+        if (pressed === 'true') await expect(button(name), `${name} is pressed but not highlighted`).toHaveClass(/bg-cp-accent\/20/);
+        else await expect(button(name), `${name} is highlighted but not pressed`).not.toHaveClass(/bg-cp-accent\/20/);
+      }
+    }
+  });
+});
