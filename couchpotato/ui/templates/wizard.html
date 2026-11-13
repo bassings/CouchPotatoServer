@@ -25,7 +25,7 @@
                     :disabled="idx > currentStep"
                     :aria-label="stepLabel(idx)"
                     :aria-current="idx === currentStep ? 'step' : null"
-                    :aria-disabled="(saving && idx <= currentStep).toString()"
+                    :aria-disabled="idx > currentStep ? null : saving.toString()"
                     class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all"
                     :class="idx < currentStep ? 'bg-cp-success text-white' : 
                             idx === currentStep ? 'bg-cp-accent text-black ring-2 ring-cp-accent/30' : 
@@ -1249,7 +1249,8 @@ function setupWizard() {
     // Space/Enter on a focused radio is the button's own click.
     sourceKeydown(event) {
       const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
-      if (!step) return;
+      // A modified arrow is a browser shortcut (Alt+Left is Back): leave it alone.
+      if (!step || event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault();
       const n = this.sourceOrder.length;
       const at = this.sourceOrder.indexOf(this.formData.searchType);

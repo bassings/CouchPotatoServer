@@ -548,12 +548,19 @@ test.describe('the folder browser is a modal dialog', () => {
       '/a/x/deep/': { dirs: [] },
     });
     await expect(folderRow(page, 'a')).toBeVisible();
+    // A successful listing shows no error box and no Retry (the "hide" direction of the error container).
+    const errorBox = folderDialog(page).locator('[role="alert"]');
+    const retryButton = folderDialog(page).getByRole('button', { name: 'Retry', exact: true });
+    await expect(errorBox, 'an empty error box shows over a successful listing').toBeHidden();
+    await expect(retryButton, 'a stray Retry shows over a successful listing').toBeHidden();
 
     // Level one: the focused row is removed while the next listing loads. Hold it to look at that moment.
     const releaseA = served.hold('/a/');
     await tabTo(page, folderRow(page, 'a'));
     await page.keyboard.press('Enter');
     await expectFocusInDialog(page, 'while /a/ is loading');
+    await expect(errorBox, 'an error box shows while a listing loads').toBeHidden();
+    await expect(retryButton, 'Retry shows while a listing loads').toBeHidden();
     releaseA();
     await expect(folderRow(page, 'x')).toBeVisible();
     await expect(folderRow(page, 'x'), `after /a/ loaded, focus is on ${await whereIsFocus(page)}`).toBeFocused();
@@ -767,6 +774,21 @@ test.describe('the step indicator names each step and marks the current one', ()
     }
   });
 
+  test('a step button not yet reached is natively disabled and carries no aria-disabled; reached ones read "false"', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2);
+    for (let idx = 0; idx < 6; idx += 1) {
+      const button = indicators(page).nth(idx);
+      if (idx > 2) {
+        await expect(button, `step ${idx + 1} is not natively disabled`).toBeDisabled();
+        await expect(button, `step ${idx + 1} (not reached) has aria-disabled as well as disabled`).not.toHaveAttribute('aria-disabled', /.*/);
+      } else {
+        await expect(button, `reached step ${idx + 1}`).toHaveAttribute('aria-disabled', 'false');
+      }
+    }
+  });
+
   test('going back moves aria-current and clears "completed" from the steps ahead', async ({ page }) => {
     await acceptSaves(page);
     await openWizard(page);
@@ -887,6 +909,29 @@ test.describe('the source choice is a radio group', () => {
     await expectOn('Torrents', 'Up is Left');
     await page.keyboard.press('ArrowDown');
     await expectOn('Both', 'Down is Right');
+  });
+
+  test('Alt, Control and Meta with an arrow key leave the choice alone and do not cancel the browser shortcut', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2);
+    await tabTo(page, checkedSource(page));                    // Torrents
+    // Record whether the page's own handler cancelled each keydown (document runs after the group's
+    // handler in the bubble phase), then cancel it here so a real Alt+Left cannot navigate the test away.
+    await page.evaluate(() => {
+      const seen: boolean[] = [];
+      (window as any).__prevented = seen;
+      document.addEventListener('keydown', (event) => { seen.push(event.defaultPrevented); event.preventDefault(); });
+    });
+    for (const [chord, label] of [['Alt+ArrowLeft', 'Alt+Left'], ['Control+ArrowRight', 'Control+Right'], ['Meta+ArrowLeft', 'Meta+Left']]) {
+      await page.keyboard.press(chord);
+      await expect(sourceRadio(page, 'Torrents'), `${label} changed the choice`).toHaveAttribute('aria-checked', 'true');
+      await expect(sourceRadio(page, 'Torrents'), `${label} moved focus`).toBeFocused();
+    }
+    const prevented = await page.evaluate(() => (window as any).__prevented as boolean[]);
+    // Press events also include the modifier keys' own keydowns; none of them may have been cancelled.
+    expect(prevented.length, 'no keydown was recorded').toBeGreaterThan(0);
+    expect(prevented.filter(Boolean), 'the page cancelled a modified arrow key, swallowing a browser shortcut').toEqual([]);
   });
 
   test('Space on a focused radio chooses it', async ({ page }) => {
