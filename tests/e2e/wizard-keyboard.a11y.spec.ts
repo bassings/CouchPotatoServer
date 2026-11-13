@@ -918,20 +918,26 @@ test.describe('the source choice is a radio group', () => {
     await tabTo(page, checkedSource(page));                    // Torrents
     // Record whether the page's own handler cancelled each keydown (document runs after the group's
     // handler in the bubble phase), then cancel it here so a real Alt+Left cannot navigate the test away.
+    // The key is recorded with the flag so a handler that STOPS the event (it never reaches here)
+    // is caught as well as one that cancels it.
     await page.evaluate(() => {
-      const seen: boolean[] = [];
-      (window as any).__prevented = seen;
-      document.addEventListener('keydown', (event) => { seen.push(event.defaultPrevented); event.preventDefault(); });
+      const seen: { key: string; prevented: boolean }[] = [];
+      (window as any).__keys = seen;
+      document.addEventListener('keydown', (event) => { seen.push({ key: event.key, prevented: event.defaultPrevented }); event.preventDefault(); });
     });
     for (const [chord, label] of [['Alt+ArrowLeft', 'Alt+Left'], ['Control+ArrowRight', 'Control+Right'], ['Meta+ArrowLeft', 'Meta+Left']]) {
       await page.keyboard.press(chord);
       await expect(sourceRadio(page, 'Torrents'), `${label} changed the choice`).toHaveAttribute('aria-checked', 'true');
       await expect(sourceRadio(page, 'Torrents'), `${label} moved focus`).toBeFocused();
     }
-    const prevented = await page.evaluate(() => (window as any).__prevented as boolean[]);
-    // Press events also include the modifier keys' own keydowns; none of them may have been cancelled.
-    expect(prevented.length, 'no keydown was recorded').toBeGreaterThan(0);
-    expect(prevented.filter(Boolean), 'the page cancelled a modified arrow key, swallowing a browser shortcut').toEqual([]);
+    const keys = await page.evaluate(() => (window as any).__keys as { key: string; prevented: boolean }[]);
+    // The modifier keys' own keydowns are recorded too; only the arrows matter.
+    const arrows = keys.filter(({ key }) => key.startsWith('Arrow'));
+    expect(
+      arrows.map(({ key }) => key),
+      'a modified arrow key never reached the document: the page stopped it',
+    ).toEqual(['ArrowLeft', 'ArrowRight', 'ArrowLeft']);
+    expect(arrows.filter(({ prevented }) => prevented), 'the page cancelled a modified arrow key, swallowing a browser shortcut').toEqual([]);
   });
 
   test('Space on a focused radio chooses it', async ({ page }) => {
