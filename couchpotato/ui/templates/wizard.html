@@ -460,7 +460,7 @@
                 <label for="wizard-blackhole-nzb-dir" class="block text-xs text-cp-muted mb-1">NZB Watch Folder</label>
                 <div class="flex gap-2">
                   <input id="wizard-blackhole-nzb-dir" type="text" x-model="formData.downloaderConfig.blackhole.nzb_directory" placeholder="/path/to/nzb/watch"
-                         class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                         class="flex-1 min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <button @click="browseDirectory('blackhole_nzb', $event.currentTarget)" type="button" :aria-disabled="saving.toString()" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
                 </div>
               </div>
@@ -468,7 +468,7 @@
                 <label for="wizard-blackhole-torrent-dir" class="block text-xs text-cp-muted mb-1">Torrent Watch Folder</label>
                 <div class="flex gap-2">
                   <input id="wizard-blackhole-torrent-dir" type="text" x-model="formData.downloaderConfig.blackhole.torrent_directory" placeholder="/path/to/torrent/watch"
-                         class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                         class="flex-1 min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <button @click="browseDirectory('blackhole_torrent', $event.currentTarget)" type="button" :aria-disabled="saving.toString()" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
                 </div>
               </div>
@@ -736,7 +736,7 @@
             <label for="wizard-renamer-from" class="block text-xs text-cp-muted mb-1.5">Download Folder</label>
             <div class="flex gap-2">
               <input id="wizard-renamer-from" type="text" x-model="formData.renamer.from" placeholder="/path/to/downloads/complete"
-                     class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
+                     class="flex-1 min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
               <button @click="browseDirectory('renamer_from', $event.currentTarget)" type="button" :aria-disabled="saving.toString()"
                       class="px-4 py-2 rounded-md text-sm bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
                 Browse
@@ -749,7 +749,7 @@
             <label for="wizard-renamer-to" class="block text-xs text-cp-muted mb-1.5">Movie Library</label>
             <div class="flex gap-2">
               <input id="wizard-renamer-to" type="text" x-model="formData.renamer.to" placeholder="/path/to/movies"
-                     class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
+                     class="flex-1 min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
               <button @click="browseDirectory('renamer_to', $event.currentTarget)" type="button" :aria-disabled="saving.toString()"
                       class="px-4 py-2 rounded-md text-sm bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
                 Browse

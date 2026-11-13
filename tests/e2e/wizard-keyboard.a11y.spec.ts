@@ -1338,3 +1338,44 @@ for (const theme of ['light', 'dark'] as const) {
     });
   });
 }
+
+/**
+ * The folder rows ("input + Browse") must fit the card at 375px, so the Browse button and its focus
+ * ring are not cut off by the card's `overflow-hidden`.
+ *
+ * This was found by Linux CI and invisible on macOS: a text input's intrinsic width comes from the
+ * font, and the page's `Inter` is not loaded, so the fallback face decides. On Linux the two step-5
+ * inputs were 244px wide, the row overflowed its 293px by 39px, and the Browse button's right edge
+ * (373px) sat past the card's right edge (359px): its ring was clipped (right side 0%). On macOS the
+ * same input is 205px and fits, so no test run on a Mac could see it. The inputs are therefore
+ * made deliberately wide here (`size`), which reproduces the Linux overflow on any platform.
+ */
+test.describe('the Browse rows fit the card at 375px whatever the input\'s own width', () => {
+  test.use({ viewport: PHONE });
+
+  for (const opener of OPENERS) {
+    for (const wide of [false, true]) {
+      test(`"${opener.label}" Browse button and its ring stay inside the card${wide ? ' with a very wide input' : ''}`, async ({ page }) => {
+        await acceptSaves(page);
+        await openWizard(page);
+        await mountStep(page, opener.step, opener.scene);
+        if (wide) await page.locator(opener.field).evaluate((el) => el.setAttribute('size', '40'));
+        const m = await page.locator(opener.field).evaluate((input) => {
+          const row = input.parentElement as HTMLElement;
+          const button = row.querySelector('button') as HTMLElement;
+          let card: Element | null = row;
+          while (card && getComputedStyle(card).overflowX === 'visible') card = card.parentElement;
+          return {
+            buttonRight: button.getBoundingClientRect().right,
+            cardRight: (card as Element).getBoundingClientRect().right,
+            rowScroll: row.scrollWidth,
+            rowClient: row.clientWidth,
+          };
+        });
+        expect(m.rowScroll, `the row overflows its box by ${m.rowScroll - m.rowClient}px`).toBeLessThanOrEqual(m.rowClient);
+        // 4px: the 2px outline plus its 2px offset.
+        expect(m.buttonRight + 4, `the Browse button's ring reaches ${m.buttonRight + 4}px but the card clips at ${m.cardRight}px`).toBeLessThanOrEqual(m.cardRight);
+      });
+    }
+  }
+});
