@@ -64,7 +64,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: 'Skip' }).click();
     await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
 
-    await page.getByRole('button', { name: /^Both/ }).click();
+    await page.getByRole('radio', { name: /^Both/ }).click();
     await page.getByRole('button', { name: /Private Trackers/ }).click();
     await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
     await page.getByRole('switch', { name: 'Enable HDBits' }).click();

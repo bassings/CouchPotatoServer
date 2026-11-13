@@ -453,29 +453,50 @@ result. Getting it wrong the other way files a bug against working code.
   apply and nothing is transmitted; the exposure is an error message containing
   a URL or path being visible in a console someone screenshots into a bug
   report. Not assessed call by call.
-- **Setup wizard accessibility gaps found while hiding its decorative icons
-  (2026-11-12; owner decision: fixed in a dedicated PR straight after the
-  SonarQube batch that found them).** All pre-existing, none reached by a test
-  before `tests/e2e/wizard-icons.a11y.spec.ts`:
-  1. Focus loss on every step. The Continue/Finish button binds `:disabled` to
-     `saving`, and `nextStep()` sets `saving = true`, so the control the user
-     just activated is disabled, the browser drops focus to `<body>`, and
-     nothing restores it. The Jackett sync button has the same `:disabled`
-     shape. The project rule is `aria-disabled` plus a re-entry guard.
-  2. Contrast. The three 10px hint lines on the Providers step source cards
-     ("NZB indexers", "Torrent trackers", "Maximum coverage") measure 2.34:1 in
-     the light theme and 3.21:1 in the dark theme (`opacity-60`), against
-     4.5:1. The axe scan excludes exactly those three nodes through
-     `KNOWN_CONTRAST_DEBT`, and a companion test fails when they stop failing
-     or when the selector matches anything else, so the exclusion cannot
-     outlive the fix.
-  3. The directory browser is not a dialog: no `role="dialog"`, `aria-modal`,
-     label, Escape handling or focus trap, and `browseDirectory()` never moves
-     focus into it. The settings twin in `partials/settings/modals.html` has
-     all of these.
-  4. State by colour alone: the step indicator has no `aria-current`, and the
-     Usenet/Torrents/Both source buttons have no `aria-pressed`
-     (`wanted.html` shows the repo's pattern).
+- **Setup wizard accessibility: what A11Y-003 fixed and what remains
+  (2026-11-13).** Fixed and covered by the `wizard-keyboard`,
+  `wizard-contrast` and `wizard-icons` specs: focus loss (aria-disabled plus
+  re-entry guards, focus to the new step heading); hint contrast (the
+  exclusion is gone); the folder browser as a modal dialog with focus in, a
+  trap, focus return, and focus kept when a folder opens or Retry is pressed;
+  step indicator names and `aria-current`; the Usenet/Torrents/Both choice as a
+  radio group; `aria-pressed` on the download client buttons; Back, Skip, the
+  step buttons and Browse exposed as inert during a save; and a persistent
+  status region. Still open:
+  1. The wizard's visual toast (`x-show="message"`) is a 20% tint of the
+     success/danger token behind text in that token. At 1280px: light success
+     4.49:1 and dark error 4.29:1 (need 4.5:1). At 375px axe cannot decide
+     ("incomplete": the toast overlaps content). Settings ships identical
+     markup; the fix is a design decision about the toast, so it is not
+     scanned in `wizard-contrast.a11y.spec.ts` and not hidden by an exclusion.
+  2. `partials/settings/modals.html` (the twin) has no focus move-in, no focus
+     return and a trap that only works once focus is already inside.
+  3. No scroll padding for the fixed 48px phone header / bottom bar, so a
+     control focused by Tab can be left under them (WCAG 2.4.11). The wizard
+     headings avoid it by scrolling to the top on a step change; other
+     controls and pages were not assessed.
+  4. Not confirmable by any automated test, needing a real screen reader: that
+     the status region is spoken (and not twice), how a focused heading is
+     voiced, how the source radio group is read (and that the roving tab stop
+     and Arrow keys behave as expected with each screen reader's own
+     radio-group handling), and the dialog's reading order.
+  5. The dead `x-if="false && ..."` legacy downloader test block still binds
+     `:disabled="testingDownloader"` on its Test Connection button. It never
+     renders. Reviving it would bring the focus loss back (a natively disabled
+     focused button drops focus to `<body>`), so it must move to `aria-disabled`
+     first; `testDownloader()` itself already has the re-entry guard and the
+     announcements.
+  6. The Usenet/Torrents/Both radio group deliberately does not match its own
+     tint: choosing Both checks only Both (`aria-checked`), but the highlight
+     still lights all three, as it always has (owner decision 2026-11-13: the
+     state is a pick-one choice, the look was left alone). A sighted user sees
+     three lit buttons; a screen-reader user hears one checked radio.
+  7. A save that never answers leaves the wizard on "Saving…" until the page is
+     reloaded: no request has a timeout, and Back, Skip, the step buttons and
+     Browse stay inert for as long as it hangs.
+  8. Pre-existing: `saveSetting()` treats an HTTP 200 whose JSON body is `null`
+     as a successful save (only `success === false` is refused), so the wizard
+     can advance on a save the server did not confirm.
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are

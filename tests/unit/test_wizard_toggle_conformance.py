@@ -64,7 +64,11 @@ def test_wizard_toggles_carry_full_accessibility_attributes():
         'every role="switch" toggle in wizard.html must use the canonical '
         'w-8 h-4 track size'
     )
-    assert rendered.count(':aria-checked=') == switch_count, (
+    # The Usenet/Torrents/Both source choice is a radio group (three role="radio"
+    # buttons, each with its own :aria-checked), which is not a toggle.
+    radio_count = rendered.count('role="radio"')
+    assert radio_count == 3, f'expected the three source radios, found {radio_count}'
+    assert rendered.count(':aria-checked=') == switch_count + radio_count, (
         'every role="switch" toggle in wizard.html must have :aria-checked'
     )
 

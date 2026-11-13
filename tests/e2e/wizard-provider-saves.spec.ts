@@ -33,7 +33,7 @@ test('Providers step saves each enabled provider in a fixed order with trimmed l
   await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible({ timeout: 10000 });
   expect(saves, 'the Security step saved something although both fields were empty').toEqual([]);
 
-  await page.getByRole('button', { name: /^Both/ }).click();
+  await page.getByRole('radio', { name: /^Both/ }).click();
 
   await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
   await page.getByRole('button', { name: '+ Add another indexer' }).click();

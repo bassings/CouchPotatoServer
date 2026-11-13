@@ -766,9 +766,9 @@ test.describe('Accessibility', () => {
     await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
 
     // Step 3: Providers -> choose a search type so the provider toggles render.
-    // Each source button's accessible name is "<Type> <hint>" (e.g. "Both
+    // Each source radio's accessible name is "<Type> <hint>" (e.g. "Both
     // Maximum coverage"), so match on a name starting with the type.
-    await page.getByRole('button', { name: new RegExp('^' + searchType) }).click();
+    await page.getByRole('radio', { name: new RegExp('^' + searchType) }).click();
     await expect(page.locator('button[role="switch"]:visible').first()).toBeVisible();
   }
 
@@ -815,7 +815,7 @@ test.describe('Accessibility', () => {
     // together; enabling Newznab and Jackett reveals their credential
     // fields, and expanding + enabling one private tracker reveals the
     // `x-for` field loop (AC-A11Y-2's bound-id case).
-    await page.getByRole('button', { name: /^Both/ }).click();
+    await page.getByRole('radio', { name: /^Both/ }).click();
     await expect(page.getByRole('switch', { name: 'Enable Newznab Indexers' })).toBeVisible();
     await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
     await page.getByRole('switch', { name: 'Enable Jackett / TorrentPotato' }).click();
