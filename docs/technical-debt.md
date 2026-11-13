@@ -497,6 +497,10 @@ result. Getting it wrong the other way files a bug against working code.
   8. Pre-existing: `saveSetting()` treats an HTTP 200 whose JSON body is `null`
      as a successful save (only `success === false` is refused), so the wizard
      can advance on a save the server did not confirm.
+  9. The "+ Add another indexer" button on the Providers step measures about
+     113x16.5px at 1280px, under the 24px target size (WCAG 2.5.8). Whether the
+     spacing exemption applies was not assessed, and it has no focus-ring or
+     size test (the Remove buttons beside it do).
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are

@@ -1324,6 +1324,15 @@ for (const theme of ['light', 'dark'] as const) {
       expect(problems, `a heading that takes focus shows no ring:\n${problems.join('\n')}`).toEqual([]);
     });
 
+    test('the Remove indexer buttons', async ({ page }) => {
+      await acceptSaves(page);
+      await openWizard(page, theme);
+      await mountStep(page, 2, indexerScene(2));
+      await expectVisibleFocusAndSize(page, [1, 2].map((n) => ({
+        name: `Remove indexer ${n}`, target: page.getByRole('button', { name: `Remove indexer ${n}`, exact: true }),
+      })));
+    });
+
     test('the folder browser controls', async ({ page }) => {
       await openFolderBrowser(page, OPENERS[0]);
       const dialog = folderDialog(page);
@@ -1367,7 +1376,8 @@ test.describe('the Browse rows fit the card at 375px whatever the input\'s own w
           while (card && getComputedStyle(card).overflowX === 'visible') card = card.parentElement;
           return {
             buttonRight: button.getBoundingClientRect().right,
-            cardRight: (card as Element).getBoundingClientRect().right,
+            // The INNER edge: what the clip actually cuts at is inside the card's border.
+            cardRight: (card as Element).getBoundingClientRect().right - parseFloat(getComputedStyle(card as Element).borderRightWidth),
             rowScroll: row.scrollWidth,
             rowClient: row.clientWidth,
           };
@@ -1377,5 +1387,102 @@ test.describe('the Browse rows fit the card at 375px whatever the input\'s own w
         expect(m.buttonRight + 4, `the Browse button's ring reaches ${m.buttonRight + 4}px but the card clips at ${m.cardRight}px`).toBeLessThanOrEqual(m.cardRight);
       });
     }
+  }
+});
+
+/** Step 3 ("Where to Search") with Usenet chosen, Newznab on and `n` empty indexer rows. */
+const indexerScene = (n: number) =>
+  `state.formData.searchType = "usenet"; state.formData.newznab.enabled = true; state.formData.newznab.entries = [${Array.from({ length: n }, () => '{host: "", api_key: ""}').join(', ')}];`;
+
+const removeButtons = (page: Page) => page.getByRole('button', { name: /^Remove indexer \d+$/ });
+const addIndexerButton = (page: Page) => page.getByRole('button', { name: '+ Add another indexer' });
+
+/**
+ * The Newznab indexer rows ("URL input + API key input + Remove") at 375px. Neither input had `min-w-0`,
+ * so each kept its intrinsic width: the row overflowed (measured 115px on macOS, 171px on Linux, with two
+ * entries), the API key was sliced by the card's `overflow-hidden`, and the Remove buttons sat wholly
+ * outside the card while Tab still reached them. `size=40` reproduces Linux font metrics on any platform.
+ */
+test.describe('the Newznab indexer rows fit the card at 375px whatever the inputs\' own width', () => {
+  test.use({ viewport: PHONE });
+
+  for (const entries of [1, 2]) {
+    for (const wide of [false, true]) {
+      test(`${entries} ${entries === 1 ? 'entry' : 'entries'}: the row and every Remove button stay inside the card${wide ? ' with very wide inputs' : ''}`, async ({ page }) => {
+        await acceptSaves(page);
+        await openWizard(page);
+        await mountStep(page, 2, indexerScene(entries));
+        await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(entries);
+        if (wide) {
+          await page.locator('[aria-label^="Newznab indexer URL"], [aria-label^="Newznab API key"]')
+            .evaluateAll((els) => els.forEach((el) => el.setAttribute('size', '40')));
+        }
+        const rows = await page.locator('[aria-label^="Newznab indexer URL"]').evaluateAll((inputs) => inputs.map((input) => {
+          const row = input.parentElement as HTMLElement;
+          let clip: Element | null = row;
+          while (clip && getComputedStyle(clip).overflowX === 'visible') clip = clip.parentElement;
+          const clipRight = (clip as Element).getBoundingClientRect().right - parseFloat(getComputedStyle(clip as Element).borderRightWidth);
+          return {
+            rowScroll: row.scrollWidth,
+            rowClient: row.clientWidth,
+            clipRight,
+            buttons: Array.from(row.querySelectorAll('button')).map((b) => ({
+              visible: getComputedStyle(b).display !== 'none',
+              right: b.getBoundingClientRect().right,
+            })),
+          };
+        }));
+        expect(rows).toHaveLength(entries);
+        rows.forEach((m, i) => {
+          expect(m.rowScroll, `row ${i + 1} overflows its box by ${m.rowScroll - m.rowClient}px`).toBeLessThanOrEqual(m.rowClient);
+          for (const b of m.buttons.filter((x) => x.visible)) {
+            // 4px: the 2px outline plus its 2px offset.
+            expect(b.right + 4, `row ${i + 1}: the Remove button's ring reaches ${b.right + 4}px but the card clips at ${m.clipRight}px`).toBeLessThanOrEqual(m.clipRight);
+          }
+        });
+        expect(await removeButtons(page).count(), 'two or more entries must show a Remove button each').toBe(entries > 1 ? entries : 0);
+        if (entries > 1) await expect(removeButtons(page).first()).toBeVisible();
+      });
+    }
+  }
+});
+
+/**
+ * Pressing Enter on Remove removes the focused button itself (the rows are keyed by index, and with one
+ * entry left no Remove button is shown), so focus must be handed on or it falls to <body>.
+ */
+test.describe('removing an indexer by keyboard never drops focus to <body>', () => {
+  test.use({ viewport: PHONE });
+
+  const cases = [
+    { name: 'the last of three', n: 3, remove: 3, focused: 'Remove indexer 2' },
+    { name: 'the first of three', n: 3, remove: 1, focused: 'Remove indexer 1' },
+    { name: 'the middle of three', n: 3, remove: 2, focused: 'Remove indexer 2' },
+    { name: 'one of two (no Remove button is left to focus)', n: 2, remove: 2, focused: '+ Add another indexer' },
+  ];
+
+  for (const c of cases) {
+    test(`removing ${c.name} leaves focus on "${c.focused}"`, async ({ page }) => {
+      await acceptSaves(page);
+      await openWizard(page);
+      await mountStep(page, 2, indexerScene(c.n));
+      // Tell the rows apart by what they hold, so the right one is shown to have gone.
+      await page.evaluate(() => {
+        const state = (window as any).Alpine.$data(document.querySelector('[x-data="setupWizard()"]'));
+        state.formData.newznab.entries.forEach((e: any, i: number) => { e.host = `host-${i + 1}`; });
+      });
+      await tabTo(page, page.getByRole('button', { name: `Remove indexer ${c.remove}`, exact: true }));
+      await page.keyboard.press('Enter');
+      await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(c.n - 1);
+      const kept = await page.getByLabel(/^Newznab indexer URL/).evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value));
+      expect(kept, 'the wrong indexer was removed').toEqual(Array.from({ length: c.n }, (_, i) => `host-${i + 1}`).filter((_, i) => i !== c.remove - 1));
+      // Focus is handed on after the rows re-render, so wait for it (bounded) rather than read it at the
+      // instant the row disappears, when it is legitimately still on the removed button's way out.
+      const target = c.focused.startsWith('+') ? addIndexerButton(page) : page.getByRole('button', { name: c.focused, exact: true });
+      await expect.poll(() => whereIsFocus(page), { message: `focus should reach "${c.focused}"` }).not.toMatch(/^<body>|^nothing/);
+      const where = await whereIsFocus(page);
+      expect(await page.evaluate(() => document.activeElement === document.body), `focus fell to <body> (${where})`).toBe(false);
+      await expect(target, `focus should be on "${c.focused}" but is on ${where}`).toBeFocused();
+    });
   }
 });
