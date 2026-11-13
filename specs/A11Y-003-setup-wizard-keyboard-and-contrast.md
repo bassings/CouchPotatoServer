@@ -166,7 +166,7 @@ PR #584 and none was reached by a test before it:
 - The download-client buttons are true toggles shown by colour alone; AC-A11Y-6 named only the source buttons.
 - AC-A11Y-1 required step headings out of the tab order, but nothing tested it (a surviving mutation).
 - `aria-pressed` was chosen for a single-choice control; a pick-one group is a radio group (owner decision 2026-11-13). A criterion naming an ARIA pattern should say whether the control is one-of-many or independent.
-- AC-QA-8 required `wizard-provider-saves.spec.ts` to stay unchanged, but changing the source buttons to radios necessarily changes that spec's `getByRole('button', ...)` selector to `getByRole('radio', ...)` (one word; five other specs changed the same way).
+- AC-QA-8 required `wizard-provider-saves.spec.ts` to stay unchanged, but changing the source buttons to radios necessarily changes that spec's `getByRole('button', ...)` selector to `getByRole('radio', ...)` (one word; five other specs changed the same way, which also contradicts AC-A11Y-8's "the other wizard specs pass unchanged").
 - AC-A11Y-6 said Arrow keys move and choose with no exclusion for Alt, Control or Meta, whose arrow chords are browser shortcuts (Alt+Left is Back); the handler swallowed them until a review found it.
 - AC-A11Y-2 allowed native `disabled` on not-yet-reached step buttons without saying they must not also carry `aria-disabled`; they carried `aria-disabled="false"` on a disabled control.
-- No QA criterion required the folder dialog's error container to be tested in the hide direction (an empty alert box and a stray Retry over every successful listing left the suite green).
+- No QA criterion required the folder dialog's error container to be tested in the hide direction (a surviving mutation: binding the container to the loading flag alone, which shows an empty alert box and a stray Retry over every successful listing, left the suite green; the template itself never shipped that).
