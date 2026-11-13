@@ -1324,13 +1324,16 @@ for (const theme of ['light', 'dark'] as const) {
       expect(problems, `a heading that takes focus shows no ring:\n${problems.join('\n')}`).toEqual([]);
     });
 
-    test('the Remove indexer buttons', async ({ page }) => {
+    test('the Remove indexer buttons and + Add another indexer', async ({ page }) => {
       await acceptSaves(page);
       await openWizard(page, theme);
       await mountStep(page, 2, indexerScene(2));
-      await expectVisibleFocusAndSize(page, [1, 2].map((n) => ({
-        name: `Remove indexer ${n}`, target: page.getByRole('button', { name: `Remove indexer ${n}`, exact: true }),
-      })));
+      await expectVisibleFocusAndSize(page, [
+        ...[1, 2].map((n) => ({
+          name: `Remove indexer ${n}`, target: page.getByRole('button', { name: `Remove indexer ${n}`, exact: true }),
+        })),
+        { name: '+ Add another indexer', target: addIndexerButton(page) },
+      ]);
     });
 
     test('the folder browser controls', async ({ page }) => {
@@ -1369,6 +1372,8 @@ test.describe('the Browse rows fit the card at 375px whatever the input\'s own w
         await openWizard(page);
         await mountStep(page, opener.step, opener.scene);
         if (wide) await page.locator(opener.field).evaluate((el) => el.setAttribute('size', '40'));
+        // The step is still animating in until now; a button read mid-transition sits short of where it settles.
+        await expectVisualTransitionsToSettle(page, `the ${opener.label} step`);
         const m = await page.locator(opener.field).evaluate((input) => {
           const row = input.parentElement as HTMLElement;
           const button = row.querySelector('button') as HTMLElement;
@@ -1417,6 +1422,8 @@ test.describe('the Newznab indexer rows fit the card at 375px whatever the input
           await page.locator('[aria-label^="Newznab indexer URL"], [aria-label^="Newznab API key"]')
             .evaluateAll((els) => els.forEach((el) => el.setAttribute('size', '40')));
         }
+        // The step is still animating in until now; a button read mid-transition sits short of where it settles.
+        await expectVisualTransitionsToSettle(page, 'the Providers step');
         const rows = await page.locator('[aria-label^="Newznab indexer URL"]').evaluateAll((inputs) => inputs.map((input) => {
           const row = input.parentElement as HTMLElement;
           let clip: Element | null = row;
@@ -1457,7 +1464,8 @@ test.describe('removing an indexer by keyboard never drops focus to <body>', () 
   const cases = [
     { name: 'the last of three', n: 3, remove: 3, focused: 'Remove indexer 2' },
     { name: 'the first of three', n: 3, remove: 1, focused: 'Remove indexer 1' },
-    { name: 'the middle of three', n: 3, remove: 2, focused: 'Remove indexer 2' },
+    // The focused node survives here but becomes display:none, so a handler that leaves focus alone strands it on <body>.
+    { name: 'the first of two (its button survives but is hidden)', n: 2, remove: 1, focused: '+ Add another indexer' },
     { name: 'one of two (no Remove button is left to focus)', n: 2, remove: 2, focused: '+ Add another indexer' },
   ];
 
@@ -1485,4 +1493,155 @@ test.describe('removing an indexer by keyboard never drops focus to <body>', () 
       await expect(target, `focus should be on "${c.focused}" but is on ${where}`).toBeFocused();
     });
   }
+});
+
+const indexerHosts = (page: Page) => page.getByLabel(/^Newznab indexer URL/).evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value));
+
+/** Record the number of indexer rows after every change to the page from now on. */
+async function recordRowCounts(page: Page) {
+  await page.evaluate(() => {
+    const counts: number[] = [document.querySelectorAll('[aria-label^="Newznab indexer URL"]').length];
+    (window as any).__rowCounts = counts;
+    new MutationObserver(() => {
+      counts.push(document.querySelectorAll('[aria-label^="Newznab indexer URL"]').length);
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+}
+const rowCounts = (page: Page): Promise<number[]> => page.evaluate(() => (window as any).__rowCounts);
+
+/** Hold Enter: the first `down` is the press, every further `down` without an `up` is an auto-repeat. */
+async function holdEnter(page: Page, presses = 6) {
+  for (let i = 0; i < presses; i += 1) await page.keyboard.down('Enter');
+  await page.keyboard.up('Enter');
+}
+
+test.describe('a held key removes one indexer and adds none', () => {
+  test.use({ viewport: PHONE });
+
+  test('Playwright\'s repeated down() really produces repeat keydowns (the premise of the tests below)', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await page.evaluate(() => {
+      const seen: boolean[] = [];
+      (window as any).__repeats = seen;
+      document.addEventListener('keydown', (e) => { if (e.key === 'Enter') seen.push(e.repeat); }, true);
+    });
+    await holdEnter(page, 4);
+    expect(await page.evaluate(() => (window as any).__repeats)).toEqual([false, true, true, true]);
+  });
+
+  // `late`: the repeats start only after focus has been handed on, so they land on the NEXT control (the next
+  // Remove button, or Add). Without it they are all sent before the handover and only the Remove button sees them.
+  for (const held of [
+    { n: 4, left: 3, late: false }, { n: 2, left: 1, late: false },
+    { n: 4, left: 3, late: true }, { n: 2, left: 1, late: true },
+  ]) {
+    test(`holding Enter on Remove indexer 1 of ${held.n}${held.late ? ' (repeats start once focus has moved on)' : ''} removes exactly one row, adds none, and never reaches zero`, async ({ page }) => {
+      await acceptSaves(page);
+      await openWizard(page);
+      await mountStep(page, 2, indexerScene(held.n));
+      await page.evaluate(() => {
+        const state = (window as any).Alpine.$data(document.querySelector('[x-data="setupWizard()"]'));
+        state.formData.newznab.entries.forEach((e: any, i: number) => { e.host = `host-${i + 1}`; });
+      });
+      await tabTo(page, page.getByRole('button', { name: 'Remove indexer 1', exact: true }));
+      await recordRowCounts(page);
+      // Focus is handed on to the next Remove button, or to Add once only one row is left.
+      const handedTo = held.left > 1 ? page.getByRole('button', { name: 'Remove indexer 1', exact: true }) : addIndexerButton(page);
+      if (held.late) {
+        await page.keyboard.down('Enter');
+        await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(held.left);
+        await expect(handedTo).toBeFocused();
+        for (let i = 0; i < 5; i += 1) await page.keyboard.down('Enter');
+        await page.keyboard.up('Enter');
+      } else {
+        await holdEnter(page);
+      }
+      await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(held.left);
+      await expect(handedTo).toBeFocused();
+      // Let the held key's remaining keydowns be handled, then read the whole history rather than the end state.
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const counts = await rowCounts(page);
+      expect(Math.min(...counts), `the row count reached ${Math.min(...counts)} (history ${counts.join(',')})`).toBeGreaterThanOrEqual(1);
+      expect(Math.max(...counts.slice(1)), `a row was added while the key was held (history ${counts.join(',')})`).toBeLessThan(held.n);
+      expect(await indexerHosts(page)).toEqual(Array.from({ length: held.n - 1 }, (_, i) => `host-${i + 2}`));
+    });
+  }
+
+  test('removing is a no-op when only one entry is left, even if a Remove click is delivered', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(1));
+    // The button is display:none with one entry; the handler's own guard is what is under test, so the
+    // click is dispatched rather than pressed.
+    await page.locator('[data-indexer-remove]').dispatchEvent('click');
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.getByLabel(/^Newznab indexer URL/), 'the last indexer was removed, leaving zero rows').toHaveCount(1);
+  });
+
+  test('a single Enter and a single Space each still add one row on Add, and remove one on Remove', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(2));
+    const rows = page.getByLabel(/^Newznab indexer URL/);
+    await tabTo(page, addIndexerButton(page));
+    await page.keyboard.press('Enter');
+    await expect(rows).toHaveCount(3);
+    await page.keyboard.press('Space');
+    await expect(rows).toHaveCount(4);
+    await tabTo(page, page.getByRole('button', { name: 'Remove indexer 1', exact: true }));
+    await page.keyboard.press('Space');
+    await expect(rows).toHaveCount(3);
+    await expect(addIndexerButton(page), 'a Space on Remove must not carry its keyup into a click on Add').not.toBeFocused();
+    await expect(page.getByRole('button', { name: 'Remove indexer 1', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(rows).toHaveCount(2);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(rows).toHaveCount(2);
+  });
+});
+
+test.describe('removing an indexer is announced and only moves focus that was on the pressed button', () => {
+  test.use({ viewport: PHONE });
+
+  test('the removal is announced as "Indexer N removed", and again when the same position is removed twice', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    await recordStatusTexts(page);
+    await tabTo(page, page.getByRole('button', { name: 'Remove indexer 1', exact: true }));
+    await page.keyboard.press('Enter');
+    await expect(statusRegion(page)).toHaveText('Indexer 1 removed');
+    // Focus has been handed to the Remove button now at position 1: remove that one too.
+    await expect(page.getByRole('button', { name: 'Remove indexer 1', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await statusTexts(page)).filter((t) => t === 'Indexer 1 removed').length, {
+      message: 'an identical announcement must be made again, so the region has to be emptied between the two',
+    }).toBe(2);
+  });
+
+  test('the position announced is the 1-based position removed', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    await tabTo(page, page.getByRole('button', { name: 'Remove indexer 3', exact: true }));
+    await page.keyboard.press('Enter');
+    await expect(statusRegion(page)).toHaveText('Indexer 3 removed');
+  });
+
+  test('a Remove click while focus is on another control removes the row and leaves focus where it was', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    const url = page.getByLabel('Newznab indexer URL 1');
+    await url.focus();
+    // Not a key press: Chromium focuses a button on a mouse click, so the "focus is elsewhere" branch of the
+    // handler cannot be reached by clicking. What is under test is that branch, not an input device.
+    await page.getByRole('button', { name: 'Remove indexer 3', exact: true }).dispatchEvent('click');
+    await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(2);
+    // The announcement is made in the same tick that would have moved focus, so once it is there the
+    // handler has finished and focus can be read without racing it.
+    await expect(statusRegion(page)).toHaveText('Indexer 3 removed');
+    await expect(url, `focus was taken from the control it was on, and is now on ${await whereIsFocus(page)}`).toBeFocused();
+  });
 });
