@@ -1615,9 +1615,11 @@ test.describe('removing an indexer is announced and only moves focus that was on
     // Focus has been handed to the Remove button now at position 1: remove that one too.
     await expect(page.getByRole('button', { name: 'Remove indexer 1', exact: true })).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect.poll(async () => (await statusTexts(page)).filter((t) => t === 'Indexer 1 removed').length, {
+    // The sequence itself, not a count of writes: the region has to be EMPTIED and then given the text again,
+    // in separate steps, or a screen reader sees no change and says nothing the second time.
+    await expect.poll(() => statusTexts(page), {
       message: 'an identical announcement must be made again, so the region has to be emptied between the two',
-    }).toBe(2);
+    }).toEqual(['Indexer 1 removed', '', 'Indexer 1 removed']);
   });
 
   test('the position announced is the 1-based position removed', async ({ page }) => {
@@ -1643,5 +1645,111 @@ test.describe('removing an indexer is announced and only moves focus that was on
     // handler has finished and focus can be read without racing it.
     await expect(statusRegion(page)).toHaveText('Indexer 3 removed');
     await expect(url, `focus was taken from the control it was on, and is now on ${await whereIsFocus(page)}`).toBeFocused();
+  });
+
+  test('focus on a control outside the indexer list is not taken when a row is removed', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    await backButton(page).focus();
+    await page.getByRole('button', { name: 'Remove indexer 3', exact: true }).dispatchEvent('click');
+    await expect(statusRegion(page)).toHaveText('Indexer 3 removed');
+    await expect(backButton(page), `focus was taken from Back, and is now on ${await whereIsFocus(page)}`).toBeFocused();
+  });
+
+  test('with focus nowhere (on <body>) before the click, a removal does not pull focus into the list', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+    await page.getByRole('button', { name: 'Remove indexer 3', exact: true }).dispatchEvent('click');
+    await expect(statusRegion(page)).toHaveText('Indexer 3 removed');
+    expect(await whereIsFocus(page), 'focus was pulled into the list although it was never there').toMatch(/^<body>/);
+  });
+
+  // A pointer click that does not move focus (Safari, iOS) is simulated with a dispatched click: what is under
+  // test is where the handler leaves focus, not an input device.
+  test('keyboard focus on Remove 3 survives a click on Remove 1 that does not move focus: it lands on a named Remove button, not <body>', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    await tabTo(page, page.getByRole('button', { name: 'Remove indexer 3', exact: true }));
+    await page.getByRole('button', { name: 'Remove indexer 1', exact: true }).dispatchEvent('click');
+    await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(2);
+    await expect(statusRegion(page)).toHaveText('Indexer 1 removed');
+    const where = await whereIsFocus(page);
+    expect(await page.evaluate(() => document.activeElement === document.body), `focus fell to <body> (${where})`).toBe(false);
+    await expect(page.getByRole('button', { name: 'Remove indexer 1', exact: true }), `focus is on ${where}`).toBeFocused();
+  });
+
+  test('focus in row 3\'s URL input when Remove 1 is clicked: that input is destroyed (rows are keyed by index, row 1 and 2 keep their nodes and take the shifted data), and focus goes to a Remove button', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    await page.evaluate(() => {
+      const state = (window as any).Alpine.$data(document.querySelector('[x-data="setupWizard()"]'));
+      state.formData.newznab.entries.forEach((e: any, i: number) => { e.host = `host-${i + 1}`; });
+    });
+    const third = page.getByLabel('Newznab indexer URL 3');
+    await third.focus();
+    const node = await third.elementHandle();
+    await page.getByRole('button', { name: 'Remove indexer 1', exact: true }).dispatchEvent('click');
+    await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(2);
+    await expect(statusRegion(page)).toHaveText('Indexer 1 removed');
+    expect(await node!.evaluate((el) => el.isConnected), 'the focused row-3 input should have been the node that was destroyed').toBe(false);
+    expect(await indexerHosts(page), 'rows 1 and 2 should now hold what rows 2 and 3 held').toEqual(['host-2', 'host-3']);
+    const where = await whereIsFocus(page);
+    expect(await page.evaluate(() => document.activeElement === document.body), `focus fell to <body> (${where})`).toBe(false);
+    await expect(page.getByRole('button', { name: 'Remove indexer 1', exact: true }), `focus is on ${where}`).toBeFocused();
+  });
+});
+
+test.describe('Remove and Add are inert while a save is in flight', () => {
+  test.use({ viewport: PHONE });
+
+  test('both read aria-disabled while Continue is saving, change nothing when activated, and work again once the save fails', async ({ page }) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let saves = 0;
+    await page.route('**/settings.save/**', async (route) => {
+      saves += 1;
+      await gate;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false }) });
+    });
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    const remove = page.getByRole('button', { name: 'Remove indexer 1', exact: true });
+    const add = addIndexerButton(page);
+    await expect(remove).toHaveAttribute('aria-disabled', 'false');
+    await expect(add).toHaveAttribute('aria-disabled', 'false');
+    expect(await remove.evaluate((el) => el.hasAttribute('disabled')), 'Remove must not be natively disabled: it would drop focus').toBe(false);
+    expect(await add.evaluate((el) => el.hasAttribute('disabled')), 'Add must not be natively disabled: it would drop focus').toBe(false);
+
+    await recordStatusTexts(page);
+    await tabTo(page, nextButton(page));
+    await page.keyboard.press('Enter');
+    await expect.poll(() => saves).toBeGreaterThan(0);
+    await expect(statusRegion(page)).toHaveText('Saving…');
+    await expect(remove).toHaveAttribute('aria-disabled', 'true');
+    await expect(add).toHaveAttribute('aria-disabled', 'true');
+
+    await remove.dispatchEvent('click');
+    await add.dispatchEvent('click');
+    // Let the handlers, and the tick they would have used, run before reading.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.getByLabel(/^Newznab indexer URL/), 'a row was removed or added during a save').toHaveCount(3);
+    await expect(statusRegion(page), 'the save\'s own announcement was overwritten').toHaveText('Saving…');
+    expect(await statusTexts(page)).toEqual(['Saving…']);
+
+    release();
+    await expect(remove).toHaveAttribute('aria-disabled', 'false');
+    await expect(add).toHaveAttribute('aria-disabled', 'false');
+    await tabTo(page, remove);
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(2);
+    await tabTo(page, addIndexerButton(page));
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(3);
   });
 });
