@@ -924,9 +924,22 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
 # its comma had been checked. Requiring `application/json` is also this route's
 # cross-site defence: a page on another origin cannot send that content type
 # without a preflight, and `cors_origins` defaults to empty, so none is allowed.
+#
+# Each route also names the key whose value must be a JSON ARRAY of JSON
+# OBJECTS. The parser turns an object with numeric-looking keys (`{"0": {...},
+# "7": {...}}`, also `""`, `"."`, `"1.5"`) into a list, so without this check
+# such a body would reach the writer looking like rows.
 STRICT_JSON_API_ROUTES = {
-    'settings.save_group': frozenset({'section', 'rows'}),
+    'settings.save_group': (frozenset({'section', 'rows'}), 'rows'),
 }
+
+
+def _strict_json_body_ok(route, body):
+    keys, rows_key = STRICT_JSON_API_ROUTES[route]
+    if not isinstance(body, dict) or set(body) != keys:
+        return False
+    rows = body[rows_key]
+    return isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
 
 
 async def _strict_json_refusal(route, request):
@@ -943,9 +956,10 @@ async def _strict_json_refusal(route, request):
     if acceptable:
         try:
             body = json.loads(await request.body())
-        except ValueError:
+        except (ValueError, RecursionError):
+            # RecursionError: a body of nested brackets is untrusted input, not a 500.
             body = None
-        acceptable = isinstance(body, dict) and set(body) == STRICT_JSON_API_ROUTES[route]
+        acceptable = _strict_json_body_ok(route, body)
     if acceptable:
         return None
     # The reason only: nothing the caller sent is logged.

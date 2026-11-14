@@ -193,6 +193,42 @@ class TestTransportIsJsonPostOnly:
 
         self.refused(settings, client.post(url(), json=body), before)
 
+    @pytest.mark.parametrize('key', ['0', '7', '', '.', '1.5'])
+    def test_rows_sent_as_an_object_with_numeric_looking_keys_are_refused(self, world, key):
+        """The shared parser would turn that object into a list before the writer sees it."""
+        settings, client = world
+        before = sha(settings.file)
+        rows = three_rows(settings, 'newznab')
+        body = {'section': 'newznab', 'rows': {key: rows[0], '9': rows[1]}}
+
+        self.refused(settings, client.post(url(), json=body), before)
+
+    @pytest.mark.parametrize('rows', ['text', 7, None, True, {}])
+    def test_rows_that_are_not_a_json_array_are_refused_by_the_dispatch(self, world, rows):
+        settings, client = world
+        before = sha(settings.file)
+
+        self.refused(settings, client.post(url(), json={'section': 'newznab', 'rows': rows}), before)
+
+    @pytest.mark.parametrize('element', ['text', 7, None, [{'host': 'x'}], True])
+    def test_a_row_that_is_not_a_json_object_is_refused_by_the_dispatch(self, world, element):
+        settings, client = world
+        before = sha(settings.file)
+        rows = three_rows(settings, 'newznab')
+        rows[1] = element
+
+        self.refused(settings, client.post(url(), json={'section': 'newznab', 'rows': rows}), before)
+
+    @pytest.mark.parametrize('body', [b'[' * 200000, b'[' * 5000 + b']' * 5000,
+                                      b'{"section": "newznab", "rows": ' + b'[' * 5000 + b']' * 5000 + b'}'])
+    def test_a_deeply_nested_body_is_a_400_and_not_a_500(self, world, body):
+        settings, client = world
+        before = sha(settings.file)
+
+        response = client.post(url(), content=body, headers={'Content-Type': 'application/json'})
+
+        self.refused(settings, response, before)
+
     def test_a_body_that_is_not_json_is_refused(self, world):
         settings, client = world
         before = sha(settings.file)
