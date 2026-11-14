@@ -1331,7 +1331,9 @@ function setupWizard() {
         case 2: // Providers
           // Usenet providers
           if (this.formData.searchType === 'usenet' || this.formData.searchType === 'both') {
-            // Newznab
+            // Newznab. Validated before the first save is issued: nothing is
+            // written for a step that is refused.
+            if (this.formData.newznab.enabled) this.assertNewznabHasNoCommas();
             saves.push(this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0'));
             if (this.formData.newznab.enabled) {
               // The server pairs host, api_key and use BY POSITION, so all three
@@ -1716,6 +1718,24 @@ function setupWizard() {
           : document.querySelector('[data-indexer-add]');
         if (next) next.focus();
       });
+    },
+
+    // The server splits the saved lists on every comma, so a comma INSIDE a
+    // URL or a key would turn one row into two positions (the text after a
+    // comma in a key goes to the NEXT indexer). Refuse it here, naming the row
+    // as shown and the field, never the value. Only rows that will be saved
+    // are checked: a row with no URL is dropped whole, key and all. Throws,
+    // like any failed save, so nextStep() shows its error and keeps the step.
+    assertNewznabHasNoCommas() {
+      const entries = this.formData.newznab.entries;
+      for (let i = 0; i < entries.length; i++) {
+        const host = (entries[i].host || '').trim();
+        if (!host) continue;
+        if (host.includes(',')) throw new Error('Indexer ' + (i + 1) + ': the URL cannot contain a comma');
+        if ((entries[i].api_key || '').includes(',')) {
+          throw new Error('Indexer ' + (i + 1) + ': the API key cannot contain a comma');
+        }
+      }
     },
 
     addIndexer() {
