@@ -14,6 +14,7 @@ registry, ``Settings.setFile`` subscribes to the event bus), so
 import configparser
 import contextlib
 import hashlib
+import logging
 from pathlib import Path
 
 from couchpotato.core.settings import Settings
@@ -90,6 +91,128 @@ def group_settings(tmp_path, monkeypatch, stored=None):
         api_docs.clear()
         api_docs.update(saved[2])
         api_docs_missing[:] = saved[3]
+
+
+def three_rows(settings, section, tag='a'):
+    return placeholder_rows(settings.combine_groups()[section], 3, tag=tag)
+
+
+def snapshot(settings, section):
+    """(sha of the file, the group as memory holds it) before a save."""
+    columns = settings.combine_groups()[section]
+    return sha(settings.file), memory_group(settings, section, columns)
+
+
+def assert_nothing_changed(settings, section, before):
+    """Disk and memory still hold the pre-save group, even after a later save.
+
+    The later, unrelated save is the point: a refused or failed group that only
+    left the FILE alone but stayed in memory would be written out by it.
+    """
+    before_sha, before_memory = before
+    columns = settings.combine_groups()[section]
+    assert sha(settings.file) == before_sha, 'config.ini changed'
+    assert memory_group(settings, section, columns) == before_memory, 'memory changed'
+
+    settings.addSection('core')
+    settings.set('core', 'zz_later_unrelated', '1')
+    settings.save()
+    assert stored_group(settings.file, section, columns) == before_memory, (
+        'a later unrelated save wrote the refused group to disk')
+
+
+def _reader_urls(settings, monkeypatch, section):
+    """URLs a real automation reader fetches, with only the network call replaced."""
+    from couchpotato.core.media.movie.providers.automation.imdb import IMDBWatchlist
+    from couchpotato.core.media.movie.providers.automation.itunes import ITunes
+    from couchpotato.core.media.movie.providers.automation.letterboxd import Letterboxd
+
+    fetched = []
+    if section == 'imdb':
+        reader = IMDBWatchlist.__new__(IMDBWatchlist)
+        reader.setName('IMDB:IMDBWatchlist')
+        monkeypatch.setattr(reader, 'getFromURL', lambda url: fetched.append(url) or [])
+    elif section == 'itunes':
+        reader = ITunes.__new__(ITunes)
+        monkeypatch.setattr(reader, 'getCache', lambda key, url, **kw: fetched.append(url) or '<feed/>')
+    else:
+        reader = Letterboxd.__new__(Letterboxd)
+        monkeypatch.setattr(reader, 'getHTMLData', lambda url, **kw: fetched.append(url) or '')
+    reader.getIMDBids()
+    return fetched
+
+
+def reader_view(settings, monkeypatch, section):
+    """The rows the provider's real reader sees in `settings`.
+
+    Newznab and torrentpotato go through their real ``getHosts``. The automation
+    readers have no row object, so the view is the list of URLs the real reader
+    asks for: a disabled row is skipped, which is exactly the enabler-to-URL
+    pairing a misplaced cell would break.
+    """
+    from couchpotato.environment import Env
+    monkeypatch.setattr(Env, '_settings', settings)
+
+    if section == 'newznab':
+        from couchpotato.core.media.movie.providers.nzb.newznab import Newznab
+        return [(h['use'], h['host'], h['api_key'], h['extra_score'], h['custom_tag'])
+                for h in Newznab.__new__(Newznab).getHosts()]
+    if section == 'torrentpotato':
+        from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
+        return [(h['use'], h['host'], h['pass_key'], h['name'], h['seed_ratio'],
+                 h['seed_time'], h['extra_score'])
+                for h in TorrentPotato.__new__(TorrentPotato).getHosts()]
+    return _reader_urls(settings, monkeypatch, section)
+
+
+def expected_view(section, rows):
+    """What `reader_view` must return for rows that were saved as `rows`."""
+    if section == 'newznab':
+        return [(r['use'], r['host'], r['api_key'], int(r['extra_score']), r['custom_tag'])
+                for r in rows]
+    if section == 'torrentpotato':
+        return [(r['use'], r['host'], r['pass_key'], r['name'], float(r['seed_ratio']),
+                 int(r['seed_time']), int(r['extra_score'])) for r in rows]
+    shape = {
+        'imdb': '%s&start=0',
+        'itunes': '%s',
+        'letterboxd': 'https://letterboxd.com/%s/watchlist/page/1/',
+    }[section]
+    return [shape % r['automation_urls'] for r in rows if r['automation_urls_use'] == '1']
+
+
+class LogCapture(logging.Handler):
+    """Every record from the real loggers, whatever its level.
+
+    Not ``caplog``: the project renames the INFO level (``couchpotato/core/
+    logger.py``), so ``caplog.at_level('INFO')`` captures nothing. This hangs a
+    plain handler on the root logger and lowers its level for the duration.
+    """
+
+    def __init__(self):
+        super().__init__(level=logging.DEBUG)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+    def at_or_above(self, levelno):
+        return [r for r in self.records if r.levelno >= levelno]
+
+    def text(self):
+        return '\n'.join(r.getMessage() for r in self.records)
+
+    def __enter__(self):
+        root = logging.getLogger()
+        self._root_level = root.level
+        root.setLevel(logging.DEBUG)
+        root.addHandler(self)
+        return self
+
+    def __exit__(self, *exc_info):
+        root = logging.getLogger()
+        root.removeHandler(self)
+        root.setLevel(self._root_level)
 
 
 def sha(path):
