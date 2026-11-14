@@ -592,6 +592,43 @@ class Settings:
             'values': self.getValues()
         }
 
+    def combine_groups(self):
+        """Map each section that stores rows to its ordered column names.
+
+        A "combine" group is a set of options edited as rows but stored as one
+        comma-separated list per column, paired back up by position. The only
+        source of truth is the `combine` list a provider declares on a
+        `type: 'combined'` option and registers through `settings.options`
+        (`addOptions`), so nothing here names a section or a column.
+
+        Naming: this and the other group methods below are snake_case, like
+        `_coerce_value` and `_password_save_snapshot` and unlike the older
+        camelCase methods of the class.
+        """
+        groups = {}
+        for section_key, section in self.options.items():
+            section_name = section.get('name', section_key)
+            for group in section.get('groups', []):
+                for option in group.get('options', []):
+                    columns = option.get('combine')
+                    if option.get('type') == 'combined' and columns:
+                        groups[section_name] = tuple(columns)
+        return groups
+
+    def is_combine_option(self, section, option):
+        """Would `option` become a column of a combine group in `section`?
+
+        The one membership test. The name is folded the way the config parser
+        folds it (`optionxform`) after `strip()`, because that is the column it
+        would become: a trailing space reloads as a duplicate option and `API_KEY`
+        writes `api_key`. A name that is not a string is not a member.
+        """
+        columns = self.combine_groups().get(section)
+        if not columns or not isinstance(option, str):
+            return False
+        fold = self.p.optionxform if self.p else str.lower
+        return fold(option.strip()) in {fold(column) for column in columns}
+
     def _parse_directories(self, value, soft_chroot):
         """Normalise a `directories` setting value and map it into the chroot.
 
