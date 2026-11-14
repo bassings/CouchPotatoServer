@@ -836,6 +836,12 @@ class Settings:
         if snapshot is None:
             self.p.remove_section(section)
             return
+        # A builder that removed the section must not turn a refusal into a
+        # NoSectionError: put the section back so the columns can be restored.
+        # Options outside the group that it removed are not undone (a builder
+        # only reads; see save_group).
+        if not self.p.has_section(section):
+            self.p.add_section(section)
         for column, previous in snapshot.items():
             if previous is None:
                 self.p.remove_option(section, column)

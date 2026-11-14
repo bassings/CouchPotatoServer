@@ -538,6 +538,29 @@ class TestBuilderCallable:
         assert result['success'] is False
         assert_nothing_changed(settings, 'newznab', before)
 
+    def test_a_builder_that_removed_the_section_still_gets_a_refusal_and_the_group_back(self, settings):
+        """A builder must not write, but one that does must not turn a refusal into a raise.
+
+        With the snapshot taken first, restoring the columns into a section the
+        builder removed raised `NoSectionError`, so `save_group` broke its
+        "never raises" contract and the group's columns stayed gone.
+        """
+        from couchpotato.core.settings import GroupMisaligned
+        group_before = {column: settings.p.get('newznab', column)
+                        for column in settings.combine_groups()['newznab']}
+
+        def builder():
+            settings.p.remove_section('newznab')
+            raise GroupMisaligned()
+
+        result = settings.save_group('newznab', builder)
+
+        assert result['success'] is False
+        assert result['invalid'] == [{'row': None, 'column': None, 'reason': 'misaligned'}]
+        group_after = {column: settings.p.get('newznab', column)
+                       for column in settings.combine_groups()['newznab']}
+        assert group_after == group_before, 'the group columns were not put back'
+
     def test_a_builder_that_declines_a_misaligned_group_is_a_request_level_refusal(self, settings):
         from couchpotato.core.settings import GroupMisaligned
 
