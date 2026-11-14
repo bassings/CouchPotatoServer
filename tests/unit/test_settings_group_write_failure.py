@@ -119,10 +119,11 @@ class TestAWriteThatFails:
         def interrupted(*args, **kwargs):
             raise KeyboardInterrupt
 
+        rows = three_rows(settings, 'newznab')
         with monkeypatch.context() as patched:
             patched.setattr(os, 'replace', interrupted)
             with pytest.raises(KeyboardInterrupt):
-                settings.save_group('newznab', three_rows(settings, 'newznab'))
+                settings.save_group('newznab', rows)
 
         assert_nothing_changed(settings, 'newznab', before)
 
@@ -179,8 +180,12 @@ class TestTheRollbackHappensInsideTheLock:
 
         monkeypatch.setattr(os, 'replace', fail_first_then_work)
 
-        result = settings.save_group('newznab', three_rows(settings, 'newznab'))
-        second['thread'].join(5)
+        rows = three_rows(settings, 'newznab')
+        try:
+            result = settings.save_group('newznab', rows)
+        finally:
+            if 'thread' in second:
+                second['thread'].join(5)
 
         assert result['success'] is False
         assert second['was_blocked'], 'the second writer was not waiting on the lock'
@@ -211,17 +216,25 @@ class TestOneContinuousHold:
             'finished_while_held': None, 'threads': [],
         }
 
-        original_set = settings.p.set
+        original_set = settings.set
 
-        def hooked_set(section, option, value=None):
-            original_set(section, option, value)
+        def hooked_set(section, option, value):
+            """Fire AFTER `Settings.set` has returned, i.e. BETWEEN two columns.
+
+            Inside `Settings.set` the lock is held by that call alone, so a
+            second writer is blocked whether or not the writer holds the lock
+            across the whole group: an assertion made there cannot fail. Here
+            only the writer's own outer hold keeps the second writer out.
+            """
+            result = original_set(section, option, value)
             if threading.get_ident() == main and section == 'newznab' and option in columns:
                 world['group_set_holds'].append(lock.hold_of(main))
                 if world['finished_while_held'] is None:
                     world['release'].set()
                     world['finished_while_held'] = world['any_done'].wait(1.0)
+            return result
 
-        monkeypatch.setattr(settings.p, 'set', hooked_set)
+        monkeypatch.setattr(settings, 'set', hooked_set)
 
         real_replace = os.replace
 
@@ -234,7 +247,13 @@ class TestOneContinuousHold:
             return real_replace(src, dst)
 
         monkeypatch.setattr(os, 'replace', spy)
-        return world
+        try:
+            yield world
+        finally:
+            # A failing test must not leave a writer thread running or waiting.
+            world['release'].set()
+            for thread in world['threads']:
+                thread.join(5)
 
     def start_second_writer(self, world, action):
         def run():

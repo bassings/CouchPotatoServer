@@ -18,6 +18,7 @@ from tests.helpers.combine_groups import (
     SECTIONS,
     assert_nothing_changed,
     group_settings,
+    held_by_another_thread,
     memory_group,
     placeholder_rows,
     provider_configs,
@@ -432,15 +433,7 @@ class TestBuilderCallable:
         held_elsewhere = []
 
         def builder():
-            import threading
-            outcome = []
-            probe = threading.Thread(
-                target=lambda: outcome.append(settings_module._PASSWORD_SAVE_LOCK.acquire(blocking=False)))
-            probe.start()
-            probe.join()
-            if outcome[0]:
-                settings_module._PASSWORD_SAVE_LOCK.release()
-            held_elsewhere.append(not outcome[0])
+            held_elsewhere.append(held_by_another_thread(settings_module._PASSWORD_SAVE_LOCK))
             return rows
 
         assert settings.save_group('newznab', builder) == {'success': True}

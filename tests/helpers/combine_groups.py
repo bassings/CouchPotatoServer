@@ -182,6 +182,31 @@ def expected_view(section, rows):
     return [shape % r['automation_urls'] for r in rows if r['automation_urls_use'] == '1']
 
 
+def held_by_another_thread(lock):
+    """Is `lock` held by the calling thread, as another thread sees it?
+
+    The probe thread RELEASES the lock itself if it manages to take it. A
+    re-entrant lock can only be released by its owner, so a probe that took it
+    and left would hold it for the rest of the process and block every later
+    settings test (measured: a five hour hang).
+    """
+    outcome = []
+
+    def probe():
+        got = lock.acquire(blocking=False)
+        try:
+            outcome.append(not got)
+        finally:
+            if got:
+                lock.release()
+
+    thread = threading.Thread(target=probe)
+    thread.start()
+    thread.join(5)
+    assert outcome, 'the probe thread did not finish'
+    return outcome[0]
+
+
 class InstrumentedLock:
     """A re-entrant lock that can say which hold a call happened inside.
 
