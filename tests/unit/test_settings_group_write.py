@@ -447,13 +447,13 @@ class TestRowsAreKeyedByRow:
     def test_each_host_sits_at_the_position_of_its_own_key(self, settings):
         columns = settings.combine_groups()['newznab']
         rows = [{column: '' for column in columns}, {column: '' for column in columns}]
-        rows[0].update(host='https://h1.invalid', api_key='placeholder-k1', use='1')
-        rows[1].update(host='https://h2.invalid', api_key='placeholder-k2', use='1')
+        rows[0].update(host='https://h1.invalid', api_key='placeholder-key-one', use='1')
+        rows[1].update(host='https://h2.invalid', api_key='placeholder-key-two', use='1')
 
         assert settings.save_group('newznab', rows) == {'success': True}
         stored = stored_group(settings.file, 'newznab', columns)
         assert stored['host'].split(',') == ['https://h1.invalid', 'https://h2.invalid']
-        assert stored['api_key'].split(',') == ['placeholder-k1', 'placeholder-k2']
+        assert stored['api_key'].split(',') == ['placeholder-key-one', 'placeholder-key-two']
 
     def test_twelve_rows_keep_rows_ten_and_eleven_at_positions_ten_and_eleven(self, settings):
         columns = settings.combine_groups()['newznab']
