@@ -28,6 +28,109 @@ _type_adapters = {
 _PASSWORD_SAVE_LOCK = threading.RLock()
 
 
+#: Why a group save can be refused. The writer returns these codes and no
+#: others (AC-ARCH-11(iii)); a client composes the text a person reads from the
+#: code, the 0-based row as sent and the column name. `misaligned` is reachable
+#: only through a builder (see `GroupMisaligned`), never from rows it is handed.
+_GROUP_REFUSAL_TEXT = {
+    'comma': 'A value contains a comma, which would split it across rows. '
+             'Nothing was saved.',
+    'control_character': 'A value contains a line break or another control character. '
+                         'Nothing was saved.',
+    'not_string': 'Every value must be text. Nothing was saved.',
+    'not_encodable': 'A value contains a character that cannot be stored. '
+                     'Nothing was saved.',
+    'missing_column': 'A row is missing a column. Nothing was saved.',
+    'unknown_column': 'A row has a column this group does not have. Nothing was saved.',
+    'not_writable': 'A column of this group cannot be changed. Nothing was saved.',
+    'unknown_section': 'That is not a group of settings saved as rows. Nothing was saved.',
+    'malformed': 'The request was not a list of rows. Nothing was saved.',
+    'misaligned': 'The stored rows do not line up. Fix them in Settings first. '
+                  'Nothing was saved.',
+}
+GROUP_REFUSAL_REASONS = frozenset(_GROUP_REFUSAL_TEXT)
+
+
+class GroupMisaligned(Exception):
+    """Raised by a group builder that finds the stored rows misaligned.
+
+    A builder runs under the lock, reads the stored rows and returns the rows to
+    write. When the stored columns do not line up it cannot merge safely, so it
+    declines with this and the writer refuses the save with `misaligned`.
+    """
+
+
+def _invalid(row, column, reason):
+    return {'row': row, 'column': column, 'reason': reason}
+
+
+def _group_refusal(problems):
+    """The refusal body: the first reason's fixed text, then every offending cell.
+
+    The text is fixed per reason so that it can never carry a submitted value.
+    """
+    return {'success': False,
+            'error': _GROUP_REFUSAL_TEXT[problems[0]['reason']],
+            'invalid': problems}
+
+
+def group_transport_refusal():
+    """The refusal body for a request that was not a JSON POST of rows.
+
+    The API dispatch (`couchpotato/__init__.py`) enforces the transport and
+    answers with this, so it shares the one refusal shape the writer returns.
+    """
+    return _group_refusal([_invalid(None, None, 'malformed')])
+
+
+def _cell_problem(cell):
+    """Why this cell cannot be stored as a row's cell, or None.
+
+    Checked on the exact value that would be written. A comma becomes a new
+    position on read. A C0 control character can lose part of the value on
+    reload (a continuation line that starts with `#` or `;` is a comment to the
+    parser). Nothing is coerced: a list cell would be stringified into text that
+    holds a comma after the comma check had passed it.
+    """
+    if not isinstance(cell, str):
+        return 'not_string'
+    if any(ord(char) < 0x20 for char in cell):
+        return 'control_character'
+    if ',' in cell:
+        return 'comma'
+    try:
+        cell.encode('utf-8')
+    except UnicodeEncodeError:
+        # A lone surrogate is valid JSON text that the file encoding cannot hold.
+        # Left alone it fails at the file write and is reported as a write
+        # failure, so it is refused here as the bad input it is.
+        return 'not_encodable'
+    return None
+
+
+def _row_problems(index, row, columns):
+    if not isinstance(row, dict):
+        return [_invalid(index, None, 'malformed')]
+    problems = [_invalid(index, column, 'missing_column') for column in columns if column not in row]
+    # The submitted name is not echoed: a refusal never carries caller text.
+    problems += [_invalid(index, None, 'unknown_column') for key in row if key not in columns]
+    for column in columns:
+        reason = _cell_problem(row[column]) if column in row else None
+        if reason:
+            problems.append(_invalid(index, column, reason))
+    return problems
+
+
+def _group_problems(rows, columns):
+    """Every reason `rows` cannot be written as the group `columns`."""
+    if not isinstance(rows, list) or not rows:
+        return [_invalid(None, None, 'malformed')]
+    problems = []
+    for index, row in enumerate(rows):
+        problems.extend(_row_problems(index, row, columns))
+    return problems
+
+
 def _strip_bytes_literal(value: str) -> str:
     """Strip Python 2 bytes literal prefix from config values (e.g. b'Horror' -> Horror)."""
     if isinstance(value, str) and value.startswith("b'") and value.endswith("'"):
@@ -100,6 +203,19 @@ class Settings:
                 'name': {'desc': 'The option name'},
                 'value': {'desc': 'The value to save'},
             }
+        })
+
+        addApiView('settings.save_group', self.save_group_view, docs={
+            'desc': 'Save every column of one multi-row settings group in one request, '
+                    'or save nothing. POST only, with an application/json body of '
+                    '{"section": name, "rows": [{column: text, ...}, ...]}. A refusal '
+                    'lists each offending cell by row and column, never by value.',
+            'params': {
+                'section': {'desc': 'The section whose rows are saved'},
+                'rows': {'desc': 'A JSON array of objects, one per row, each holding '
+                                 'every column of the group as a string'},
+            },
+            'return': {'type': 'object', 'example': '{"success": true}'},
         })
 
         addEvent('database.setup', self.databaseSetup)
@@ -591,6 +707,160 @@ class Settings:
             'options': self.getOptions(),
             'values': self.getValues()
         }
+
+    def combine_groups(self):
+        """Map each section that stores rows to its ordered column names.
+
+        A "combine" group is a set of options edited as rows but stored as one
+        comma-separated list per column, paired back up by position. The only
+        source of truth is the `combine` list a provider declares on a
+        `type: 'combined'` option and registers through `settings.options`
+        (`addOptions`), so nothing here names a section or a column.
+
+        Naming: this and the other group methods below are snake_case, like
+        `_coerce_value` and `_password_save_snapshot` and unlike the older
+        camelCase methods of the class.
+        """
+        groups = {}
+        for section_key, section in self.options.items():
+            section_name = section.get('name', section_key)
+            for group in section.get('groups', []):
+                for option in group.get('options', []):
+                    columns = option.get('combine')
+                    if option.get('type') == 'combined' and columns:
+                        groups[section_name] = tuple(columns)
+        return groups
+
+    def save_group_view(self, section=None, rows=None, **kwargs):
+        """The API view: a thin relay to `save_group` that adds the INFO line.
+
+        The transport (a JSON POST of exactly `section` and `rows`) is enforced
+        in the API dispatch. Anything else reaching here is refused as malformed.
+        """
+        if kwargs:
+            return self._refuse_group(None, [_invalid(None, None, 'malformed')])
+        result = self.save_group(section, rows)
+        if result.get('success'):
+            self.log.info('Saved a settings group: section=%s rows=%d', section, len(rows))
+        return result
+
+    def save_group(self, section, rows):
+        """Write one combine group from rows: every column, or nothing.
+
+        `rows` is a list of dicts, each holding exactly the group's columns as
+        strings, or a callable that returns such a list (a builder). A builder
+        runs under the lock this method takes, so a caller can read the stored
+        rows and write them in one continuous hold (AC-ARCH-11(ii)); it may
+        raise `GroupMisaligned` to decline. A builder only reads and returns
+        rows: the group's columns are snapshotted BEFORE it is called, so any
+        write it makes to them is undone on a refusal or a failure. It must
+        never call `save()` (a write to disk cannot be undone) or write outside
+        the group.
+
+        Returns `{'success': True}`, or `{'success': False, 'error': text,
+        'invalid': [{'row', 'column', 'reason'}, ...]}` for a refusal, or
+        `{'success': False, 'error': text}` when the file could not be written
+        or a builder raised something other than `GroupMisaligned`. It never
+        raises for either, and logs the refusal (WARNING, once) or the failure
+        (ERROR, once) itself, without a cell value.
+
+        Validation comes first and mutates nothing. The parser is then written
+        and saved under one hold of the lock, and put back if the save fails,
+        so a failed write cannot be persisted by the next unrelated save.
+
+        One window is accepted and is not a defect: an interrupt (a
+        `BaseException`) after `os.replace` has succeeded leaves the disk
+        holding the new whole group while memory is rolled back. The next save
+        writes memory out and restores the disk. Both states are whole, aligned
+        groups.
+        """
+        with _PASSWORD_SAVE_LOCK:
+            return self._save_group(section, rows)
+
+    def _save_group(self, section, rows):
+        columns = self.combine_groups().get(section) if isinstance(section, str) else None
+        if columns is None:
+            # The caller's text is not logged: it is not a registered name.
+            return self._refuse_group(None, [_invalid(None, None, 'unknown_section')])
+        snapshot = self._group_snapshot(section, columns)
+        try:
+            rows = rows() if callable(rows) else rows
+            problems = [_invalid(None, column, 'not_writable') for column in columns
+                        if not self.isOptionWritable(section, column)]
+            problems += _group_problems(rows, columns)
+            if problems:
+                result = self._refuse_group(section, problems)
+            else:
+                result = self._write_group(section, columns, rows)
+        except GroupMisaligned:
+            result = self._refuse_group(section, [_invalid(None, None, 'misaligned')])
+        except Exception as error:
+            result = self._group_write_failed(section, error)
+        except BaseException:
+            self._restore_group(section, snapshot)
+            raise
+        if not result['success']:
+            self._restore_group(section, snapshot)
+        return result
+
+    def _refuse_group(self, section, problems):
+        first = problems[0]
+        self.log.warning('Refused a settings group save: section=%s first_row=%s '
+                         'first_column=%s reason=%s offences=%d',
+                         section or 'unregistered', first['row'], first['column'],
+                         first['reason'], len(problems))
+        return _group_refusal(problems)
+
+    def _group_write_failed(self, section, error):
+        self.log.error('Could not save the settings group "%s" (%s). '
+                       'Nothing was changed.', section, type(error).__name__)
+        return {'success': False,
+                'error': 'The settings could not be saved. Nothing was changed.'}
+
+    def _write_group(self, section, columns, rows):
+        """Set every column and save once. Raises on failure; the caller restores."""
+        self.addSection(section)
+        for column in columns:
+            self.set(section, column, ','.join(row[column] for row in rows))
+        self.save()
+        return {'success': True}
+
+    def _group_snapshot(self, section, columns):
+        """The group's stored strings, or None when the section does not exist yet."""
+        if not self.p.has_section(section):
+            return None
+        return {column: self.p.get(section, column) if self.p.has_option(section, column) else None
+                for column in columns}
+
+    def _restore_group(self, section, snapshot):
+        if snapshot is None:
+            self.p.remove_section(section)
+            return
+        # A builder that removed the section must not turn a refusal into a
+        # NoSectionError: put the section back so the columns can be restored.
+        # Options outside the group that it removed are not undone (a builder
+        # only reads; see save_group).
+        if not self.p.has_section(section):
+            self.p.add_section(section)
+        for column, previous in snapshot.items():
+            if previous is None:
+                self.p.remove_option(section, column)
+            else:
+                self.p.set(section, column, previous)
+
+    def is_combine_option(self, section, option):
+        """Would `option` become a column of a combine group in `section`?
+
+        The one membership test. The name is folded the way the config parser
+        folds it (`optionxform`) after `strip()`, because that is the column it
+        would become: a trailing space reloads as a duplicate option and `API_KEY`
+        writes `api_key`. A name that is not a string is not a member.
+        """
+        columns = self.combine_groups().get(section)
+        if not columns or not isinstance(option, str):
+            return False
+        fold = self.p.optionxform if self.p else str.lower
+        return fold(option.strip()) in {fold(column) for column in columns}
 
     def _parse_directories(self, value, soft_chroot):
         """Normalise a `directories` setting value and map it into the chroot.
