@@ -125,7 +125,20 @@ async function stallAnimationFrames(page: Page) {
     window.requestAnimationFrame = (callback: FrameRequestCallback) => held.push(callback);
   });
 }
+/**
+ * Release the held frames, after checking the stall really held. A held-back test is only worth anything if
+ * the hide Alpine schedules is still pending here: a callback is queued, and the Remove button that is about to
+ * be hidden still has a layout box. Without this a stall that silently does nothing (Alpine uses a timer, not a
+ * frame, when the page is not visible) leaves the test green against code that is wrong.
+ */
 async function releaseAnimationFrames(page: Page) {
+  const pending = await page.evaluate(() => ({
+    queued: ((window as any).__heldFrames as unknown[]).length,
+    boxes: Array.from(document.querySelectorAll('[data-indexer-remove]')).map((el) => el.getClientRects().length),
+  }));
+  expect(pending.queued, 'the stall did not hold: no animation frame callback is queued, so the hide is not pending').toBeGreaterThan(0);
+  expect(pending.boxes.length, 'the stall check needs a Remove button that is about to be hidden').toBeGreaterThan(0);
+  expect(pending.boxes.every((n) => n > 0), 'the stall did not hold: a Remove button that should be hidden only on the next frame is already hidden').toBe(true);
   await page.evaluate(() => {
     const real = (window as any).__realFrame as typeof window.requestAnimationFrame;
     window.requestAnimationFrame = real;
@@ -1502,7 +1515,8 @@ test.describe('removing an indexer by keyboard never drops focus to <body>', () 
 
   // `stalled` holds animation frames back so Alpine's x-show hide lands after the handler's tick, as it can in a
   // real browser; the unstalled run passes or fails by which of the two wins.
-  for (const c of cases.flatMap((each) => [{ ...each, stalled: false }, { ...each, stalled: true }])) {
+  // Only the two-row cases are held back: with three rows no Remove button is hidden, so there is no hide to stall.
+  for (const c of cases.flatMap((each) => [{ ...each, stalled: false }, ...(each.n === 2 ? [{ ...each, stalled: true }] : [])])) {
     test(`removing ${c.name} leaves focus on "${c.focused}"${c.stalled ? ' (frames held back)' : ''}`, async ({ page }) => {
       await acceptSaves(page);
       await openWizard(page);
