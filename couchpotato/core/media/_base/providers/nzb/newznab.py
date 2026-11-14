@@ -141,6 +141,10 @@ class Base(NZBProvider, RSS):
         list = []
         for nr in range(len(hosts)):
 
+            # A missing entry disables the indexer: fail closed.
+            try: use = uses[nr]
+            except Exception: use = '0'
+
             try: key = api_keys[nr]
             except Exception: key = ''
 
@@ -157,7 +161,7 @@ class Base(NZBProvider, RSS):
             except Exception: custom_category = ''
 
             list.append({
-                'use': uses[nr],
+                'use': use,
                 'host': host,
                 'api_key': key,
                 'extra_score': score,
@@ -194,7 +198,7 @@ class Base(NZBProvider, RSS):
                     return True
             return False
 
-        return NZBProvider.isEnabled(self) and host['host'] and host['api_key'] and int(host['use'])
+        return NZBProvider.isEnabled(self) and host['host'] and host['api_key'] and tryInt(host['use'])
 
     def getApiExt(self, host):
         return '&apikey=%s' % host['api_key']
