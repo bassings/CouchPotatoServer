@@ -72,6 +72,15 @@ def _group_refusal(problems):
             'invalid': problems}
 
 
+def group_transport_refusal():
+    """The refusal body for a request that was not a JSON POST of rows.
+
+    The API dispatch (`couchpotato/__init__.py`) enforces the transport and
+    answers with this, so it shares the one refusal shape the writer returns.
+    """
+    return _group_refusal([_invalid(None, None, 'malformed')])
+
+
 def _cell_problem(cell):
     """Why this cell cannot be stored as a row's cell, or None.
 
@@ -185,6 +194,19 @@ class Settings:
                 'name': {'desc': 'The option name'},
                 'value': {'desc': 'The value to save'},
             }
+        })
+
+        addApiView('settings.save_group', self.save_group_view, docs={
+            'desc': 'Save every column of one multi-row settings group in one request, '
+                    'or save nothing. POST only, with an application/json body of '
+                    '{"section": name, "rows": [{column: text, ...}, ...]}. A refusal '
+                    'lists each offending cell by row and column, never by value.',
+            'params': {
+                'section': {'desc': 'The section whose rows are saved'},
+                'rows': {'desc': 'A JSON array of objects, one per row, each holding '
+                                 'every column of the group as a string'},
+            },
+            'return': {'type': 'object', 'example': '{"success": true}'},
         })
 
         addEvent('database.setup', self.databaseSetup)
@@ -699,6 +721,19 @@ class Settings:
                     if option.get('type') == 'combined' and columns:
                         groups[section_name] = tuple(columns)
         return groups
+
+    def save_group_view(self, section=None, rows=None, **kwargs):
+        """The API view: a thin relay to `save_group` that adds the INFO line.
+
+        The transport (a JSON POST of exactly `section` and `rows`) is enforced
+        in the API dispatch. Anything else reaching here is refused as malformed.
+        """
+        if kwargs:
+            return self._refuse_group(None, [_invalid(None, None, 'malformed')])
+        result = self.save_group(section, rows)
+        if result.get('success'):
+            self.log.info('Saved a settings group: section=%s rows=%d', section, len(rows))
+        return result
 
     def save_group(self, section, rows):
         """Write one combine group from rows: every column, or nothing.

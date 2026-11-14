@@ -19,7 +19,7 @@ from couchpotato.api import api_nonblock, callApiHandler
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt
 from couchpotato.core.logger import CPLog, log_suppressed
-from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
+from couchpotato.core.settings import _PASSWORD_SAVE_LOCK, group_transport_refusal
 from couchpotato.environment import Env
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
@@ -917,6 +917,43 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
 })
 
 
+# Routes that take their whole payload as ONE JSON object holding exactly these
+# top-level keys (SEC-004). A cell value must never travel in a URL, and the
+# shared parameter parser URL-decodes form and query values a second time and
+# turns a bracket key into nesting, either of which would change a cell after
+# its comma had been checked. Requiring `application/json` is also this route's
+# cross-site defence: a page on another origin cannot send that content type
+# without a preflight, and `cors_origins` defaults to empty, so none is allowed.
+STRICT_JSON_API_ROUTES = {
+    'settings.save_group': frozenset({'section', 'rows'}),
+}
+
+
+async def _strict_json_refusal(route, request):
+    """A 400 response when `request` is not a POST of exactly the route's JSON keys.
+
+    Judged on the raw body, before `getParams` runs: after parsing, a
+    bracket-keyed member (`"rows[0][host]"`) is indistinguishable from a nested
+    one and its value has been decoded once.
+    """
+    content_type = request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
+    acceptable = (request.method == 'POST'
+                  and content_type == 'application/json'
+                  and set(request.query_params) <= {'t'})
+    if acceptable:
+        try:
+            body = json.loads(await request.body())
+        except ValueError:
+            body = None
+        acceptable = isinstance(body, dict) and set(body) == STRICT_JSON_API_ROUTES[route]
+    if acceptable:
+        return None
+    # The reason only: nothing the caller sent is logged.
+    log.warning('Refused a settings group save: the request was not a JSON POST '
+                'of exactly the expected keys')
+    return JSONResponse(content=group_transport_refusal(), status_code=400)
+
+
 def session_cookie_attributes() -> dict:
     """The ONE source of the session cookie's attributes, set and delete alike.
 
@@ -1319,6 +1356,11 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 content={'success': False, 'error': 'Cross-origin request refused'},
                 status_code=403,
             )
+
+        if route in STRICT_JSON_API_ROUTES:
+            refusal = await _strict_json_refusal(route, request)
+            if refusal is not None:
+                return refusal
 
         # Serve cached files (posters, etc.) directly
         if route.startswith('file.cache/'):
