@@ -492,11 +492,25 @@ result. Getting it wrong the other way files a bug against working code.
      state is a pick-one choice, the look was left alone). A sighted user sees
      three lit buttons; a screen-reader user hears one checked radio.
   7. A save that never answers leaves the wizard on "Saving…" until the page is
-     reloaded: no request has a timeout, and Back, Skip, the step buttons and
-     Browse stay inert for as long as it hangs.
+     reloaded: no request has a timeout, and Back, Skip, the step buttons,
+     Browse, and the indexer Remove and Add buttons stay inert for as long as
+     it hangs.
   8. Pre-existing: `saveSetting()` treats an HTTP 200 whose JSON body is `null`
      as a successful save (only `success === false` is refused), so the wizard
      can advance on a save the server did not confirm.
+  9. Pre-existing: while a Continue save is in flight the indexer URL and API
+     key fields and the Newznab toggle can still be changed. The save has
+     already read its lists, so the server keeps the old values and the page
+     shows the new ones.
+  10. To be fixed next, in its own PR (read from the code, not reproduced end
+      to end): the Providers step builds the Newznab host list and API-key
+      list by dropping blanks from each independently, while the `use` list
+      keeps every row (the three expressions in `saveCurrentStep`, `wizard.html`).
+      The server pairs the three lists by position (`getHosts` in
+      `couchpotato/core/media/_base/providers/nzb/newznab.py`). A row with a
+      URL and no key therefore shifts every later key onto the wrong indexer
+      (one indexer's API key is sent to another), and a blank row's `0` in
+      `use` lands on the indexer after it and disables it.
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are

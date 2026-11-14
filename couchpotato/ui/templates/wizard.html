@@ -1678,17 +1678,22 @@ function setupWizard() {
     // now at that index, else the previous one, else the Add button, so it
     // never falls to <body>. Judged by the outcome, not by which button was
     // pressed (a pointer click need not move focus): if focus was inside the
-    // list and, once the rows have re-rendered, is on <body> or on a node that
-    // is gone or hidden, hand it on. Focus on a surviving, visible control is
-    // left alone, and so is focus outside the list.
+    // list and, once the rows have re-rendered, it is lost, hand it on. Focus
+    // on a surviving control is left alone, and so is focus outside the list.
+    // "Lost" is decided from state, never from layout: Alpine hides an x-show
+    // element on the next animation frame, AFTER this tick, so a Remove button
+    // that is about to be hidden still looks visible here. Lost is: focus on
+    // <body>; the focused node gone from the document; or focus on a Remove
+    // button when one entry is left (Remove is shown only for two or more).
     // The last entry is never removed: the UI hides Remove at one entry, and a
     // list of none is a state it otherwise cannot reach. Nothing changes while
     // a save is in flight: it has already read the list it will send.
     removeIndexer(idx) {
-      if (this.saving || this.formData.newznab.entries.length <= 1) return;
+      const entries = this.formData.newznab.entries;
+      if (this.saving || entries.length <= 1) return;
       const list = document.querySelector('[data-indexer-list]');
       const wasInList = !!list && list.contains(document.activeElement);
-      this.formData.newznab.entries.splice(idx, 1);
+      entries.splice(idx, 1);
       // Emptied first so the same text twice running (Indexer 1 removed, then
       // Indexer 1 again) still changes the region and is spoken again.
       this.announce('');
@@ -1696,11 +1701,11 @@ function setupWizard() {
         this.announce('Indexer ' + (idx + 1) + ' removed');
         if (!wasInList) return;
         const active = document.activeElement;
-        const lost = !active || active === document.body || !active.isConnected || active.getClientRects().length === 0;
+        const lost = !active || active === document.body || !active.isConnected
+          || (entries.length <= 1 && 'indexerRemove' in active.dataset);
         if (!lost) return;
-        const buttons = Array.from(document.querySelectorAll('[data-indexer-remove]'));
-        const next = this.formData.newznab.entries.length > 1
-          ? buttons[Math.min(idx, buttons.length - 1)]
+        const next = entries.length > 1
+          ? document.querySelectorAll('[data-indexer-remove]')[Math.min(idx, entries.length - 1)]
           : document.querySelector('[data-indexer-add]');
         if (next) next.focus();
       });

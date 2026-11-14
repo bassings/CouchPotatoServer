@@ -102,6 +102,37 @@ async function whereIsFocus(page: Page): Promise<string> {
   });
 }
 
+/**
+ * Focus is on `target` and STAYS there. Alpine hides an `x-show` element on the next animation frame, so
+ * focus that is right for one frame can still be taken from a control that is about to be hidden; reading
+ * it once, at the moment it arrives, passes by timing. Wait (bounded) for it, then let two frames go by.
+ */
+async function expectFocusHolds(page: Page, target: Locator, name: string) {
+  await expect(target, `focus should reach "${name}" but is on ${await whereIsFocus(page)}`).toBeFocused();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const where = await whereIsFocus(page);
+  expect(await page.evaluate(() => document.activeElement === document.body), `focus fell to <body> (${where})`).toBe(false);
+  await expect(target, `focus reached "${name}" but was then lost: it is on ${where}`).toBeFocused();
+}
+
+/** Hold every requestAnimationFrame callback (Alpine hides an `x-show` element from one) until `releaseAnimationFrames`. */
+async function stallAnimationFrames(page: Page) {
+  await page.evaluate(() => {
+    const real = window.requestAnimationFrame.bind(window);
+    const held: FrameRequestCallback[] = [];
+    (window as any).__realFrame = real;
+    (window as any).__heldFrames = held;
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => held.push(callback);
+  });
+}
+async function releaseAnimationFrames(page: Page) {
+  await page.evaluate(() => {
+    const real = (window as any).__realFrame as typeof window.requestAnimationFrame;
+    window.requestAnimationFrame = real;
+    for (const callback of (window as any).__heldFrames.splice(0) as FrameRequestCallback[]) real(callback);
+  });
+}
+
 /** `aria-disabled="true"` and no native `disabled`: the control keeps its place in focus. */
 async function expectBusyButNotDisabled(button: Locator, what: string) {
   await expect(button, `${what} is not exposed as busy with aria-disabled`).toHaveAttribute('aria-disabled', 'true');
@@ -1469,8 +1500,10 @@ test.describe('removing an indexer by keyboard never drops focus to <body>', () 
     { name: 'one of two (no Remove button is left to focus)', n: 2, remove: 2, focused: '+ Add another indexer' },
   ];
 
-  for (const c of cases) {
-    test(`removing ${c.name} leaves focus on "${c.focused}"`, async ({ page }) => {
+  // `stalled` holds animation frames back so Alpine's x-show hide lands after the handler's tick, as it can in a
+  // real browser; the unstalled run passes or fails by which of the two wins.
+  for (const c of cases.flatMap((each) => [{ ...each, stalled: false }, { ...each, stalled: true }])) {
+    test(`removing ${c.name} leaves focus on "${c.focused}"${c.stalled ? ' (frames held back)' : ''}`, async ({ page }) => {
       await acceptSaves(page);
       await openWizard(page);
       await mountStep(page, 2, indexerScene(c.n));
@@ -1480,6 +1513,7 @@ test.describe('removing an indexer by keyboard never drops focus to <body>', () 
         state.formData.newznab.entries.forEach((e: any, i: number) => { e.host = `host-${i + 1}`; });
       });
       await tabTo(page, page.getByRole('button', { name: `Remove indexer ${c.remove}`, exact: true }));
+      if (c.stalled) await stallAnimationFrames(page);
       await page.keyboard.press('Enter');
       await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(c.n - 1);
       const kept = await page.getByLabel(/^Newznab indexer URL/).evaluateAll((els) => els.map((el) => (el as HTMLInputElement).value));
@@ -1487,10 +1521,11 @@ test.describe('removing an indexer by keyboard never drops focus to <body>', () 
       // Focus is handed on after the rows re-render, so wait for it (bounded) rather than read it at the
       // instant the row disappears, when it is legitimately still on the removed button's way out.
       const target = c.focused.startsWith('+') ? addIndexerButton(page) : page.getByRole('button', { name: c.focused, exact: true });
-      await expect.poll(() => whereIsFocus(page), { message: `focus should reach "${c.focused}"` }).not.toMatch(/^<body>|^nothing/);
-      const where = await whereIsFocus(page);
-      expect(await page.evaluate(() => document.activeElement === document.body), `focus fell to <body> (${where})`).toBe(false);
-      await expect(target, `focus should be on "${c.focused}" but is on ${where}`).toBeFocused();
+      if (c.stalled) {
+        await expect(target, `with the hide still pending focus is on ${await whereIsFocus(page)}`).toBeFocused();
+        await releaseAnimationFrames(page);
+      }
+      await expectFocusHolds(page, target, c.focused);
     });
   }
 });
@@ -1517,6 +1552,17 @@ async function holdEnter(page: Page, presses = 6) {
 
 test.describe('a held key removes one indexer and adds none', () => {
   test.use({ viewport: PHONE });
+
+  test('a held Tab from Remove 1 keeps moving focus through the controls that follow, and does not stick', async ({ page }) => {
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, indexerScene(3));
+    await tabTo(page, page.getByRole('button', { name: 'Remove indexer 1', exact: true }));
+    // Tab order after Remove 1: URL 2, API key 2, Remove 2, URL 3. The first down is the press, the rest are repeats.
+    for (let i = 0; i < 4; i += 1) await page.keyboard.down('Tab');
+    await page.keyboard.up('Tab');
+    await expect(page.getByLabel('Newznab indexer URL 3'), `a held Tab stuck: focus is on ${await whereIsFocus(page)}`).toBeFocused();
+  });
 
   test('Playwright\'s repeated down() really produces repeat keydowns (the premise of the tests below)', async ({ page }) => {
     await acceptSaves(page);
@@ -1656,6 +1702,30 @@ test.describe('removing an indexer is announced and only moves focus that was on
     await expect(statusRegion(page)).toHaveText('Indexer 3 removed');
     await expect(backButton(page), `focus was taken from Back, and is now on ${await whereIsFocus(page)}`).toBeFocused();
   });
+
+  // With two rows the click leaves one, so every Remove button is about to be hidden BY STATE. The still-focused
+  // Remove 1 stays visible for one more frame, which is why a layout check made in the next tick cannot see it.
+  // `stalled`: animation frames are held back until the test releases them, so the hide is certain to land AFTER
+  // the handler's tick. Left to itself the frame wins the race some of the time (measured: 8 of 60 runs went red
+  // against a layout-based rule), and a guard that is only sometimes red proves little.
+  for (const clicked of [1, 2]) {
+    for (const stalled of [false, true]) {
+      test(`two rows, focus on Remove 1, a click on Remove ${clicked} that does not move focus${stalled ? ' (frames held back)' : ''}: focus goes to Add and stays`, async ({ page }) => {
+        await acceptSaves(page);
+        await openWizard(page);
+        await mountStep(page, 2, indexerScene(2));
+        await tabTo(page, page.getByRole('button', { name: 'Remove indexer 1', exact: true }));
+        if (stalled) await stallAnimationFrames(page);
+        await page.getByRole('button', { name: `Remove indexer ${clicked}`, exact: true }).dispatchEvent('click');
+        await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(1);
+        await expect(statusRegion(page)).toHaveText(`Indexer ${clicked} removed`);
+        // Decided from state: focus is already on Add while the hide is still pending.
+        if (stalled) await expect(addIndexerButton(page), `with the hide still pending focus is on ${await whereIsFocus(page)}`).toBeFocused();
+        if (stalled) await releaseAnimationFrames(page);
+        await expectFocusHolds(page, addIndexerButton(page), '+ Add another indexer');
+      });
+    }
+  }
 
   test('with focus nowhere (on <body>) before the click, a removal does not pull focus into the list', async ({ page }) => {
     await acceptSaves(page);
