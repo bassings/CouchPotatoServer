@@ -1334,9 +1334,16 @@ function setupWizard() {
             // Newznab
             saves.push(this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0'));
             if (this.formData.newznab.enabled) {
-              const hosts = this.formData.newznab.entries.map(e => e.host).filter(Boolean).join(',');
-              const keys = this.formData.newznab.entries.map(e => e.api_key).filter(Boolean).join(',');
-              const use = this.formData.newznab.entries.map((e, i) => e.host ? '1' : '0').join(',');
+              // The server pairs host, api_key and use BY POSITION, so all three
+              // lists come from one filtered list of rows. A row with no URL is
+              // dropped whole (its key too); a kept row with no key leaves an
+              // empty slot rather than letting a later key shift onto it.
+              const rows = this.formData.newznab.entries
+                .map(e => ({ host: (e.host || '').trim(), api_key: (e.api_key || '').trim() }))
+                .filter(r => r.host);
+              const hosts = rows.map(r => r.host).join(',');
+              const keys = rows.map(r => r.api_key).join(',');
+              const use = rows.map(() => '1').join(',');
               saves.push(
                 this.saveSetting('newznab', 'host', hosts),
                 this.saveSetting('newznab', 'api_key', keys),

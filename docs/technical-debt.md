@@ -502,15 +502,29 @@ result. Getting it wrong the other way files a bug against working code.
      key fields and the Newznab toggle can still be changed. The save has
      already read its lists, so the server keeps the old values and the page
      shows the new ones.
-  10. To be fixed next, in its own PR (read from the code, not reproduced end
-      to end): the Providers step builds the Newznab host list and API-key
-      list by dropping blanks from each independently, while the `use` list
-      keeps every row (the three expressions in `saveCurrentStep`, `wizard.html`).
-      The server pairs the three lists by position (`getHosts` in
-      `couchpotato/core/media/_base/providers/nzb/newznab.py`). A row with a
-      URL and no key therefore shifts every later key onto the wrong indexer
-      (one indexer's API key is sent to another), and a blank row's `0` in
-      `use` lands on the indexer after it and disables it.
+- **Newznab positional lists: what the 2026-11-14 pairing fix did not close.**
+  The wizard now builds `host`, `api_key` and `use` from one filtered list of
+  rows, so a key no longer shifts onto another indexer. The server still pairs
+  those lists by position (`newznab.py` `getHosts`), and three older gaps
+  remain, each confirmed against the real `getHosts`:
+  1. A comma inside one field splits it. Neither the wizard nor the Settings
+     page (`combinedField`) rejects or escapes one. A comma in an API key
+     gives the next indexer the text after the comma; a comma in a URL makes
+     `getHosts` raise `IndexError` at the unguarded `uses[nr]`. What that
+     exception breaks downstream was not traced.
+  2. `host`, `api_key` and `use` are saved as separate requests (the Settings
+     page saves five). If the host save lands and the key save fails on an
+     install that already has indexers, new hosts pair with the old key list.
+     Saving the lists in one request is the fix.
+  3. The wizard never writes `extra_score`, `custom_tag` or
+     `custom_categories`, so re-running it over a configured install leaves
+     those matched to the old indexers by position. `combinedField` also
+     omits `custom_categories`.
+  Installs that saved misaligned lists through the wizard before the fix
+  cannot be detected or repaired automatically. Separately, a Settings row
+  filled in without touching its Enable switch saves an empty `use` entry, on
+  which `int(host['use'])` raises `ValueError` (seen by feeding that shape to
+  `getHosts`; not reproduced through the page).
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are

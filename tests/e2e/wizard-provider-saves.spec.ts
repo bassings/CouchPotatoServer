@@ -40,8 +40,12 @@ test('Providers step saves each enabled provider in a fixed order with trimmed l
   await page.getByRole('button', { name: '+ Add another indexer' }).click();
   await page.getByLabel('Newznab indexer URL 1').fill('https://indexer-one.invalid');
   await page.getByLabel('Newznab API key 1').fill('placeholder-key-one');
-  // Row 2 has a key but no host: the host is dropped, the key is kept, and
-  // the "use" flag for the row is 0.
+  // Row 2 has a key but no host. The server pairs host, api_key and use by
+  // position, so a row with no host is dropped whole, key included: a key with
+  // no URL cannot be used, and keeping it would shift row 3's slot onto the
+  // wrong indexer. (An earlier version of this spec pinned the opposite, that
+  // the key was kept, and so recorded a defect: indexer three was sent
+  // `placeholder-key-two`. See wizard-newznab-pairing.spec.ts.)
   await page.getByLabel('Newznab API key 2').fill('placeholder-key-two');
   // Row 3 has a host but no key.
   await page.getByLabel('Newznab indexer URL 3').fill('https://indexer-three.invalid');
@@ -71,8 +75,8 @@ test('Providers step saves each enabled provider in a fixed order with trimmed l
   expect(calls).toEqual([
     ['newznab', 'enabled', '1'],
     ['newznab', 'host', 'https://indexer-one.invalid,https://indexer-three.invalid'],
-    ['newznab', 'api_key', 'placeholder-key-one,placeholder-key-two'],
-    ['newznab', 'use', '1,0,1'],
+    ['newznab', 'api_key', 'placeholder-key-one,'],
+    ['newznab', 'use', '1,1'],
     ['binsearch', 'enabled', '0'],
     ['thepiratebay', 'enabled', '1'],
     ['yts', 'enabled', '0'],
