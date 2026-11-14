@@ -187,23 +187,26 @@
               {% set toggle_label_expr = "" %}
               {% include "partials/settings/toggle.html" %}
             </div>
-            <div x-show="formData.newznab.enabled" x-transition class="space-y-3">
+            <div x-show="formData.newznab.enabled" x-transition class="space-y-3" data-indexer-list>
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
                 <div class="flex gap-2 items-center">
                   <input type="text" :aria-label="'Newznab indexer URL ' + (idx + 1)" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'"
                          x-model="entry.host"
-                         class="flex-[2] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                         class="flex-[2] min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <input type="password" :aria-label="'Newznab API key ' + (idx + 1)" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
-                         class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                  <button @click="formData.newznab.entries.splice(idx, 1)" x-show="formData.newznab.entries.length > 1"
+                         class="flex-1 min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  {#- w-6 h-6 is a 24px target (WCAG 2.5.8). -ml-1 centres the icon in it; no right margin, so the target ends inside the row and cannot overflow it. -#}
+                  <button type="button" @click="removeIndexer(idx)" @keydown="ignoreHeldKey($event)" :aria-disabled="saving.toString()" x-show="formData.newznab.entries.length > 1"
+                          data-indexer-remove
                           :aria-label="'Remove indexer ' + (idx + 1)"
-                          class="text-cp-muted hover:text-cp-danger transition-colors">
+                          class="shrink-0 inline-flex items-center justify-center w-6 h-6 -ml-1 text-cp-muted hover:text-cp-danger transition-colors">
                     <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
                 </div>
               </template>
-              <button @click="formData.newznab.entries.push({host: '', api_key: ''})" 
-                      class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add another indexer</button>
+              {#- inline-flex min-h-6: a 24px-high target (WCAG 2.5.8) that is still only as wide as its text. -#}
+              <button type="button" @click="addIndexer()" @keydown="ignoreHeldKey($event)" :aria-disabled="saving.toString()" data-indexer-add
+                      class="inline-flex items-center min-h-6 text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add another indexer</button>
               <p class="text-[10px] text-cp-muted">
                 Popular indexers: <a href="https://nzbgeek.info" target="_blank" class="text-cp-accent hover:underline">NZBGeek</a>, 
                 <a href="https://drunkenslug.com" target="_blank" class="text-cp-accent hover:underline">DrunkenSlug</a>,
@@ -1669,12 +1672,65 @@ function setupWizard() {
       if (first) first.focus();
     },
 
+    // Removing an indexer can remove the focused Remove button itself: the rows
+    // are keyed by index, so the last row's button goes, and with one entry
+    // left no Remove button is shown at all. Hand focus to the Remove button
+    // now at that index, else the previous one, else the Add button, so it
+    // never falls to <body>. Judged by the outcome, not by which button was
+    // pressed (a pointer click need not move focus): if focus was inside the
+    // list and, once the rows have re-rendered, it is lost, hand it on. Focus
+    // on a surviving control is left alone, and so is focus outside the list.
+    // "Lost" is decided from state, never from layout: Alpine hides an x-show
+    // element on the next animation frame, AFTER this tick, so a Remove button
+    // that is about to be hidden still looks visible here. Lost is: focus on
+    // <body>; the focused node gone from the document; or focus on a Remove
+    // button when one entry is left (Remove is shown only for two or more).
+    // The last entry is never removed: the UI hides Remove at one entry, and a
+    // list of none is a state it otherwise cannot reach. Nothing changes while
+    // a save is in flight: it has already read the list it will send.
+    removeIndexer(idx) {
+      const entries = this.formData.newznab.entries;
+      if (this.saving || entries.length <= 1) return;
+      const list = document.querySelector('[data-indexer-list]');
+      const wasInList = !!list && list.contains(document.activeElement);
+      entries.splice(idx, 1);
+      // Emptied first so the same text twice running (Indexer 1 removed, then
+      // Indexer 1 again) still changes the region and is spoken again.
+      this.announce('');
+      this.$nextTick(() => {
+        this.announce('Indexer ' + (idx + 1) + ' removed');
+        if (!wasInList) return;
+        const active = document.activeElement;
+        const lost = !active || active === document.body || !active.isConnected
+          || (entries.length <= 1 && 'indexerRemove' in active.dataset);
+        if (!lost) return;
+        const next = entries.length > 1
+          ? document.querySelectorAll('[data-indexer-remove]')[Math.min(idx, entries.length - 1)]
+          : document.querySelector('[data-indexer-add]');
+        if (next) next.focus();
+      });
+    },
+
+    addIndexer() {
+      if (this.saving) return;
+      this.formData.newznab.entries.push({ host: '', api_key: '' });
+    },
+
+    // A held Enter repeats its keydown, and Enter activates a button on keydown.
+    // Removing moves focus to the next control, so without this the held key
+    // would carry on into it: deleting every row, then adding blank ones.
+    // Enter only: Space activates on keyup, so holding it never repeated the
+    // activation. A held Tab must still move on.
+    ignoreHeldKey(event) {
+      if (event.repeat && event.key === 'Enter') event.preventDefault();
+    },
+
     // Opening a folder row removes the focused button (the x-for is keyed by
     // path) and Retry's container hides while it loads, so focus would fall to
     // <body>. Park it on Up, which is always there, until the listing is in.
     parkBrowserFocus() {
       const active = document.activeElement;
-      const onResult = active && (active.hasAttribute('data-folder-row') || active.id === 'wizard-browser-retry');
+      const onResult = active && ('folderRow' in active.dataset || active.id === 'wizard-browser-retry');
       if (!onResult) return;
       this.browserFocusParked = true;
       document.getElementById('wizard-browser-up').focus();
