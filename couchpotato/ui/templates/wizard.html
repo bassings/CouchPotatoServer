@@ -1726,13 +1726,18 @@ function setupWizard() {
     // as shown and the field, never the value. Only rows that will be saved
     // are checked: a row with no URL is dropped whole, key and all. Throws,
     // like any failed save, so nextStep() shows its error and keeps the step.
+    //
+    // `%2C` / `%2c` counts as a comma: the server URL-decodes saved values a
+    // second time (getParams -> unquote), so an encoded one is stored as a
+    // real comma.
     assertNewznabHasNoCommas() {
+      const hasComma = (text) => /,|%2c/i.test(text);
       const entries = this.formData.newznab.entries;
       for (let i = 0; i < entries.length; i++) {
         const host = (entries[i].host || '').trim();
         if (!host) continue;
-        if (host.includes(',')) throw new Error('Indexer ' + (i + 1) + ': the URL cannot contain a comma');
-        if ((entries[i].api_key || '').includes(',')) {
+        if (hasComma(host)) throw new Error('Indexer ' + (i + 1) + ': the URL cannot contain a comma');
+        if (hasComma(entries[i].api_key || '')) {
           throw new Error('Indexer ' + (i + 1) + ': the API key cannot contain a comma');
         }
       }

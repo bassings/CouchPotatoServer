@@ -507,23 +507,37 @@ result. Getting it wrong the other way files a bug against working code.
   rows, so a key no longer shifts onto another indexer (2026-11-14). The
   server still pairs those lists by position (`newznab.py` `getHosts`).
   Closed since, each with a unit or E2E test:
-  - `getHosts` gives a missing `use` entry the value `'0'`, so a `use` list
-    shorter than `host` no longer raises `IndexError`: the extra hosts are
-    disabled (`tests/unit/test_newznab_use_guards.py`).
+  - When the `use` list has fewer entries than the `host` list (a comma inside
+    a URL does this), `getHosts` returns every host with `use` `'0'`, so
+    `search()` queries nothing, and logs one warning per distinct pair of
+    counts per process naming the two counts only, never a host or key. Master
+    raised `IndexError` there; a per-row fallback was tried and rejected
+    because it left the shifted positions enabled, so `search()` queried a
+    host the user never entered with another indexer's key. A `use` list longer
+    than `host` is tolerated as before
+    (`tests/unit/test_newznab_use_guards.py`, including a `search()` test).
   - `isEnabled` reads `use` with `tryInt`, so an empty or non-numeric entry
     (which the Settings page saves for a row filled in without touching its
     Enable switch) disables that indexer instead of raising `ValueError`. The
     shape was fed to `getHosts`; it was not reproduced through the page.
-  - The wizard refuses a comma inside a kept row's URL or API key before
-    issuing any save, and names the row and field (not the value) in its
-    error toast (`tests/e2e/wizard-newznab-comma.spec.ts`).
-  Still open, each confirmed against the real `getHosts` unless stated:
+  - The wizard refuses a literal comma or an encoded one (`%2C`, `%2c`) inside
+    a kept row's URL or API key before issuing any save, and names the row and
+    field (not the value) in its error toast
+    (`tests/e2e/wizard-newznab-comma.spec.ts`). Encoded commas are refused
+    because `getParams` URL-decodes saved values a second time.
+  Still open:
   1. The Settings page (`combinedField`) does not reject or escape a comma
-     inside a field. A comma in an API key gives the next indexer the text
-     after the comma. A comma in a URL now leaves the extra host disabled
-     rather than raising, but the positions after it are still shifted. A
-     numeric `use` other than `0` and `1` (for example `2` or `-1`) still
-     enables the indexer; only empty and non-numeric entries fail closed.
+     inside a field. A comma in a URL now fails closed through the length rule
+     above. A comma in an API key does not: the key list is not length-checked
+     (master tolerates a shorter or longer one), so the text after the comma
+     still shifts keys onto the following indexers. A numeric `use` other than
+     `0` and `1` (for example `2` or `-1`) still enables the indexer; only
+     empty and non-numeric entries fail closed.
+  1a. `getParams` (`couchpotato/core/helpers/request.py`) URL-decodes values a
+     second time, so any saved value containing a literal `%xx` is rewritten.
+     Not changed here.
+  1b. `torrentpotato.py` has the same unguarded `uses[nr]` and
+     `int(host['use'])` shapes as `newznab.py` had. Not changed here.
   2. `host`, `api_key` and `use` are saved as separate requests (the Settings
      page saves five). If the host save lands and the key save fails on an
      install that already has indexers, new hosts pair with the old key list.

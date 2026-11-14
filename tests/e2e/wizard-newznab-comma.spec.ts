@@ -35,12 +35,34 @@ async function recordSaves(page: Page): Promise<string[]> {
   return saves;
 }
 
-async function openProviders(page: Page, rows: Row[]) {
+/**
+ * Count settings saves from INSIDE the page, synchronously at the moment
+ * `fetch` is called. The route recorder above sees a request only once
+ * Playwright has been told about it, so a save issued and then abandoned by a
+ * refused step could be missed by it; this list cannot be.
+ */
+async function countFetchedSaves(page: Page) {
+  await page.addInitScript(() => {
+    const real = window.fetch.bind(window);
+    const calls: string[] = [];
+    (window as any).__saveFetches = calls;
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('settings.save')) calls.push(`${url} ${String(init?.body)}`);
+      return real(input, init);
+    };
+  });
+}
+
+const fetchedSaves = (page: Page): Promise<string[]> => page.evaluate(() => (window as any).__saveFetches);
+
+async function openProviders(page: Page, rows: Row[], source: RegExp = /^Usenet/) {
+  await countFetchedSaves(page);
   await page.goto('/wizard/');
   await page.getByRole('button', { name: /Continue/i }).click();           // Welcome -> Security
   await page.getByRole('button', { name: /Continue/i }).click();           // Security -> Providers
   await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible({ timeout: 10000 });
-  await page.getByRole('radio', { name: /^Usenet/ }).click();
+  await page.getByRole('radio', { name: source }).click();
   await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
   for (let i = 1; i < rows.length; i++) {
     await page.getByRole('button', { name: '+ Add another indexer' }).click();
@@ -64,20 +86,23 @@ async function settle(page: Page) {
 }
 
 /** Continue, then assert the step refused: error shown, still on the step, no save of any kind. */
-async function expectRefused(page: Page, saves: string[], message: string) {
+async function expectRefused(page: Page, saves: string[], message: string, notShown: string[] = [SECRET_PART]) {
   await continueButton(page).click();
   await expect(toastText(page)).toContainText(message);
   await settle(page);
 
+  expect(await fetchedSaves(page), 'a refused step must not even call fetch for a save').toEqual([]);
   expect(saves, 'a refused step must issue no save requests at all').toEqual([]);
   await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
   await expect(continueButton(page)).toBeFocused();
   await expect(continueButton(page)).toHaveAttribute('aria-disabled', 'false');
 
   // The value typed is never repeated, on screen or to a screen reader.
-  await expect(toastText(page)).not.toContainText(SECRET_PART);
   await expect(page.getByTestId('toast-announcer-assertive')).toContainText(message);
-  await expect(page.getByTestId('toast-announcer-assertive')).not.toContainText(SECRET_PART);
+  for (const value of notShown) {
+    await expect(toastText(page)).not.toContainText(value);
+    await expect(page.getByTestId('toast-announcer-assertive')).not.toContainText(value);
+  }
 }
 
 test.describe('a comma inside a Newznab URL or API key is refused by the wizard', () => {
@@ -130,5 +155,64 @@ test.describe('a comma inside a Newznab URL or API key is refused by the wizard'
     expect(saves).toContain('newznab.host=https://indexer-a.invalid');
     expect(saves).toContain('newznab.api_key=placeholder-key-a');
     expect(saves).toContain('newznab.use=1');
+  });
+
+  test('a whitespace-only URL is a dropped row: a comma in its key does not block', async ({ page }) => {
+    const saves = await recordSaves(page);
+    await openProviders(page, [
+      { host: '   ', key: `placeholder-orphan,${SECRET_PART}` },
+      { host: 'https://indexer-b.invalid', key: 'placeholder-key-b' },
+    ]);
+
+    await continueButton(page).click();
+    await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeHidden({ timeout: 10000 });
+
+    expect(saves).toContain('newznab.host=https://indexer-b.invalid');
+    expect(saves.join('\n')).not.toContain(SECRET_PART);
+  });
+
+  test('the URL message names the row and field but never repeats the URL', async ({ page }) => {
+    const saves = await recordSaves(page);
+    await openProviders(page, [
+      { host: 'https://placeholder-url-marker.invalid/api?x=1,other', key: 'placeholder-key-a' },
+    ]);
+
+    await expectRefused(page, saves, 'Indexer 1: the URL cannot contain a comma', ['placeholder-url-marker']);
+  });
+
+  // The server decodes saved values a second time (`getParams` -> `unquote`), so
+  // an encoded comma typed here becomes a real one in config.ini.
+  for (const encoded of ['%2C', '%2c']) {
+    test(`an encoded comma (${encoded}) in an API key is refused like a literal one`, async ({ page }) => {
+      const saves = await recordSaves(page);
+      await openProviders(page, [
+        { host: 'https://indexer-a.invalid', key: `placeholder-key-a${encoded}${SECRET_PART}` },
+      ]);
+
+      await expectRefused(page, saves, 'Indexer 1: the API key cannot contain a comma');
+    });
+
+    test(`an encoded comma (${encoded}) in a URL is refused like a literal one`, async ({ page }) => {
+      const saves = await recordSaves(page);
+      await openProviders(page, [
+        { host: 'https://indexer-a.invalid', key: 'placeholder-key-a' },
+        { host: `https://indexer-b.invalid/api?x=1${encoded}placeholder-url-marker`, key: 'placeholder-key-b' },
+      ]);
+
+      await expectRefused(page, saves, 'Indexer 2: the URL cannot contain a comma', ['placeholder-url-marker']);
+    });
+  }
+
+  test('in Both mode a refused step saves nothing on the torrent side either', async ({ page }) => {
+    const saves = await recordSaves(page);
+    await openProviders(page, [
+      { host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` },
+    ], /^Both/);
+    await page.getByRole('switch', { name: 'Enable ThePirateBay' }).click();
+    await page.getByRole('switch', { name: 'Enable Jackett / TorrentPotato' }).click();
+    await page.locator('#wizard-jackett-url').fill('http://jackett.invalid:9117');
+    await page.locator('#wizard-jackett-api-key').fill('placeholder-jackett-key');
+
+    await expectRefused(page, saves, 'Indexer 1: the API key cannot contain a comma');
   });
 });
