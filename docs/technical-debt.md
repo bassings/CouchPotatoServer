@@ -502,15 +502,6 @@ result. Getting it wrong the other way files a bug against working code.
      key fields and the Newznab toggle can still be changed. The save has
      already read its lists, so the server keeps the old values and the page
      shows the new ones.
-  10. To be fixed next, in its own PR (read from the code, not reproduced end
-      to end): the Providers step builds the Newznab host list and API-key
-      list by dropping blanks from each independently, while the `use` list
-      keeps every row (the three expressions in `saveCurrentStep`, `wizard.html`).
-      The server pairs the three lists by position (`getHosts` in
-      `couchpotato/core/media/_base/providers/nzb/newznab.py`). A row with a
-      URL and no key therefore shifts every later key onto the wrong indexer
-      (one indexer's API key is sent to another), and a blank row's `0` in
-      `use` lands on the indexer after it and disables it.
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are
