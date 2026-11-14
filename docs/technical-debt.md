@@ -502,16 +502,28 @@ result. Getting it wrong the other way files a bug against working code.
      key fields and the Newznab toggle can still be changed. The save has
      already read its lists, so the server keeps the old values and the page
      shows the new ones.
-- **Newznab positional lists: what the 2026-11-14 pairing fix did not close.**
-  The wizard now builds `host`, `api_key` and `use` from one filtered list of
-  rows, so a key no longer shifts onto another indexer. The server still pairs
-  those lists by position (`newznab.py` `getHosts`), and three older gaps
-  remain, each confirmed against the real `getHosts`:
-  1. A comma inside one field splits it. Neither the wizard nor the Settings
-     page (`combinedField`) rejects or escapes one. A comma in an API key
-     gives the next indexer the text after the comma; a comma in a URL makes
-     `getHosts` raise `IndexError` at the unguarded `uses[nr]`. What that
-     exception breaks downstream was not traced.
+- **Newznab positional lists: what the pairing fixes did not close.**
+  The wizard builds `host`, `api_key` and `use` from one filtered list of
+  rows, so a key no longer shifts onto another indexer (2026-11-14). The
+  server still pairs those lists by position (`newznab.py` `getHosts`).
+  Closed since, each with a unit or E2E test:
+  - `getHosts` gives a missing `use` entry the value `'0'`, so a `use` list
+    shorter than `host` no longer raises `IndexError`: the extra hosts are
+    disabled (`tests/unit/test_newznab_use_guards.py`).
+  - `isEnabled` reads `use` with `tryInt`, so an empty or non-numeric entry
+    (which the Settings page saves for a row filled in without touching its
+    Enable switch) disables that indexer instead of raising `ValueError`. The
+    shape was fed to `getHosts`; it was not reproduced through the page.
+  - The wizard refuses a comma inside a kept row's URL or API key before
+    issuing any save, and names the row and field (not the value) in its
+    error toast (`tests/e2e/wizard-newznab-comma.spec.ts`).
+  Still open, each confirmed against the real `getHosts` unless stated:
+  1. The Settings page (`combinedField`) does not reject or escape a comma
+     inside a field. A comma in an API key gives the next indexer the text
+     after the comma. A comma in a URL now leaves the extra host disabled
+     rather than raising, but the positions after it are still shifted. A
+     numeric `use` other than `0` and `1` (for example `2` or `-1`) still
+     enables the indexer; only empty and non-numeric entries fail closed.
   2. `host`, `api_key` and `use` are saved as separate requests (the Settings
      page saves five). If the host save lands and the key save fails on an
      install that already has indexers, new hosts pair with the old key list.
@@ -521,10 +533,7 @@ result. Getting it wrong the other way files a bug against working code.
      those matched to the old indexers by position. `combinedField` also
      omits `custom_categories`.
   Installs that saved misaligned lists through the wizard before the fix
-  cannot be detected or repaired automatically. Separately, a Settings row
-  filled in without touching its Enable switch saves an empty `use` entry, on
-  which `int(host['use'])` raises `ValueError` (seen by feeding that shape to
-  `getHosts`; not reproduced through the page).
+  cannot be detected or repaired automatically.
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are
