@@ -503,51 +503,52 @@ result. Getting it wrong the other way files a bug against working code.
      already read its lists, so the server keeps the old values and the page
      shows the new ones.
 - **Newznab positional lists: what the pairing fixes did not close.**
-  The wizard builds `host`, `api_key` and `use` from one filtered list of
-  rows, so a key no longer shifts onto another indexer (2026-11-14). The
-  server still pairs those lists by position (`newznab.py` `getHosts`).
-  Closed since, each with a unit or E2E test:
-  - When the `use` list has fewer entries than the `host` list (a comma inside
-    a URL does this), `getHosts` returns every host with `use` `'0'`, so
-    `search()` queries nothing, and logs one warning per distinct pair of
-    counts per process naming the two counts only, never a host or key. Master
-    raised `IndexError` there; a per-row fallback was tried and rejected
-    because it left the shifted positions enabled, so `search()` queried a
-    host the user never entered with another indexer's key. A `use` list longer
-    than `host` is tolerated as before
-    (`tests/unit/test_newznab_use_guards.py`, including a `search()` test).
-  - `isEnabled` reads `use` with `tryInt`, so an empty or non-numeric entry
-    (which the Settings page saves for a row filled in without touching its
-    Enable switch) disables that indexer instead of raising `ValueError`. The
-    shape was fed to `getHosts`; it was not reproduced through the page.
-  - The wizard refuses a literal comma or an encoded one (`%2C`, `%2c`) inside
-    a kept row's URL or API key before issuing any save, and names the row and
-    field (not the value) in its error toast
-    (`tests/e2e/wizard-newznab-comma.spec.ts`). Encoded commas are refused
-    because `getParams` URL-decodes saved values a second time.
-  Still open:
-  1. The Settings page (`combinedField`) does not reject or escape a comma
-     inside a field. A comma in a URL now fails closed through the length rule
-     above. A comma in an API key does not: the key list is not length-checked
-     (master tolerates a shorter or longer one), so the text after the comma
-     still shifts keys onto the following indexers. A numeric `use` other than
-     `0` and `1` (for example `2` or `-1`) still enables the indexer; only
-     empty and non-numeric entries fail closed.
-  1a. `getParams` (`couchpotato/core/helpers/request.py`) URL-decodes values a
-     second time, so any saved value containing a literal `%xx` is rewritten.
-     Not changed here.
-  1b. `torrentpotato.py` has the same unguarded `uses[nr]` and
-     `int(host['use'])` shapes as `newznab.py` had. Not changed here.
-  2. `host`, `api_key` and `use` are saved as separate requests (the Settings
-     page saves five). If the host save lands and the key save fails on an
-     install that already has indexers, new hosts pair with the old key list.
-     Saving the lists in one request is the fix.
-  3. The wizard never writes `extra_score`, `custom_tag` or
+  Newznab stores each indexer as parallel comma-separated lists (`host`,
+  `api_key`, `use`, plus `extra_score`, `custom_tag`, `custom_categories`)
+  that `getHosts` in `newznab.py` pairs BY POSITION. The wizard builds `host`,
+  `api_key` and `use` from one filtered list of rows, so a key no longer
+  shifts onto another indexer (#587, contained in the v3.278.0 tag).
+  Closed here: the wizard refuses a literal comma or an encoded one (`%2C`,
+  `%2c`) inside a kept row's URL or API key before issuing any save, and names
+  the row and field (not the value) in its error toast
+  (`tests/e2e/wizard-newznab-comma.spec.ts`). It can only ever refuse a save.
+  Still open, and deliberately not fixed on the server:
+  a. The Settings page (`combinedField`) accepts a comma in a URL or a key.
+     After a comma in a URL, `getHosts` raises `IndexError` (the host list is
+     longer than `use`) until the next Settings edit after a reload:
+     `combinedField` builds its rows from the longest list and re-saves every
+     column padded to that length, after which the lists are equal length with
+     the hosts shifted against the keys, and the text after the comma is
+     queried with the next row's API key. Deleting the bogus row leaves the
+     following indexer paired with the wrong key. A comma in a key shifts later
+     keys. (The re-padding is in `combinedField` in
+     `partials/settings/scripts.html`; the end-to-end sequence was observed in
+     review runs, not by a test in this repo.)
+  b. `getHosts` has no fallback for `uses[nr]` and `isEnabled` calls
+     `int(host['use'])`, so a short `use` list or an empty or non-numeric
+     entry raises. These crashes currently stop a search before later rows are
+     queried. Two guards were tried and reverted, a per-row fallback to
+     disabled, and a whole-provider disable when `use` is shorter than `host`
+     together with `tryInt`. Each produced a case where an API key reached the
+     wrong indexer where master had stopped. Guarding these lookups is unsafe
+     until misalignment is prevented at the source.
+  c. `getParams` (`couchpotato/core/helpers/request.py`) URL-decodes saved
+     values a second time. So `%2C` typed on the Settings page is stored as a
+     comma, `%252C` typed in the wizard is stored as `%2C` and becomes a comma
+     on a later Settings re-save, and any saved value containing a literal
+     `%xx` is rewritten.
+  d. `host`, `api_key` and `use` are saved as separate requests (the Settings
+     page saves five), so a partial failure leaves new hosts paired with old
+     keys. The wizard never writes `extra_score`, `custom_tag` or
      `custom_categories`, so re-running it over a configured install leaves
-     those matched to the old indexers by position. `combinedField` also
-     omits `custom_categories`.
-  Installs that saved misaligned lists through the wizard before the fix
-  cannot be detected or repaired automatically.
+     those matched to the old indexers by position; `combinedField` also omits
+     `custom_categories`. `torrentpotato.py` has the same positional shape and
+     the same unguarded `uses[nr]` and `int(host['use'])` lookups.
+  e. Installs that saved misaligned lists through the wizard before v3.278.0
+     cannot be detected or repaired automatically.
+  Direction for the durable fix: refuse commas in `combinedField` and stop it
+  silently re-padding and re-saving, or store each indexer as one record
+  instead of parallel lists.
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are
