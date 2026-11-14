@@ -742,17 +742,28 @@ class Settings:
         strings, or a callable that returns such a list (a builder). A builder
         runs under the lock this method takes, so a caller can read the stored
         rows and write them in one continuous hold (AC-ARCH-11(ii)); it may
-        raise `GroupMisaligned` to decline.
+        raise `GroupMisaligned` to decline. A builder only reads and returns
+        rows: the group's columns are snapshotted BEFORE it is called, so any
+        write it makes to them is undone on a refusal or a failure. It must
+        never call `save()` (a write to disk cannot be undone) or write outside
+        the group.
 
         Returns `{'success': True}`, or `{'success': False, 'error': text,
         'invalid': [{'row', 'column', 'reason'}, ...]}` for a refusal, or
-        `{'success': False, 'error': text}` when the file could not be written.
-        It never raises for either, and logs the refusal (WARNING, once) or the
-        failure (ERROR, once) itself, without a cell value.
+        `{'success': False, 'error': text}` when the file could not be written
+        or a builder raised something other than `GroupMisaligned`. It never
+        raises for either, and logs the refusal (WARNING, once) or the failure
+        (ERROR, once) itself, without a cell value.
 
         Validation comes first and mutates nothing. The parser is then written
         and saved under one hold of the lock, and put back if the save fails,
         so a failed write cannot be persisted by the next unrelated save.
+
+        One window is accepted and is not a defect: an interrupt (a
+        `BaseException`) after `os.replace` has succeeded leaves the disk
+        holding the new whole group while memory is rolled back. The next save
+        writes memory out and restores the disk. Both states are whole, aligned
+        groups.
         """
         with _PASSWORD_SAVE_LOCK:
             return self._save_group(section, rows)
@@ -762,19 +773,26 @@ class Settings:
         if columns is None:
             # The caller's text is not logged: it is not a registered name.
             return self._refuse_group(None, [_invalid(None, None, 'unknown_section')])
+        snapshot = self._group_snapshot(section, columns)
         try:
             rows = rows() if callable(rows) else rows
+            problems = [_invalid(None, column, 'not_writable') for column in columns
+                        if not self.isOptionWritable(section, column)]
+            problems += _group_problems(rows, columns)
+            if problems:
+                result = self._refuse_group(section, problems)
+            else:
+                result = self._write_group(section, columns, rows)
         except GroupMisaligned:
-            return self._refuse_group(section, [_invalid(None, None, 'misaligned')])
+            result = self._refuse_group(section, [_invalid(None, None, 'misaligned')])
         except Exception as error:
-            return self._group_write_failed(section, error)
-
-        problems = [_invalid(None, column, 'not_writable') for column in columns
-                    if not self.isOptionWritable(section, column)]
-        problems += _group_problems(rows, columns)
-        if problems:
-            return self._refuse_group(section, problems)
-        return self._write_group(section, columns, rows)
+            result = self._group_write_failed(section, error)
+        except BaseException:
+            self._restore_group(section, snapshot)
+            raise
+        if not result['success']:
+            self._restore_group(section, snapshot)
+        return result
 
     def _refuse_group(self, section, problems):
         first = problems[0]
@@ -791,17 +809,11 @@ class Settings:
                 'error': 'The settings could not be saved. Nothing was changed.'}
 
     def _write_group(self, section, columns, rows):
-        snapshot = self._group_snapshot(section, columns)
-        try:
-            self.addSection(section)
-            for column in columns:
-                self.set(section, column, ','.join(row[column] for row in rows))
-            self.save()
-        except BaseException as error:
-            self._restore_group(section, snapshot)
-            if not isinstance(error, Exception):
-                raise
-            return self._group_write_failed(section, error)
+        """Set every column and save once. Raises on failure; the caller restores."""
+        self.addSection(section)
+        for column in columns:
+            self.set(section, column, ','.join(row[column] for row in rows))
+        self.save()
         return {'success': True}
 
     def _group_snapshot(self, section, columns):

@@ -390,6 +390,21 @@ class TestWhatIsLogged:
         assert log.at_or_above(logging.WARNING) == []
         assert 'canary' not in log.text()
 
+    def test_a_builder_that_raises_logs_one_error_with_the_type_and_no_traceback_or_value(
+            self, settings):
+        def builder():
+            raise RuntimeError('canary-in-the-exception-text')
+
+        with LogCapture() as log:
+            result = settings.save_group('newznab', builder)
+
+        lines = log.at_or_above(logging.WARNING)
+        assert result['success'] is False and 'invalid' not in result
+        assert len(lines) == 1, [r.getMessage() for r in log.records]
+        assert lines[0].levelno == logging.ERROR and lines[0].exc_info is None
+        assert 'newznab' in lines[0].getMessage() and 'RuntimeError' in lines[0].getMessage()
+        assert 'canary' not in log.text() and 'canary' not in repr(result)
+
     def test_a_failed_write_logs_one_error_naming_the_section_and_exception_type(
             self, settings, monkeypatch):
         rows = three_rows(settings, 'newznab')

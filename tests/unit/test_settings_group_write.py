@@ -11,6 +11,8 @@ with the five real option declarations registered (``tests/helpers``), and
 check the file, not only the return value. All hosts are ``.invalid`` and every
 credential is a ``placeholder-`` string.
 """
+import os
+
 import pytest
 
 from couchpotato.core.settings import Settings
@@ -456,6 +458,43 @@ class TestBuilderCallable:
         result = settings.save_group('newznab', lambda: rows)
 
         assert result['invalid'] == [{'row': 2, 'column': 'custom_tag', 'reason': 'comma'}]
+        assert_nothing_changed(settings, 'newznab', before)
+
+    @pytest.mark.parametrize('ending', [
+        'raises', 'declines_misaligned', 'returns_a_comma', 'returns_valid_rows_then_the_file_write_fails',
+    ])
+    def test_what_a_builder_wrote_to_the_group_is_undone_on_any_refusal_or_failure(
+            self, settings, monkeypatch, ending):
+        """The snapshot is taken BEFORE the builder runs.
+
+        A builder only reads and returns rows, but one that sets a column in
+        memory and then fails must not leave that value for the next unrelated
+        save to persist.
+        """
+        from couchpotato.core.settings import GroupMisaligned
+        rows = three_rows(settings, 'newznab')
+        if ending == 'returns_a_comma':
+            rows[2]['custom_tag'] = 'a,b'
+        before = snapshot(settings, 'newznab')
+
+        def builder():
+            settings.set('newznab', 'host', 'builder-wrote-this')
+            settings.set('newznab', 'api_key', 'builder-wrote-this-too')
+            if ending == 'raises':
+                raise RuntimeError('boom')
+            if ending == 'declines_misaligned':
+                raise GroupMisaligned()
+            return rows
+
+        def no_space(*args, **kwargs):
+            raise OSError(28, 'No space left on device')
+
+        with monkeypatch.context() as patched:
+            if ending.endswith('file_write_fails'):
+                patched.setattr(os, 'replace', no_space)
+            result = settings.save_group('newznab', builder)
+
+        assert result['success'] is False
         assert_nothing_changed(settings, 'newznab', before)
 
     def test_a_builder_that_declines_a_misaligned_group_is_a_request_level_refusal(self, settings):
