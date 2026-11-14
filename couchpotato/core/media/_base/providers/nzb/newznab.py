@@ -16,6 +16,9 @@ from requests import HTTPError
 
 log = CPLog(__name__)
 
+# (host count, use count) pairs already warned about, so the warning is not repeated.
+_warned_length_mismatches = set()
+
 
 class Base(NZBProvider, RSS):
 
@@ -138,12 +141,15 @@ class Base(NZBProvider, RSS):
         custom_tags = splitString(self.conf('custom_tag'), clean = False)
         custom_categories = splitString(self.conf('custom_categories'), clean = False)
 
+        # Fewer use entries than hosts means the lists are misaligned (a comma
+        # inside a URL does exactly this), so no pairing can be trusted: fail
+        # closed and enable nothing rather than guess which host each belongs to.
+        misaligned = len(uses) < len(hosts)
+        if misaligned:
+            self._warnLengthMismatch(len(hosts), len(uses))
+
         list = []
         for nr in range(len(hosts)):
-
-            # A missing entry disables the indexer: fail closed.
-            try: use = uses[nr]
-            except Exception: use = '0'
 
             try: key = api_keys[nr]
             except Exception: key = ''
@@ -161,7 +167,7 @@ class Base(NZBProvider, RSS):
             except Exception: custom_category = ''
 
             list.append({
-                'use': use,
+                'use': '0' if misaligned else uses[nr],
                 'host': host,
                 'api_key': key,
                 'extra_score': score,
@@ -170,6 +176,17 @@ class Base(NZBProvider, RSS):
             })
 
         return list
+
+    def _warnLengthMismatch(self, host_count, use_count):
+        # getHosts runs on every search and every isEnabled(), so say it once
+        # per distinct pair of counts. Counts only: a host or URL can carry a
+        # credential and must not reach the log.
+        counts = (host_count, use_count)
+        if counts in _warned_length_mismatches:
+            return
+        _warned_length_mismatches.add(counts)
+        log.warning('The Newznab host and use lists are different lengths (%d hosts, %d use entries): '
+                    'all Newznab indexers are disabled until the settings are corrected', host_count, use_count)
 
     def belongsTo(self, url, provider = None, host = None):
 
