@@ -450,6 +450,26 @@ class TestEveryTransportOfAComma:
         assert sha(settings.file) == before
 
 
+class TestALoneSurrogateOverHttp:
+
+    def test_json_text_the_file_cannot_hold_is_a_refusal_and_not_a_write_failure(self, world):
+        import json
+        settings, client = world
+        before = sha(settings.file)
+        rows = three_rows(settings, 'newznab')
+        rows[1]['api_key'] = '\ud800x'
+        body = json.dumps({'section': 'newznab', 'rows': rows})
+        assert '\\ud800' in body, 'the fixture must send the escape the browser would'
+
+        with LogCapture() as log:
+            response = client.post(url(), content=body, headers={'Content-Type': 'application/json'})
+
+        assert response.status_code == 200
+        assert response.json()['invalid'] == [{'row': 1, 'column': 'api_key', 'reason': 'not_encodable'}]
+        assert [r.levelno for r in log.at_or_above(logging.WARNING)] == [logging.WARNING]
+        assert sha(settings.file) == before
+
+
 class TestNoValueIsEverReturnedOrLogged:
     """AC-SEC-7, AC-SEC-8 (successful-save clause), AC-OPS-1, -3, -8."""
 

@@ -109,11 +109,11 @@ def test_the_class_under_test_is_the_real_settings(settings):
 
 PAIRS = [(section, column) for section in SECTIONS for column in declared_groups()[section]]
 
-#: The nine reason codes AC-ARCH-11(iii) freezes. `misaligned` is reachable only
+#: The ten reason codes AC-ARCH-11(iii) freezes. `misaligned` is reachable only
 #: from a builder callable, never from rows the writer is handed.
 REASON_CODES = frozenset({
-    'comma', 'control_character', 'not_string', 'missing_column', 'unknown_column',
-    'not_writable', 'unknown_section', 'malformed', 'misaligned',
+    'comma', 'control_character', 'not_string', 'not_encodable', 'missing_column',
+    'unknown_column', 'not_writable', 'unknown_section', 'malformed', 'misaligned',
 })
 
 
@@ -268,6 +268,46 @@ class TestOnlyStringsAreCells:
         refuse(settings, 'newznab', rows, (2, 'custom_tag', 'not_string'))
 
 
+class TestACellTheFileCannotHold:
+    """A lone surrogate is valid JSON text but cannot be written as UTF-8.
+
+    It used to pass validation and fail at the file write, so bad input was
+    reported as a write failure with an ERROR line. It is refused up front, with
+    a reason of its own: it is not a control character.
+    """
+
+    @pytest.mark.parametrize('cell', ['\ud800x', 'x\udfff', '\ud800', 'a\udc00\ud800b'])
+    @pytest.mark.parametrize('section, column', PAIRS)
+    def test_it_is_refused_in_any_column_with_nothing_written(self, settings, section, column, cell):
+        rows = three_rows(settings, section)
+        rows[2][column] = cell
+
+        refuse(settings, section, rows, (2, column, 'not_encodable'))
+
+    def test_it_is_a_warning_and_never_an_error(self, settings):
+        import logging
+        from tests.helpers.combine_groups import LogCapture
+        rows = three_rows(settings, 'newznab')
+        rows[1]['api_key'] = '\ud800canary'
+
+        with LogCapture() as log:
+            result = settings.save_group('newznab', rows)
+
+        lines = log.at_or_above(logging.WARNING)
+        assert result['success'] is False and 'invalid' in result
+        assert [r.levelno for r in lines] == [logging.WARNING]
+        assert 'reason=not_encodable' in lines[0].getMessage()
+        assert 'canary' not in log.text()
+
+    def test_well_formed_non_ascii_text_is_still_accepted(self, settings):
+        rows = three_rows(settings, 'newznab')
+        rows[1]['host'] = 'https://bücher.example/\U0001f9ea'
+
+        assert settings.save_group('newznab', rows) == {'success': True}
+        assert stored_group(settings.file, 'newznab', ['host'])['host'].split(',')[1] == (
+            'https://bücher.example/\U0001f9ea')
+
+
 class TestMalformedPayloads:
     """AC-QA-4, AC-SEC-4: only the declared columns of one named group."""
 
@@ -376,7 +416,7 @@ class TestRefusalContract:
         assert a['error'] == b['error']
         assert 'canary' not in a['error']
 
-    def test_the_writer_can_return_no_reason_outside_the_nine_codes(self, settings):
+    def test_the_writer_can_return_no_reason_outside_the_ten_codes(self, settings):
         from couchpotato.core.settings import GROUP_REFUSAL_REASONS
         assert GROUP_REFUSAL_REASONS == REASON_CODES
 
@@ -387,6 +427,7 @@ class TestRefusalContract:
             ('newznab', [dict(rows[0], host='a,b')]),
             ('newznab', [dict(rows[0], host='a\nb')]),
             ('newznab', [dict(rows[0], host=3)]),
+            ('newznab', [dict(rows[0], host='\ud800x')]),
             ('newznab', [{'host': 'x'}]),
             ('newznab', [dict(rows[0], enabled='1')]),
             ('newznab', ['x']),

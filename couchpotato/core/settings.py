@@ -38,6 +38,8 @@ _GROUP_REFUSAL_TEXT = {
     'control_character': 'A value contains a line break or another control character. '
                          'Nothing was saved.',
     'not_string': 'Every value must be text. Nothing was saved.',
+    'not_encodable': 'A value contains a character that cannot be stored. '
+                     'Nothing was saved.',
     'missing_column': 'A row is missing a column. Nothing was saved.',
     'unknown_column': 'A row has a column this group does not have. Nothing was saved.',
     'not_writable': 'A column of this group cannot be changed. Nothing was saved.',
@@ -96,6 +98,13 @@ def _cell_problem(cell):
         return 'control_character'
     if ',' in cell:
         return 'comma'
+    try:
+        cell.encode('utf-8')
+    except UnicodeEncodeError:
+        # A lone surrogate is valid JSON text that the file encoding cannot hold.
+        # Left alone it fails at the file write and is reported as a write
+        # failure, so it is refused here as the bad input it is.
+        return 'not_encodable'
     return None
 
 
