@@ -15,6 +15,7 @@ import configparser
 import contextlib
 import hashlib
 import logging
+import threading
 from pathlib import Path
 
 from couchpotato.core.settings import Settings
@@ -179,6 +180,63 @@ def expected_view(section, rows):
         'letterboxd': 'https://letterboxd.com/%s/watchlist/page/1/',
     }[section]
     return [shape % r['automation_urls'] for r in rows if r['automation_urls_use'] == '1']
+
+
+class InstrumentedLock:
+    """A re-entrant lock that can say which hold a call happened inside.
+
+    It stands in for ``couchpotato.core.settings._PASSWORD_SAVE_LOCK``. Two
+    things a barrier or a sleep cannot show deterministically:
+
+    * ``on_outermost_release(thread_id)`` runs while the lock is STILL held, at
+      the end of a thread's outermost hold. State read there is what the next
+      thread to take the lock would see.
+    * ``hold_of(thread_id)`` is the serial number of the outermost hold that
+      thread is inside right now (None when it holds nothing), so a test can
+      assert that several calls shared one continuous hold.
+    """
+
+    def __init__(self, on_outermost_release=None):
+        self._lock = threading.RLock()
+        self._guard = threading.Lock()
+        self._depth = {}
+        self._hold = {}
+        self._serial = 0
+        self._on_release = on_outermost_release
+        self.waiting = 0
+
+    def acquire(self, blocking=True, timeout=-1):
+        with self._guard:
+            self.waiting += 1
+        got = self._lock.acquire(blocking, timeout)
+        with self._guard:
+            self.waiting -= 1
+        if got:
+            me = threading.get_ident()
+            self._depth[me] = self._depth.get(me, 0) + 1
+            if self._depth[me] == 1:
+                self._serial += 1
+                self._hold[me] = self._serial
+        return got
+
+    def release(self):
+        me = threading.get_ident()
+        self._depth[me] -= 1
+        if self._depth[me] == 0:
+            if self._on_release is not None:
+                self._on_release(me)
+            del self._hold[me]
+        self._lock.release()
+
+    def hold_of(self, thread_id):
+        return self._hold.get(thread_id)
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc_info):
+        self.release()
 
 
 class LogCapture(logging.Handler):
