@@ -551,6 +551,162 @@ describe('a refused or failed save', () => {
   });
 });
 
+describe('a correction typed while a refused save is open', () => {
+  const refusal = (row: number) => ({ body: { success: false, error: 'A cell cannot contain a comma.', invalid: [{ row, column: 'host', reason: 'comma' }] } });
+
+  it('is still sent, and its success clears the refusal', async () => {
+    const net = installFetch();
+    const first = deferred<Reply>();
+    net.replies.push(first.promise, { body: { success: true } });
+    const panel = aligned();
+    const group = panel.ensureGroup('newznab', combinedOption(panel.options));
+    group.rows[1][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
+    panel.editGroup('newznab');
+    await vi.advanceTimersByTimeAsync(500);
+    group.rows[1][1] = 'https://placeholder-corrected.invalid/api';
+    panel.editGroup('newznab');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(net.calls).toHaveLength(1);
+
+    first.resolve(refusal(1));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(net.calls).toHaveLength(2);
+    expect(net.body(1).rows[1].host).toBe('https://placeholder-corrected.invalid/api');
+    expect(group.refusal).toEqual([]);
+    expect(group.dirty).toBe(false);
+  });
+});
+
+describe('a verdict for rows that have since changed', () => {
+  it('marks no cell, and the save after it marks the right row', async () => {
+    const net = installFetch();
+    const first = deferred<Reply>();
+    net.replies.push(first.promise, { body: { success: false, error: 'x', invalid: [{ row: 1, column: 'host', reason: 'comma' }] } });
+    const panel = aligned();
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    field.getPanel = () => panel;
+    field.init();
+    field.held.rows[2][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
+    panel.editGroup('newznab');
+    await vi.advanceTimersByTimeAsync(500);
+
+    field.removeRow(0);
+    // Row 3 as it was; the index 1 is valid now but names a different row.
+    first.resolve({ body: { success: false, error: 'x', invalid: [{ row: 1, column: 'host', reason: 'comma' }] } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(field.held.refusal).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([1]);
+    expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
+  });
+
+  it('keeps an earlier refusal on the row it describes when a row above it is removed', () => {
+    const panel = aligned();
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    field.getPanel = () => panel;
+    field.init();
+    field.held.refusal = [{ row: 2, column: 'host', reason: 'comma', message: 'Row 3: the host cannot contain a comma. Remove it to save.' }];
+
+    field.removeRow(0);
+
+    expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([1]);
+    expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
+  });
+
+  it('drops the marks of a removed row', () => {
+    const panel = aligned();
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    field.getPanel = () => panel;
+    field.init();
+    field.held.refusal = [{ row: 1, column: 'host', reason: 'comma', message: 'Row 2: x' }];
+
+    field.removeRow(1);
+
+    expect(field.held.refusal).toEqual([]);
+  });
+});
+
+describe('what describes a cell', () => {
+  function fieldFor(values: Record<string, string>, misaligned: boolean) {
+    const panel = makePanel({ newznab: values }, { newznab: { misaligned, rows: 3 } });
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    field.getPanel = () => panel;
+    field.init();
+    return field;
+  }
+
+  it('is nothing for an aligned group with no refusal', () => {
+    expect(fieldFor(ALIGNED_VALUES.newznab, false).describedBy(0, 1)).toBeNull();
+  });
+
+  it('is the notice while it is shown, for every cell including the switch', () => {
+    const field = fieldFor(ALIGNED_VALUES.newznab, true);
+
+    expect(field.describedBy(0, 0)).toBe('cf-notice-newznab');
+    expect(field.describedBy(2, 4)).toBe('cf-notice-newznab');
+  });
+
+  it('is the notice then the refusal for a refused cell, and the notice goes when it clears', () => {
+    const field = fieldFor(ALIGNED_VALUES.newznab, true);
+    field.held.refusal = [{ row: 1, column: 'host', reason: 'comma', message: 'm' }];
+
+    expect(field.describedBy(1, 1)).toBe('cf-notice-newznab cf-err-newznab-1-host');
+    field.held.notice = false;
+    expect(field.describedBy(1, 1)).toBe('cf-err-newznab-1-host');
+  });
+});
+
+describe('an empty use cell', () => {
+  it('is sent as 0 for a group that is edited, whether it was missing or present but empty', async () => {
+    const net = installFetch();
+    const panel = makePanel(
+      { newznab: { ...ALIGNED_VALUES.newznab, use: '1,,' } },
+      { newznab: { misaligned: false, rows: 3 } },
+    );
+    const group = panel.ensureGroup('newznab', combinedOption(panel.options));
+    group.rows[0][1] = 'https://placeholder-edited.invalid/api';
+    panel.editGroup('newznab');
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(net.body(0).rows.map((row: any) => row.use)).toEqual(['1', '0', '0']);
+  });
+
+  it('is left empty in a group whose use column is not named use', async () => {
+    const net = installFetch();
+    const options = {
+      imdb: { name: 'imdb', groups: [{ options: [
+        { name: 'automation_urls', type: 'combined', combine: ['automation_urls_use', 'automation_urls'], pairing: ['automation_urls_use', 'automation_urls'] },
+      ] }] },
+    };
+    const panel = makePanel({ imdb: { automation_urls_use: '', automation_urls: 'https://placeholder-list.invalid/a' } }, { imdb: { misaligned: false, rows: 1 } }, options as any);
+    const group = panel.ensureGroup('imdb', options.imdb.groups[0].options[0]);
+    group.rows[0][1] = 'https://placeholder-list.invalid/b';
+    panel.editGroup('imdb');
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(net.body(0).rows[0].automation_urls_use).toBe('');
+  });
+
+  it('is never rewritten for a group nobody edited', async () => {
+    const net = installFetch();
+    const panel = makePanel({ newznab: { ...ALIGNED_VALUES.newznab, use: '1,,1' } }, { newznab: { misaligned: false, rows: 3 } });
+    panel.ensureGroup('newznab', combinedOption(panel.options));
+
+    panel.reloadCleanGroups();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(net.calls).toEqual([]);
+  });
+});
+
 describe('the misaligned notice', () => {
   it('is shown from the server flag and clears once a save of the group succeeds', async () => {
     installFetch();
@@ -669,22 +825,50 @@ describe('a button in a section with a combine group', () => {
     return panel;
   }
 
-  it('flushes the group first, then runs the action, then discards the held state before re-reading', async () => {
+  it('saves the held group first, then runs the action, then re-reads once', async () => {
     const net = installFetch();
     net.replies.push({ body: { success: true } }, { body: { success: true, message: 'Synced' } });
     const panel = torrentPanel();
     const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
     group.rows[0][1] = 'https://placeholder-edited.invalid/api';
     panel.editGroup('torrentpotato');
-    let discardedBeforeRead = false;
-    panel.init = vi.fn(async () => { discardedBeforeRead = group.dirty === false && group.refusal.length === 0; });
 
     await button(panel).execute();
     await vi.advanceTimersByTimeAsync(500);
 
     expect(net.calls.map((call) => call.url.split('/').slice(-2)[0])).toEqual(['settings.save_group', 'torrentpotato.jackett_sync']);
     expect(panel.init).toHaveBeenCalledTimes(1);
-    expect(discardedBeforeRead).toBe(true);
+  });
+
+  it('says so, in text and to a screen reader, when it drops rows typed while the action ran', async () => {
+    const net = installFetch();
+    const action = deferred<Reply>();
+    net.replies.push(action.promise);
+    const panel = torrentPanel();
+    const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+    const running = button(panel).execute();
+    await vi.advanceTimersByTimeAsync(0);
+    group.rows[0][1] = 'https://placeholder-typed-during-sync.invalid/api';
+    panel.editGroup('torrentpotato');
+
+    action.resolve({ body: { success: true, message: 'Synced' } });
+    await running;
+
+    expect(group.discarded).toMatch(/not saved/);
+    expect(panel.politeAnnouncement).toBe(group.discarded);
+    expect(panel.lastSaved).toBe(false);
+  });
+
+  it('says nothing when nothing was typed during the action', async () => {
+    const net = installFetch();
+    net.replies.push({ body: { success: true, message: 'Synced' } });
+    const panel = torrentPanel();
+    const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+
+    await button(panel).execute();
+
+    expect(group.discarded).toBe('');
+    expect(panel.politeAnnouncement).toBe('');
   });
 
   it('drops rows typed while the action ran, so a stale save never overwrites what the action wrote', async () => {

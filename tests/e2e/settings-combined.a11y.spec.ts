@@ -190,6 +190,45 @@ for (const theme of THEMES) {
     });
   });
 
+  test.describe(`the misaligned-group notice describes the cells (${theme} theme)`, () => {
+    test.use({ seedConfig: `newznab_misaligned_key_short#a11y-notice-describes-${theme}` });
+
+    test('every cell is described by it while it shows, and not once it clears; a refusal keeps its own id too', async ({ page }) => {
+      const card = await openSearchers(page, theme);
+      const notice = card.getByTestId('combine-misaligned-notice');
+      await expect(notice).toBeVisible();
+      const noticeId = await notice.getAttribute('id');
+      expect(noticeId).toBeTruthy();
+
+      const controls = card.locator('input[aria-label$="for row 1"], input[aria-label$="for row 3"], [role="switch"][aria-label^="Enable row"]');
+      expect(await controls.count()).toBeGreaterThan(4);
+      for (const described of await controls.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-describedby')))) {
+        expect(described).toContain(noticeId);
+      }
+
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ success: false, error: 'x', invalid: [{ row: 1, column: 'host', reason: 'comma' }] }),
+      }));
+      const host = card.getByLabel('host for row 2', { exact: true });
+      await host.fill('https://placeholder-two.invalid/api,x');
+      await expect(card.getByTestId('combine-row-error')).toBeVisible();
+      const refused = (await host.getAttribute('aria-describedby')) ?? '';
+      expect(refused).toContain(noticeId);
+      expect(refused).toContain('cf-err-newznab-1-host');
+
+      await page.unroute('**/settings.save_group/**');
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+      }));
+      await host.fill('https://placeholder-two.invalid/api');
+      await expect(notice).toHaveCount(0);
+      for (const described of await controls.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-describedby')))) {
+        expect(described).toBeNull();
+      }
+    });
+  });
+
   for (const [name, width] of [['a 320px viewport', 320], ['200% zoom on a 1280px viewport (640 CSS px)', 640]] as const) {
     test.describe(`reflow at ${name} (${theme} theme)`, () => {
       test.use({ seedConfig: `newznab_misaligned_key_short#a11y-reflow-${theme}-${width}` });

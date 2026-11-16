@@ -110,6 +110,8 @@ for (const theme of ['light', 'dark'] as const) {
       const card = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
       const notice = card.getByTestId('combine-misaligned-notice');
       await expect(notice).toBeVisible();
+      // The notice is what describes each cell, at phone width as everywhere.
+      await expect(card.getByLabel('host for row 1', { exact: true })).toHaveAttribute('aria-describedby', await notice.getAttribute('id') ?? 'missing');
 
       await card.getByLabel('host for row 2', { exact: true }).fill('https://placeholder-two.invalid/api,x');
       const error = card.getByTestId('combine-row-error');

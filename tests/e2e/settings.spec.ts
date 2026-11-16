@@ -736,8 +736,11 @@ test.describe('Settings: the refusal text is composed by the page for every comb
   test.use({ seedConfig: 'all_groups_aligned#message-shape' });
 
   const GROUPS: [string, string, string, string][] = [
-    ['Searchers', 'Newznab', 'host', 'api_key'],
-    ['Searchers', 'TorrentPotato', 'host', 'pass_key'],
+    // The refused column is the KEY column of the first two: its option key (api_key,
+    // pass_key) and its label (api key, pass key) differ, so a message that names the raw
+    // key fails the text and the underscore checks below. `host` would not tell them apart.
+    ['Searchers', 'Newznab', 'api_key', 'api_key'],
+    ['Searchers', 'TorrentPotato', 'pass_key', 'pass_key'],
     ['Suggestions', 'IMDB Watchlist', 'automation_urls', 'automation_urls_use'],
     ['Suggestions', 'iTunes', 'automation_urls', 'automation_urls_use'],
     ['Suggestions', 'Letterboxd', 'automation_urls', 'automation_urls_use'],
@@ -1073,6 +1076,9 @@ test.describe('Settings: a misaligned group is saved only as the rows the user s
         expect(shownKeys[2]).toBe(shownKey);
         // A missing use cell is saved as 0, so no row makes the real isEnabled raise.
         expect(cellsOf(columns.use).every((cell) => cell !== '')).toBe(true);
+        // Exactly 0, read from the file: the cell the user never saw is saved OFF, not on.
+        // (Only torrentpotato_misaligned stores three use cells; the others store two.)
+        expect(cellsOf(columns.use)[2]).toBe(fixture === 'torrentpotato_misaligned' ? '1' : '0');
         const enabled = configEnabled(testServer.configPath, section);
         expect(enabled.reader_raises).toBe(false);
         expect(enabled.rows).not.toContain('raises');
@@ -1204,6 +1210,69 @@ test.describe('Settings: what the first save of an aligned shape changes, and wh
       expect(rows).toHaveLength(3);
       expect(rows[2].slice(0, 3)).toEqual(['1', 'https://placeholder-added.invalid/api', 'placeholder-pass-added']);
       expect(configEnabled(testServer.configPath, 'torrentpotato').rows).not.toContain('raises');
+    });
+  });
+});
+
+test.describe('Settings: an empty use cell', () => {
+  test.describe('on an edited torrentpotato row', () => {
+    test.use({ seedConfig: 'fresh_defaults#empty-use-edit' });
+
+    test('is stored as 0 when the row gets a host and a pass key and the switch is untouched', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'TorrentPotato');
+      await openCard(card);
+      expect(configColumns(testServer.configPath, 'torrentpotato').use).toBe('');
+
+      await card.getByLabel('host for row 1', { exact: true }).fill('https://placeholder-added.invalid/api');
+      expect((await editCell(page, card, 'pass key for row 1', 'placeholder-pass-added')).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      // The file, not the request body: both rows are off, as shown.
+      expect(configColumns(testServer.configPath, 'torrentpotato').use).toBe('0,0');
+      expect(configEnabled(testServer.configPath, 'torrentpotato')).toEqual({ reader_raises: false, rows: [false, false] });
+    });
+  });
+
+  test.describe('in a group nobody edited', () => {
+    test.use({ seedConfig: 'fresh_defaults#empty-use-unedited' });
+
+    test('is byte for byte as it was after load, tab changes and a reload', async ({ page, testServer }) => {
+      await page.clock.install();
+      const net = await recordRequests(page);
+      const before = configSha(testServer.configPath);
+      await openSettings(page, 'Searchers');
+      await openCard(providerCard(page, 'TorrentPotato'));
+      await page.getByRole('tab', { name: 'General' }).click();
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      await page.reload();
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      await settleDebounce(page);
+
+      expect(net.networkWrites()).toEqual([]);
+      expect(configSha(testServer.configPath)).toBe(before);
+      expect(configColumns(testServer.configPath, 'torrentpotato').use).toBe('');
+    });
+  });
+
+  test.describe('in an automation group', () => {
+    test.use({ seedConfig: 'fresh_defaults#automation-empty-use' });
+
+    test('stays empty after an edit: only the use column named use is normalised', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      await openSettings(page, 'Suggestions');
+      const card = providerCard(page, 'IMDB Watchlist');
+      await openCard(card);
+
+      expect((await editCell(page, card, 'automation urls for row 1', 'https://placeholder-list.invalid/a')).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      const columns = configColumns(testServer.configPath, 'imdb');
+      expect(columns.automation_urls).toBe('https://placeholder-list.invalid/a');
+      expect(columns.automation_urls_use).toBe('');
     });
   });
 });
@@ -1346,6 +1415,11 @@ test.describe('Settings: saves are ordered, one in flight per group', () => {
 test.describe('Settings: a button acts on saved rows, never on held ones', () => {
   test.use({ seedConfig: 'torrentpotato_aligned#sync-button' });
 
+  // What this proves: the edit is saved BEFORE the sync, and the sync's rows are shown with
+  // no later group save. What it does NOT prove: that held rows are discarded after the sync.
+  // With nothing typed during the action there is nothing to discard, so that guard is the
+  // JS unit test in tests/unit/ui/settings-group-save.spec.ts ("drops rows typed while the
+  // action ran"), which fails when the discard is removed; this E2E does not.
   test('the held edit is saved before the sync, and the sync\'s rows are then shown, not saved over', async ({ page, testServer }) => {
     test.info().annotations.push(...combineGroupWriter());
     await page.clock.install();

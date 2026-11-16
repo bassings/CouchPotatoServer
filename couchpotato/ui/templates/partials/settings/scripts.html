@@ -574,6 +574,7 @@ function settingsPanel() {
           refusal: [],
           refusalKey: '',
           error: '',
+          discarded: '',
         };
       }
       return this.groupState[section];
@@ -596,6 +597,7 @@ function settingsPanel() {
     editGroup(section) {
       const group = this.groupState[section];
       group.dirty = true;
+      group.discarded = '';
       group.version += 1;
       clearTimeout(group.timer);
       group.timer = setTimeout(() => this.saveGroup(section), 500);
@@ -623,7 +625,9 @@ function settingsPanel() {
       do {
         group.queued = false;
         ok = await this.sendGroup(section, group);
-      } while (group.queued && ok);
+      // Whatever the outcome: a correction typed while a refused save was open
+      // is the very edit that can clear the refusal, so it must still be sent.
+      } while (group.queued);
       group.saving = false;
       this.saving = Object.values(this.groupState).some(other => other.saving);
       return ok;
@@ -631,8 +635,14 @@ function settingsPanel() {
 
     groupPayloadRows(group) {
       const columns = group.opt.combine || [];
-      return group.rows.map(row => Object.fromEntries(
-        columns.map((col, position) => [col, String(row[position] ?? '').trim()])));
+      // A `use` cell that is empty is saved as 0, as it is shown (off): an empty
+      // one makes the provider's isEnabled raise. Only on an edited group, which
+      // is the only kind sent. Other columns, `automation_urls_use` included, are
+      // sent as they are.
+      return group.rows.map(row => Object.fromEntries(columns.map((col, position) => {
+        const cell = String(row[position] ?? '').trim();
+        return [col, col === 'use' && cell === '' ? '0' : cell];
+      })));
     },
 
     async sendGroup(section, group) {
@@ -649,9 +659,12 @@ function settingsPanel() {
           this.acceptGroup(section, group, rows, sent);
           return true;
         }
-        this.rejectGroup(group, payload);
+        // A verdict on rows the user has since changed says nothing about the
+        // rows now on screen (its row numbers may even have moved): the save
+        // that follows gives the current one.
+        if (group.version === sent) this.rejectGroup(group, payload);
       } catch {
-        this.failGroup(group, 'Could not reach the server, so these rows were not saved.');
+        if (group.version === sent) this.failGroup(group, 'Could not reach the server, so these rows were not saved.');
       }
       return false;
     },
@@ -740,8 +753,22 @@ function settingsPanel() {
     discardGroup(section) {
       const group = this.groupState[section];
       if (!group) return;
+      // Rows typed while the action ran would be saved over what it wrote, so they
+      // are dropped. Say so, in text and to a screen reader, rather than silently.
+      const lost = !!(group.timer || group.dirty);
       clearTimeout(group.timer);
       Object.assign(group, { timer: null, dirty: false, queued: false, refusal: [], refusalKey: '', error: '' });
+      group.discarded = lost ? 'Changes typed while that action ran were not saved: the action replaced these rows.' : '';
+      if (lost) this.announce(group.discarded, false);
+    },
+
+    /** Row `idx` was removed: drop its marks and move the later rows' up, so the
+     *  marks stay on the rows they describe until the next save gives a verdict. */
+    shiftRefusal(group, idx) {
+      group.refusal = group.refusal
+        .filter(entry => entry.row !== idx)
+        .map(entry => (entry.row > idx ? { ...entry, row: entry.row - 1 } : entry))
+        .map(entry => ({ ...entry, message: this.refusalText(group, entry) }));
     },
 
     async saveSingle(section, name, value) {
@@ -1355,6 +1382,18 @@ function combinedField(section, opt) {
       return 'cf-err-' + this.section + '-' + entry.row + '-' + entry.column;
     },
 
+    noticeId() { return 'cf-notice-' + this.section; },
+
+    /** What describes a cell: the misaligned notice while it is shown, then its
+     *  own refusal. Null when neither, so the attribute is absent. */
+    describedBy(rowIdx, colIdx) {
+      const ids = [];
+      if (this.held && this.held.notice) ids.push(this.noticeId());
+      const entry = this.cellError(rowIdx, colIdx);
+      if (entry) ids.push(this.errorId(entry));
+      return ids.length ? ids.join(' ') : null;
+    },
+
     getPanel() {
       return getSettingsPanel(this.$el);
     },
@@ -1386,7 +1425,7 @@ function combinedField(section, opt) {
       if (this.rows.length > 1) {
         this.held.rows.splice(idx, 1);
         // The marks name rows by position, and the positions have just moved.
-        this.held.refusal = [];
+        this.getPanel().shiftRefusal(this.held, idx);
         this.getPanel().editGroup(this.section);
       }
     },

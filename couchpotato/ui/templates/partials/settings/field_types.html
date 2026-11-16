@@ -234,7 +234,7 @@
          card (WCAG 1.4.3 needs 4.5:1, measured by settings-combined.a11y.spec.ts);
          without it, 4.81:1. The border and the text still carry the danger colour. -->
     <template x-if="held && held.notice">
-      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-misaligned-notice">
+      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" :id="noticeId()" data-testid="combine-misaligned-notice">
         <p class="text-xs text-cp-danger">The saved entries here do not line up: some columns have more entries than others. The rows shown are what will be saved when you change one, so check each row first.</p>
       </div>
     </template>
@@ -246,6 +246,13 @@
     <template x-if="held && held.error">
       <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-save-error">
         <p class="text-xs text-cp-danger" x-text="held.error"></p>
+      </div>
+    </template>
+
+    <!-- Rows typed while a button action ran were dropped (announced once by the panel). -->
+    <template x-if="held && held.discarded">
+      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-discarded-note">
+        <p class="text-xs text-cp-danger" x-text="held.discarded"></p>
       </div>
     </template>
 
@@ -271,7 +278,8 @@
                       class="relative w-8 h-4 rounded-full transition-colors shrink-0"
                       role="switch"
                       :aria-checked="(row[colIdx] === '1' || row[colIdx] === 1).toString()"
-                      :aria-label="'Enable row ' + (rowIdx + 1)">
+                      :aria-label="'Enable row ' + (rowIdx + 1)"
+                      :aria-describedby="describedBy(rowIdx, colIdx)">
                 <span :class="(row[colIdx] === '1' || row[colIdx] === 1) ? 'translate-x-4' : 'translate-x-0.5'"
                       class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5" aria-hidden="true"></span>
               </button>
@@ -286,7 +294,7 @@
                      @input="updateRow(rowIdx, colIdx, $event.target.value)"
                      :aria-label="col.replace(/_/g, ' ') + ' for row ' + (rowIdx + 1)"
                      :aria-invalid="cellError(rowIdx, colIdx) ? 'true' : null"
-                     :aria-describedby="cellError(rowIdx, colIdx) ? errorId(cellError(rowIdx, colIdx)) : null"
+                     :aria-describedby="describedBy(rowIdx, colIdx)"
                      :class="cellError(rowIdx, colIdx) ? 'border-cp-danger focus:border-cp-danger' : 'border-white/[0.06] focus:border-cp-accent/30'"
                      class="w-full bg-white/[0.03] border rounded-md px-3 py-1.5 text-xs focus:outline-none">
             </template>
