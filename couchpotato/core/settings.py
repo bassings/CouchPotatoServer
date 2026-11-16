@@ -108,6 +108,16 @@ def _cell_problem(cell):
     return None
 
 
+def unstorable_cell(cell):
+    """Why the group writer would refuse this cell, or None.
+
+    The writer's own test, for a caller that would rather skip one bad value than
+    have the whole group refused (the Jackett sync). It repeats no rule of its
+    own: it asks the one the writer applies.
+    """
+    return _cell_problem(cell)
+
+
 def _row_problems(index, row, columns):
     if not isinstance(row, dict):
         return [_invalid(index, None, 'malformed')]
@@ -730,6 +740,57 @@ class Settings:
                     if option.get('type') == 'combined' and columns:
                         groups[section_name] = tuple(columns)
         return groups
+
+    def group_cells(self, section):
+        """Each column of a stored group as its cells (Definitions, "Cells").
+
+        A cell is a piece of the raw stored value split on `,`. Nothing is
+        trimmed and nothing is dropped, so an empty cell is a position, and an
+        empty or missing stored value is one empty cell. The columns are the
+        group's own (`combine_groups`); a section that is not a group has none.
+        """
+        columns = self.combine_groups().get(section, ())
+        with _PASSWORD_SAVE_LOCK:
+            return {column: (self.p.get(section, column)
+                             if self.p.has_option(section, column) else '').split(',')
+                    for column in columns}
+
+    def group_stored_rows(self, section, pairing_columns, short_cells=None):
+        """A stored group as rows (Definitions, "Row count"; AC-DATA-13).
+
+        `pairing_columns` are the columns whose cells pair up across a row; which
+        they are is the caller's to say, because a group's declaration does not
+        distinguish them from its other columns. The row count is the largest
+        cell count among them. A column shorter than that supplies
+        `short_cells[column]` if the caller states one, else an empty cell for a
+        pairing column and the option's declared default for any other. Cells
+        beyond the row count are not rows and are not returned.
+        """
+        short_cells = short_cells or {}
+        cells = self.group_cells(section)
+        count = max((len(cells[column]) for column in pairing_columns if column in cells), default=1)
+        rows = []
+        for index in range(count):
+            row = {}
+            for column, values in cells.items():
+                if index < len(values):
+                    row[column] = values[index]
+                elif column in short_cells:
+                    row[column] = short_cells[column]
+                elif column in pairing_columns:
+                    row[column] = ''
+                else:
+                    row[column] = (self._declared_default_cells(section, column) or [''])[0]
+            rows.append(row)
+        return rows
+
+    def _declared_default_cells(self, section, column):
+        """The cells of the default a provider declared for `column`, or None."""
+        for group in self.options.get(section, {}).get('groups', []):
+            for option in group.get('options', []):
+                if option.get('name') == column and 'default' in option:
+                    return str(option['default']).split(',')
+        return None
 
     def save_group_view(self, section=None, rows=None, **kwargs):
         """The API view: a thin relay to `save_group` that adds the INFO line.

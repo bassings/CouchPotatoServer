@@ -1117,9 +1117,25 @@ class TestTorrentPotatoJackettIntegration:
         assert result['success'] is False
         assert 'required' in result['error']
 
-    def test_jackettSync_adds_indexers(self):
-        p = self._make_provider()
+    @staticmethod
+    def _sync(tmp_path, monkeypatch, xml_response, stored=None):
+        """Run the real sync over a real `Settings` on a temporary config file.
 
+        The sync writes through the group writer, so a stub of `conf` or
+        `getHosts` would observe nothing: the stored columns are read back from
+        the file instead. Only the network call is replaced.
+        """
+        from tests.helpers.combine_groups import group_settings, stored_group
+        from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
+        columns = ('use', 'host', 'pass_key', 'name')
+        with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
+            monkeypatch.setattr(Env, '_settings', settings)
+            p = TorrentPotato.__new__(TorrentPotato)
+            with patch.object(p, 'urlopen', return_value=xml_response):
+                result = p.jackettSync('http://localhost:9117', 'testapikey')
+            return result, stored_group(settings.file, 'torrentpotato', columns)
+
+    def test_jackettSync_adds_indexers(self, tmp_path, monkeypatch):
         xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
         <indexers>
             <indexer id="yts" configured="true">
@@ -1130,101 +1146,53 @@ class TestTorrentPotatoJackettIntegration:
             </indexer>
         </indexers>'''
 
-        saved_settings = {}
-
-        def mock_conf(key, value=None, **kwargs):
-            if value is not None:
-                saved_settings[key] = value
-                return value
-            return saved_settings.get(key, '')
-
-        with patch.object(p, 'urlopen', return_value=xml_response), \
-             patch.object(p, 'conf', side_effect=mock_conf), \
-             patch.object(p, 'getHosts', return_value=[]):
-            result = p.jackettSync('http://localhost:9117', 'testapikey')
+        result, stored = self._sync(tmp_path, monkeypatch, xml_response)
 
         assert result['success'] is True
         assert result['added'] == 2
         assert result['total'] == 2
-        assert 'host' in saved_settings
-        assert 'yts/api' in saved_settings['host']
-        assert '1337x/api' in saved_settings['host']
+        assert stored['host'] == ('http://localhost:9117/potato/yts/api,'
+                                  'http://localhost:9117/potato/1337x/api')
+        assert stored['pass_key'] == 'testapikey,testapikey'
+        assert stored['name'] == 'YTS,1337x'
 
-    def test_jackettSync_preserves_existing_indexers(self):
-        p = self._make_provider()
-
+    def test_jackettSync_preserves_existing_indexers(self, tmp_path, monkeypatch):
         xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
         <indexers>
             <indexer id="yts" configured="true">
                 <title>YTS</title>
             </indexer>
         </indexers>'''
+        existing = {'torrentpotato': {
+            'use': '1', 'host': 'http://other-indexer.invalid/api', 'name': 'other',
+            'pass_key': 'pass123', 'seed_ratio': '1', 'seed_time': '40', 'extra_score': '0'}}
 
-        existing_host = {
-            'use': '1',
-            'host': 'http://other-indexer.com/api',
-            'name': 'other',
-            'pass_key': 'pass123',
-            'seed_ratio': 1.0,
-            'seed_time': 40,
-            'extra_score': 0
-        }
-
-        saved_settings = {}
-
-        def mock_conf(key, value=None, **kwargs):
-            if value is not None:
-                saved_settings[key] = value
-                return value
-            return saved_settings.get(key, '')
-
-        with patch.object(p, 'urlopen', return_value=xml_response), \
-             patch.object(p, 'conf', side_effect=mock_conf), \
-             patch.object(p, 'getHosts', return_value=[existing_host]):
-            result = p.jackettSync('http://localhost:9117', 'testapikey')
+        result, stored = self._sync(tmp_path, monkeypatch, xml_response, stored=existing)
 
         assert result['success'] is True
         assert result['added'] == 1
         assert result['total'] == 2  # existing + new
-        assert 'other-indexer.com' in saved_settings['host']  # codeql[py/incomplete-url-substring-sanitization]
-        assert 'yts/api' in saved_settings['host']
+        assert stored['host'] == ('http://other-indexer.invalid/api,'
+                                  'http://localhost:9117/potato/yts/api')
+        assert stored['pass_key'] == 'pass123,testapikey'
 
-    def test_jackettSync_skips_duplicates(self):
-        p = self._make_provider()
-
+    def test_jackettSync_skips_duplicates(self, tmp_path, monkeypatch):
         xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
         <indexers>
             <indexer id="yts" configured="true">
                 <title>YTS</title>
             </indexer>
         </indexers>'''
+        existing = {'torrentpotato': {
+            'use': '1', 'host': 'http://localhost:9117/potato/yts/api', 'name': 'YTS',
+            'pass_key': 'testapikey', 'seed_ratio': '1', 'seed_time': '40', 'extra_score': '0'}}
 
-        existing_host = {
-            'use': '1',
-            'host': 'http://localhost:9117/potato/yts/api',
-            'name': 'YTS',
-            'pass_key': 'testapikey',
-            'seed_ratio': 1.0,
-            'seed_time': 40,
-            'extra_score': 0
-        }
-
-        saved_settings = {}
-
-        def mock_conf(key, value=None, **kwargs):
-            if value is not None:
-                saved_settings[key] = value
-                return value
-            return saved_settings.get(key, '')
-
-        with patch.object(p, 'urlopen', return_value=xml_response), \
-             patch.object(p, 'conf', side_effect=mock_conf), \
-             patch.object(p, 'getHosts', return_value=[existing_host]):
-            result = p.jackettSync('http://localhost:9117', 'testapikey')
+        result, stored = self._sync(tmp_path, monkeypatch, xml_response, stored=existing)
 
         assert result['success'] is True
         assert result['added'] == 0  # Should skip since URL already exists
         assert result['total'] == 1
+        assert stored['host'] == 'http://localhost:9117/potato/yts/api'
 
 
 class TestFanartTVSettingIsReachable:
