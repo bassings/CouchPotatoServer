@@ -8,7 +8,7 @@ from couchpotato.api import addApiView
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, tryInt, tryFloat, cleanHost
 from couchpotato.core.logger import CPLog
-from couchpotato.core.settings import unstorable_cell
+from couchpotato.core.settings import GroupMisaligned, unstorable_cell
 from couchpotato.environment import Env
 from couchpotato.core.media._base.providers.base import ResultList
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
@@ -18,6 +18,9 @@ log = CPLog(__name__)
 
 # The columns that pair a row's host with its credential (SEC-004, Definitions).
 PAIRING_COLUMNS = ('host', 'pass_key', 'use', 'name')
+
+MISALIGNED_TEXT = ('The saved TorrentPotato rows do not line up, so a sync could pair a key '
+                   'with the wrong host. Fix the rows in Settings first. Nothing was changed.')
 
 
 class Base(TorrentProvider):
@@ -347,6 +350,13 @@ class Base(TorrentProvider):
                 'error': 'Jackett URL and API key are required. Please configure them in settings.'
             }
 
+        replace = self._isReplace(replace)
+        if not replace and Env.get('settings').group_misaligned(self._section(), PAIRING_COLUMNS):
+            # Refused before any network request. The builder asks again under the
+            # lock, because another writer can land in between.
+            log.warning('Refused a Jackett sync: the stored torrentpotato rows do not line up')
+            return {'success': False, 'error': MISALIGNED_TEXT}
+
         # The network is fetched BEFORE the settings lock is taken: a slow Jackett
         # must not stall every other settings write.
         indexers, error = self.getJackettIndexers(jackett_url, jackett_api_key)
@@ -378,7 +388,7 @@ class Base(TorrentProvider):
         outcome = {}
         result = Env.get('settings').save_group(
             self._section(),
-            self._jackettRowsBuilder(storable, jackett_api_key, self._isReplace(replace), outcome))
+            self._jackettRowsBuilder(storable, jackett_api_key, replace, outcome))
         if not result['success']:
             return {'success': False, 'error': result['error']}
 
@@ -420,6 +430,8 @@ class Base(TorrentProvider):
         """
         def build():
             settings = Env.get('settings')
+            if not replace and settings.group_misaligned(self._section(), PAIRING_COLUMNS):
+                raise GroupMisaligned
             stored = [] if replace else settings.group_stored_rows(
                 self._section(), PAIRING_COLUMNS, {'use': '0'})
             rows = [row for row in stored if row['host'] or row['pass_key'] or row['name']]

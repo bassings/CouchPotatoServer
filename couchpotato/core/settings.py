@@ -784,6 +784,28 @@ class Settings:
             rows.append(row)
         return rows
 
+    def group_misaligned(self, section, pairing_columns):
+        """Do the stored columns of a group disagree about its rows?
+
+        The Definitions' "Misaligned group" (decision D2), for any registered
+        group: ignore a pairing column whose cells are all empty (nothing in it
+        can be mispaired); the group is misaligned when the remaining pairing
+        columns do not all have the same cell count. A non-pairing column never
+        makes it so by being shorter, or by being longer only by cells that are
+        empty or hold a cell of the column's declared default; any other cell
+        past the row count is data whose row cannot be identified.
+        """
+        cells = self.group_cells(section)
+        pairing = {column: cells[column] for column in pairing_columns if column in cells}
+        if len({len(values) for values in pairing.values() if any(values)}) > 1:
+            return True
+        count = max((len(values) for values in pairing.values()), default=1)
+        for column, values in cells.items():
+            allowed = {''} | set(self._declared_default_cells(section, column) or [])
+            if column not in pairing and any(cell not in allowed for cell in values[count:]):
+                return True
+        return False
+
     def _declared_default_cells(self, section, column):
         """The cells of the default a provider declared for `column`, or None."""
         for group in self.options.get(section, {}).get('groups', []):

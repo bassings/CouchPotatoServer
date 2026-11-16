@@ -358,3 +358,118 @@ class TestNoPerColumnWriterRemains:
         provider.jackettSync()
 
         assert written == []
+
+
+MISALIGNED = dict(STORED, pass_key='placeholder-key-two,placeholder-key-three',
+                  host='https://p1.invalid/api,https://p2.invalid/api,https://p3.invalid/api',
+                  use='1,1,1', name='n1,n2,n3', seed_ratio='1,1,1', seed_time='40,40,40',
+                  extra_score='0,0,0')
+
+
+@pytest.fixture
+def misaligned_world(tmp_path, monkeypatch):
+    """The stored group the gate reviewer measured: three hosts, two pass_keys."""
+    stored = {'torrentpotato': dict(MISALIGNED, jackett_url=JACKETT, jackett_api_key=JACKETT_KEY)}
+    with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
+        monkeypatch.setattr(Env, '_settings', settings)
+        from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
+        provider = TorrentPotato.__new__(TorrentPotato)
+        requested = []
+        xml = '<indexers><indexer id="alpha" configured="true"><title>Alpha</title></indexer></indexers>'
+        monkeypatch.setattr(provider, 'urlopen', lambda url, **kwargs: requested.append(url) or xml)
+        yield settings, provider, requested
+
+
+class TestAMisalignedStoredGroup:
+    """AC-SEC-9 rule (c). Measured on the old code: with `host` of P1,P2,P3 and
+    `pass_key` of K2,K3 the sync returned success, wrote an aligned group with
+    P1 paired to K2, and the notice disappeared."""
+
+    def test_the_fixture_is_really_misaligned_for_the_real_reader(self, misaligned_world, monkeypatch):
+        settings, _, _ = misaligned_world
+
+        view = reader_view(settings, monkeypatch, 'torrentpotato')
+
+        assert view[0][1:3] == ('https://p1.invalid/api', 'placeholder-key-two'), (
+            'P1 is already paired with the key meant for P2')
+
+    def test_a_merge_sync_is_refused_before_any_network_request_and_nothing_is_written(
+            self, misaligned_world):
+        settings, provider, requested = misaligned_world
+        before = snapshot(settings, 'torrentpotato')
+
+        result = provider.jackettSync()
+
+        assert result['success'] is False
+        assert requested == [], 'a request reached Jackett'
+        assert 'Settings' in result['error'], 'the user is told where to fix the rows'
+        assert_nothing_changed(settings, 'torrentpotato', before)
+
+    def test_the_refusal_is_one_warning_and_carries_no_value(self, misaligned_world):
+        settings, provider, _ = misaligned_world
+
+        with LogCapture() as logs:
+            result = provider.jackettSync()
+
+        assert len(logs.at_or_above(logging.WARNING)) == 1
+        for private in ('p1.invalid', 'placeholder-key', JACKETT_KEY, JACKETT, 'n1'):
+            assert private not in logs.text() + str(result)
+
+    def test_a_short_pass_key_column_and_a_short_use_column_are_both_refused(
+            self, tmp_path, monkeypatch):
+        for short in ('pass_key', 'use'):
+            columns = dict(STORED, **{short: STORED[short].split(',')[0]})
+            stored = {'torrentpotato': dict(columns, jackett_url=JACKETT, jackett_api_key=JACKETT_KEY)}
+            (tmp_path / short).mkdir()
+            with group_settings(tmp_path / short, monkeypatch, stored=stored) as settings:
+                monkeypatch.setattr(Env, '_settings', settings)
+                from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
+                provider = TorrentPotato.__new__(TorrentPotato)
+                monkeypatch.setattr(provider, 'getJackettIndexers',
+                                    lambda *a, **k: pytest.fail('a request reached Jackett'))
+
+                assert provider.jackettSync()['success'] is False, short
+
+    def test_replace_is_allowed_and_replaces_every_row_from_jackett(self, misaligned_world):
+        settings, provider, requested = misaligned_world
+
+        result = provider.jackettSync(replace=True)
+
+        assert result['success'] is True
+        assert len(requested) == 1
+        assert cells(settings, 'host') == [JACKETT + '/potato/alpha/api']
+        assert {len(cells(settings, column)) for column in COLUMNS} == {1}
+
+    def test_the_group_going_misaligned_after_the_pre_check_is_refused_under_the_lock(self, world):
+        """Another writer can land between the pre-check and the lock. The
+        builder asks the same question again, under the lock, and declines."""
+        settings, provider = world
+        fetch = provider.getJackettIndexers
+
+        def fetch_then_a_writer_misaligns_the_group(url, key, movies_only=True):
+            settings.set('torrentpotato', 'pass_key', 'placeholder-stored-key-one')
+            settings.save()
+            return fetch(url, key, movies_only)
+
+        provider.getJackettIndexers = fetch_then_a_writer_misaligns_the_group
+        with LogCapture() as logs:
+            result = provider.jackettSync()
+
+        assert result['success'] is False
+        assert 'Settings' in result['error']
+        assert 'Alpha' not in ''.join(columns(settings).values()), 'a row was written'
+        assert cells(settings, 'host') == ['https://stored-one.invalid/api',
+                                           'https://stored-two.invalid/api']
+        assert len([r for r in logs.at_or_above(logging.WARNING)
+                    if 'settings group' in r.getMessage()]) == 1
+
+    def test_the_shipped_defaults_are_not_misaligned(self, tmp_path, monkeypatch):
+        defaults = {'torrentpotato': {'jackett_url': JACKETT, 'jackett_api_key': JACKETT_KEY}}
+        with group_settings(tmp_path, monkeypatch, stored=defaults) as settings:
+            monkeypatch.setattr(Env, '_settings', settings)
+            from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
+            provider = TorrentPotato.__new__(TorrentPotato)
+            monkeypatch.setattr(provider, 'getJackettIndexers',
+                                lambda url, key, movies_only=True: ([indexer('alpha', 'Alpha')], None))
+
+            assert provider.jackettSync()['success'] is True

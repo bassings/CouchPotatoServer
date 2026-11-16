@@ -118,3 +118,75 @@ class TestTheWritersOwnCellTest:
                                       'café テスト'])
     def test_a_storable_cell_is_not(self, cell):
         assert unstorable_cell(cell) is None
+
+
+class TestMisalignedGroup:
+    """Definitions, "Misaligned group" (decision D2), for any registered group."""
+
+    def misaligned(self, settings):
+        return settings.group_misaligned('zz_test', PAIRING)
+
+    def aligned(self, settings, **overrides):
+        columns = dict(host='a,b', key='ka,kb', use='1,0', weight='7,8', tag='t1,t2')
+        columns.update(overrides)
+        store(settings, **columns)
+
+    def test_equal_pairing_columns_are_aligned(self, settings):
+        self.aligned(settings)
+
+        assert self.misaligned(settings) is False
+
+    def test_a_pairing_column_one_cell_short_is_misaligned(self, settings):
+        self.aligned(settings, host='a,b,c', key='kb,kc')
+
+        assert self.misaligned(settings) is True
+
+    def test_a_short_use_column_is_misaligned(self, settings):
+        self.aligned(settings, use='1')
+
+        assert self.misaligned(settings) is True
+
+    def test_a_pairing_column_that_is_all_empty_is_ignored_whatever_its_length(self, settings):
+        self.aligned(settings, key='')
+
+        assert self.misaligned(settings) is False
+
+    def test_a_trailing_blank_row_in_every_pairing_column_is_aligned(self, settings):
+        self.aligned(settings, host='a,', key='ka,', use='1,0')
+
+        assert self.misaligned(settings) is False
+
+    def test_nothing_stored_is_aligned(self, settings):
+        store(settings, host='', key='', use='', weight='', tag='')
+
+        assert self.misaligned(settings) is False
+
+    def test_a_non_pairing_column_that_is_shorter_is_aligned(self, settings):
+        self.aligned(settings, weight='7', tag='')
+
+        assert self.misaligned(settings) is False
+
+    @pytest.mark.parametrize('weight, tag', [('7,8,,', 't1,t2,,'), ('7,8,5,5', 't1,t2,'),
+                                             ('7,8,5', 't1,t2,,,')])
+    def test_a_non_pairing_column_longer_by_empty_or_default_cells_is_aligned(
+            self, settings, weight, tag):
+        self.aligned(settings, weight=weight, tag=tag)
+
+        assert self.misaligned(settings) is False
+
+    @pytest.mark.parametrize('weight, tag', [('7,8,9', 't1,t2'), ('7,8', 't1,t2,orphan')])
+    def test_a_non_pairing_column_longer_by_a_cell_holding_data_is_misaligned(
+            self, settings, weight, tag):
+        self.aligned(settings, weight=weight, tag=tag)
+
+        assert self.misaligned(settings) is True
+
+    def test_a_section_that_is_not_a_group_is_not_misaligned(self, settings):
+        assert settings.group_misaligned('core', PAIRING) is False
+
+    def test_the_group_is_the_registered_one_with_no_name_written_in_settings(self):
+        import couchpotato.core.settings as module
+        import inspect
+        source = inspect.getsource(module.Settings.group_misaligned)
+        for literal in ('torrentpotato', 'newznab', 'automation_urls', 'pass_key', 'api_key'):
+            assert literal not in source
