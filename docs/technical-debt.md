@@ -569,6 +569,19 @@ result. Getting it wrong the other way files a bug against working code.
   `setTimeout(resolve, 750)` in its route handler. The trap guard only looks
   for `waitForTimeout`, so it is accepted; a gate the test releases would
   remove the dependence on time.
+- **The dark-theme danger tint is under 4.5:1 elsewhere (2026-11-17).** The
+  validation box `px-3 py-2 rounded-lg bg-cp-danger/10 border border-cp-danger/20`
+  with `text-cp-danger` text measures 4.47:1 on the dark card (WCAG 1.4.3 needs
+  4.5:1). SEC-004 P3 dropped the tint from its own message boxes (4.81:1). The
+  same box remains in `partials/settings/profiles.html` (about lines 176-179)
+  and `partials/settings/categories.html` (about lines 180-183). Not measured
+  there by a test; a scoped fix in `base.html`, as the review-queue and
+  operator-replace controls have, is the existing precedent.
+- **No screen-reader, Firefox or WebKit run exists for the Settings combined
+  field (2026-11-17).** Its refusal and notice announcements are proven by
+  counting text changes in the live regions in Chromium only
+  (`settings.spec.ts`, `settings-combined.a11y.spec.ts`). What a screen reader
+  says, and how Firefox and WebKit render the field, has not been observed.
 
 ### Deferred at PR 1's review (2026-08-06)
 
