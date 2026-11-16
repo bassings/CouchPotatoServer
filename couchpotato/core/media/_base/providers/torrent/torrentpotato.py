@@ -270,6 +270,18 @@ class Base(TorrentProvider):
             log.error('Failed to fetch Jackett indexers: %s', type(e).__name__)
             return None, f'Failed to connect to Jackett: {type(e).__name__}'
 
+    def _savedJackettSetting(self, name):
+        value = self.conf(name)
+
+        # Ensure values are strings (settings may return bytes)
+        if isinstance(value, bytes):
+            value = value.decode('utf-8')
+
+        # Also handle str that looks like bytes repr: "b'...'"
+        if isinstance(value, str) and value.startswith("b'") and value.endswith("'"):
+            value = value[2:-1]
+        return value
+
     def _jackettCredentials(self, jackett_url, jackett_api_key):
         """Pick the Jackett URL and API key a request may use.
 
@@ -289,20 +301,8 @@ class Base(TorrentProvider):
                          'The saved API key is only used with the saved URL.'
             }
 
-        saved_url = self.conf('jackett_url')
-        saved_key = self.conf('jackett_api_key')
-
-        # Ensure values are strings (settings may return bytes)
-        if isinstance(saved_url, bytes):
-            saved_url = saved_url.decode('utf-8')
-        if isinstance(saved_key, bytes):
-            saved_key = saved_key.decode('utf-8')
-
-        # Also handle str that looks like bytes repr: "b'...'"
-        if isinstance(saved_key, str) and saved_key.startswith("b'") and saved_key.endswith("'"):
-            saved_key = saved_key[2:-1]
-        if isinstance(saved_url, str) and saved_url.startswith("b'") and saved_url.endswith("'"):
-            saved_url = saved_url[2:-1]
+        saved_url = self._savedJackettSetting('jackett_url')
+        saved_key = self._savedJackettSetting('jackett_api_key')
 
         return jackett_url or saved_url, jackett_api_key or saved_key, None
 
