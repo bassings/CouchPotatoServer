@@ -195,6 +195,71 @@ class TestASuccessfulSync:
             assert {len(cells(settings, column)) for column in COLUMNS} == {1}
 
 
+class TestWhichStoredRowsSurviveAMerge:
+
+    def world_with(self, tmp_path, monkeypatch, **columns):
+        stored = {'torrentpotato': dict(columns, jackett_url=JACKETT, jackett_api_key=JACKETT_KEY)}
+        return group_settings(tmp_path, monkeypatch, stored=stored)
+
+    def sync(self, settings, monkeypatch):
+        monkeypatch.setattr(Env, '_settings', settings)
+        from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
+        provider = TorrentPotato.__new__(TorrentPotato)
+        monkeypatch.setattr(provider, 'getJackettIndexers',
+                            lambda url, key, movies_only=True: ([indexer('alpha', 'Alpha')], None))
+        return provider.jackettSync()
+
+    def test_a_row_holding_only_a_pass_key_keeps_its_credential_and_its_place(
+            self, tmp_path, monkeypatch):
+        columns = dict(host='https://one.invalid/api,,https://three.invalid/api',
+                       pass_key='placeholder-key-one,placeholder-orphan-key,placeholder-key-three',
+                       name='name-one,,name-three', use='1,1,1', seed_ratio='1,1,1',
+                       seed_time='40,40,40', extra_score='0,0,0')
+        with self.world_with(tmp_path, monkeypatch, **columns) as settings:
+            result = self.sync(settings, monkeypatch)
+
+            assert result['success'] is True
+            assert cells(settings, 'pass_key')[:3] == [
+                'placeholder-key-one', 'placeholder-orphan-key', 'placeholder-key-three']
+            assert cells(settings, 'host')[:3] == ['https://one.invalid/api', '', 'https://three.invalid/api']
+
+    def test_a_row_holding_only_a_name_is_kept_too(self, tmp_path, monkeypatch):
+        columns = dict(host='https://one.invalid/api,', pass_key='placeholder-key-one,',
+                       name='name-one,name-only', use='1,1', seed_ratio='1,1', seed_time='40,40',
+                       extra_score='0,0')
+        with self.world_with(tmp_path, monkeypatch, **columns) as settings:
+            self.sync(settings, monkeypatch)
+
+            assert cells(settings, 'name')[:2] == ['name-one', 'name-only']
+
+    def test_a_row_with_no_host_no_key_and_no_name_is_dropped_whole_and_later_rows_close_up(
+            self, tmp_path, monkeypatch):
+        columns = dict(host='https://one.invalid/api,,https://three.invalid/api',
+                       pass_key='placeholder-key-one,,placeholder-key-three',
+                       name='name-one,,name-three', use='1,1,0', seed_ratio='1,2,3',
+                       seed_time='40,41,42', extra_score='0,5,7')
+        with self.world_with(tmp_path, monkeypatch, **columns) as settings:
+            self.sync(settings, monkeypatch)
+
+            assert cells(settings, 'host')[:2] == ['https://one.invalid/api', 'https://three.invalid/api']
+            assert cells(settings, 'seed_time')[:2] == ['40', '42'], 'a later row keeps its OWN cells'
+            assert cells(settings, 'extra_score')[:2] == ['0', '7']
+
+    def test_a_row_the_user_never_enabled_is_not_switched_on(self, tmp_path, monkeypatch):
+        """With `use` all empty the group is aligned, and a row whose enabler cell
+        is missing is supplied `0`, never `1`."""
+        columns = dict(host='https://one.invalid/api,https://two.invalid/api',
+                       pass_key='placeholder-key-one,placeholder-key-two', name='n1,n2', use='',
+                       seed_ratio='1,1', seed_time='40,40', extra_score='0,0')
+        with self.world_with(tmp_path, monkeypatch, **columns) as settings:
+            result = self.sync(settings, monkeypatch)
+
+            assert result['success'] is True
+            assert cells(settings, 'use')[:2] == ['', '0']
+            assert '1' not in cells(settings, 'use')[:2]
+            assert cells(settings, 'use')[2] == '1', 'only the new Jackett indexer is enabled'
+
+
 class TestOneWriteInOneHold:
     """AC-DATA-9"""
 
