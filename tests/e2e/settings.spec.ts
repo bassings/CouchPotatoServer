@@ -1,6 +1,7 @@
 import type { Locator } from '@playwright/test';
 
 import { test, expect } from './fixtures';
+import { configColumns, configView } from './helpers';
 import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
@@ -488,5 +489,54 @@ test.describe('Settings: a password field cannot be half-edited', () => {
   test('the field is type=password, so it is not shoulder-surfable', async ({ page }) => {
     const field = await firstPasswordInput(page);
     await expect(field).toHaveAttribute('type', 'password');
+  });
+});
+
+// SEC-004 AC-QA-10: a named starting configuration is written to the worker's
+// config.ini BEFORE its server starts. This pins the mechanism itself, end to end:
+// the file, the provider's real reader over that file, and the settings read the page
+// uses must all show the fixture. Read-only, so it needs no persistence annotation.
+test.describe('Settings: a named starting configuration', () => {
+  test.use({ seedConfig: 'newznab_aligned#starting-configuration-check' });
+
+  test('the test\'s server started from the fixture, and the file and the reader agree', async ({ page, testServer }) => {
+    const columns = configColumns(testServer.configPath, 'newznab');
+    expect(columns.use).toBe('1,0,1');
+    expect(columns.api_key).toBe('placeholder-key-one,placeholder-key-two,placeholder-key-three');
+
+    const view = configView(testServer.configPath, 'newznab') as string[][];
+    expect(view.map((row) => row[0])).toEqual(['1', '0', '1']);
+
+    const read = await page.request.get(`${testServer.apiBase}/settings/`);
+    const values = (await read.json()).values.newznab;
+    expect(values.api_key).toBe(columns.api_key);
+    expect(values.host).toBe(columns.host);
+  });
+});
+
+// SEC-004 AC-QA-19: the persistence guard covers the group-save route. `test.fail()`
+// makes this pass only if the test FAILS, and the only thing that can fail it is the
+// guard's teardown (the body below asserts nothing): a group save with no persistence
+// annotation must fail the test, never reach the worker's config.ini unseen.
+// What this cannot tell is WHICH guard failed it (the block, or the changed-file audit
+// that follows); tests/unit/e2e_fixture_cleanup.test.ts pins the block on its own.
+test.describe('Settings: the persistence guard covers the group-save route', () => {
+  test.use({ seedConfig: 'newznab_aligned#guard-covers-group-save' });
+
+  test('an unannotated group save fails the test at teardown', async ({ page, testServer }) => {
+    test.fail(true, 'the guard must fail a test that saves a combine group without declaring it');
+    await page.goto('/settings/');
+    await expect(page.locator('h1')).toContainText('Settings');
+
+    await page.evaluate(async (apiBase) => {
+      await fetch(`${apiBase}/settings.save_group/`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ section: 'newznab', rows: [{
+          use: '1', host: 'https://placeholder-guard.invalid', api_key: 'placeholder-key-guard',
+          extra_score: '0', custom_tag: '',
+        }] }),
+      });
+    }, testServer.apiBase);
   });
 });

@@ -1,4 +1,9 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+
 import { expect, Locator, Page } from '@playwright/test';
+
+import { SETTINGS_WRITE_ROUTES } from './settings_persistence';
 
 /**
  * Shared E2E helpers.
@@ -156,11 +161,47 @@ export async function mockMovieTrailer(
  * browser interaction install this route before loading `/settings/`.
  */
 export async function mockSettingsSave(page: Page): Promise<void> {
-  await page.route('**/settings.save/**', route => route.fulfill({
+  // The group route too (SEC-004 AC-QA-19): a combined field saves through it, so a
+  // mock for `settings.save` alone leaves every combine-group click a real writer.
+  await page.route(SETTINGS_WRITE_ROUTES, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ success: true }),
   }));
+}
+
+const VENV_PYTHON = '.venv/bin/python';
+const PYTHON = process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
+
+/**
+ * Ask tests/helpers/config_readback.py about a worker's real `config.ini` (the path
+ * `workerServer.configPath` exposes). It runs as a MODULE from the repository root:
+ * run by path, its own directory shadows the standard library's `http`. It loads a
+ * copy, so reading never changes the file under test.
+ */
+function readConfig(...args: string[]): unknown {
+  return JSON.parse(execFileSync(
+    PYTHON, ['-m', 'tests.helpers.config_readback', ...args],
+    { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
+  ));
+}
+
+/** sha256 of the settings file's bytes: the "nothing was written" assertion. */
+export function configSha(configPath: string): string {
+  return readConfig('sha', configPath) as string;
+}
+
+/** A combine group's columns as the raw strings stored in the file (null: not stored). */
+export function configColumns(configPath: string, section: string): Record<string, string | null> {
+  return readConfig('columns', configPath, section) as Record<string, string | null>;
+}
+
+/**
+ * What the provider's real reader sees for the group stored in the file: `getHosts`
+ * for newznab and torrentpotato, the URLs the automation reader would fetch otherwise.
+ */
+export function configView(configPath: string, section: string): unknown[] {
+  return readConfig('view', configPath, section) as unknown[];
 }
 
 /**

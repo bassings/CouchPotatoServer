@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   execFileSync: vi.fn(),
   spawn: vi.fn(),
   writeFileSync: vi.fn(),
+  resolvePort: vi.fn((_configured: string | undefined, _offset?: number) => 5150),
 }));
 vi.mock('@playwright/test', () => ({
   test: { extend: (fixtures: typeof mocks.fixtures) => { mocks.fixtures = fixtures; } },
@@ -18,7 +19,7 @@ vi.mock('node:fs', () => ({
 }));
 vi.mock('node:timers/promises', () => ({ setTimeout: () => new Promise(() => {}) }));
 vi.mock('../e2e/port', () => ({
-  assertE2EPortAvailable: vi.fn(), resolveE2EPort: () => 5150,
+  assertE2EPortAvailable: vi.fn(), resolveE2EPort: mocks.resolvePort,
 }));
 import '../e2e/fixtures';
 
@@ -106,7 +107,7 @@ describe('settings fixture restoration', () => {
         }));
 
         const result = mocks.fixtures.settingsPersistenceGuard[0](
-          { page, workerServer }, use, { annotations: [{ type: 'persistsSettings' }] },
+          { page, testServer: workerServer }, use, { annotations: [{ type: 'persistsSettings' }] },
         );
         await expect(result).rejects.toThrow(/snapshot/i);
         await expect(result).rejects.not.toThrow('private-api-key');
@@ -132,7 +133,7 @@ describe('settings fixture restoration', () => {
       return { ok: name !== 'failed' || failure !== 'http', json: async () => ({ success: name !== 'failed' }) };
     }));
     const result = mocks.fixtures.settingsPersistenceGuard[0](
-      { page, workerServer }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },
+      { page, testServer: workerServer }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },
     );
     const error = await result.catch((err: Error) => err);
     expect(writes).toEqual(['failed', 'enabled', 'leftover']);
@@ -153,7 +154,7 @@ describe('settings fixture restoration', () => {
     };
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ values: {} }) })));
     const result = mocks.fixtures.settingsPersistenceGuard[0](
-      { page, workerServer }, async () => {
+      { page, testServer: workerServer }, async () => {
         await onRoute({
           request: () => ({ url: () => `${workerServer.apiBase}/settings.save/?value=private-password` }),
           fulfill: vi.fn(),
@@ -184,7 +185,7 @@ describe('settings fixture restoration', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     const result = mocks.fixtures.settingsPersistenceGuard[0](
-      { page, workerServer }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },
+      { page, testServer: workerServer }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },
     );
     if (verificationUnavailable) {
       await expect(result).rejects.toThrow(
@@ -195,5 +196,208 @@ describe('settings fixture restoration', () => {
     }
     expect(reads).toBe(3);
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
+
+// SEC-004 AC-QA-19: the persistence guard covers the group-save route.
+describe('settings fixture group-save coverage', () => {
+  const workerServer = { apiBase: 'http://localhost:5150/api/private-api-key' };
+  const COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
+  const options = {
+    newznab: { groups: [{ options: [{ name: 'api_key', type: 'combined', combine: COLUMNS }] }] },
+    core: { groups: [{ options: [{ name: 'port' }] }] },
+  };
+  const aligned = {
+    use: '1,0', host: 'https://placeholder-one.invalid,https://placeholder-two.invalid',
+    api_key: 'placeholder-key-one,placeholder-key-two', extra_score: '5,10', custom_tag: 'tag-one,tag-two',
+  };
+  const snapshot = (newznab: Record<string, string>, state = { misaligned: false, rows: 2 }, core = { port: '5150' }) => ({
+    options, values: { newznab, core }, combine_state: { newznab: state },
+  });
+  const edited = { ...aligned, host: 'https://placeholder-edited.invalid,https://placeholder-two.invalid' };
+  const GROUP_URL = `${workerServer.apiBase}/settings.save_group/`;
+
+  type Write = { url: string; options: any };
+  function stubServer(reads: unknown[], failGroup = false) {
+    const writes: Write[] = [];
+    let read = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+      if (!init) return { ok: true, json: async () => reads[read++] };
+      writes.push({ url, options: init });
+      return { ok: !failGroup, json: async () => ({ success: !failGroup }) };
+    }));
+    return { writes, reads: () => read };
+  }
+  const run = (annotations: { type: string }[], use: () => Promise<void> = async () => {}) => {
+    const page = { route: vi.fn(), close: vi.fn() };
+    const result = mocks.fixtures.settingsPersistenceGuard[0]({ page, testServer: workerServer }, use, { annotations });
+    return { page, result };
+  };
+
+  it('intercepts the group-save route as well as the per-column one', async () => {
+    stubServer([snapshot(aligned), snapshot(aligned)]);
+    const { page, result } = run([]);
+    await result;
+
+    expect(page.route).toHaveBeenCalledTimes(1);
+    const pattern = page.route.mock.calls[0][0] as RegExp;
+    expect(pattern).toBeInstanceOf(RegExp);
+    expect(pattern.test(GROUP_URL)).toBe(true);
+    expect(pattern.test(`${workerServer.apiBase}/settings.save/`)).toBe(true);
+    expect(pattern.test(`${workerServer.apiBase}/settings/`)).toBe(false);
+    expect(pattern.test(`${workerServer.apiBase}/settings.saveother/`)).toBe(false);
+  });
+
+  it('blocks an unannotated group save and fails the test at teardown without the request URL', async () => {
+    stubServer([snapshot(aligned), snapshot(aligned)]);
+    let onRoute: (route: unknown) => Promise<void> = async () => {};
+    const fulfill = vi.fn();
+    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn() };
+    const result = mocks.fixtures.settingsPersistenceGuard[0](
+      { page, testServer: workerServer },
+      async () => { await onRoute({ request: () => ({ url: () => GROUP_URL }), fulfill }); },
+      { annotations: [] },
+    );
+    const error = await result.catch((err: Error) => err);
+
+    expect(fulfill).toHaveBeenCalledWith(expect.objectContaining({ status: 409 }));
+    expect((error as Error).message).toContain('1 unmocked settings.save request(s)');
+    expect((error as Error).message).not.toContain('private-api-key');
+  });
+
+  it('restores a changed group with ONE group save of its baseline rows, never per column', async () => {
+    const server = stubServer([snapshot(aligned), snapshot(edited), snapshot(aligned)]);
+    const { result } = run([{ type: 'persistsSettings' }]);
+    await result;
+
+    expect(server.writes).toHaveLength(1);
+    expect(server.writes[0].url).toBe(GROUP_URL);
+    expect(server.writes[0].options.headers['content-type']).toMatch(/^application\/json/);
+    expect(JSON.parse(server.writes[0].options.body)).toEqual({
+      section: 'newznab',
+      rows: [
+        { use: '1', host: 'https://placeholder-one.invalid', api_key: 'placeholder-key-one', extra_score: '5', custom_tag: 'tag-one' },
+        { use: '0', host: 'https://placeholder-two.invalid', api_key: 'placeholder-key-two', extra_score: '10', custom_tag: 'tag-two' },
+      ],
+    });
+    expect(server.reads()).toBe(3);
+  });
+
+  it('still restores a non-combine option in the same section per column', async () => {
+    const before = { ...snapshot(aligned), values: { newznab: aligned, core: { port: '5150' } } };
+    const after = { ...snapshot(edited), values: { newznab: edited, core: { port: '5199' } } };
+    const server = stubServer([before, after, before]);
+    const { result } = run([{ type: 'persistsSettings' }]);
+    await result;
+
+    expect(server.writes.map((write) => write.url)).toEqual(
+      expect.arrayContaining([GROUP_URL, `${workerServer.apiBase}/settings.save/`]),
+    );
+    expect(server.writes).toHaveLength(2);
+  });
+
+  it('skips the restore and its verification for a misaligned baseline, and does not fail', async () => {
+    const short = { ...aligned, api_key: 'placeholder-key-one', use: '1' };
+    const server = stubServer([snapshot(short, { misaligned: true, rows: 2 }), snapshot(edited, { misaligned: true, rows: 2 })]);
+    const { result } = run([{ type: 'persistsSettings' }]);
+    await expect(result).resolves.toBeUndefined();
+
+    expect(server.writes).toHaveLength(0);
+  });
+
+  it('skips a baseline a group save cannot reproduce (a column shorter than the row count)', async () => {
+    const shortColumn = { ...aligned, extra_score: '5' };
+    const server = stubServer([snapshot(shortColumn), snapshot({ ...shortColumn, host: 'changed,changed' })]);
+    const { result } = run([{ type: 'persistsSettings' }]);
+    await expect(result).resolves.toBeUndefined();
+
+    expect(server.writes).toHaveLength(0);
+  });
+
+  it('reports a failed group restore by section, not by column', async () => {
+    stubServer([snapshot(aligned), snapshot(edited), snapshot(edited)], true);
+    const { result } = run([{ type: 'persistsSettings' }]);
+    const error = await result.catch((err: Error) => err);
+
+    expect((error as Error).message).toContain('newznab (group)');
+    expect((error as Error).message).not.toContain('placeholder');
+  });
+});
+
+// SEC-004 AC-QA-10: a test that names a seedConfig gets its own server, started from
+// that named fixture BEFORE it starts; a test that names none shares the worker's.
+describe('seedConfig test server', () => {
+  const shared = { baseURL: 'http://localhost:5150', apiBase: 'http://localhost:5150/api/k', configPath: '/shared/config.ini' };
+
+  function serverProcess() {
+    const proc = Object.assign(new EventEmitter(), {
+      exitCode: null as number | null,
+      signalCode: null,
+      stdout: new EventEmitter(), stderr: new EventEmitter(),
+      kill: vi.fn(() => { proc.exitCode = 0; proc.emit('exit', 0, null); }),
+    });
+    return proc;
+  }
+
+  function stubReadyServer() {
+    mocks.spawn.mockReturnValue(serverProcess());
+    mocks.execFileSync.mockImplementation((_python, args) => (args[1] === 'prepare' ? '/seeded-data' : ''));
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, text: async () => 'poster-card' })
+      .mockResolvedValueOnce({ ok: true, text: async () => 'movie-releases' })
+      .mockResolvedValueOnce({ text: async () => "apiBase: '/api/seeded-key'" }));
+  }
+
+  it('shares the worker server, and starts nothing, when no seedConfig is named', async () => {
+    const use = vi.fn();
+    await (mocks.fixtures.testServer as any)({ seedConfig: '', workerServer: shared }, use, { parallelIndex: 0, workerIndex: 1 });
+
+    expect(use).toHaveBeenCalledWith(shared);
+    expect(mocks.execFileSync).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
+  it('seeds the named fixture before the server starts, on a port and data dir of its own', async () => {
+    stubReadyServer();
+    let served: Record<string, string> | undefined;
+    await (mocks.fixtures.testServer as any)(
+      { seedConfig: 'newznab_aligned#a-test', workerServer: shared },
+      async (server: Record<string, string>) => { served = server; },
+      { parallelIndex: 0, workerIndex: 1 },
+    );
+
+    const calls = mocks.execFileSync.mock.calls.map((call) => call[1] as string[]);
+    const seed = calls.find((args) => args[0] === 'scripts/seed_e2e_data.py');
+    expect(seed).toContain('--config-fixture=newznab_aligned#a-test');
+    expect(calls.find((args) => args[1] === 'prepare')).toEqual(['scripts/e2e_worker_data.py', 'prepare', '20']);
+    expect(mocks.resolvePort).toHaveBeenCalledWith(undefined, 20);
+    expect(served?.configPath).toBe('/seeded-data/config.ini');
+  });
+
+  it('seeds the fixture before it spawns the server', async () => {
+    stubReadyServer();
+    const order: string[] = [];
+    mocks.execFileSync.mockImplementation((_python, args) => {
+      order.push(String(args[0]));
+      return args[1] === 'prepare' ? '/seeded-data' : '';
+    });
+    mocks.spawn.mockImplementation(() => { order.push('spawn'); return serverProcess(); });
+    await (mocks.fixtures.testServer as any)(
+      { seedConfig: 'newznab_aligned', workerServer: shared }, async () => {}, { parallelIndex: 0, workerIndex: 1 },
+    );
+
+    expect(order.indexOf('scripts/seed_e2e_data.py')).toBeLessThan(order.indexOf('spawn'));
+  });
+
+  it('stops the dedicated server and frees its data dir after the test', async () => {
+    stubReadyServer();
+    await (mocks.fixtures.testServer as any)(
+      { seedConfig: 'newznab_aligned', workerServer: shared }, async () => {}, { parallelIndex: 0, workerIndex: 1 },
+    );
+
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
+      expect.any(String), ['scripts/e2e_worker_data.py', 'cleanup', '20'], { stdio: 'pipe' },
+    );
   });
 });

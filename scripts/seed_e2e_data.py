@@ -629,8 +629,231 @@ def _enable_authentication(data_dir, plaintext):
     return True
 
 
-def seed(data_dir, password=None):
+# --- Named starting configurations (SEC-004 AC-QA-10) -----------------------
+#
+# A starting state for a multi-row settings group (one comma-separated list per
+# column, paired by position) cannot be created through the API once per-column
+# saves are refused, and the server reads `config.ini` only at start. So each is
+# a named fixture, written here BEFORE the server starts. Every fixture states
+# only the options it sets; the server's registered defaults fill in the rest,
+# exactly as they do for a real install that never touched them.
+#
+# Placeholders are word-style and obviously fake. Cells are joined at runtime
+# (`_cells`) so that no literal here is two credentials joined by a comma.
+
+
+def _cells(*cells):
+    return ','.join(cells)
+
+
+def _newznab(**columns):
+    return {'newznab': columns}
+
+
+def _three_hosts():
+    return _cells(*('https://placeholder-%s.invalid/api' % word for word in ('one', 'two', 'three')))
+
+
+def _fixture_newznab_aligned():
+    return _newznab(
+        use=_cells('1', '0', '1'),
+        host=_three_hosts(),
+        api_key=_cells('placeholder-key-one', 'placeholder-key-two', 'placeholder-key-three'),
+        extra_score=_cells('5', '10', '15'),
+        custom_tag=_cells('tag-one', 'tag-two', 'tag-three'),
+    )
+
+
+def _fixture_newznab_wizard_written():
+    """`wizard.html` writes `host`, `api_key` and `use` only, so `extra_score` and
+    `custom_tag` stay at their six defaults: not misaligned (Definitions)."""
+    return _newznab(
+        use=_cells('1', '1', '1'),
+        host=_three_hosts(),
+        api_key=_cells('placeholder-key-one', 'placeholder-key-two', 'placeholder-key-three'),
+    )
+
+
+def _fixture_newznab_key_in_row_four():
+    return _newznab(api_key=_cells('', '', '', 'placeholder-key-four', '', ''))
+
+
+def _fixture_newznab_misaligned_key_short():
+    """Three hosts; `api_key` and `use` short together by one cell."""
+    return _newznab(
+        use=_cells('1', '0'),
+        host=_three_hosts(),
+        api_key=_cells('placeholder-key-one', 'placeholder-key-two'),
+    )
+
+
+def _fixture_newznab_misaligned_use_short():
+    """Only `use` is short: the shape on which `isEnabled` raises on master."""
+    return _newznab(
+        use=_cells('1', '0'),
+        host=_three_hosts(),
+        api_key=_cells('placeholder-key-one', 'placeholder-key-two', 'placeholder-key-three'),
+    )
+
+
+def _fixture_newznab_untrimmed():
+    """A space after each separator: untouched on disk until the group is edited."""
+    return _newznab(
+        use='1, 0',
+        host='https://placeholder-one.invalid/api, https://placeholder-two.invalid/api',
+        api_key='placeholder-key-one, placeholder-key-two',
+    )
+
+
+def _fixture_newznab_legacy_bytes():
+    """Values stored as Python bytes literals, as a long-lived config can hold."""
+    return _newznab(
+        use="b'1,0'",
+        host="b'https://placeholder-one.invalid/api,https://placeholder-two.invalid/api'",
+        api_key="b'placeholder-key-one,placeholder-key-two'",
+    )
+
+
+def _fixture_itunes_shipped():
+    """The shipped iTunes default, written explicitly: a URL then a comma."""
+    return {'itunes': {
+        'automation_urls': 'https://itunes.apple.com/rss/topmovies/limit=25/xml,',
+        'automation_urls_use': ',',
+    }}
+
+
+def _fixture_torrentpotato_aligned():
+    return {'torrentpotato': {
+        'use': _cells('1', '0', '1'),
+        'host': _three_hosts(),
+        'pass_key': _cells('placeholder-pass-one', 'placeholder-pass-two', 'placeholder-pass-three'),
+        'name': _cells('name-one', 'name-two', 'name-three'),
+        'seed_ratio': _cells('1', '2', '3'),
+        'seed_time': _cells('40', '50', '60'),
+        'extra_score': _cells('0', '5', '10'),
+    }}
+
+
+def _fixture_torrentpotato_misaligned():
+    """Three hosts, two pass keys, three uses: a key shared by the wrong host."""
+    stored = _fixture_torrentpotato_aligned()
+    stored['torrentpotato']['pass_key'] = _cells('placeholder-pass-one', 'placeholder-pass-two')
+    return stored
+
+
+def _fixture_torrentpotato_use_short():
+    stored = _fixture_torrentpotato_aligned()
+    stored['torrentpotato']['use'] = _cells('1', '0')
+    return stored
+
+
+def _automation(section, urls, use):
+    return {section: {'automation_urls': _cells(*urls), 'automation_urls_use': _cells(*use)}}
+
+
+def _automation_urls(section):
+    return ['https://placeholder-%s-%s.invalid/list' % (section, word) for word in ('one', 'two', 'three')]
+
+
+def _merge(*fixtures):
+    merged = {}
+    for fixture in fixtures:
+        for section, options in fixture.items():
+            merged.setdefault(section, {}).update(options)
+    return merged
+
+
+def _fixture_all_groups_aligned():
+    return _merge(
+        _fixture_newznab_aligned(),
+        _fixture_torrentpotato_aligned(),
+        _fixture_itunes_shipped(),
+        _automation('imdb', _automation_urls('imdb')[:2], ('1', '0')),
+        _automation('letterboxd', _automation_urls('letterboxd')[:2], ('1', '0')),
+    )
+
+
+def _fixture_all_groups_misaligned():
+    return _merge(
+        _fixture_newznab_misaligned_key_short(),
+        _fixture_torrentpotato_misaligned(),
+        _automation('imdb', _automation_urls('imdb'), ('1', '0')),
+        _automation('itunes', _automation_urls('itunes'), ('1', '0')),
+        _automation('letterboxd', _automation_urls('letterboxd'), ('1', '0')),
+    )
+
+
+_CONFIG_FIXTURES = {
+    'fresh_defaults': dict,
+    'newznab_aligned': _fixture_newznab_aligned,
+    'newznab_wizard_written': _fixture_newznab_wizard_written,
+    'newznab_key_in_row_four': _fixture_newznab_key_in_row_four,
+    'newznab_misaligned_key_short': _fixture_newznab_misaligned_key_short,
+    'newznab_misaligned_use_short': _fixture_newznab_misaligned_use_short,
+    'newznab_untrimmed': _fixture_newznab_untrimmed,
+    'newznab_legacy_bytes': _fixture_newznab_legacy_bytes,
+    'itunes_shipped': _fixture_itunes_shipped,
+    'torrentpotato_aligned': _fixture_torrentpotato_aligned,
+    'torrentpotato_misaligned': _fixture_torrentpotato_misaligned,
+    'torrentpotato_use_short': _fixture_torrentpotato_use_short,
+    'all_groups_aligned': _fixture_all_groups_aligned,
+    'all_groups_misaligned': _fixture_all_groups_misaligned,
+}
+
+
+def config_fixture(name):
+    """The stored options (`{section: {option: raw value}}`) a named fixture sets.
+
+    A `#label` after the name is ignored. A test that WRITES a fixture's group owns
+    that fixture value alone, because the E2E server reads `config.ini` once and a
+    second writer would see the first one's rows; many tests need the same shape,
+    so the label makes the value distinct while the content stays single-sourced.
+    A fresh copy every call, so a caller cannot change the fixture for the next.
+    """
+    base = name.split('#', 1)[0]
+    if base not in _CONFIG_FIXTURES:
+        raise ValueError('unknown config fixture %r (known: %s)' % (base, ', '.join(sorted(_CONFIG_FIXTURES))))
+    return _CONFIG_FIXTURES[base]()
+
+
+def apply_config_fixture(data_dir, name):
+    """Merge a named fixture into `<data_dir>/config.ini`. Writes nothing else.
+
+    Scoped to `.e2e*` data dirs for the reason `_enable_authentication` is: this
+    overwrites settings, and settings sit on the irreplaceable tier.
+    """
+    import configparser
+
+    stored = config_fixture(name)
+    basename = os.path.basename(os.path.realpath(os.path.abspath(data_dir)).rstrip(os.sep))
+    if not basename.startswith('.e2e'):
+        raise ValueError(
+            'refusing to write a config fixture into %r: it is not a .e2e* data dir, '
+            'and the fixture would overwrite real settings' % data_dir
+        )
+
+    config_file = os.path.join(data_dir, 'config.ini')
+    parser = configparser.RawConfigParser()
+    if os.path.exists(config_file):
+        parser.read(config_file, encoding='utf-8')
+    for section, options in stored.items():
+        if not parser.has_section(section):
+            parser.add_section(section)
+        for option, value in options.items():
+            parser.set(section, option, value)
+
+    os.makedirs(data_dir, exist_ok=True)
+    tmp = config_file + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as handle:
+        parser.write(handle)
+    os.replace(tmp, config_file)
+    print('  config fixture: %s' % name.split('#', 1)[0])
+
+
+def seed(data_dir, password=None, config_fixture_name=None):
     """Seed the profile, movie, and releases. Returns a summary dict."""
+    if config_fixture_name:
+        apply_config_fixture(data_dir, config_fixture_name)
     _bind_to_loopback(data_dir)
     if password:
         _enable_authentication(data_dir, password)
@@ -846,7 +1069,19 @@ def main(argv=None):
              'Refused unless --data_dir is a .e2e* directory. Omit it and the '
              'instance is seeded open, as every other E2E worker is.',
     )
+    parser.add_argument(
+        '--config-fixture', default=None, dest='config_fixture',
+        help='Write a named starting configuration into <data_dir>/config.ini '
+             'BEFORE the server starts (SEC-004 AC-QA-10): a multi-row settings '
+             'group in a shape the API can no longer create. Refused unless '
+             '--data_dir is a .e2e* directory. Omit it for a fresh install.',
+    )
     args = parser.parse_args(argv)
+    if args.config_fixture:
+        try:
+            config_fixture(args.config_fixture)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     if not _is_safe_seed_target(args.data_dir):
         print(
@@ -860,7 +1095,7 @@ def main(argv=None):
         return 1
 
     try:
-        result = seed(args.data_dir, password=args.password)
+        result = seed(args.data_dir, password=args.password, config_fixture_name=args.config_fixture)
     except Exception as exc:  # noqa: BLE001 -- report and exit non-zero, don't traceback-spam CI
         print('ERROR: failed to seed E2E data: %s' % exc, file=sys.stderr)
         return 1

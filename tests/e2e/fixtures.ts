@@ -29,9 +29,13 @@ import { test as base, expect } from '@playwright/test';
 import { assertE2EPortAvailable, resolveE2EPort } from './port';
 import {
   allowsSettingsPersistence,
+  baselineGroupRows,
   changedSettings,
+  combineColumns,
   serializeSettingValue,
   SETTINGS_PERSISTENCE_ANNOTATION,
+  SETTINGS_WRITE_ROUTES,
+  splitGroupWrites,
 } from './settings_persistence';
 
 // Same interpreter-resolution order as playwright.config.ts used to apply
@@ -85,7 +89,12 @@ const LOG_DIR = 'test-results';
 // tests) and the seed script is Python.
 const SEEDED_MOVIE_ID = 'e2e-seed-movie-001';
 
-type WorkerServer = { baseURL: string; apiBase: string };
+/**
+ * `configPath` is the worker's real `config.ini`, for a test that asserts on the FILE
+ * (through tests/e2e/helpers.ts' `configSha`, `configColumns` and `configView`) rather
+ * than on a request body or the page's own state.
+ */
+type WorkerServer = { baseURL: string; apiBase: string; configPath: string };
 type Exit = { code: number | null; signal: NodeJS.Signals | null };
 
 async function loadSettingsSnapshot(
@@ -276,14 +285,55 @@ async function stopServer(proc: ChildProcess): Promise<void> {
   }
 }
 
-export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServer: WorkerServer }>({
-  workerServer: [async ({}, use, workerInfo) => {
-    // parallelIndex (not workerIndex): bounded to the actual concurrency
-    // level (0..workers-1) and STABLE across a worker restart after a
+/** Put one combine group back with one group save. False on any failure. */
+async function restoreGroup(apiBase: string, section: string, rows: unknown): Promise<boolean> {
+  try {
+    const response = await fetch(`${apiBase}/settings.save_group/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ section, rows }),
+    });
+    const payload = await response.json().catch(() => null);
+    return response.ok && payload?.success !== false;
+  } catch {
+    return false;
+  }
+}
+
+/** Put one setting back by its own save. False on any failure, or a masked baseline. */
+async function restoreColumn(apiBase: string, section: string, name: string, value: unknown): Promise<boolean> {
+  if (typeof value === 'string' && /^\*+$/.test(value)) return false;
+  try {
+    const body = new URLSearchParams({ section, name, value: serializeSettingValue(value) });
+    const response = await fetch(`${apiBase}/settings.save/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body,
+    });
+    const payload = await response.json().catch(() => null);
+    return response.ok && payload?.success !== false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One CouchPotato server on its own port and data dir, for as long as `use` runs.
+ *
+ * The worker's own server is one of these, and so is the dedicated server a test gets
+ * when it names a `seedConfig`: one lifecycle, so a startup failure, a mid-run crash and
+ * a data-dir cleanup are handled once. `index` selects the port (BASE_PORT + index) and
+ * the data dir (`e2e_worker_data.py`'s `.e2e-w<index>-data`).
+ */
+type ServeOptions = { index: number; workerIndex: number; seedConfig: string };
+
+const serverLifecycle = {
+  async serve({ index: idx, workerIndex, seedConfig }: ServeOptions, use: (server: WorkerServer) => Promise<void>) {
+    // The worker's index is parallelIndex (not workerIndex): bounded to the actual
+    // concurrency level (0..workers-1) and STABLE across a worker restart after a
     // crash, so a retried worker reserves the SAME data dir its crashed
     // predecessor had -- which is exactly the case cleanup-on-failure
     // below exists for.
-    const idx = workerInfo.parallelIndex;
     const port = resolveE2EPort(process.env.BASE_PORT, idx);
     const baseURL = `http://localhost:${port}`;
 
@@ -308,7 +358,9 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
       // fail the worker, never start a server against an empty database
       // (same ordering and the same "no || true" contract
       // scripts/seed_e2e_data.py's own docstring establishes).
-      execFileSync(PYTHON, ['scripts/seed_e2e_data.py', `--data_dir=${dataDir}`], { stdio: 'pipe' });
+      const seedArgs = ['scripts/seed_e2e_data.py', `--data_dir=${dataDir}`];
+      if (seedConfig) seedArgs.push(`--config-fixture=${seedConfig}`);
+      execFileSync(PYTHON, seedArgs, { stdio: 'pipe' });
 
       // --console_log is load-bearing, not noise. runner.py computes
       // `console = (debug or options.console_log) and not quiet and not
@@ -337,7 +389,11 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
       if (!apiBaseMatch) {
         throw new Error(`worker ${idx}: rendered root did not expose CP.apiBase`);
       }
-      await use({ baseURL, apiBase: new URL(apiBaseMatch[1], baseURL).toString().replace(/\/$/, '') });
+      await use({
+        baseURL,
+        apiBase: new URL(apiBaseMatch[1], baseURL).toString().replace(/\/$/, ''),
+        configPath: path.resolve(dataDir, 'config.ini'),
+      });
     } catch (err) {
       try {
         if (proc) await stopServer(proc);
@@ -347,7 +403,7 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
       // Persist BEFORE the cleanup below removes the data dir. The startup
       // path is the one the fixture can spend 60 seconds in, and it was the
       // one path that kept nothing.
-      writeServerLog(idx, workerInfo.workerIndex, output);
+      writeServerLog(idx, workerIndex, output);
       // Best-effort: a worker that failed to start still frees its data
       // dir, so a Playwright retry of this same worker slot (AC-QA-56's
       // `retries: 2`) does not immediately fail a SECOND time on
@@ -370,7 +426,7 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
     // explain a mid-run failure was the one thing the run never kept.
     // test-results/ is Playwright's own output dir, already gitignored and
     // already where traces and screenshots land.
-    const logPath = writeServerLog(idx, workerInfo.workerIndex, output);
+    const logPath = writeServerLog(idx, workerIndex, output);
 
     await stopServer(proc);
     execFileSync(PYTHON, ['scripts/e2e_worker_data.py', 'cleanup', String(idx)], { stdio: 'pipe' });
@@ -387,19 +443,60 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
         `Last output:\n${output.slice(-4000)}`,
       );
     }
+  },
+};
+
+/**
+ * A dedicated server for a test that names a `seedConfig` starts at BASE_PORT + this
+ * + the worker's parallelIndex, with the data dir of the same index, so it can never
+ * collide with a worker's own server (BASE_PORT + parallelIndex) inside 5150-5200.
+ */
+const SEEDED_SERVER_INDEX_BASE = 20;
+
+type TestOptions = { seedConfig: string; testServer: WorkerServer };
+
+export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions, { workerServer: WorkerServer }>({
+  workerServer: [async ({}, use, workerInfo) => {
+    await serverLifecycle.serve(
+      { index: workerInfo.parallelIndex, workerIndex: workerInfo.workerIndex, seedConfig: '' },
+      use,
+    );
   }, { scope: 'worker', auto: true }],
 
-  baseURL: async ({ workerServer }, use) => {
-    await use(workerServer.baseURL);
+  // The named starting configuration (scripts/seed_e2e_data.py `--config-fixture`) this
+  // test's server is seeded with BEFORE it starts, set per `describe` with
+  // `test.use({ seedConfig })` (SEC-004 AC-QA-10). Empty: the worker's shared server.
+  //
+  // TEST-scoped, not worker-scoped as the spec's AC-QA-10 words it: Playwright refuses
+  // `test.use({ seedConfig })` inside a describe for a worker-scoped option ("it forces
+  // a new worker"; measured on this repo's Playwright). A test that names a fixture gets
+  // its OWN server, started for that test and stopped after it, so no test can start from
+  // another's saved rows. The one-writer-per-value rule is then belt and braces, kept
+  // and checked statically (tests/unit/e2e_seed_config_ownership.test.ts).
+  seedConfig: ['', { option: true }],
+
+  // The server THIS test talks to: its own seeded one, or the worker's.
+  testServer: async ({ seedConfig, workerServer }, use, testInfo) => {
+    if (!seedConfig) {
+      await use(workerServer);
+      return;
+    }
+    await serverLifecycle.serve(
+      { index: SEEDED_SERVER_INDEX_BASE + testInfo.parallelIndex, workerIndex: testInfo.workerIndex, seedConfig },
+      use,
+    );
   },
 
-  settingsPersistenceGuard: [async ({ page, workerServer }, use, testInfo) => {
+  baseURL: async ({ testServer }, use) => {
+    await use(testServer.baseURL);
+  },
+
+  settingsPersistenceGuard: [async ({ page, testServer }, use, testInfo) => {
     let blocked = 0;
-    const pattern = '**/settings.save/**';
-    const settingsURL = `${workerServer.apiBase}/settings/`;
+    const settingsURL = `${testServer.apiBase}/settings/`;
     const before = await loadSettingsSnapshot(settingsURL, 'baseline');
 
-    await page.route(pattern, async (route) => {
+    await page.route(SETTINGS_WRITE_ROUTES, async (route) => {
       if (allowsSettingsPersistence(testInfo.annotations)) {
         await route.continue();
         return;
@@ -424,39 +521,42 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
     const after = await loadSettingsSnapshot(settingsURL, 'after');
     const changed = changedSettings(before, after);
 
+    // A combine group is restored by ONE group save of its baseline rows, never per
+    // column: a per-column restore leaves a group half-restored when one request fails,
+    // and the per-column route refuses these columns from SEC-004 P6.
+    const { groups, perColumn } = splitGroupWrites(before, changed);
     const restoreFailures = new Set<string>();
-    for (const { section, name } of changed) {
-      const value = before?.values?.[section]?.[name];
-      if (typeof value === 'string' && /^\*+$/.test(value)) {
-        restoreFailures.add(`${section}.${name}`);
-        continue;
+    const restorable = groups.filter((section) => baselineGroupRows(before, section) !== null);
+    for (const section of restorable) {
+      if (!await restoreGroup(testServer.apiBase, section, baselineGroupRows(before, section))) {
+        restoreFailures.add(`${section} (group)`);
       }
-      try {
-        const body = new URLSearchParams({ section, name, value: serializeSettingValue(value) });
-        const response = await fetch(`${workerServer.apiBase}/settings.save/`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-          body,
-        });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok || payload?.success === false) {
-          restoreFailures.add(`${section}.${name}`);
-        }
-      } catch {
+    }
+    for (const { section, name } of perColumn) {
+      if (!await restoreColumn(testServer.apiBase, section, name, before?.values?.[section]?.[name])) {
         restoreFailures.add(`${section}.${name}`);
       }
     }
 
+    // A group the save cannot reproduce (misaligned, or a column shorter than the row
+    // count) is neither restored nor verified. That is safe only because a test that
+    // writes such a group owns its worker (AC-QA-10); the audit below still fails an
+    // unannotated write.
+    const columns = combineColumns(before);
+    const skipped = new Set(groups
+      .filter((section) => !restorable.includes(section))
+      .flatMap((section) => columns[section].map((name) => `${section}.${name}`)));
+    const verified = changed.filter(({ section, name }) => !skipped.has(`${section}.${name}`));
     let verificationFailed = false;
-    if (changed.length > 0) {
+    if (verified.length > 0) {
       try {
         const restored = await loadSettingsSnapshot(settingsURL, 'restored');
         for (const { section, name } of changedSettings(before, restored)) {
-          restoreFailures.add(`${section}.${name}`);
+          if (!skipped.has(`${section}.${name}`)) restoreFailures.add(`${section}.${name}`);
         }
       } catch {
         verificationFailed = true;
-        for (const { section, name } of changed) restoreFailures.add(`${section}.${name}`);
+        for (const { section, name } of verified) restoreFailures.add(`${section}.${name}`);
       }
     }
     if (restoreFailures.size > 0) {
@@ -468,7 +568,8 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
 
     if (blocked > 0 || (changed.length > 0 && !allowsSettingsPersistence(testInfo.annotations))) {
       throw new Error(
-        `This test sent ${Math.max(blocked, changed.length)} unmocked settings.save request(s), which would `
+        `This test sent ${Math.max(blocked, changed.length)} unmocked settings.save request(s) `
+        + `(settings.save or settings.save_group), which would `
         + `persist into the worker database and leak into later tests. Mock settings.save, `
         + `or explicitly annotate an intentional persistence test with `
         + `{ type: '${SETTINGS_PERSISTENCE_ANNOTATION}' }.`,
