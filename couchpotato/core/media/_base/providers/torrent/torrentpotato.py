@@ -39,9 +39,10 @@ class Base(TorrentProvider):
                 'jackett_url': {'desc': 'Jackett base URL (optional). Must come with jackett_api_key; '
                                         'if neither is sent the saved pair is used'},
                 'jackett_api_key': {'desc': 'Jackett API key (optional). Empty or blank counts as not sent'},
-                'replace': {'desc': 'true (also 1, yes, on) replaces every stored indexer with the '
-                                    'Jackett ones; anything else merges. Refused on a merge when the '
-                                    'stored rows do not line up'},
+                'replace': {'desc': 'Replaces every stored indexer with the Jackett ones only for '
+                                    'boolean true or the text true, 1, yes or on (any case). Anything '
+                                    'else merges, including the number 1 in a JSON body, a list and '
+                                    'an object. A merge is refused when the stored rows do not line up'},
             },
             'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
         })

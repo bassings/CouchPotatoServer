@@ -740,8 +740,9 @@ class Settings:
         The columns whose cells pair up across a row, declared once as a
         `pairing` list on the same `combined` option as `combine` and derived the
         way `combine_groups` is. A group declared without one is a programming
-        error, caught by a unit test over every registered group; at runtime it
-        falls back to every column pairing, which can only err toward refusing.
+        error: a unit test reads each group's raw declaration for it. This method
+        does not check; it falls back to every column pairing, which errs toward
+        refusing and so cannot be used to detect the omission.
         """
         return {section: tuple(option.get('pairing') or option['combine'])
                 for section, option in self._combined_options()}

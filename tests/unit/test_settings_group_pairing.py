@@ -7,7 +7,9 @@ beside ``combine``, and ``Settings`` derives them the way it derives the groups
 ``group_stored_rows(section)`` take no column list, so nothing restates them.
 
 A group declared without ``pairing`` is a programming error. It is caught here,
-over every registered group, not at runtime.
+over the raw declaration of every registered group. At runtime ``combine_pairing``
+falls back to every column pairing, which errs toward refusing and hides nothing
+from a user, but is not itself a check.
 
 Hosts are ``.invalid`` and every credential is a ``placeholder-`` string.
 """
@@ -45,12 +47,19 @@ class TestTheDeclaration:
         assert settings.combine_pairing() == EXPECTED
 
     def test_every_registered_group_declares_a_pairing_inside_its_columns(self, settings):
-        groups = settings.combine_groups()
-        assert set(groups) == set(SECTIONS)
-        for section, columns in groups.items():
-            pairing = settings.combine_pairing()[section]
-            assert pairing, '%s declares no pairing' % section
-            assert set(pairing) <= set(columns), '%s pairs a column it does not have' % section
+        """Read from the RAW registered option dicts. `combine_pairing()` falls back to
+        every column for a group with no `pairing`, so it cannot show the omission."""
+        raw = {}
+        for section_key, section in settings.options.items():
+            for group in section.get('groups', []):
+                for option in group.get('options', []):
+                    if option.get('type') == 'combined' and option.get('combine'):
+                        raw[section.get('name', section_key)] = option
+        assert set(raw) == set(SECTIONS)
+        for section, option in raw.items():
+            pairing = option.get('pairing')
+            assert isinstance(pairing, list) and pairing, '%s declares no pairing list' % section
+            assert set(pairing) <= set(option['combine']), '%s pairs a column it does not have' % section
 
     def test_the_methods_take_no_column_list(self):
         for method in (Settings.group_misaligned, Settings.group_stored_rows):

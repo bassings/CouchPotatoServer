@@ -51,16 +51,15 @@ def _keyword(call, name):
     return next((k.value for k in call.keywords if k.arg == name), None)
 
 
-# Forwarding wrappers: they pass a caller's option name through, so the name is not
-# a literal, and they are not themselves a write of any one column. Allow-listed by
-# file and function, never by name alone, so the same shape anywhere else is a hit.
-FORWARDING_WRAPPERS = {
-    # `Plugin.conf`: `Env.setting(attr, section=section or <this plugin>, value=value, ...)`.
-    ('couchpotato/core/plugins/base.py', 'conf'),
-    # Not a forwarder, but equally not a combine column: it switches the provider's
-    # own enabler option (`self.enabled_option`, an `enabler` type) off after a login
-    # failure, and no combine group contains an enabler.
-    ('couchpotato/core/media/_base/providers/base.py', 'disableAccount'),
+# Non-literal option names that are allowed, each pinned to ONE file, ONE function and
+# the exact source of the name argument, and never when the section is a literal combine
+# section. Anything else non-literal in those functions is still a hit.
+ALLOWED_NON_LITERAL = {
+    # `Plugin.conf` forwards its caller's name: `Env.setting(attr, section=..., value=value)`.
+    ('couchpotato/core/plugins/base.py', 'conf', 'attr'),
+    # Not a forwarder, but equally not a combine column: it switches the provider's own
+    # enabler option off after a login failure, and no combine group contains an enabler.
+    ('couchpotato/core/media/_base/providers/base.py', 'disableAccount', 'self.enabled_option'),
 }
 
 
@@ -93,10 +92,10 @@ def _enclosing_functions(tree):
 
 
 def column_writes(source):
-    """``[(line, [sections], option, function)]`` for every write of a column.
+    """``[(line, [sections], option, function, option_source)]`` for every write.
 
-    `option` is None when the name is not a literal. A section of None is one that
-    cannot be resolved.
+    `option` is None when the name is not a literal, and `option_source` is the
+    name argument's source text. A section of None is one that cannot be resolved.
     """
     tree = ast.parse(source)
     declared = _declared_sections(tree)
@@ -114,9 +113,11 @@ def column_writes(source):
             else:
                 explicit = _keyword(call, 'section')
                 sections = [_literal(explicit)] if explicit is not None else sorted(declared) or [None]
-            writes.append((call.lineno, sections, option, function))
-        elif method == 'set' and len(call.args) >= 3 and _literal(call.args[0]) and _literal(call.args[1]):
-            writes.append((call.lineno, [_literal(call.args[0])], _literal(call.args[1]), function))
+            source_text = ast.unparse(call.args[0]) if call.args else ast.unparse(_keyword(call, 'attr'))
+            writes.append((call.lineno, sections, option, function, source_text))
+        elif method == 'set' and len(call.args) >= 3 and _literal(call.args[0]):
+            writes.append((call.lineno, [_literal(call.args[0])], _literal(call.args[1]), function,
+                           ast.unparse(call.args[1])))
     return writes
 
 
@@ -125,14 +126,15 @@ def combine_hits(source, groups, path='scratch.py'):
 
     An unresolvable section (None) counts against every group, because a write
     that cannot be placed cannot be shown to be outside one. A write whose option
-    name is not a literal hits every group its section owns, unless it is an
-    allow-listed forwarding wrapper.
+    name is not a literal hits every group its section owns, unless it is exactly
+    one of `ALLOWED_NON_LITERAL` and its section is not a literal combine section.
     """
     hits = []
-    for line, sections, option, function in column_writes(source):
-        if option is None and (path, function) in FORWARDING_WRAPPERS:
-            continue
+    for line, sections, option, function, option_source in column_writes(source):
         for section in sections:
+            allowed = (path, function, option_source) in ALLOWED_NON_LITERAL and section not in groups
+            if option is None and allowed:
+                continue
             owners = [s for s in groups if section is None or s == section]
             if option is None and owners:
                 hits.append((line, section, '<non-literal>'))
@@ -175,7 +177,7 @@ class TestTheScanItself:
         source = ("config = [{'name': 'rtorrent', 'groups': []}]\n"
                   "class A:\n    def f(self):\n        self.conf('host', value='x')\n")
 
-        assert column_writes(source) == [(4, ['rtorrent'], 'host', 'f')], 'the write was seen'
+        assert column_writes(source) == [(4, ['rtorrent'], 'host', 'f', "'host'")], 'the write was seen'
         assert combine_hits(source, groups) == []
 
     def test_a_core_setting_named_like_a_combine_column_is_not_a_hit(self, groups):
@@ -199,7 +201,7 @@ class TestTheTree:
 
         writes = column_writes(source)
 
-        assert any(section == ['rtorrent'] and option == 'host' for _, section, option, _ in writes), (
+        assert any(section == ['rtorrent'] and option == 'host' for _, section, option, _, _ in writes), (
             'the scan no longer sees rtorrent_.py writing its own host')
         assert combine_hits(source, groups) == []
 
@@ -245,11 +247,19 @@ class TestTheShapesTheFirstScanMissed:
 
         assert [hit[1:] for hit in hits] == [('torrentpotato', '<non-literal>')]
 
-    def test_the_forwarding_wrapper_is_allowed_only_at_its_own_path_and_function(self, groups):
+    def test_the_plugin_conf_wrapper_is_allowed_only_at_its_own_path_and_function(self, groups):
         source = "class A:\n    def conf(self, attr, value=None):\n        return Env.setting(attr, section=section or name, value=value)\n"
 
         assert combine_hits(source, groups, 'couchpotato/core/plugins/base.py') == []
         assert combine_hits(source, groups, 'couchpotato/core/plugins/other.py') != []
+
+    def test_the_plugin_conf_wrapper_does_not_excuse_another_name_or_a_combine_section(self, groups):
+        path = 'couchpotato/core/plugins/base.py'
+        other_name = "class A:\n    def conf(self, attr, value=None):\n        return Env.setting(self.key, section=section, value=value)\n"
+        literal_section = "class A:\n    def conf(self, attr, value=None):\n        return Env.setting(attr, 'torrentpotato', value)\n"
+
+        assert combine_hits(other_name, groups, path) != []
+        assert combine_hits(literal_section, groups, path) != []
 
     def test_a_non_literal_name_in_a_section_with_no_combine_group_is_not_a_hit(self, groups):
         source = ("config = [{'name': 'tmdb_charts', 'groups': []}]\n"
@@ -257,3 +267,53 @@ class TestTheShapesTheFirstScanMissed:
                   "        return super().conf(attr, value=value, section='tmdb_charts')\n")
 
         assert combine_hits(source, groups) == []
+
+
+PROVIDERS_BASE = 'couchpotato/core/media/_base/providers/base.py'
+
+
+class TestTheDisableAccountAllowance:
+    """The one allowed call is `self.conf(self.enabled_option, False)` in
+    `disableAccount`. Everything else written in that function is still a hit."""
+
+    def inside(self, body):
+        return "class A:\n    def disableAccount(self):\n        %s\n" % body
+
+    def hits(self, groups, body, path=PROVIDERS_BASE):
+        return combine_hits(self.inside(body), groups, path)
+
+    def test_the_one_real_call_is_allowed(self, groups):
+        assert self.hits(groups, "self.conf(self.enabled_option, False)") == []
+
+    @pytest.mark.parametrize('body', [
+        "self.conf(column, 'x')",
+        "self.conf(self.key_column, 'x')",
+        "Env.setting(self.key_column, 'torrentpotato', 'x')",
+        "settings.set('torrentpotato', self.key_column, 'x')",
+        "Env.setting(self.enabled_option, 'torrentpotato', 'x')",
+    ])
+    def test_any_other_non_literal_write_in_that_function_is_a_hit(self, groups, body):
+        assert self.hits(groups, body) != []
+
+    def test_the_allowed_call_is_a_hit_in_any_other_file_or_function(self, groups):
+        body = "self.conf(self.enabled_option, False)"
+        # Same call, but the file's own section owns a combine group.
+        scratch = ("config = [{'name': 'torrentpotato', 'groups': []}]\n" + self.inside(body))
+
+        assert combine_hits(self.inside(body), groups, 'couchpotato/core/other.py') != []
+        assert combine_hits(scratch, groups, PROVIDERS_BASE) != [], 'a literal combine section'
+        assert combine_hits(self.inside(body).replace('disableAccount', 'other'), groups, PROVIDERS_BASE) != []
+
+
+class TestASetWithALiteralCombineSection:
+
+    def test_a_non_literal_name_is_a_hit(self, groups):
+        assert combine_hits("settings.set('torrentpotato', name, 'x')\n", groups) == [
+            (1, 'torrentpotato', '<non-literal>')]
+
+    def test_a_non_literal_name_in_another_section_is_not(self, groups):
+        assert combine_hits("settings.set('core', name, 'x')\n", groups) == []
+
+    def test_a_literal_section_and_name_is_still_a_hit(self, groups):
+        assert combine_hits("settings.set('newznab', 'API_KEY', 'x')\n", groups) == [
+            (1, 'newznab', 'API_KEY')]
