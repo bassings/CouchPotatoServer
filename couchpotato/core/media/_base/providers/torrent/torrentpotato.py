@@ -408,10 +408,16 @@ class Base(TorrentProvider):
         }
 
     def _isReplace(self, replace):
-        """A query string can only send text, and the text `false` is truthy."""
+        """Replace everything only for boolean True or the text true, 1, yes or on.
+
+        Any other value is false, including a list or dict (`replace[0]=false`
+        arrives as `['false']`, which is truthy) and a number. Over HTTP
+        `getParams` already turns the text `false` into False; what this adds is
+        that `0`, `no` and `off` no longer replace either.
+        """
         if isinstance(replace, str):
             return replace.strip().lower() in ('true', '1', 'yes', 'on')
-        return bool(replace)
+        return replace is True
 
     def _section(self):
         """The settings section this provider's `conf` reads and writes."""

@@ -135,20 +135,45 @@ class TestASuccessfulSync:
         assert cells(settings, 'host') == [JACKETT + '/potato/alpha/api', JACKETT + '/potato/beta/api']
         assert {len(cells(settings, column)) for column in COLUMNS} == {2}
 
-    @pytest.mark.parametrize('flag', ['false', 'False', '0', '', 'no'])
-    def test_a_replace_flag_that_is_a_string_for_false_does_not_replace(self, world, flag):
-        """A query string can only send text, and the text `false` is truthy."""
+    @pytest.mark.parametrize('flag', [False, None, 'false', 'False', '0', '', 'no', 'off', ' ', 'maybe',
+                                      0, 1, 2, 1.0, ['true'], ['1'], {'0': 'true'}, ('true',)])
+    def test_a_replace_flag_that_is_not_plainly_true_does_not_replace(self, world, flag):
         settings, provider = world
 
         provider.jackettSync(replace=flag)
 
         assert 'https://stored-one.invalid/api' in cells(settings, 'host')
 
-    @pytest.mark.parametrize('flag', [True, 'true', 'True', '1'])
+    @pytest.mark.parametrize('flag', [True, 'true', 'True', ' TRUE ', '1', 'yes', 'Yes', 'on', 'ON'])
     def test_a_replace_flag_that_says_true_replaces(self, world, flag):
         settings, provider = world
 
         provider.jackettSync(replace=flag)
+
+        assert 'https://stored-one.invalid/api' not in cells(settings, 'host')
+
+    @pytest.mark.parametrize('query', [
+        {'replace[0]': 'false'}, {'replace[0]': 'true'}, {'replace[a]': 'true'},
+        {'replace': '0'}, {'replace': 'no'}, {'replace': 'off'}, {'replace': 'false'},
+    ])
+    def test_a_query_that_is_not_plainly_replace_true_keeps_the_stored_rows(self, world, query):
+        """Through the real parameter parser: `replace[0]=false` arrives as the
+        list `['false']`, which is truthy."""
+        from couchpotato.core.helpers.request import getParams
+        settings, provider = world
+
+        result = provider.jackettSync(**getParams(query))
+
+        assert result['success'] is True
+        assert 'https://stored-one.invalid/api' in cells(settings, 'host')
+
+    @pytest.mark.parametrize('query', [{'replace': 'true'}, {'replace': '1'}, {'replace': 'yes'},
+                                       {'replace': 'on'}])
+    def test_a_query_that_says_replace_true_replaces(self, world, query):
+        from couchpotato.core.helpers.request import getParams
+        settings, provider = world
+
+        provider.jackettSync(**getParams(query))
 
         assert 'https://stored-one.invalid/api' not in cells(settings, 'host')
 
