@@ -254,7 +254,7 @@ describe('settings fixture group-save coverage', () => {
     const fulfill = vi.fn();
     const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn() };
     const result = mocks.fixtures.settingsPersistenceGuard[0](
-      { page, testServer: workerServer },
+      { page, testServer: workerServer, seedConfig: 'newznab_aligned#unannotated' },
       async () => { await onRoute({ request: () => ({ url: () => GROUP_URL }), fulfill }); },
       { annotations: [] },
     );
@@ -399,5 +399,65 @@ describe('seedConfig test server', () => {
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       expect.any(String), ['scripts/e2e_worker_data.py', 'cleanup', '20'], { stdio: 'pipe' },
     );
+  });
+});
+
+// SEC-004 P3 fix round: a group save is refused on the worker's SHARED server whatever the
+// test declares, and a combine-group writer must own its seedConfig value at RUN time (the
+// static check cannot see through a helper, a bare annotation or a looped constant).
+describe('group saves and the shared server', () => {
+  const workerServer = { apiBase: 'http://localhost:5150/api/private-api-key' };
+  const GROUP_URL = `${workerServer.apiBase}/settings.save_group/`;
+  const COLUMN_URL = `${workerServer.apiBase}/settings.save/`;
+  const snapshot = { options: {}, values: {}, combine_state: {} };
+
+  async function runGuard(seedConfig: string | undefined, annotations: { type: string }[], url: string) {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => snapshot })));
+    let onRoute: (route: unknown) => Promise<void> = async () => {};
+    const route = { request: () => ({ url: () => url }), fulfill: vi.fn(), continue: vi.fn() };
+    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn() };
+    const result = (mocks.fixtures.settingsPersistenceGuard[0] as any)(
+      { page, testServer: workerServer, seedConfig }, async () => { await onRoute(route); }, { annotations },
+    );
+    const error = await result.catch((err: Error) => err);
+    return { route, error: error as Error | undefined };
+  }
+
+  it('blocks a group save on the shared server even when the test declares persistence', async () => {
+    const { route, error } = await runGuard('', [{ type: 'persistsSettings' }], GROUP_URL);
+
+    expect(route.continue).not.toHaveBeenCalled();
+    expect(route.fulfill).toHaveBeenCalledWith(expect.objectContaining({ status: 409 }));
+    expect(error?.message).toMatch(/shared server/);
+    expect(error?.message).not.toContain('private-api-key');
+  });
+
+  it('lets a group save through on a test\'s own seeded server when it declares persistence', async () => {
+    const { route, error } = await runGuard('newznab_aligned#own', [{ type: 'persistsSettings' }], GROUP_URL);
+
+    expect(route.continue).toHaveBeenCalledOnce();
+    expect(error).toBeUndefined();
+  });
+
+  it('still lets a per-column save through on the shared server when declared', async () => {
+    const { route, error } = await runGuard('', [{ type: 'persistsSettings' }], COLUMN_URL);
+
+    expect(route.continue).toHaveBeenCalledOnce();
+    expect(error).toBeUndefined();
+  });
+
+  it('fails a combine-group writer that runs on the shared server', async () => {
+    const { error } = await runGuard('', [{ type: 'persistsSettings' }, { type: 'writesCombineGroup' }], COLUMN_URL);
+
+    expect(error?.message).toMatch(/own seedConfig/);
+  });
+
+  it('fails a second combine-group writer on a seedConfig value already used by one', async () => {
+    const writer = [{ type: 'persistsSettings' }, { type: 'writesCombineGroup' }];
+    const first = await runGuard('newznab_aligned#runtime-owner', writer, COLUMN_URL);
+    const second = await runGuard('newznab_aligned#runtime-owner', writer, COLUMN_URL);
+
+    expect(first.error).toBeUndefined();
+    expect(second.error?.message).toMatch(/already owned/);
   });
 });

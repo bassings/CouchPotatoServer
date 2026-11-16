@@ -31,6 +31,7 @@ import {
   allowsSettingsPersistence,
   baselineGroupRows,
   changedSettings,
+  COMBINE_WRITER_ANNOTATION,
   combineColumns,
   serializeSettingValue,
   SETTINGS_PERSISTENCE_ANNOTATION,
@@ -285,6 +286,25 @@ async function stopServer(proc: ChildProcess): Promise<void> {
   }
 }
 
+/**
+ * The seedConfig values combine-group writers have used in this worker process. The
+ * static check (tests/unit/e2e_seed_config_ownership.test.ts) cannot see through a helper
+ * in another file, a bare annotation or a looped constant, so this is the guard for those:
+ * a writer on the shared server, or on a value another writer already used, fails.
+ */
+const writerSeeds = new Set<string>();
+
+function assertWriterOwnsItsSeed(annotations: readonly { type: string }[], seedConfig: string | undefined) {
+  if (!annotations.some(({ type }) => type === COMBINE_WRITER_ANNOTATION)) return;
+  if (!seedConfig) {
+    throw new Error('A combine-group writer must run on its own seedConfig server, not the shared one.');
+  }
+  if (writerSeeds.has(seedConfig)) {
+    throw new Error(`seedConfig ${JSON.stringify(seedConfig)} is already owned by another combine-group writer; give this test its own value.`);
+  }
+  writerSeeds.add(seedConfig);
+}
+
 /** Put one combine group back with one group save. False on any failure. */
 async function restoreGroup(apiBase: string, section: string, rows: unknown): Promise<boolean> {
   try {
@@ -491,12 +511,25 @@ export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions
     await use(testServer.baseURL);
   },
 
-  settingsPersistenceGuard: [async ({ page, testServer }, use, testInfo) => {
+  settingsPersistenceGuard: [async ({ page, testServer, seedConfig }, use, testInfo) => {
     let blocked = 0;
+    let sharedGroupSaves = 0;
+    const onSharedServer = !seedConfig;
     const settingsURL = `${testServer.apiBase}/settings/`;
     const before = await loadSettingsSnapshot(settingsURL, 'baseline');
 
     await page.route(SETTINGS_WRITE_ROUTES, async (route) => {
+      // A group save on the worker's SHARED server is never allowed, whatever the test
+      // declares: it would change rows every later test on that server starts from.
+      if (onSharedServer && route.request().url().includes('settings.save_group')) {
+        sharedGroupSaves += 1;
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, error: 'E2E group saves need the test\'s own seedConfig server' }),
+        });
+        return;
+      }
       if (allowsSettingsPersistence(testInfo.annotations)) {
         await route.continue();
         return;
@@ -566,6 +599,14 @@ export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions
       );
     }
 
+    if (sharedGroupSaves > 0) {
+      throw new Error(
+        `This test sent ${sharedGroupSaves} settings.save_group request(s) to the worker's shared server, `
+        + 'which is refused whatever the test declares. Seed the test onto its own server with '
+        + 'test.use({ seedConfig }).',
+      );
+    }
+    assertWriterOwnsItsSeed(testInfo.annotations, seedConfig);
     if (blocked > 0 || (changed.length > 0 && !allowsSettingsPersistence(testInfo.annotations))) {
       throw new Error(
         `This test sent ${Math.max(blocked, changed.length)} unmocked settings.save request(s) `
