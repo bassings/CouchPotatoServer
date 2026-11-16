@@ -220,26 +220,48 @@ class TestOneWriteInOneHold:
         me = threading.get_ident()
         read_in_hold = []
         write_in_hold = []
-        real_cells = settings.group_cells
+        real_rows = settings.group_stored_rows
         real_replace = os.replace
 
-        def spy_cells(*args, **kwargs):
+        def spy_rows(*args, **kwargs):
             read_in_hold.append(lock.hold_of(me))
-            return real_cells(*args, **kwargs)
+            return real_rows(*args, **kwargs)
 
         def spy_replace(src, dst):
             write_in_hold.append(lock.hold_of(me))
             return real_replace(src, dst)
 
-        monkeypatch.setattr(settings, 'group_cells', spy_cells)
+        monkeypatch.setattr(settings, 'group_stored_rows', spy_rows)
         monkeypatch.setattr(os, 'replace', spy_replace)
 
         provider.jackettSync()
 
         assert len(write_in_hold) == 1
         assert write_in_hold[0] is not None, 'the file was written outside any hold'
+        assert read_in_hold, 'the stored rows were never read'
         assert write_in_hold[0] in read_in_hold, (
             'the stored rows were read in a different hold from the one that wrote them')
+
+    def test_a_value_changed_between_the_fetch_and_the_lock_survives_the_sync(self, world, monkeypatch):
+        """The lost update: rows built before the writer takes the lock are stale
+        by the time they are written. The change lands as the writer is entered,
+        i.e. after the fetch and before the lock is taken."""
+        settings, provider = world
+        real_save_group = settings.save_group
+
+        def other_writer_first(section, rows):
+            settings.set('torrentpotato', 'pass_key',
+                         'placeholder-rotated-key-one,placeholder-stored-key-two')
+            settings.save()
+            return real_save_group(section, rows)
+
+        monkeypatch.setattr(settings, 'save_group', other_writer_first)
+
+        result = provider.jackettSync()
+
+        assert result['success'] is True
+        assert cells(settings, 'pass_key')[:2] == ['placeholder-rotated-key-one',
+                                                   'placeholder-stored-key-two']
 
     def test_the_fetch_happens_while_the_lock_is_free(self, world, monkeypatch):
         """A fetch under the lock would stall every other settings write for as
