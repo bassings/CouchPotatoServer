@@ -85,6 +85,7 @@ config = [{
                     'label': 'url',
                     'type': 'combined',
                     'combine': ['automation_urls_use', 'automation_urls'],
+                    'pairing': ['automation_urls_use', 'automation_urls'],
                     'default': 'https://itunes.apple.com/rss/topmovies/limit=25/xml,',
                 },
             ],

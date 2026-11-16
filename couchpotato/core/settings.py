@@ -108,6 +108,16 @@ def _cell_problem(cell):
     return None
 
 
+def unstorable_cell(cell):
+    """Why the group writer would refuse this cell, or None.
+
+    The writer's own test, for a caller that would rather skip one bad value than
+    have the whole group refused (the Jackett sync). It repeats no rule of its
+    own: it asks the one the writer applies.
+    """
+    return _cell_problem(cell)
+
+
 def _row_problems(index, row, columns):
     if not isinstance(row, dict):
         return [_invalid(index, None, 'malformed')]
@@ -721,15 +731,113 @@ class Settings:
         `_coerce_value` and `_password_save_snapshot` and unlike the older
         camelCase methods of the class.
         """
-        groups = {}
+        return {section: tuple(option['combine'])
+                for section, option in self._combined_options()}
+
+    def combine_pairing(self):
+        """Map each combine group to its pairing columns (Definitions).
+
+        The columns whose cells pair up across a row, declared once as a
+        `pairing` list on the same `combined` option as `combine` and derived the
+        way `combine_groups` is. A group declared without one is a programming
+        error: a unit test reads each group's raw declaration for it. This method
+        does not check; it falls back to every column pairing, which errs toward
+        refusing and so cannot be used to detect the omission.
+        """
+        return {section: tuple(option.get('pairing') or option['combine'])
+                for section, option in self._combined_options()}
+
+    def _combined_options(self):
+        """Each `(section, option)` whose option is a registered combine group."""
+        found = {}
         for section_key, section in self.options.items():
             section_name = section.get('name', section_key)
             for group in section.get('groups', []):
                 for option in group.get('options', []):
-                    columns = option.get('combine')
-                    if option.get('type') == 'combined' and columns:
-                        groups[section_name] = tuple(columns)
-        return groups
+                    if option.get('type') == 'combined' and option.get('combine'):
+                        found[section_name] = option
+        return found.items()
+
+    def group_cells(self, section):
+        """Each column of a stored group as its cells (Definitions, "Cells").
+
+        A cell is a piece of the raw stored value split on `,`. Nothing is
+        trimmed and nothing is dropped, so an empty cell is a position, and an
+        empty or missing stored value is one empty cell. The value is read as
+        `get()` reads it (a legacy `b'...'` wrapper is stripped first). The columns are the
+        group's own (`combine_groups`); a section that is not a group has none.
+        """
+        columns = self.combine_groups().get(section, ())
+        with _PASSWORD_SAVE_LOCK:
+            return {column: self._stored_text(section, column).split(',') for column in columns}
+
+    def _stored_text(self, section, column):
+        """A stored value as `get()` reads it: the same `_coerce_value`, so a legacy
+        bytes-literal wrapper (`b'...'`) is stripped here exactly as it is for the
+        provider's own reader. A value that was never stored is empty text."""
+        if not self.p.has_option(section, column):
+            return ''
+        value = _coerce_value(self.p.get(section, column), self.getType(section, column))
+        return value if isinstance(value, str) else str(value)
+
+    def group_stored_rows(self, section, short_cells=None):
+        """A stored group as rows (Definitions, "Row count"; AC-DATA-13).
+
+        The row count is the largest cell count among the group's pairing columns
+        (`combine_pairing`). A column shorter than that supplies
+        `short_cells[column]` if the caller states one, else an empty cell for a
+        pairing column and the option's declared default for any other. Cells
+        beyond the row count are not rows and are not returned.
+        """
+        short_cells = short_cells or {}
+        cells = self.group_cells(section)
+        pairing_columns = self.combine_pairing().get(section, ())
+        count = max((len(cells[column]) for column in pairing_columns if column in cells), default=1)
+        rows = []
+        for index in range(count):
+            row = {}
+            for column, values in cells.items():
+                if index < len(values):
+                    row[column] = values[index]
+                elif column in short_cells:
+                    row[column] = short_cells[column]
+                elif column in pairing_columns:
+                    row[column] = ''
+                else:
+                    row[column] = (self._declared_default_cells(section, column) or [''])[0]
+            rows.append(row)
+        return rows
+
+    def group_misaligned(self, section):
+        """Do the stored columns of a group disagree about its rows?
+
+        The Definitions' "Misaligned group" (decision D2), for any registered
+        group: ignore a pairing column whose cells are all empty (nothing in it
+        can be mispaired); the group is misaligned when the remaining pairing
+        columns do not all have the same cell count. A non-pairing column never
+        makes it so by being shorter, or by being longer only by cells that are
+        empty or hold a cell of the column's declared default; any other cell
+        past the row count is data whose row cannot be identified.
+        """
+        cells = self.group_cells(section)
+        pairing_columns = self.combine_pairing().get(section, ())
+        pairing = {column: cells[column] for column in pairing_columns if column in cells}
+        if len({len(values) for values in pairing.values() if any(values)}) > 1:
+            return True
+        count = max((len(values) for values in pairing.values()), default=1)
+        for column, values in cells.items():
+            allowed = {''} | set(self._declared_default_cells(section, column) or [])
+            if column not in pairing and any(cell not in allowed for cell in values[count:]):
+                return True
+        return False
+
+    def _declared_default_cells(self, section, column):
+        """The cells of the default a provider declared for `column`, or None."""
+        for group in self.options.get(section, {}).get('groups', []):
+            for option in group.get('options', []):
+                if option.get('name') == column and 'default' in option:
+                    return str(option['default']).split(',')
+        return None
 
     def save_group_view(self, section=None, rows=None, **kwargs):
         """The API view: a thin relay to `save_group` that adds the INFO line.

@@ -8,11 +8,16 @@ from couchpotato.api import addApiView
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, tryInt, tryFloat, cleanHost
 from couchpotato.core.logger import CPLog
+from couchpotato.core.settings import GroupMisaligned, unstorable_cell
+from couchpotato.environment import Env
 from couchpotato.core.media._base.providers.base import ResultList
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
 
 
 log = CPLog(__name__)
+
+MISALIGNED_TEXT = ('The saved TorrentPotato rows do not line up, so a sync could pair a key '
+                   'with the wrong host. Fix the rows in Settings first. Nothing was changed.')
 
 
 class Base(TorrentProvider):
@@ -27,19 +32,27 @@ class Base(TorrentProvider):
 
         # Register API endpoint for Jackett sync
         addApiView('torrentpotato.jackett_sync', self.jackettSync, docs={
-            'desc': 'Sync TorrentPotato indexers from Jackett',
+            'desc': 'Sync TorrentPotato indexers from Jackett. Send no parameters to use the saved '
+                    'Jackett URL and API key. A jackett_url must be sent with its own jackett_api_key '
+                    '(the saved key is never sent to a URL in the request).',
             'params': {
-                'jackett_url': {'desc': 'Jackett base URL (optional, uses saved setting if not provided)'},
-                'jackett_api_key': {'desc': 'Jackett API key (optional, uses saved setting if not provided)'},
+                'jackett_url': {'desc': 'Jackett base URL (optional). Must come with jackett_api_key; '
+                                        'if neither is sent the saved pair is used'},
+                'jackett_api_key': {'desc': 'Jackett API key (optional). Empty or blank counts as not sent'},
+                'replace': {'desc': 'Replaces every stored indexer with the Jackett ones only for '
+                                    'boolean true or the text true, 1, yes or on (any case). Anything '
+                                    'else merges, including the number 1 in a JSON body, a list and '
+                                    'an object. A merge is refused when the stored rows do not line up'},
             },
             'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
         })
 
         addApiView('torrentpotato.jackett_test', self.jackettTest, docs={
-            'desc': 'Test Jackett connection and list available indexers',
+            'desc': 'Test Jackett connection and list available indexers. Send no parameters to use '
+                    'the saved Jackett URL and API key; a jackett_url must come with its own key.',
             'params': {
-                'jackett_url': {'desc': 'Jackett base URL'},
-                'jackett_api_key': {'desc': 'Jackett API key'},
+                'jackett_url': {'desc': 'Jackett base URL (optional). Must come with jackett_api_key'},
+                'jackett_api_key': {'desc': 'Jackett API key (optional)'},
             },
             'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
         })
@@ -262,25 +275,50 @@ class Base(TorrentProvider):
             log.error('Failed to fetch Jackett indexers: %s', type(e).__name__)
             return None, f'Failed to connect to Jackett: {type(e).__name__}'
 
-    def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
-        """Test Jackett connection and return list of available indexers"""
-        saved_url = self.conf('jackett_url')
-        saved_key = self.conf('jackett_api_key')
+    def _savedJackettSetting(self, name):
+        value = self.conf(name)
 
         # Ensure values are strings (settings may return bytes)
-        if isinstance(saved_url, bytes):
-            saved_url = saved_url.decode('utf-8')
-        if isinstance(saved_key, bytes):
-            saved_key = saved_key.decode('utf-8')
+        if isinstance(value, bytes):
+            value = value.decode('utf-8')
 
         # Also handle str that looks like bytes repr: "b'...'"
-        if isinstance(saved_key, str) and saved_key.startswith("b'") and saved_key.endswith("'"):
-            saved_key = saved_key[2:-1]
-        if isinstance(saved_url, str) and saved_url.startswith("b'") and saved_url.endswith("'"):
-            saved_url = saved_url[2:-1]
+        if isinstance(value, str) and value.startswith("b'") and value.endswith("'"):
+            value = value[2:-1]
+        return value
 
-        jackett_url = jackett_url or saved_url
-        jackett_api_key = jackett_api_key or saved_key
+    def _jackettCredentials(self, jackett_url, jackett_api_key):
+        """Pick the Jackett URL and API key a request may use.
+
+        A single request cannot pair a caller-supplied URL with the saved key: a
+        request that supplies its own `jackett_url` must supply its own
+        `jackett_api_key` (AC-SEC-9 rule (a)), because combining them would send
+        the stored key to a host the caller chose. (This does not bind the saved
+        key to the saved URL: `settings.save` can change the URL alone.) Returns `(url, key, refusal)`;
+        `refusal` is a response dict, with no submitted value in it, or None.
+        """
+        supplied = (jackett_url, jackett_api_key)
+        if any(value and not isinstance(value, str) for value in supplied):
+            return None, None, {'success': False, 'error': 'Jackett URL and API key must be text'}
+        if isinstance(jackett_api_key, str) and not jackett_api_key.strip():
+            jackett_api_key = None  # a key that is empty after stripping is absent
+        if jackett_url and not jackett_api_key:
+            return None, None, {
+                'success': False,
+                'error': 'A Jackett URL must be sent with its own API key. '
+                         'The saved API key is only used with the saved URL.'
+            }
+
+        saved_url = self._savedJackettSetting('jackett_url')
+        saved_key = self._savedJackettSetting('jackett_api_key')
+
+        return jackett_url or saved_url, jackett_api_key or saved_key, None
+
+    def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
+        """Test Jackett connection and return list of available indexers"""
+        jackett_url, jackett_api_key, refusal = self._jackettCredentials(jackett_url, jackett_api_key)
+        if refusal:
+            return refusal
 
         if not jackett_url or not jackett_api_key:
             return {
@@ -306,27 +344,15 @@ class Base(TorrentProvider):
         """Sync TorrentPotato indexers from Jackett
 
         Args:
-            jackett_url: Jackett base URL (uses saved setting if not provided)
-            jackett_api_key: Jackett API key (uses saved setting if not provided)
-            replace: If True, replace all existing indexers. If False, merge/add new ones.
+            jackett_url: Jackett base URL. Must come with its own jackett_api_key; when
+                neither is given the saved pair is used
+            jackett_api_key: Jackett API key (empty after stripping counts as not given)
+            replace: True (or the text true, 1, yes, on) replaces all existing indexers;
+                anything else merges/adds new ones.
         """
-        saved_url = self.conf('jackett_url')
-        saved_key = self.conf('jackett_api_key')
-
-        # Ensure values are strings (settings may return bytes)
-        if isinstance(saved_url, bytes):
-            saved_url = saved_url.decode('utf-8')
-        if isinstance(saved_key, bytes):
-            saved_key = saved_key.decode('utf-8')
-
-        # Also handle str that looks like bytes repr: "b'...'"
-        if isinstance(saved_key, str) and saved_key.startswith("b'") and saved_key.endswith("'"):
-            saved_key = saved_key[2:-1]
-        if isinstance(saved_url, str) and saved_url.startswith("b'") and saved_url.endswith("'"):
-            saved_url = saved_url[2:-1]
-
-        jackett_url = jackett_url or saved_url
-        jackett_api_key = jackett_api_key or saved_key
+        jackett_url, jackett_api_key, refusal = self._jackettCredentials(jackett_url, jackett_api_key)
+        if refusal:
+            return refusal
 
         if not jackett_url or not jackett_api_key:
             return {
@@ -334,6 +360,15 @@ class Base(TorrentProvider):
                 'error': 'Jackett URL and API key are required. Please configure them in settings.'
             }
 
+        replace = self._isReplace(replace)
+        if not replace and Env.get('settings').group_misaligned(self._section()):
+            # Refused before any network request. The builder asks again under the
+            # lock, because another writer can land in between.
+            log.warning('Refused a Jackett sync: the stored torrentpotato rows do not line up')
+            return {'success': False, 'error': MISALIGNED_TEXT}
+
+        # The network is fetched BEFORE the settings lock is taken: a slow Jackett
+        # must not stall every other settings write.
         indexers, error = self.getJackettIndexers(jackett_url, jackett_api_key)
 
         if error:
@@ -348,65 +383,93 @@ class Base(TorrentProvider):
                 'error': 'No configured indexers found in Jackett'
             }
 
-        # Get existing hosts
-        existing_hosts = self.getHosts() if not replace else []
-        existing_urls = {h['host'] for h in existing_hosts}
+        # A Jackett title, id or key the settings file cannot hold (a comma would
+        # become a new row; a control character can lose part of a value) skips
+        # that one indexer: never a partial row, never the others held up.
+        storable = [i for i in indexers if self._isStorableIndexer(i, jackett_api_key)]
+        skipped = len(indexers) - len(storable)
+        if not storable:
+            return {
+                'success': False,
+                'error': 'None of the %d Jackett indexers could be saved: their address, '
+                         'name or the API key contains a comma or a control character' % skipped
+            }
 
-        # Build new configuration
-        new_uses = []
-        new_hosts = []
-        new_names = []
-        new_pass_keys = []
-        new_seed_ratios = []
-        new_seed_times = []
-        new_extra_scores = []
+        outcome = {}
+        result = Env.get('settings').save_group(
+            self._section(),
+            self._jackettRowsBuilder(storable, jackett_api_key, replace, outcome))
+        if not result['success']:
+            return {'success': False, 'error': result['error']}
 
-        # Keep existing entries first (if not replacing)
-        for host in existing_hosts:
-            new_uses.append(str(host.get('use', '1')))
-            new_hosts.append(host['host'])
-            new_names.append(host.get('name', ''))
-            new_pass_keys.append(host.get('pass_key', ''))
-            new_seed_ratios.append(str(host.get('seed_ratio', '1')))
-            new_seed_times.append(str(host.get('seed_time', '40')))
-            new_extra_scores.append(str(host.get('extra_score', '0')))
+        log.info('Synced %d indexers from Jackett (%d new, %d skipped)',
+                 len(storable), outcome['added'], skipped)
 
-        # Add new indexers from Jackett
-        added_count = 0
-        for indexer in indexers:
-            potato_url = indexer['potato_url']
-
-            # Skip if already exists
-            if potato_url in existing_urls:
-                continue
-
-            new_uses.append('1')  # Enable by default
-            new_hosts.append(potato_url)
-            new_names.append(indexer['title'])  # Use title as username
-            new_pass_keys.append(jackett_api_key)  # Use Jackett API key as passkey
-            new_seed_ratios.append('1')
-            new_seed_times.append('40')
-            new_extra_scores.append('0')
-            added_count += 1
-
-        # Save the configuration
-        self.conf('use', value=','.join(new_uses))
-        self.conf('host', value=','.join(new_hosts))
-        self.conf('name', value=','.join(new_names))
-        self.conf('pass_key', value=','.join(new_pass_keys))
-        self.conf('seed_ratio', value=','.join(new_seed_ratios))
-        self.conf('seed_time', value=','.join(new_seed_times))
-        self.conf('extra_score', value=','.join(new_extra_scores))
-
-        log.info('Synced %d indexers from Jackett (%d new)', len(indexers), added_count)
-
+        message = f'Synced {len(storable)} indexers from Jackett ({outcome["added"]} new)'
+        if skipped:
+            message += f', {skipped} skipped because of a comma or control character'
         return {
             'success': True,
-            'message': f'Synced {len(indexers)} indexers from Jackett ({added_count} new)',
-            'added': added_count,
-            'total': len(new_hosts),
-            'indexers': indexers
+            'message': message,
+            'added': outcome['added'],
+            'skipped': skipped,
+            'total': outcome['total'],
+            'indexers': storable
         }
+
+    def _isReplace(self, replace):
+        """Replace everything only for boolean True or the text true, 1, yes or on.
+
+        Any other value is false, including a list or dict (`replace[0]=false`
+        arrives as `['false']`, which is truthy) and a number. Over HTTP
+        `getParams` already turns the text `false` into False; what this adds is
+        that `0`, `no` and `off` no longer replace either.
+        """
+        if isinstance(replace, str):
+            return replace.strip().lower() in ('true', '1', 'yes', 'on')
+        return replace is True
+
+    def _section(self):
+        """The settings section this provider's `conf` reads and writes."""
+        return self.getName().lower().split(':')[0]
+
+    def _isStorableIndexer(self, indexer, jackett_api_key):
+        cells = (indexer.get('potato_url'), indexer.get('title'), jackett_api_key)
+        return all(unstorable_cell(cell) is None for cell in cells)
+
+    def _jackettRowsBuilder(self, indexers, jackett_api_key, replace, outcome):
+        """The builder `Settings.save_group` runs under its lock (AC-DATA-9).
+
+        It only reads the stored rows and returns the merged rows: the writer
+        validates them, writes every column once, and puts the memory back if
+        anything fails. Stored cells are kept exactly as stored.
+        """
+        def build():
+            settings = Env.get('settings')
+            if not replace and settings.group_misaligned(self._section()):
+                raise GroupMisaligned
+            stored = [] if replace else settings.group_stored_rows(
+                self._section(), {'use': '0'})
+            rows = [row for row in stored if row['host'] or row['pass_key'] or row['name']]
+            known = {row['host'] for row in rows}
+            added = 0
+            for indexer in indexers:
+                if indexer['potato_url'] in known:
+                    continue
+                rows.append({
+                    'use': '1',  # Enable by default
+                    'host': indexer['potato_url'],
+                    'pass_key': jackett_api_key,  # Use Jackett API key as passkey
+                    'name': indexer['title'],  # Use title as username
+                    'seed_ratio': '1',
+                    'seed_time': '40',
+                    'extra_score': '0',
+                })
+                added += 1
+            outcome.update(added=added, total=len(rows))
+            return rows
+
+        return build
 
     def test(self):
         """Test connectivity to all enabled TorrentPotato hosts."""
@@ -536,6 +599,7 @@ config = [{
                     'description': 'Can be found on your profile page',
                     'type': 'combined',
                     'combine': ['use', 'host', 'pass_key', 'name', 'seed_ratio', 'seed_time', 'extra_score'],
+                    'pairing': ['host', 'pass_key', 'use', 'name'],
                 },
             ],
         },

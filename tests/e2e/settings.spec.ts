@@ -1,6 +1,7 @@
 import type { Locator } from '@playwright/test';
 
 import { test, expect } from './fixtures';
+import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
  * Settings page tests for CouchPotato new UI.
@@ -10,6 +11,44 @@ test.describe('Settings', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/settings/');
     await expect(page.locator('h1')).toContainText('Settings');
+  });
+
+  test('the Jackett sync button reaches the real server and is not refused by the origin check', async ({ page }) => {
+    // SEC-004 P2, AC-SEC-9 rule (b). The sync route is deliberately NOT stubbed:
+    // a stub would answer in the browser and could never show that the origin
+    // check lets the real button through. The Jackett URL is an `.invalid` host
+    // with no saved key, so the handler stops at its own "required" refusal and
+    // nothing leaves the machine. The persistence guard restores the URL.
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    const saved = await page.evaluate(async () => {
+      const body = new URLSearchParams({
+        section: 'torrentpotato', name: 'jackett_url', value: 'http://jackett.invalid:9117',
+      });
+      const response = await fetch((window as any).CP.apiBase + '/settings.save/', { method: 'POST', body });
+      return (await response.json()).success;
+    });
+    expect(saved).toBe(true);
+
+    const answered = page.waitForResponse((response) => response.url().includes('torrentpotato.jackett_sync'));
+    const outcome = await page.evaluate(async () => {
+      const root = document.querySelector('[x-data="settingsPanel()"]');
+      const panel = (window as any).Alpine.$data(root);
+      const option = Object.values(panel.options as Record<string, any>)
+        .flatMap((section) => section.groups || [])
+        .flatMap((group: any) => group.options || [])
+        .find((candidate: any) => candidate.name === 'jackett_sync');
+      if (!option) throw new Error('the declared jackett_sync button option is absent');
+      const field = (window as any).buttonField('torrentpotato', option);
+      await field.execute();
+      return { success: field.success, result: field.result };
+    });
+    const response = await answered;
+
+    expect(response.status()).toBe(200);
+    expect(await response.request().headerValue('referer')).toContain('/settings/');
+    expect(outcome.success).toBe(false);
+    expect(outcome.result).toMatch(/Jackett URL and API key are required/);
+    expect(outcome.result).not.toMatch(/cross-origin/i);
   });
 
   test('should show settings tabs', async ({ page }) => {

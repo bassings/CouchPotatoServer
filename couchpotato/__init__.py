@@ -914,6 +914,11 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
     'renamer.operator_replace',
     'renamer.operator_candidates',
     'renamer.operator_replacement_preview',
+    # SEC-004 P2: the Jackett sync rewrites the torrentpotato rows, and the test
+    # route spends the stored Jackett key, so neither may be driven by a page on
+    # another origin (a plain GET carries no Origin at all).
+    'torrentpotato.jackett_sync',
+    'torrentpotato.jackett_test',
 })
 
 

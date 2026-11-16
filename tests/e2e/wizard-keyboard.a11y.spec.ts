@@ -232,7 +232,7 @@ test.describe('keyboard focus is kept through every wizard action', () => {
     let releaseSync!: () => void;
     const syncGate = new Promise<void>((resolve) => { releaseSync = resolve; });
     let syncRequests = 0;
-    await page.route('**/provider.torrentpotato.jackett_sync/**', async (route) => {
+    await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
       syncRequests += 1;
       await syncGate;
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced 3 trackers' }) });
@@ -257,6 +257,33 @@ test.describe('keyboard focus is kept through every wizard action', () => {
     await expect(page.locator('p[x-text="jackettSyncResult"]')).toHaveText('Synced 3 trackers');
     await expect(sync, `focus is on ${await whereIsFocus(page)} once the sync finished`).toBeFocused();
     await expect(sync).toHaveAttribute('aria-disabled', 'false');
+  });
+
+  test('Sync Trackers from Jackett reaches the registered route on the real server', async ({ page }) => {
+    // Only the settings saves are answered here, so nothing is written. The sync
+    // route is NOT stubbed: the earlier tests stub the route name the wizard
+    // requests, which is how a name the server does not register stayed green.
+    await acceptSaves(page);
+    await openWizard(page);
+    await mountStep(page, 2, `
+      state.formData.torrentpotato.enabled = true;
+      state.formData.torrentpotato.jackett_url = 'http://jackett.invalid:9117';
+      state.formData.torrentpotato.jackett_api_key = 'placeholder-key';
+    `);
+    const sync = page.getByRole('button', { name: /^(Sync Trackers from Jackett|Syncing…)$/ });
+    const answered = page.waitForResponse((response) => response.url().includes('jackett_sync'));
+
+    await sync.click();
+    const response = await answered;
+
+    expect(new URL(response.url()).pathname).toMatch(/\/torrentpotato\.jackett_sync\/$/);
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    // The saves were answered by this test, so the server still holds no saved
+    // Jackett URL or key: the handler's own refusal, not "API call doesn't exist"
+    // and not the origin check's 403.
+    expect(body.success).toBe(false);
+    expect(body.error).toMatch(/Jackett URL and API key are required/);
   });
 });
 
@@ -292,7 +319,7 @@ test.describe('a busy control ignores a second activation', () => {
     let releaseSync!: () => void;
     const syncGate = new Promise<void>((resolve) => { releaseSync = resolve; });
     let syncRequests = 0;
-    await page.route('**/provider.torrentpotato.jackett_sync/**', async (route) => {
+    await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
       syncRequests += 1;
       await syncGate;
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }) });
@@ -1108,7 +1135,7 @@ test.describe('busy states and results are announced through one persistent stat
   test('a Jackett sync announces "Syncing…" then its result, and announces an identical second result again', async ({ page }) => {
     await acceptSaves(page);
     let calls = 0;
-    await page.route('**/provider.torrentpotato.jackett_sync/**', (route) => {
+    await page.route('**/torrentpotato.jackett_sync/**', (route) => {
       calls += 1;
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'Jackett refused the key' }) });
     });

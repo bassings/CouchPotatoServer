@@ -329,6 +329,7 @@ config = [{
                     'description': 'Can be found on your profile page',
                     'type': 'combined',
                     'combine': ['use', 'host', 'api_key', 'extra_score', 'custom_tag'],
+                    'pairing': ['host', 'api_key', 'use'],
                 },
             ],
         },

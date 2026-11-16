@@ -1540,7 +1540,7 @@ function setupWizard() {
         await this.saveSetting('torrentpotato', 'jackett_api_key', this.formData.torrentpotato.jackett_api_key);
         
         // Trigger sync
-        const resp = await fetch(CP.apiBase + '/provider.torrentpotato.jackett_sync/');
+        const resp = await fetch(CP.apiBase + '/torrentpotato.jackett_sync/');
         const data = await resp.json();
         this.jackettSyncSuccess = data.success === true;
         this.jackettSyncResult = data.success ? (data.message || 'Synced successfully!') : (data.error || data.message || 'Sync failed');
