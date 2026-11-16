@@ -16,9 +16,6 @@ from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
 
 log = CPLog(__name__)
 
-# The columns that pair a row's host with its credential (SEC-004, Definitions).
-PAIRING_COLUMNS = ('host', 'pass_key', 'use', 'name')
-
 MISALIGNED_TEXT = ('The saved TorrentPotato rows do not line up, so a sync could pair a key '
                    'with the wrong host. Fix the rows in Settings first. Nothing was changed.')
 
@@ -363,7 +360,7 @@ class Base(TorrentProvider):
             }
 
         replace = self._isReplace(replace)
-        if not replace and Env.get('settings').group_misaligned(self._section(), PAIRING_COLUMNS):
+        if not replace and Env.get('settings').group_misaligned(self._section()):
             # Refused before any network request. The builder asks again under the
             # lock, because another writer can land in between.
             log.warning('Refused a Jackett sync: the stored torrentpotato rows do not line up')
@@ -448,10 +445,10 @@ class Base(TorrentProvider):
         """
         def build():
             settings = Env.get('settings')
-            if not replace and settings.group_misaligned(self._section(), PAIRING_COLUMNS):
+            if not replace and settings.group_misaligned(self._section()):
                 raise GroupMisaligned
             stored = [] if replace else settings.group_stored_rows(
-                self._section(), PAIRING_COLUMNS, {'use': '0'})
+                self._section(), {'use': '0'})
             rows = [row for row in stored if row['host'] or row['pass_key'] or row['name']]
             known = {row['host'] for row in rows}
             added = 0
@@ -601,6 +598,7 @@ config = [{
                     'description': 'Can be found on your profile page',
                     'type': 'combined',
                     'combine': ['use', 'host', 'pass_key', 'name', 'seed_ratio', 'seed_time', 'extra_score'],
+                    'pairing': ['host', 'pass_key', 'use', 'name'],
                 },
             ],
         },

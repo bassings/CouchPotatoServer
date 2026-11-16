@@ -25,7 +25,7 @@ def settings(tmp_path, monkeypatch):
             {'name': 'weight', 'default': '5'},
             {'name': 'tag', 'default': ''},
             {'name': 'key', 'default': ',', 'type': 'combined',
-             'combine': ['use', 'host', 'key', 'weight', 'tag']},
+             'combine': ['use', 'host', 'key', 'weight', 'tag'], 'pairing': PAIRING},
         ]}]})
         yield live
 
@@ -61,7 +61,7 @@ class TestCells:
 class TestStoredRows:
 
     def rows(self, settings):
-        return settings.group_stored_rows('zz_test', PAIRING, {'use': '0'})
+        return settings.group_stored_rows('zz_test', {'use': '0'})
 
     def test_aligned_columns_become_rows_in_order(self, settings):
         store(settings, host='a,b', key='ka,kb', use='1,0', weight='7,8', tag='t1,t2')
@@ -124,7 +124,7 @@ class TestMisalignedGroup:
     """Definitions, "Misaligned group" (decision D2), for any registered group."""
 
     def misaligned(self, settings):
-        return settings.group_misaligned('zz_test', PAIRING)
+        return settings.group_misaligned('zz_test')
 
     def aligned(self, settings, **overrides):
         columns = dict(host='a,b', key='ka,kb', use='1,0', weight='7,8', tag='t1,t2')
@@ -182,7 +182,7 @@ class TestMisalignedGroup:
         assert self.misaligned(settings) is True
 
     def test_a_section_that_is_not_a_group_is_not_misaligned(self, settings):
-        assert settings.group_misaligned('core', PAIRING) is False
+        assert settings.group_misaligned('core') is False
 
     def test_the_group_is_the_registered_one_with_no_name_written_in_settings(self):
         import couchpotato.core.settings as module

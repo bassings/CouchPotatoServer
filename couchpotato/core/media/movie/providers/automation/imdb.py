@@ -234,6 +234,7 @@ config = [{
                     'label': 'url',
                     'type': 'combined',
                     'combine': ['automation_urls_use', 'automation_urls'],
+                    'pairing': ['automation_urls_use', 'automation_urls'],
                 },
             ],
         },

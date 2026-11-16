@@ -731,15 +731,31 @@ class Settings:
         `_coerce_value` and `_password_save_snapshot` and unlike the older
         camelCase methods of the class.
         """
-        groups = {}
+        return {section: tuple(option['combine'])
+                for section, option in self._combined_options()}
+
+    def combine_pairing(self):
+        """Map each combine group to its pairing columns (Definitions).
+
+        The columns whose cells pair up across a row, declared once as a
+        `pairing` list on the same `combined` option as `combine` and derived the
+        way `combine_groups` is. A group declared without one is a programming
+        error, caught by a unit test over every registered group; at runtime it
+        falls back to every column pairing, which can only err toward refusing.
+        """
+        return {section: tuple(option.get('pairing') or option['combine'])
+                for section, option in self._combined_options()}
+
+    def _combined_options(self):
+        """Each `(section, option)` whose option is a registered combine group."""
+        found = {}
         for section_key, section in self.options.items():
             section_name = section.get('name', section_key)
             for group in section.get('groups', []):
                 for option in group.get('options', []):
-                    columns = option.get('combine')
-                    if option.get('type') == 'combined' and columns:
-                        groups[section_name] = tuple(columns)
-        return groups
+                    if option.get('type') == 'combined' and option.get('combine'):
+                        found[section_name] = option
+        return found.items()
 
     def group_cells(self, section):
         """Each column of a stored group as its cells (Definitions, "Cells").
@@ -755,19 +771,18 @@ class Settings:
                              if self.p.has_option(section, column) else '').split(',')
                     for column in columns}
 
-    def group_stored_rows(self, section, pairing_columns, short_cells=None):
+    def group_stored_rows(self, section, short_cells=None):
         """A stored group as rows (Definitions, "Row count"; AC-DATA-13).
 
-        `pairing_columns` are the columns whose cells pair up across a row; which
-        they are is the caller's to say, because a group's declaration does not
-        distinguish them from its other columns. The row count is the largest
-        cell count among them. A column shorter than that supplies
+        The row count is the largest cell count among the group's pairing columns
+        (`combine_pairing`). A column shorter than that supplies
         `short_cells[column]` if the caller states one, else an empty cell for a
         pairing column and the option's declared default for any other. Cells
         beyond the row count are not rows and are not returned.
         """
         short_cells = short_cells or {}
         cells = self.group_cells(section)
+        pairing_columns = self.combine_pairing().get(section, ())
         count = max((len(cells[column]) for column in pairing_columns if column in cells), default=1)
         rows = []
         for index in range(count):
@@ -784,7 +799,7 @@ class Settings:
             rows.append(row)
         return rows
 
-    def group_misaligned(self, section, pairing_columns):
+    def group_misaligned(self, section):
         """Do the stored columns of a group disagree about its rows?
 
         The Definitions' "Misaligned group" (decision D2), for any registered
@@ -796,6 +811,7 @@ class Settings:
         past the row count is data whose row cannot be identified.
         """
         cells = self.group_cells(section)
+        pairing_columns = self.combine_pairing().get(section, ())
         pairing = {column: cells[column] for column in pairing_columns if column in cells}
         if len({len(values) for values in pairing.values() if any(values)}) > 1:
             return True
