@@ -50,12 +50,20 @@ function isTestDeclaration(call: ts.CallExpression): boolean {
   return (named || modified) && titled && call.arguments.some((arg) => ts.isFunctionLike(arg));
 }
 
-function seedConfigOf(call: ts.CallExpression): string | null | undefined {
+/**
+ * The `seedConfig` a `test.use` sets: its text for a string literal; for a template with
+ * substitutions (a loop that gives each iteration its own fixture or label) a value that
+ * belongs to THAT call site alone, `siteKey` plus the template; null for anything else,
+ * which the check cannot reason about and refuses.
+ */
+function seedConfigOf(call: ts.CallExpression, siteKey: string): string | null | undefined {
   const [options] = call.arguments;
   if (!options || !ts.isObjectLiteralExpression(options)) return undefined;
   for (const property of options.properties) {
     if (ts.isPropertyAssignment(property) && property.name.getText() === 'seedConfig') {
-      return ts.isStringLiteralLike(property.initializer) ? property.initializer.text : null;
+      const { initializer } = property;
+      if (ts.isStringLiteralLike(initializer)) return initializer.text;
+      return ts.isTemplateExpression(initializer) ? `${siteKey} ${initializer.getText()}` : null;
     }
   }
   return undefined;
@@ -90,8 +98,8 @@ export function seedConfigOwnershipViolations(sources: Source[]): string[] {
           const scope = { node, value: undefined as unknown as string | null };
           inner = [...scopes, scope];
           describes.push(scope);
-        } else if (isTestUse(node) && seedConfigOf(node) !== undefined) {
-          const value = seedConfigOf(node) as string | null;
+        } else if (isTestUse(node) && seedConfigOf(node, where(node)) !== undefined) {
+          const value = seedConfigOf(node, where(node)) as string | null;
           const owner = scopes[scopes.length - 1];
           if (!owner) violations.push(`${where(node)}: seedConfig is set outside a describe, so it would apply to the whole file`);
           else if (value === null) violations.push(`${where(node)}: seedConfig must be a string literal`);
@@ -190,10 +198,34 @@ describe('seedConfig ownership check', () => {
     expect(seedConfigOwnershipViolations([{ name: 'a.spec.ts', text }])[0]).toContain('outside a describe');
   });
 
-  it('rejects a seedConfig that is not a string literal', () => {
+  it('rejects a seedConfig that is neither a string nor a template', () => {
     const text = `const name = 'x'; test.describe('a', () => { test.use({ seedConfig: name }); test('r', async () => {}); });`;
 
     expect(seedConfigOwnershipViolations([{ name: 'a.spec.ts', text }])[0]).toContain('string literal');
+  });
+
+  it('accepts a loop whose template gives each iteration its own value, one writer per describe', () => {
+    const text = `for (const shape of ['a', 'b']) {
+      test.describe(shape, () => {
+        test.use({ seedConfig: \`\${shape}#edit\` });
+        test('w', async () => { ${writer()} });
+      });
+    }`;
+    expect(seedConfigOwnershipViolations([{ name: 'a.spec.ts', text }])).toEqual([]);
+  });
+
+  it('rejects a second test in a looped describe whose test writes', () => {
+    const text = `for (const shape of ['a', 'b']) {
+      test.describe(shape, () => {
+        test.use({ seedConfig: \`\${shape}#edit\` });
+        test('w', async () => { ${writer()} });
+        test('r', async () => {});
+      });
+    }`;
+    const found = seedConfigOwnershipViolations([{ name: 'a.spec.ts', text }]);
+
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain('used by 2 tests');
   });
 
   it('does not count test.skip(condition) inside a test as a second test', () => {
