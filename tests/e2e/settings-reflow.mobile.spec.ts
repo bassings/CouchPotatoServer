@@ -85,3 +85,49 @@ for (const theme of ['light', 'dark'] as const) {
     });
   }
 }
+
+// SEC-004 P3: the refused combined field and the misaligned-group notice at phone
+// width. The refusal is stubbed in the server's own shape; nothing is written.
+for (const theme of ['light', 'dark'] as const) {
+  test.describe(`a refused combined field at 375px in ${theme} theme`, () => {
+    test.use({ seedConfig: `newznab_misaligned_key_short#mobile-reflow-${theme}` });
+
+    test('the notice and the inline refusal show in full inside the viewport', async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 800 });
+      await page.addInitScript((selectedTheme) => {
+        localStorage.setItem('cp-theme', selectedTheme);
+      }, theme);
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false, error: 'A cell cannot contain a comma.',
+          invalid: [{ row: 1, column: 'host', reason: 'comma' }],
+        }),
+      }));
+      await page.goto('/settings/');
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      const card = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
+      const notice = card.getByTestId('combine-misaligned-notice');
+      await expect(notice).toBeVisible();
+
+      await card.getByLabel('host for row 2', { exact: true }).fill('https://placeholder-two.invalid/api,x');
+      const error = card.getByTestId('combine-row-error');
+      await expect(error).toBeVisible();
+      await expect(card.locator('[aria-invalid="true"]')).toHaveCount(1);
+
+      await expectNoHorizontalDocumentOverflow(page, `refused combined field, ${theme}`);
+      for (const box of [notice, error]) {
+        const fits = await box.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const text = element.querySelector('p') as HTMLElement;
+          return {
+            inside: rect.left >= 0 && rect.right <= document.documentElement.clientWidth,
+            clipped: text.scrollWidth > text.clientWidth,
+          };
+        });
+        expect(fits).toEqual({ inside: true, clipped: false });
+      }
+    });
+  });
+}

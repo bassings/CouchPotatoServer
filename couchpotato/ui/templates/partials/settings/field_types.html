@@ -227,9 +227,14 @@
   <div x-data="combinedField(group.section, opt)">
     <!-- Misaligned stored rows (the server's flag): persistent until a save of
          this group succeeds. Not a live region: it is there on load, and says
-         what is true of the rows now on screen. -->
+         what is true of the rows now on screen.
+
+         The message boxes below use the validation box of profiles.html WITHOUT its
+         bg-cp-danger/10 tint: with it, text-cp-danger measures 4.47:1 on the dark
+         card (WCAG 1.4.3 needs 4.5:1, measured by settings-combined.a11y.spec.ts);
+         without it, 4.81:1. The border and the text still carry the danger colour. -->
     <template x-if="held && held.notice">
-      <div class="mb-2 px-3 py-2 rounded-lg bg-cp-danger/10 border border-cp-danger/20" data-testid="combine-misaligned-notice">
+      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-misaligned-notice">
         <p class="text-xs text-cp-danger">The saved entries here do not line up: some columns have more entries than others. The rows shown are what will be saved when you change one, so check each row first.</p>
       </div>
     </template>
@@ -239,7 +244,7 @@
          rows stay on screen and unsaved. Announced once by the panel, so this
          carries no live role of its own. -->
     <template x-if="held && held.error">
-      <div class="mb-2 px-3 py-2 rounded-lg bg-cp-danger/10 border border-cp-danger/20" data-testid="combine-save-error">
+      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-save-error">
         <p class="text-xs text-cp-danger" x-text="held.error"></p>
       </div>
     </template>
@@ -298,7 +303,7 @@
       <!-- Refused cells of THIS row, directly below it. Persistent: removed only
            when the group saves. No live role: the panel announces the refusal. -->
       <template x-if="rowErrors(rowIdx).length">
-        <div class="mt-1 px-3 py-2 rounded-lg bg-cp-danger/10 border border-cp-danger/20" data-testid="combine-row-error">
+        <div class="mt-1 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-row-error">
           <template x-for="entry in rowErrors(rowIdx)" :key="entry.column">
             <p class="text-xs text-cp-danger" :id="errorId(entry)" x-text="entry.message"></p>
           </template>
