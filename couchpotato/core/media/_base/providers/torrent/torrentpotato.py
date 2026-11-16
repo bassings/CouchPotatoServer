@@ -35,19 +35,26 @@ class Base(TorrentProvider):
 
         # Register API endpoint for Jackett sync
         addApiView('torrentpotato.jackett_sync', self.jackettSync, docs={
-            'desc': 'Sync TorrentPotato indexers from Jackett',
+            'desc': 'Sync TorrentPotato indexers from Jackett. Send no parameters to use the saved '
+                    'Jackett URL and API key. A jackett_url must be sent with its own jackett_api_key '
+                    '(the saved key is never sent to a URL in the request).',
             'params': {
-                'jackett_url': {'desc': 'Jackett base URL (optional, uses saved setting if not provided)'},
-                'jackett_api_key': {'desc': 'Jackett API key (optional, uses saved setting if not provided)'},
+                'jackett_url': {'desc': 'Jackett base URL (optional). Must come with jackett_api_key; '
+                                        'if neither is sent the saved pair is used'},
+                'jackett_api_key': {'desc': 'Jackett API key (optional). Empty or blank counts as not sent'},
+                'replace': {'desc': 'true (also 1, yes, on) replaces every stored indexer with the '
+                                    'Jackett ones; anything else merges. Refused on a merge when the '
+                                    'stored rows do not line up'},
             },
             'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
         })
 
         addApiView('torrentpotato.jackett_test', self.jackettTest, docs={
-            'desc': 'Test Jackett connection and list available indexers',
+            'desc': 'Test Jackett connection and list available indexers. Send no parameters to use '
+                    'the saved Jackett URL and API key; a jackett_url must come with its own key.',
             'params': {
-                'jackett_url': {'desc': 'Jackett base URL'},
-                'jackett_api_key': {'desc': 'Jackett API key'},
+                'jackett_url': {'desc': 'Jackett base URL (optional). Must come with jackett_api_key'},
+                'jackett_api_key': {'desc': 'Jackett API key (optional)'},
             },
             'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
         })
@@ -285,15 +292,18 @@ class Base(TorrentProvider):
     def _jackettCredentials(self, jackett_url, jackett_api_key):
         """Pick the Jackett URL and API key a request may use.
 
-        The saved key belongs to the saved URL and nowhere else. A request that
-        supplies its own `jackett_url` must supply its own `jackett_api_key`
-        (AC-SEC-9 rule (a)): combining it with the saved key would send the
-        stored key to a host the caller chose. Returns `(url, key, refusal)`;
+        A single request cannot pair a caller-supplied URL with the saved key: a
+        request that supplies its own `jackett_url` must supply its own
+        `jackett_api_key` (AC-SEC-9 rule (a)), because combining them would send
+        the stored key to a host the caller chose. (This does not bind the saved
+        key to the saved URL: `settings.save` can change the URL alone.) Returns `(url, key, refusal)`;
         `refusal` is a response dict, with no submitted value in it, or None.
         """
         supplied = (jackett_url, jackett_api_key)
         if any(value and not isinstance(value, str) for value in supplied):
             return None, None, {'success': False, 'error': 'Jackett URL and API key must be text'}
+        if isinstance(jackett_api_key, str) and not jackett_api_key.strip():
+            jackett_api_key = None  # a key that is empty after stripping is absent
         if jackett_url and not jackett_api_key:
             return None, None, {
                 'success': False,
@@ -336,9 +346,11 @@ class Base(TorrentProvider):
         """Sync TorrentPotato indexers from Jackett
 
         Args:
-            jackett_url: Jackett base URL (uses saved setting if not provided)
-            jackett_api_key: Jackett API key (uses saved setting if not provided)
-            replace: If True, replace all existing indexers. If False, merge/add new ones.
+            jackett_url: Jackett base URL. Must come with its own jackett_api_key; when
+                neither is given the saved pair is used
+            jackett_api_key: Jackett API key (empty after stripping counts as not given)
+            replace: True (or the text true, 1, yes, on) replaces all existing indexers;
+                anything else merges/adds new ones.
         """
         jackett_url, jackett_api_key, refusal = self._jackettCredentials(jackett_url, jackett_api_key)
         if refusal:

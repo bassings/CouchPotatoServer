@@ -1,4 +1,9 @@
-"""SEC-004 P2, AC-SEC-9 rule (a): the saved Jackett key only ever goes to the saved URL.
+"""SEC-004 P2, AC-SEC-9 rule (a): one request cannot pair a caller-supplied URL with the saved key.
+
+What is guaranteed is that, and no more: someone who can call ``settings.save``
+can still change ``jackett_url`` alone and then call a route with no parameters,
+which sends the saved key to the new URL (measured, on master too; recorded as
+debt).
 
 ``jackettTest`` and ``jackettSync`` used to combine a request-supplied
 ``jackett_url`` with the saved ``jackett_api_key``, so a request that named any
@@ -77,13 +82,15 @@ class TestASuppliedUrlNeedsItsOwnKey:
         assert result['success'] is False
         assert requested == []
 
-    def test_a_blank_key_does_not_count_as_a_key(self, world, operation):
+    @pytest.mark.parametrize('blank', ['', ' ', '   ', '\t', ' \n '])
+    def test_a_key_that_is_empty_after_stripping_does_not_count_as_a_key(
+            self, world, operation, blank):
         _, provider, requested = world
 
-        result = run(provider, operation, jackett_url=OTHER_URL, jackett_api_key='')
+        result = run(provider, operation, jackett_url=OTHER_URL, jackett_api_key=blank)
 
         assert result['success'] is False
-        assert requested == []
+        assert requested == [], 'a request went out, so the saved key travelled with it'
 
     def test_a_url_with_its_own_key_is_used_with_that_key_and_never_the_saved_one(
             self, world, operation):
@@ -97,6 +104,8 @@ class TestASuppliedUrlNeedsItsOwnKey:
         assert SAVED_KEY not in requested[0]
 
     @pytest.mark.parametrize('url, key', [
+        (OTHER_URL, 0),
+        (OTHER_URL, []),
         (['a', 'b'], OTHER_KEY),
         (OTHER_URL, ['a', 'b']),
         (OTHER_URL, {'k': 'v'}),
