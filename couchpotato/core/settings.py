@@ -763,14 +763,22 @@ class Settings:
 
         A cell is a piece of the raw stored value split on `,`. Nothing is
         trimmed and nothing is dropped, so an empty cell is a position, and an
-        empty or missing stored value is one empty cell. The columns are the
+        empty or missing stored value is one empty cell. The value is read as
+        `get()` reads it (a legacy `b'...'` wrapper is stripped first). The columns are the
         group's own (`combine_groups`); a section that is not a group has none.
         """
         columns = self.combine_groups().get(section, ())
         with _PASSWORD_SAVE_LOCK:
-            return {column: (self.p.get(section, column)
-                             if self.p.has_option(section, column) else '').split(',')
-                    for column in columns}
+            return {column: self._stored_text(section, column).split(',') for column in columns}
+
+    def _stored_text(self, section, column):
+        """A stored value as `get()` reads it: the same `_coerce_value`, so a legacy
+        bytes-literal wrapper (`b'...'`) is stripped here exactly as it is for the
+        provider's own reader. A value that was never stored is empty text."""
+        if not self.p.has_option(section, column):
+            return ''
+        value = _coerce_value(self.p.get(section, column), self.getType(section, column))
+        return value if isinstance(value, str) else str(value)
 
     def group_stored_rows(self, section, short_cells=None):
         """A stored group as rows (Definitions, "Row count"; AC-DATA-13).
