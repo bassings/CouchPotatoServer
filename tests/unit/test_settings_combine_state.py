@@ -91,6 +91,47 @@ def test_the_row_count_is_whatever_group_stored_rows_says(settings, monkeypatch)
     assert all(entry['rows'] == 7 for entry in settings.combine_state().values())
 
 
+def test_a_read_overlapping_a_group_write_is_one_snapshot(settings):
+    """`view()` returns the values AND the row count; a read that lands between two
+    column writes would pair a new host with an old key beside an aligned count."""
+    import threading
+
+    from tests.helpers.combine_groups import placeholder_rows
+
+    rows = placeholder_rows(settings.combine_groups()['newznab'], 3, tag='new')
+    original_set = settings.set
+    after_first_column = threading.Event()
+    proceed = threading.Event()
+    calls = []
+
+    def paused_set(section, option, value):
+        original_set(section, option, value)
+        calls.append(option)
+        if len(calls) == 1:
+            after_first_column.set()
+            proceed.wait(10)
+
+    settings.set = paused_set
+    seen = {}
+    writer = threading.Thread(target=lambda: settings.save_group('newznab', rows))
+    reader = threading.Thread(target=lambda: seen.update(settings.view()))
+    try:
+        writer.start()
+        assert after_first_column.wait(10)
+        reader.start()
+        reader.join(0.5)
+    finally:
+        proceed.set()
+        writer.join(10)
+        reader.join(10)
+        settings.set = original_set
+
+    values = seen['values']['newznab']
+    new_cells = {column: ','.join(row[column] for row in rows) for column in rows[0]}
+    changed = [column for column in new_cells if values[column] == new_cells[column]]
+    assert changed in ([], list(new_cells)), 'the read mixed old and new columns: %s' % changed
+
+
 def test_reading_the_state_writes_nothing(settings):
     before = Path(settings.file).read_bytes()
 

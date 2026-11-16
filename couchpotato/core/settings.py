@@ -713,11 +713,15 @@ class Settings:
         return res
 
     def view(self, **kwargs):
-        return {
-            'options': self.getOptions(),
-            'values': self.getValues(),
-            'combine_state': self.combine_state(),
-        }
+        # One snapshot: the lock a group write holds across its columns and its file
+        # write, so values and row count can never come from two different writes.
+        # Re-entrant, so a caller already holding it does not deadlock.
+        with _PASSWORD_SAVE_LOCK:
+            return {
+                'options': self.getOptions(),
+                'values': self.getValues(),
+                'combine_state': self.combine_state(),
+            }
 
     def combine_state(self):
         """Each combine group's state for the page: `{section: {'misaligned', 'rows'}}`.
