@@ -190,6 +190,41 @@ for (const theme of THEMES) {
     });
   });
 
+  test.describe(`the dropped-rows note (${theme} theme)`, () => {
+    test.use({ seedConfig: `torrentpotato_aligned#a11y-discarded-${theme}` });
+
+    test('is at least 4.5:1 and axe reports nothing with it shown', async ({ page }) => {
+      await page.addInitScript((selected) => localStorage.setItem('cp-theme', selected), theme);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
+        await gate;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }) });
+      });
+      await page.goto('/settings/');
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      const card = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'TorrentPotato', exact: true }) });
+      await card.locator('h3 button[aria-expanded="false"]').click();
+      const asked = page.waitForRequest((request) => request.url().includes('jackett_sync'));
+      await card.getByRole('button', { name: /Sync Indexers/ }).click();
+      await asked;
+      await card.getByLabel('name for row 1', { exact: true }).fill('name-typed-during-the-action');
+      release();
+
+      const note = card.getByTestId('combine-discarded-note');
+      await expect(note).toBeVisible();
+      // The pointer is still over the Sync button; its hover state is not what this measures.
+      await page.mouse.move(0, 0);
+      await expectVisualTransitionsToSettle(page, `${theme} theme, note shown`);
+      const ratio = await note.locator('p').evaluate(TEXT_CONTRAST);
+      expect(ratio, `${theme}: dropped-rows note contrast ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .analyze();
+      expect(results.violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(' ')).join(' | ')}`)).toEqual([]);
+    });
+  });
+
   test.describe(`the misaligned-group notice describes the cells (${theme} theme)`, () => {
     test.use({ seedConfig: `newznab_misaligned_key_short#a11y-notice-describes-${theme}` });
 
@@ -200,8 +235,10 @@ for (const theme of THEMES) {
       const noticeId = await notice.getAttribute('id');
       expect(noticeId).toBeTruthy();
 
-      const controls = card.locator('input[aria-label$="for row 1"], input[aria-label$="for row 3"], [role="switch"][aria-label^="Enable row"]');
-      expect(await controls.count()).toBeGreaterThan(4);
+      // Every cell, the switches, and Remove (which triggers the save the notice warns about).
+      const controls = card.locator('input[aria-label$="for row 1"], input[aria-label$="for row 3"], [role="switch"][aria-label^="Enable row"], button[aria-label^="Remove row"]');
+      expect(await controls.count()).toBeGreaterThan(8);
+      await expect(card.getByRole('button', { name: 'Remove row 2', exact: true })).toHaveAttribute('aria-describedby', noticeId ?? 'missing');
       for (const described of await controls.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-describedby')))) {
         expect(described).toContain(noticeId);
       }

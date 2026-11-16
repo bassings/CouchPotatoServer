@@ -720,6 +720,21 @@ describe('an empty use cell', () => {
     expect(net.body(0).rows.map((row: any) => row.use)).toEqual(['1', '0', '0']);
   });
 
+  it('is sent as 0 when the cell is missing altogether', async () => {
+    const net = installFetch();
+    const panel = makePanel(
+      { newznab: { ...ALIGNED_VALUES.newznab, use: '1' } },
+      { newznab: { misaligned: true, rows: 3 } },
+    );
+    const group = panel.ensureGroup('newznab', combinedOption(panel.options));
+    group.rows[0][1] = 'https://placeholder-edited.invalid/api';
+    panel.editGroup('newznab');
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(net.body(0).rows.map((row: any) => row.use)).toEqual(['1', '0', '0']);
+  });
+
   it('is left empty in a group whose use column is not named use', async () => {
     const net = installFetch();
     const options = {

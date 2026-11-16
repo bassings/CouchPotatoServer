@@ -577,6 +577,17 @@ result. Getting it wrong the other way files a bug against working code.
   and `partials/settings/categories.html` (about lines 180-183). Not measured
   there by a test; a scoped fix in `base.html`, as the review-queue and
   operator-replace controls have, is the existing precedent.
+- **The provider readers are not one snapshot (2026-11-17).** `getHosts` in
+  `newznab.py` (about lines 132-139) and its torrentpotato equivalent read `use`,
+  `host` and the key column as separate unlocked `conf()` calls, so a read that
+  overlaps a group write can pair a new host with an old key for that one
+  search. `Settings.group_cells()` is the one-snapshot reader to move them to.
+  Deliberately not changed in SEC-004 P3: the provider readers are left alone
+  until P6.
+- **`Settings.view()` now waits behind every holder of the settings lock
+  (2026-11-17).** That includes a group write's file sync and the password
+  save's hashing, so the settings page's read can stall behind them. Unmeasured
+  on a slow volume.
 - **No screen-reader, Firefox or WebKit run exists for the Settings combined
   field (2026-11-17).** Its refusal and notice announcements are proven by
   counting text changes in the live regions in Chromium only
