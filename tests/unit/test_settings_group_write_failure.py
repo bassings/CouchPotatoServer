@@ -135,7 +135,8 @@ class TestAWriteThatFails:
 
         result = settings.save_group('newznab', builder)
 
-        assert result['success'] is False and 'invalid' not in result
+        assert result['success'] is False
+        assert 'invalid' not in result
         assert_nothing_changed(settings, 'newznab', before)
 
 
@@ -399,11 +400,15 @@ class TestWhatIsLogged:
             result = settings.save_group('newznab', builder)
 
         lines = log.at_or_above(logging.WARNING)
-        assert result['success'] is False and 'invalid' not in result
+        assert result['success'] is False
+        assert 'invalid' not in result
         assert len(lines) == 1, [r.getMessage() for r in log.records]
-        assert lines[0].levelno == logging.ERROR and lines[0].exc_info is None
-        assert 'newznab' in lines[0].getMessage() and 'RuntimeError' in lines[0].getMessage()
-        assert 'canary' not in log.text() and 'canary' not in repr(result)
+        assert lines[0].levelno == logging.ERROR
+        assert lines[0].exc_info is None
+        assert 'newznab' in lines[0].getMessage()
+        assert 'RuntimeError' in lines[0].getMessage()
+        assert 'canary' not in log.text()
+        assert 'canary' not in repr(result)
 
     def test_a_failed_write_logs_one_error_naming_the_section_and_exception_type(
             self, settings, monkeypatch):
@@ -418,7 +423,8 @@ class TestWhatIsLogged:
         assert result['success'] is False
         assert len(lines) == 1, [r.getMessage() for r in log.records]
         assert lines[0].levelno == logging.ERROR
-        assert 'newznab' in lines[0].getMessage() and 'OSError' in lines[0].getMessage()
+        assert 'newznab' in lines[0].getMessage()
+        assert 'OSError' in lines[0].getMessage()
         assert lines[0].exc_info is None, 'no traceback is logged for a write failure'
         assert 'canary' not in log.text()
         assert 'canary' not in repr(result)
@@ -534,7 +540,8 @@ class TestAlignedConfigurationsRoundTrip:
             assert settings.save_group('newznab', rows) == {'success': True}
 
             stored_now = stored_group(settings.file, 'newznab', columns)
-            assert stored_now['extra_score'] == '0,0,0' and stored_now['custom_tag'] == ',,'
+            assert stored_now['extra_score'] == '0,0,0'
+            assert stored_now['custom_tag'] == ',,'
 
 
 class TestRollbackIsARevert:

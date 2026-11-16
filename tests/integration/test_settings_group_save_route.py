@@ -96,7 +96,8 @@ class TestAuthentication:
         response = client.post(url(key=None), json={'section': 'newznab', 'rows': three_rows(
             settings, 'newznab')}, headers={'X-Api-Key': API_KEY})
 
-        assert response.status_code == 200 and response.json() == {'success': True}
+        assert response.status_code == 200
+        assert response.json() == {'success': True}
 
 
 class TestTransportIsJsonPostOnly:
@@ -273,7 +274,8 @@ class TestEveryGroupSavesThroughTheRoute:
 
         response = send(client, rows, section)
 
-        assert response.status_code == 200 and response.json() == {'success': True}
+        assert response.status_code == 200
+        assert response.json() == {'success': True}
         assert stored_group(settings.file, section, columns) == {
             column: ','.join(row[column] for row in rows) for column in columns}
         assert reader_view(settings, monkeypatch, section) == expected_view(section, rows)
@@ -491,7 +493,8 @@ class TestNoValueIsEverReturnedOrLogged:
         info = [r.getMessage() for r in log.records
                 if r.levelno == logging.INFO and 'settings group' in r.getMessage()]
         assert len(info) == 1, [r.getMessage() for r in log.records]
-        assert 'section=newznab' in info[0] and 'rows=3' in info[0]
+        assert 'section=newznab' in info[0]
+        assert 'rows=3' in info[0]
         assert 'sentinel' not in log.text()
 
     def test_the_success_body_holds_no_cell_value_for_any_column_of_either_big_group(self, world):
@@ -514,13 +517,15 @@ class TestNoValueIsEverReturnedOrLogged:
 
         body = response.json()
         assert [e['reason'] for e in body['invalid']] == ['comma', 'comma']
-        assert 'canary' not in response.text and 'sentinel' not in response.text
+        assert 'canary' not in response.text
+        assert 'sentinel' not in response.text
         lines = log.at_or_above(logging.WARNING)
         assert len(lines) == 1, [r.getMessage() for r in log.records]
         assert lines[0].levelno == logging.WARNING
         for part in ('section=newznab', 'first_row=1', 'first_column=host', 'offences=2'):
             assert part in lines[0].getMessage()
-        assert 'canary' not in log.text() and 'sentinel' not in log.text()
+        assert 'canary' not in log.text()
+        assert 'sentinel' not in log.text()
 
     def test_a_forced_write_failure_logs_one_error_and_no_traceback_and_no_value(
             self, world, monkeypatch):
@@ -538,12 +543,15 @@ class TestNoValueIsEverReturnedOrLogged:
 
         body = response.json()
         assert response.status_code == 200
-        assert body['success'] is False and 'invalid' not in body
+        assert body['success'] is False
+        assert 'invalid' not in body
         assert 'sentinel' not in response.text
         lines = log.at_or_above(logging.WARNING)
         assert len(lines) == 1, [r.getMessage() for r in log.records]
-        assert lines[0].levelno == logging.ERROR and lines[0].exc_info is None
-        assert 'newznab' in lines[0].getMessage() and 'OSError' in lines[0].getMessage()
+        assert lines[0].levelno == logging.ERROR
+        assert lines[0].exc_info is None
+        assert 'newznab' in lines[0].getMessage()
+        assert 'OSError' in lines[0].getMessage()
         assert 'sentinel' not in log.text()
         assert 'Traceback' not in log.text()
         assert sha(settings.file) == before
@@ -553,7 +561,8 @@ class TestRegistration:
     """AC-ARCH-5, AC-SIMP-4"""
 
     def test_the_route_is_registered_next_to_settings_save_with_docs(self, world):
-        assert ROUTE in api_docs and api_docs[ROUTE].get('desc')
+        assert ROUTE in api_docs
+        assert api_docs[ROUTE].get('desc')
         assert ROUTE not in api_docs_missing
 
 
@@ -608,7 +617,8 @@ class TestPairingThroughTheRealSearchLoop:
         calls = self.newznab_calls(monkeypatch)
         assert len(calls) == 2, calls
         for call, (host, key) in zip(calls, [('h1', 'placeholder-key-1'), ('h2', 'placeholder-key-2')]):
-            assert '//%s.example.invalid/' % host in call and 'apikey=%s' % key in call
+            assert '//%s.example.invalid/' % host in call
+            assert 'apikey=%s' % key in call
         assert not any('evil' in call for call in calls)
         assert not any('placeholder-key-2' in c and 'h1.' in c for c in calls)
 
@@ -632,5 +642,6 @@ class TestPairingThroughTheRealSearchLoop:
         calls = self.torrentpotato_calls(monkeypatch)
         assert len(calls) == 2, calls
         for call, (host, key) in zip(calls, [('h1', 'placeholder-key-1'), ('h2', 'placeholder-key-2')]):
-            assert '//%s.example.invalid/' % host in call and 'passkey=%s' % key in call
+            assert '//%s.example.invalid/' % host in call
+            assert 'passkey=%s' % key in call
         assert not any('evil' in call for call in calls)
