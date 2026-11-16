@@ -715,8 +715,21 @@ class Settings:
     def view(self, **kwargs):
         return {
             'options': self.getOptions(),
-            'values': self.getValues()
+            'values': self.getValues(),
+            'combine_state': self.combine_state(),
         }
+
+    def combine_state(self):
+        """Each combine group's state for the page: `{section: {'misaligned', 'rows'}}`.
+
+        The Settings page and the wizard never re-derive alignment or the row count
+        in script (Definitions): they read both from here. `misaligned` is
+        `group_misaligned` and `rows` is the Definitions' row count, the number of
+        rows `group_stored_rows` returns. Nothing here names a section or a column.
+        """
+        return {section: {'misaligned': self.group_misaligned(section),
+                          'rows': len(self.group_stored_rows(section))}
+                for section in self.combine_groups()}
 
     def combine_groups(self):
         """Map each section that stores rows to its ordered column names.

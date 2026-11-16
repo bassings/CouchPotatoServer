@@ -11,9 +11,12 @@ one.
 Hosts are ``.invalid`` and every credential is a ``placeholder-`` string or a
 ``canary`` that must never be echoed.
 """
+import contextlib
 import logging
 import os
 import os.path
+import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -41,9 +44,9 @@ API_KEY = 'placeholder-api-key-for-group-save'
 ROUTE = 'settings.save_group'
 
 
-@pytest.fixture
-def world(tmp_path, monkeypatch):
-    with group_settings(tmp_path, monkeypatch) as settings:
+@contextlib.contextmanager
+def live_world(tmp_path, monkeypatch, stored=None):
+    with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
         monkeypatch.setattr(Env, '_settings', settings)
         monkeypatch.setattr(Env, '_web_base', '/', raising=False)
         monkeypatch.setattr(Env, '_api_base', '/api/%s/' % API_KEY, raising=False)
@@ -57,6 +60,12 @@ def world(tmp_path, monkeypatch):
                 key, kw.get('default', ''))):
             app = create_app(api_key=API_KEY, web_base='/')
         yield settings, TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture
+def world(tmp_path, monkeypatch):
+    with live_world(tmp_path, monkeypatch) as live:
+        yield live
 
 
 def url(key=API_KEY, route=ROUTE):
@@ -645,3 +654,36 @@ class TestPairingThroughTheRealSearchLoop:
             assert '//%s.example.invalid/' % host in call
             assert 'passkey=%s' % key in call
         assert not any('evil' in call for call in calls)
+
+
+class TestTheSettingsReadCarriesGroupState:
+    """SEC-004 P3: the page's own read says which groups are misaligned and how
+    many rows each has, so script never derives either."""
+
+    def read(self, client):
+        response = client.get(url(route='settings/'))
+        assert response.status_code == 200
+        return response.json()
+
+    def test_a_misaligned_group_is_flagged_through_the_real_http_read(self, tmp_path, monkeypatch):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'scripts'))
+        import seed_e2e_data
+
+        stored = seed_e2e_data.config_fixture('newznab_misaligned_key_short')
+        with live_world(tmp_path, monkeypatch, stored=stored) as (settings, client):
+            before = sha(settings.file)
+
+            payload = self.read(client)
+
+            assert payload['combine_state']['newznab'] == {'misaligned': True, 'rows': 3}
+            assert payload['combine_state']['torrentpotato']['misaligned'] is False
+            assert sha(settings.file) == before
+
+    def test_the_values_the_page_derives_rows_from_are_in_the_same_read(self, world):
+        settings, client = world
+
+        payload = self.read(client)
+
+        assert set(payload['combine_state']) == set(SECTIONS)
+        assert 'newznab' in payload['values']
+        assert payload['values']['newznab']['host'] == settings.get('host', 'newznab')
