@@ -262,8 +262,25 @@ class Base(TorrentProvider):
             log.error('Failed to fetch Jackett indexers: %s', type(e).__name__)
             return None, f'Failed to connect to Jackett: {type(e).__name__}'
 
-    def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
-        """Test Jackett connection and return list of available indexers"""
+    def _jackettCredentials(self, jackett_url, jackett_api_key):
+        """Pick the Jackett URL and API key a request may use.
+
+        The saved key belongs to the saved URL and nowhere else. A request that
+        supplies its own `jackett_url` must supply its own `jackett_api_key`
+        (AC-SEC-9 rule (a)): combining it with the saved key would send the
+        stored key to a host the caller chose. Returns `(url, key, refusal)`;
+        `refusal` is a response dict, with no submitted value in it, or None.
+        """
+        supplied = (jackett_url, jackett_api_key)
+        if any(value and not isinstance(value, str) for value in supplied):
+            return None, None, {'success': False, 'error': 'Jackett URL and API key must be text'}
+        if jackett_url and not jackett_api_key:
+            return None, None, {
+                'success': False,
+                'error': 'A Jackett URL must be sent with its own API key. '
+                         'The saved API key is only used with the saved URL.'
+            }
+
         saved_url = self.conf('jackett_url')
         saved_key = self.conf('jackett_api_key')
 
@@ -279,8 +296,13 @@ class Base(TorrentProvider):
         if isinstance(saved_url, str) and saved_url.startswith("b'") and saved_url.endswith("'"):
             saved_url = saved_url[2:-1]
 
-        jackett_url = jackett_url or saved_url
-        jackett_api_key = jackett_api_key or saved_key
+        return jackett_url or saved_url, jackett_api_key or saved_key, None
+
+    def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
+        """Test Jackett connection and return list of available indexers"""
+        jackett_url, jackett_api_key, refusal = self._jackettCredentials(jackett_url, jackett_api_key)
+        if refusal:
+            return refusal
 
         if not jackett_url or not jackett_api_key:
             return {
@@ -310,23 +332,9 @@ class Base(TorrentProvider):
             jackett_api_key: Jackett API key (uses saved setting if not provided)
             replace: If True, replace all existing indexers. If False, merge/add new ones.
         """
-        saved_url = self.conf('jackett_url')
-        saved_key = self.conf('jackett_api_key')
-
-        # Ensure values are strings (settings may return bytes)
-        if isinstance(saved_url, bytes):
-            saved_url = saved_url.decode('utf-8')
-        if isinstance(saved_key, bytes):
-            saved_key = saved_key.decode('utf-8')
-
-        # Also handle str that looks like bytes repr: "b'...'"
-        if isinstance(saved_key, str) and saved_key.startswith("b'") and saved_key.endswith("'"):
-            saved_key = saved_key[2:-1]
-        if isinstance(saved_url, str) and saved_url.startswith("b'") and saved_url.endswith("'"):
-            saved_url = saved_url[2:-1]
-
-        jackett_url = jackett_url or saved_url
-        jackett_api_key = jackett_api_key or saved_key
+        jackett_url, jackett_api_key, refusal = self._jackettCredentials(jackett_url, jackett_api_key)
+        if refusal:
+            return refusal
 
         if not jackett_url or not jackett_api_key:
             return {
