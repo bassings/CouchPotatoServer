@@ -294,7 +294,8 @@ class TestACellTheFileCannotHold:
             result = settings.save_group('newznab', rows)
 
         lines = log.at_or_above(logging.WARNING)
-        assert result['success'] is False and 'invalid' in result
+        assert result['success'] is False
+        assert 'invalid' in result
         assert [r.levelno for r in lines] == [logging.WARNING]
         assert 'reason=not_encodable' in lines[0].getMessage()
         assert 'canary' not in log.text()
@@ -401,7 +402,8 @@ class TestRefusalContract:
         result = settings.save_group('newznab', rows)
 
         assert set(result) == {'success', 'error', 'invalid'}
-        assert isinstance(result['error'], str) and result['error']
+        assert isinstance(result['error'], str)
+        assert result['error']
         assert all(set(entry) == {'row', 'column', 'reason'} for entry in result['invalid'])
 
     def test_the_error_text_is_fixed_and_carries_no_submitted_value(self, settings):
@@ -463,7 +465,8 @@ class TestRowsAreKeyedByRow:
         stored = stored_group(settings.file, 'newznab', columns)
         hosts = stored['host'].split(',')
         assert len(hosts) == 12
-        assert hosts[10] == rows[10]['host'] and hosts[11] == rows[11]['host']
+        assert hosts[10] == rows[10]['host']
+        assert hosts[11] == rows[11]['host']
         assert stored['api_key'].split(',')[10] == rows[10]['api_key']
 
 
