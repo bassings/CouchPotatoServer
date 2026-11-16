@@ -58,7 +58,8 @@ class TestTheDeclaration:
         assert set(raw) == set(SECTIONS)
         for section, option in raw.items():
             pairing = option.get('pairing')
-            assert isinstance(pairing, list) and pairing, '%s declares no pairing list' % section
+            assert isinstance(pairing, list), '%s declares no pairing list' % section
+            assert pairing, '%s declares an empty pairing list' % section
             assert set(pairing) <= set(option['combine']), '%s pairs a column it does not have' % section
 
     def test_the_methods_take_no_column_list(self):
