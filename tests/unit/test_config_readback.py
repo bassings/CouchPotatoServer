@@ -100,6 +100,43 @@ def test_the_automation_view_lists_the_urls_the_reader_would_fetch(tmp_path):
     assert 'placeholder-letterboxd-one' in view[0]
 
 
+def test_enabled_runs_the_real_isEnabled_over_every_row(config_path):
+    answer = run_helper('enabled', config_path, 'newznab')
+
+    assert answer == {'reader_raises': False, 'rows': [True, False, True]}
+
+
+def test_enabled_reports_a_row_whose_use_makes_isEnabled_raise(tmp_path):
+    """The provider is forced enabled so `int(host['use'])` is really reached: a
+    disabled provider short-circuits before it and could never show the hazard."""
+    data_dir = tmp_path / '.e2e-readback-empty-use'
+    seed_e2e_data.apply_config_fixture(str(data_dir), 'newznab_aligned')
+    path = data_dir / 'config.ini'
+    path.write_text(path.read_text(encoding='utf-8').replace('use = 1,0,1', 'use = 1,,1'), encoding='utf-8')
+
+    answer = run_helper('enabled', path, 'newznab')
+
+    assert answer == {'reader_raises': False, 'rows': [True, 'raises', True]}
+
+
+def test_enabled_reports_a_group_the_reader_itself_cannot_read(tmp_path):
+    data_dir = tmp_path / '.e2e-readback-use-short'
+    seed_e2e_data.apply_config_fixture(str(data_dir), 'newznab_misaligned_use_short')
+
+    answer = run_helper('enabled', data_dir / 'config.ini', 'newznab')
+
+    assert answer == {'reader_raises': True, 'rows': []}
+
+
+def test_enabled_for_a_torrentpotato_group_forces_the_provider_on(tmp_path):
+    data_dir = tmp_path / '.e2e-readback-tp'
+    seed_e2e_data.apply_config_fixture(str(data_dir), 'torrentpotato_aligned')
+
+    answer = run_helper('enabled', data_dir / 'config.ini', 'torrentpotato')
+
+    assert answer == {'reader_raises': False, 'rows': [True, False, True]}
+
+
 def test_an_unknown_section_is_an_error_not_an_empty_answer(config_path):
     completed = run_raw('columns', config_path, 'no_such_section')
 

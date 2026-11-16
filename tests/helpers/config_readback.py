@@ -3,6 +3,7 @@
     python -m tests.helpers.config_readback sha <config.ini>
     python -m tests.helpers.config_readback columns <config.ini> <section>
     python -m tests.helpers.config_readback view <config.ini> <section>
+    python -m tests.helpers.config_readback enabled <config.ini> <section>
 
 Run from the repository root and as a MODULE, never as `python tests/helpers/...`:
 a script run by path puts its own directory first on `sys.path`, and that directory
@@ -74,6 +75,48 @@ def group_view(path, section):
             return reader_view(settings, patch, section)
 
 
+def _provider_for(section):
+    if section == 'newznab':
+        from couchpotato.core.media._base.providers.nzb.base import NZBProvider as base
+        from couchpotato.core.media.movie.providers.nzb.newznab import Newznab as provider
+    else:
+        from couchpotato.core.media._base.providers.torrent.base import TorrentProvider as base
+        from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato as provider
+    return base, provider
+
+
+def group_enabled(path, section):
+    """Run the real `isEnabled` over every row the real `getHosts` returns.
+
+    `{'reader_raises': bool, 'rows': [bool | 'raises', ...]}`. The provider is
+    forced ENABLED for the call: `isEnabled` is `enabled and host and key and
+    int(use)`, so with the provider off (torrentpotato ships off) it stops before
+    `int(use)` and could never show the row that makes a search crash. Only
+    newznab and torrentpotato have these readers.
+    """
+    if section not in ('newznab', 'torrentpotato'):
+        raise SystemExit('no isEnabled reader for: %r' % section)
+    stored = _stored(path)
+    with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
+        with group_settings(Path(directory), patch, stored=stored) as settings:
+            from couchpotato.environment import Env
+            patch.setattr(Env, '_settings', settings)
+            base, provider_class = _provider_for(section)
+            patch.setattr(base, 'isEnabled', lambda self, host=None: True)
+            provider = provider_class.__new__(provider_class)
+            try:
+                hosts = provider.getHosts()
+            except Exception:
+                return {'reader_raises': True, 'rows': []}
+            rows = []
+            for host in hosts:
+                try:
+                    rows.append(bool(provider.isEnabled(host)))
+                except Exception:
+                    rows.append('raises')
+            return {'reader_raises': False, 'rows': rows}
+
+
 def main(argv):
     command, path, *rest = argv
     if command == 'sha':
@@ -82,6 +125,8 @@ def main(argv):
         result = group_columns(path, rest[0])
     elif command == 'view':
         result = group_view(path, rest[0])
+    elif command == 'enabled':
+        result = group_enabled(path, rest[0])
     else:
         raise SystemExit('unknown command: %r' % command)
     json.dump(result, sys.stdout)

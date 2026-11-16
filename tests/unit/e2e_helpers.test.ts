@@ -14,7 +14,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@playwright/test', () => ({ expect: vi.fn() }));
-import { configColumns, configSha, configView, mockSettingsSave } from '../e2e/helpers';
+import { configColumns, configEnabled, configSha, configView, mockSettingsSave } from '../e2e/helpers';
 
 describe('mockSettingsSave', () => {
   async function installed() {
@@ -76,6 +76,10 @@ describe('config file read-back', () => {
 
     expect(view.map((row) => row[2])).toEqual(['placeholder-key-one', 'placeholder-key-two']);
     expect(fs.readFileSync(configPath).equals(before)).toBe(true);
+  });
+
+  it('runs the real isEnabled over every row', () => {
+    expect(configEnabled(configPath, 'newznab')).toEqual({ reader_raises: false, rows: [true, false] });
   });
 
   it('fails loudly for a section that is not a combine group', () => {

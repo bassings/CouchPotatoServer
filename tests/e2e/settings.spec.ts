@@ -1,8 +1,8 @@
-import type { Locator } from '@playwright/test';
+import type { Locator, Page, Response } from '@playwright/test';
 
 import { test, expect } from './fixtures';
-import { configColumns, configView } from './helpers';
-import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
+import { configColumns, configEnabled, configSha, configView } from './helpers';
+import { combineGroupWriter, SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
  * Settings page tests for CouchPotato new UI.
@@ -538,5 +538,921 @@ test.describe('Settings: the persistence guard covers the group-save route', () 
         }] }),
       });
     }, testServer.apiBase);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEC-004 P3: a combined field saves ONE group per request, as rows.
+//
+// Every test runs against its own server seeded from a named fixture
+// (`seedConfig`), and asserts on the settings FILE through the provider's real
+// reader (`configColumns`, `configView`, `configSha`), not only on what the page
+// sent. A test that writes a combine group says so with `combineGroupWriter()` and
+// owns its fixture value alone (tests/unit/e2e_seed_config_ownership.test.ts).
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SeenRequest = { url: string; method: string; body: string };
+
+/**
+ * Record every request the page makes, at the network AND inside the page (a
+ * wrapper round `fetch`, armed before any script runs). Two vantage points: a
+ * request the route layer never saw, or one the page never made, is not read as
+ * "no request".
+ */
+async function recordRequests(page: Page) {
+  const seen: SeenRequest[] = [];
+  page.on('request', (request) => seen.push({
+    url: request.url(), method: request.method(), body: request.postData() ?? '',
+  }));
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    const log: { url: string; method: string; body: string }[] = [];
+    (window as any).__fetches = log;
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      log.push({
+        url: String(input instanceof Request ? input.url : input),
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : String(init?.body ?? ''),
+      });
+      return original(input, init);
+    };
+  });
+  const writes = (all: SeenRequest[]) => all.filter((request) => /settings\.save(_group)?\//.test(request.url));
+  return {
+    seen,
+    networkWrites: () => writes(seen),
+    pageWrites: async () => writes(await page.evaluate(() => (window as any).__fetches as SeenRequest[])),
+    groupSaves: () => seen.filter((request) => request.url.includes('settings.save_group') && request.method === 'POST'),
+  };
+}
+
+async function openSettings(page: Page, tab?: string) {
+  await page.goto('/settings/');
+  await expect(page.locator('h1')).toContainText('Settings');
+  if (tab) await page.getByRole('tab', { name: tab }).click();
+}
+
+function providerCard(page: Page, heading: string): Locator {
+  return page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: heading, exact: true }) });
+}
+
+/** A disabled provider is collapsed; opening it saves nothing. An enabled one is already open. */
+async function openCard(card: Locator) {
+  const closed = card.locator('h3 button[aria-expanded="false"]');
+  // The assertion below fails if the card is not open afterwards, so the guard cannot hide a failure.
+  if (await closed.count()) await closed.click(); // vacuous-guard-ok: idempotent open, an enabled provider starts open
+  await expect(card.locator('h3 button[aria-expanded="true"]')).toHaveCount(1);
+}
+
+function groupSaveResponse(page: Page): Promise<Response> {
+  return page.waitForResponse((response) => response.url().includes('settings.save_group')
+    && response.request().method() === 'POST');
+}
+
+/**
+ * Let every pending debounce fire, then wait for the network to go quiet. The page
+ * debounces edits by 500ms, so a negative assertion read at the same instant as the
+ * event would pass while a save is still scheduled. Needs `page.clock.install()`
+ * before the page loads.
+ */
+async function settleDebounce(page: Page) {
+  await page.clock.fastForward(5000);
+  await page.waitForLoadState('networkidle');
+}
+
+const NEWZNAB_HOSTS = ['one', 'two', 'three'].map((word) => `https://placeholder-${word}.invalid/api`);
+const NEWZNAB_KEYS = ['one', 'two', 'three'].map((word) => `placeholder-key-${word}`);
+
+test.describe('Settings: a refused combined-field save, against the real server', () => {
+  test.use({ seedConfig: 'newznab_aligned#real-refusal' });
+
+  test('a comma in row 2 is refused inline, below row 2, writes nothing and moves no focus', async ({ page, testServer }) => {
+    // The refused request must reach the real server, so it is let through; a refusal
+    // writes nothing, which the file hash below proves.
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    await page.clock.install();
+    const net = await recordRequests(page);
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    const host = card.getByLabel('host for row 2', { exact: true });
+
+    const refused = groupSaveResponse(page);
+    await host.fill(`${NEWZNAB_HOSTS[1]},https://placeholder-evil.invalid`);
+    await host.focus();
+    await page.clock.fastForward(600);
+    const body = await (await refused).json();
+
+    expect(body.success).toBe(false);
+    const error = card.getByTestId('combine-row-error');
+    await expect(error).toHaveCount(1);
+    await expect(error).toHaveText('Row 2: the host cannot contain a comma. Remove it to save.');
+    // Directly below row 2 and before row 3: the error sits between the two rows' inputs.
+    const order = await card.locator('input[aria-label$="for row 2"], [data-testid="combine-row-error"], input[aria-label$="for row 3"]')
+      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-testid') ?? node.getAttribute('aria-label')));
+    expect(order.indexOf('combine-row-error')).toBeGreaterThan(order.findIndex((name) => name?.endsWith('for row 2')));
+    expect(order.indexOf('combine-row-error')).toBeLessThan(order.findIndex((name) => name?.endsWith('for row 3')));
+    // Only row 2's host is marked, with the danger token, and its description resolves.
+    await expect(card.locator('[aria-invalid="true"]')).toHaveCount(1);
+    await expect(host).toHaveAttribute('aria-invalid', 'true');
+    const describedBy = await host.getAttribute('aria-describedby');
+    await expect(page.locator(`[id="${describedBy}"]`)).toHaveText(/Row 2: the host/);
+    const marked = await host.evaluate((input) => {
+      const probe = document.createElement('div');
+      probe.className = 'border border-cp-danger';
+      document.body.append(probe);
+      const expected = getComputedStyle(probe).borderTopColor;
+      probe.remove();
+      return getComputedStyle(input).borderTopColor === expected;
+    });
+    expect(marked).toBe(true);
+    // The text never carries the typed value, and no per-column toast appears.
+    await expect(error).not.toContainText('evil');
+    await expect(page.getByText(/Could not save/)).toHaveCount(0);
+    // Never "Saved", and the focused element did not move.
+    await expect(page.getByText('Saved', { exact: true })).toBeHidden();
+    await expect(host).toBeFocused();
+    // The file, read from disk, is exactly what it was; the page sent one group save.
+    expect(configSha(testServer.configPath)).toBe(before);
+    expect(net.groupSaves()).toHaveLength(1);
+    expect(net.networkWrites().filter((request) => request.url.includes('settings.save/'))).toEqual([]);
+
+    // A11Y-2: nothing removes the message on a timer.
+    await page.clock.fastForward(10_000);
+    await expect(error).toBeVisible();
+    await expect(host).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  test('a refusal survives a tab change, and the refused value is not shown as saved', async ({ page, testServer }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    await page.clock.install();
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    const host = card.getByLabel('host for row 2', { exact: true });
+    const refused = groupSaveResponse(page);
+    await host.fill(`${NEWZNAB_HOSTS[1]},https://placeholder-evil.invalid`);
+    await page.clock.fastForward(600);
+    await refused;
+    await expect(card.getByTestId('combine-row-error')).toHaveCount(1);
+
+    await page.getByRole('tab', { name: 'General' }).click();
+    await page.getByRole('tab', { name: 'Searchers' }).click();
+
+    const rebuilt = providerCard(page, 'Newznab');
+    const rebuiltHost = rebuilt.getByLabel('host for row 2', { exact: true });
+    await expect(rebuiltHost).toHaveAttribute('aria-invalid', 'true');
+    await expect(rebuiltHost).toHaveValue(`${NEWZNAB_HOSTS[1]},https://placeholder-evil.invalid`);
+    await expect(rebuilt.getByTestId('combine-row-error')).toHaveText(/Row 2: the host/);
+    expect(configSha(testServer.configPath)).toBe(before);
+  });
+
+  test('a refusal does not move focus whichever control had it: another cell, or a use switch', async ({ page }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    await page.clock.install();
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    const host = card.getByLabel('host for row 2', { exact: true });
+
+    const refused = groupSaveResponse(page);
+    await host.fill(`${NEWZNAB_HOSTS[1]},https://placeholder-evil.invalid`);
+    await page.keyboard.press('Tab');
+    await expect(card.getByLabel('api key for row 2', { exact: true })).toBeFocused();
+    await page.clock.fastForward(600);
+    await refused;
+    await expect(card.getByTestId('combine-row-error')).toHaveCount(1);
+    await expect(card.getByLabel('api key for row 2', { exact: true })).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Shift+Tab');
+    await expect(card.getByRole('switch', { name: 'Enable row 2' })).toBeFocused();
+    await page.clock.fastForward(5000);
+    await page.waitForLoadState('networkidle');
+    await expect(card.getByRole('switch', { name: 'Enable row 2' })).toBeFocused();
+  });
+});
+
+test.describe('Settings: the refusal text is composed by the page for every combine group', () => {
+  test.use({ seedConfig: 'all_groups_aligned#message-shape' });
+
+  const GROUPS: [string, string, string, string][] = [
+    ['Searchers', 'Newznab', 'host', 'api_key'],
+    ['Searchers', 'TorrentPotato', 'host', 'pass_key'],
+    ['Suggestions', 'IMDB Watchlist', 'automation_urls', 'automation_urls_use'],
+    ['Suggestions', 'iTunes', 'automation_urls', 'automation_urls_use'],
+    ['Suggestions', 'Letterboxd', 'automation_urls', 'automation_urls_use'],
+  ];
+
+  for (const [tab, heading, column] of GROUPS.map(([a, b, c]) => [a, b, c])) {
+    test(`${heading}: the message names the row and the field, and nothing else`, async ({ page }) => {
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false, error: 'A cell cannot contain a comma.',
+          invalid: [{ row: 0, column, reason: 'comma' }],
+        }),
+      }));
+      await page.clock.install();
+      await openSettings(page, tab);
+      const card = providerCard(page, heading);
+      await openCard(card);
+      const field = card.getByLabel(`${column.replace(/_/g, ' ')} for row 1`, { exact: true });
+
+      await field.fill('placeholder-secret-value');
+      await page.clock.fastForward(600);
+
+      const text = (await card.getByTestId('combine-row-error').innerText()).trim();
+      expect(text).toBe(`Row 1: the ${column.replace(/_/g, ' ')} cannot contain a comma. Remove it to save.`);
+      expect(text).not.toMatch(/placeholder|_|\w\.\w|Error:|HTTP|\b[45]\d\d\b/);
+      await expect(field).toHaveAttribute('aria-invalid', 'true');
+    });
+  }
+});
+
+test.describe('Settings: a refusal shaped like the server\'s, with two offending cells', () => {
+  test.use({ seedConfig: 'newznab_aligned#two-cells' });
+
+  test('marks both inputs, each described by its own visible message', async ({ page }) => {
+    await page.route('**/settings.save_group/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: false, error: 'A cell cannot contain a comma.',
+        invalid: [{ row: 1, column: 'host', reason: 'comma' }, { row: 1, column: 'api_key', reason: 'comma' }],
+      }),
+    }));
+    await page.clock.install();
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+
+    await card.getByLabel('host for row 2', { exact: true }).fill('x');
+    await page.clock.fastForward(600);
+
+    await expect(card.locator('[aria-invalid="true"]')).toHaveCount(2);
+    for (const [label, words] of [['host for row 2', /Row 2: the host/], ['api key for row 2', /Row 2: the api key/]] as const) {
+      const input = card.getByLabel(label, { exact: true });
+      const target = page.locator(`[id="${await input.getAttribute('aria-describedby')}"]`);
+      await expect(target).toBeVisible();
+      await expect(target).toHaveText(words);
+    }
+  });
+});
+
+test.describe('Settings: a save that fails for any other reason', () => {
+  test.use({ seedConfig: 'newznab_aligned#other-failures' });
+
+  const FAILURES: [string, { status: number; body: string }][] = [
+    ['a server that no longer has the route', { status: 200, body: JSON.stringify({ success: false, error: "API call doesn't exist" }) }],
+    ['an HTTP 500', { status: 500, body: 'Internal Server Error' }],
+  ];
+
+  for (const [name, reply] of FAILURES) {
+    test(`shows the failure, keeps the rows, and never says Saved: ${name}`, async ({ page }) => {
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({ ...reply, contentType: 'application/json' }));
+      await page.clock.install();
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+      const host = card.getByLabel('host for row 1', { exact: true });
+
+      await host.fill('https://placeholder-typed.invalid/api');
+      await page.clock.fastForward(600);
+
+      await expect(card.getByTestId('combine-save-error')).toBeVisible();
+      await expect(host).toHaveValue('https://placeholder-typed.invalid/api');
+      await expect(page.getByText('Saved', { exact: true })).toBeHidden();
+      await page.getByRole('tab', { name: 'General' }).click();
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      await expect(providerCard(page, 'Newznab').getByLabel('host for row 1', { exact: true }))
+        .toHaveValue('https://placeholder-typed.invalid/api');
+      await expect(providerCard(page, 'Newznab').getByTestId('combine-save-error')).toBeVisible();
+    });
+  }
+});
+
+test.describe('Settings: a refusal is announced once, through one channel, and recovery says Saved once', () => {
+  test.use({ seedConfig: 'newznab_aligned#announce-and-recover' });
+
+  test('typing past a refusal does not re-announce it; clearing and re-adding the comma does, once', async ({ page, testServer }) => {
+    // The comma is removed again at the end, so the group is saved with the cells it started
+    // with: this test writes the group (one successful save) and owns its fixture value.
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    const host = card.getByLabel('host for row 2', { exact: true });
+    // Armed BEFORE the first keystroke. Counts how often a live region (aria-live,
+    // role=alert, role=status) comes to hold the text, across ALL of them together, so a
+    // refusal sent through two channels counts twice.
+    await page.evaluate(() => {
+      const state = { refusal: 0, saved: 0, last: new Map<Element, string>() };
+      (window as any).__live = state;
+      const live = '[aria-live], [role="alert"], [role="status"]';
+      new MutationObserver((records) => {
+        const touched = new Set<Element>();
+        for (const record of records) {
+          const node = record.target instanceof Element ? record.target : record.target.parentElement;
+          const region = node?.closest(live);
+          if (region) touched.add(region);
+        }
+        for (const region of touched) {
+          // innerText, not textContent: the header's status region always holds its hidden
+          // "Saved" span, which is not announced until it is shown.
+          const text = (region as HTMLElement).innerText ?? '';
+          const before = state.last.get(region) ?? '';
+          if (text.includes('cannot contain a comma') && !before.includes('cannot contain a comma')) state.refusal += 1;
+          if (/\bSaved\b/.test(text) && !/\bSaved\b/.test(before)) state.saved += 1;
+          state.last.set(region, text);
+        }
+      }).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+    });
+    const counts = () => page.evaluate(() => {
+      const { refusal, saved } = (window as any).__live;
+      return { refusal, saved };
+    });
+    const typeAndSave = async (key: string) => {
+      const answered = groupSaveResponse(page);
+      await page.keyboard.press(key);
+      await page.clock.fastForward(600);
+      return (await answered).json();
+    };
+
+    await host.click();
+    await page.keyboard.press('End');
+    expect((await typeAndSave(',')).success).toBe(false);
+    await expect(card.getByTestId('combine-row-error')).toHaveCount(1);
+    for (const key of ['a', 'b', 'c', 'd', 'e']) expect((await typeAndSave(key)).success).toBe(false);
+    expect(await counts()).toEqual({ refusal: 1, saved: 0 });
+
+    // Backspace over the five letters and the comma: the last one saves.
+    for (const key of ['Backspace', 'Backspace', 'Backspace', 'Backspace', 'Backspace']) {
+      expect((await typeAndSave(key)).success).toBe(false);
+    }
+    expect(await counts()).toEqual({ refusal: 1, saved: 0 });
+    expect((await typeAndSave('Backspace')).success).toBe(true);
+    await expect(card.getByTestId('combine-row-error')).toHaveCount(0);
+    await expect(host).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+    expect(await counts()).toEqual({ refusal: 1, saved: 1 });
+
+    // The comma again is a NEW refusal: announced again, exactly once more.
+    expect((await typeAndSave(',')).success).toBe(false);
+    await expect(card.getByTestId('combine-row-error')).toHaveCount(1);
+    expect(await counts()).toEqual({ refusal: 2, saved: 1 });
+    // One group save per edit (1 comma, 5 letters, 6 backspaces, 1 comma), nothing per
+    // column, and the file holds the original host: the refused cell was never written.
+    expect(net.groupSaves()).toHaveLength(13);
+    expect(net.networkWrites().filter((request) => request.url.includes('settings.save/'))).toEqual([]);
+    expect(configColumns(testServer.configPath, 'newznab').host).toBe(NEWZNAB_HOSTS.join(','));
+  });
+});
+
+test.describe('Settings: the starting configurations write nothing on load', () => {
+  for (const shape of ['all_groups_aligned', 'all_groups_misaligned', 'newznab_legacy_bytes']) {
+    test.describe(shape, () => {
+      test.use({ seedConfig: `${shape}#no-write-on-load` });
+
+      test('opening Settings, visiting every tab and expanding every group sends no save and leaves the file alone', async ({ page, testServer }) => {
+        await page.clock.install();
+        const net = await recordRequests(page);
+        const before = configSha(testServer.configPath);
+        await openSettings(page);
+
+        for (const name of await page.getByRole('tab').allInnerTexts()) {
+          await page.getByRole('tab', { name }).click();
+          // Each click opens one group, so the next closed one is always the first.
+          const closed = page.locator('h3 button[aria-expanded="false"]');
+          for (let remaining = await closed.count(); remaining > 0; remaining -= 1) await closed.first().click();
+        }
+        await settleDebounce(page);
+
+        expect(net.networkWrites()).toEqual([]);
+        expect(await net.pageWrites()).toEqual([]);
+        expect(configSha(testServer.configPath)).toBe(before);
+      });
+    });
+  }
+});
+
+/** Fill one cell, let the debounce fire, and return the group save's answer. */
+async function editCell(page: Page, card: Locator, label: string, value: string) {
+  const answered = groupSaveResponse(page);
+  await card.getByLabel(label, { exact: true }).fill(value);
+  await page.clock.fastForward(600);
+  return (await answered).json();
+}
+
+const cellsOf = (value: string | null) => (value ?? '').split(',');
+
+test.describe('Settings: deleting a row saves the rows that are left, each with its own cells', () => {
+  test.describe('newznab: delete the middle row', () => {
+    test.use({ seedConfig: 'newznab_aligned#delete-middle' });
+
+    test('rows A and C are stored with their own values', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+
+      const answered = groupSaveResponse(page);
+      await card.getByRole('button', { name: 'Remove row 2' }).click();
+      await page.clock.fastForward(600);
+      expect((await (await answered).json()).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      const columns = configColumns(testServer.configPath, 'newznab');
+      expect(columns).toEqual({
+        use: '1,1',
+        host: [NEWZNAB_HOSTS[0], NEWZNAB_HOSTS[2]].join(','),
+        api_key: [NEWZNAB_KEYS[0], NEWZNAB_KEYS[2]].join(','),
+        extra_score: '5,15',
+        custom_tag: 'tag-one,tag-three',
+      });
+      expect(configEnabled(testServer.configPath, 'newznab')).toEqual({ reader_raises: false, rows: [true, true] });
+      expect((configView(testServer.configPath, 'newznab') as string[][]).map((row) => row[2])).toEqual([NEWZNAB_KEYS[0], NEWZNAB_KEYS[2]]);
+    });
+  });
+
+  test.describe('newznab: edit row C, then delete row A before the debounce fires', () => {
+    test.use({ seedConfig: 'newznab_aligned#edit-then-delete' });
+
+    test('stores B and the edited C, and no key against a host it was not entered for', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      const net = await recordRequests(page);
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+
+      await card.getByLabel('api key for row 3', { exact: true }).fill('placeholder-key-edited');
+      const answered = groupSaveResponse(page);
+      await card.getByRole('button', { name: 'Remove row 1' }).click();
+      expect(net.groupSaves()).toHaveLength(0);
+      await page.clock.fastForward(600);
+      expect((await (await answered).json()).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(configColumns(testServer.configPath, 'newznab')).toEqual({
+        use: '0,1',
+        host: [NEWZNAB_HOSTS[1], NEWZNAB_HOSTS[2]].join(','),
+        api_key: [NEWZNAB_KEYS[1], 'placeholder-key-edited'].join(','),
+        extra_score: '10,15',
+        custom_tag: 'tag-two,tag-three',
+      });
+    });
+  });
+
+  test.describe('torrentpotato: delete the middle row', () => {
+    test.use({ seedConfig: 'torrentpotato_aligned#delete-middle' });
+
+    test('rows A and C keep their pass key, name, seed ratio, seed time and extra score', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'TorrentPotato');
+      await openCard(card);
+
+      const answered = groupSaveResponse(page);
+      await card.getByRole('button', { name: 'Remove row 2' }).click();
+      await page.clock.fastForward(600);
+      expect((await (await answered).json()).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      expect(configColumns(testServer.configPath, 'torrentpotato')).toMatchObject({
+        use: '1,1',
+        pass_key: 'placeholder-pass-one,placeholder-pass-three',
+        name: 'name-one,name-three',
+        seed_ratio: '1,3',
+        seed_time: '40,60',
+        extra_score: '0,10',
+      });
+      expect(configEnabled(testServer.configPath, 'torrentpotato')).toEqual({ reader_raises: false, rows: [true, true] });
+    });
+  });
+});
+
+test.describe('Settings: a misaligned group is saved only as the rows the user saw', () => {
+  const SHAPES: [string, string, string, string, string][] = [
+    ['newznab_misaligned_key_short', 'newznab', 'Newznab', 'api key for row 3', 'host for row 1'],
+    ['newznab_misaligned_use_short', 'newznab', 'Newznab', 'api key for row 3', 'host for row 1'],
+    ['torrentpotato_misaligned', 'torrentpotato', 'TorrentPotato', 'pass key for row 3', 'host for row 1'],
+    ['torrentpotato_use_short', 'torrentpotato', 'TorrentPotato', 'pass key for row 3', 'host for row 1'],
+  ];
+
+  for (const [fixture, section, heading, thirdKey, edited] of SHAPES) {
+    test.describe(fixture, () => {
+      test.use({ seedConfig: `${fixture}#first-edit` });
+
+      test('shows the notice, writes nothing on load, and the first edit saves the rows on screen', async ({ page, testServer }) => {
+        test.info().annotations.push(...combineGroupWriter());
+        await page.clock.install();
+        const before = configSha(testServer.configPath);
+        await openSettings(page, 'Searchers');
+        const card = providerCard(page, heading);
+        await openCard(card);
+        await expect(card.getByTestId('combine-misaligned-notice')).toBeVisible();
+        await expect(card.getByTestId('combine-misaligned-notice')).toContainText('do not line up');
+        await settleDebounce(page);
+        expect(configSha(testServer.configPath)).toBe(before);
+
+        // What is on screen is what is saved: row 3's key as the page shows it.
+        const shownKey = await card.getByLabel(thirdKey, { exact: true }).inputValue();
+        const shownHosts = await card.locator('input[aria-label^="host for row"]').evaluateAll(
+          (inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+        const shownKeys = await card.locator(`input[aria-label^="${thirdKey.split(' for ')[0]} for row"]`).evaluateAll(
+          (inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+        expect((await editCell(page, card, edited, `${shownHosts[0]}x`)).success).toBe(true);
+        await page.waitForLoadState('networkidle');
+
+        const columns = configColumns(testServer.configPath, section);
+        const lengths = new Set(Object.values(columns).map((value) => cellsOf(value).length));
+        expect([...lengths]).toEqual([3]);
+        expect(cellsOf(columns.host)).toEqual(shownHosts.map((host, index) => (index === 0 ? `${host}x` : host)));
+        expect(cellsOf(columns[thirdKey.startsWith('api') ? 'api_key' : 'pass_key'])).toEqual(shownKeys);
+        expect(shownKeys[2]).toBe(shownKey);
+        // A missing use cell is saved as 0, so no row makes the real isEnabled raise.
+        expect(cellsOf(columns.use).every((cell) => cell !== '')).toBe(true);
+        const enabled = configEnabled(testServer.configPath, section);
+        expect(enabled.reader_raises).toBe(false);
+        expect(enabled.rows).not.toContain('raises');
+        await expect(card.getByTestId('combine-misaligned-notice')).toHaveCount(0);
+      });
+    });
+  }
+});
+
+test.describe('Settings: shapes that are NOT misaligned show no notice', () => {
+  const SHAPES: [string, string, string, number][] = [
+    ['fresh_defaults', 'Searchers', 'Newznab', 6],
+    ['newznab_key_in_row_four', 'Searchers', 'Newznab', 6],
+    ['newznab_wizard_written', 'Searchers', 'Newznab', 3],
+    ['fresh_defaults', 'Suggestions', 'iTunes', 2],
+    ['fresh_defaults', 'Suggestions', 'IMDB Watchlist', 1],
+    ['fresh_defaults', 'Searchers', 'TorrentPotato', 2],
+  ];
+  for (const [fixture, tab, heading, rows] of SHAPES) {
+    test.describe(`${fixture} / ${heading}`, () => {
+      test.use({ seedConfig: `${fixture}#no-notice` });
+
+      test(`shows ${rows} rows and no notice`, async ({ page }) => {
+        await openSettings(page, tab);
+        const card = providerCard(page, heading);
+        await openCard(card);
+
+        await expect(card.getByRole('switch', { name: /^Enable row/ })).toHaveCount(tab === 'Suggestions' ? 0 : rows);
+        await expect(card.locator('[aria-label$="for row 1"]').first()).toBeVisible();
+        await expect(card.locator(`[aria-label$="for row ${rows}"]`).first()).toBeVisible();
+        await expect(card.locator(`[aria-label$="for row ${rows + 1}"]`)).toHaveCount(0);
+        await expect(card.getByTestId('combine-misaligned-notice')).toHaveCount(0);
+      });
+    });
+  }
+});
+
+test.describe('Settings: what the first save of an aligned shape changes, and what it leaves', () => {
+  test.describe('a key in default row 4', () => {
+    test.use({ seedConfig: 'newznab_key_in_row_four#edit-another-row' });
+
+    test('the key stays at row 4 after an edit to another row, and only the host line changes', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      const before = configColumns(testServer.configPath, 'newznab');
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+      await expect(card.getByLabel('api key for row 4', { exact: true })).toHaveValue('placeholder-key-four');
+
+      const hosts = cellsOf(before.host);
+      hosts[0] = 'https://placeholder-edited.invalid/api';
+      expect((await editCell(page, card, 'host for row 1', hosts[0])).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      const after = configColumns(testServer.configPath, 'newznab');
+      expect(after.api_key).toBe(before.api_key);
+      expect(after.use).toBe(before.use);
+      expect(after.host).toBe(hosts.join(','));
+    });
+  });
+
+  test.describe('the wizard-written shape', () => {
+    test.use({ seedConfig: 'newznab_wizard_written#first-save' });
+
+    test('shows three rows, and its first save drops the surplus default cells to three', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      expect(cellsOf(configColumns(testServer.configPath, 'newznab').extra_score)).toHaveLength(6);
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+
+      expect((await editCell(page, card, 'custom tag for row 2', 'tag-edited')).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      const columns = configColumns(testServer.configPath, 'newznab');
+      expect(columns.extra_score).toBe('0,0,0');
+      expect(columns.custom_tag).toBe(',tag-edited,');
+      expect(columns.host.split(',')).toHaveLength(3);
+    });
+  });
+
+  test.describe('the shipped iTunes default', () => {
+    test.use({ seedConfig: 'itunes_shipped#no-change-save' });
+
+    test('a save of exactly the rows it shows leaves the file byte for byte as it was', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      await openSettings(page, 'Suggestions');
+      const card = providerCard(page, 'iTunes');
+      await openCard(card);
+      const before = configSha(testServer.configPath);
+      const urlLabel = 'automation urls for row 1';
+      const stored = await card.getByLabel(urlLabel, { exact: true }).inputValue();
+
+      expect((await editCell(page, card, urlLabel, `${stored}x`)).success).toBe(true);
+      expect(configSha(testServer.configPath)).not.toBe(before);
+      expect((await editCell(page, card, urlLabel, stored)).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      expect(configSha(testServer.configPath)).toBe(before);
+    });
+  });
+
+  test.describe('a fresh install\'s shipped torrentpotato defaults', () => {
+    test.use({ seedConfig: 'fresh_defaults#torrentpotato-add-row' });
+
+    test('stay editable and savable: one added row is read back through getHosts', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      const net = await recordRequests(page);
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'TorrentPotato');
+      await openCard(card);
+
+      await card.getByRole('button', { name: 'Add row' }).click();
+      await page.clock.fastForward(5000);
+      await page.waitForLoadState('networkidle');
+      expect(net.groupSaves()).toHaveLength(0);
+
+      await card.getByLabel('host for row 3', { exact: true }).fill('https://placeholder-added.invalid/api');
+      const answered = groupSaveResponse(page);
+      await card.getByLabel('pass key for row 3', { exact: true }).fill('placeholder-pass-added');
+      await card.getByRole('switch', { name: 'Enable row 3' }).click();
+      await page.clock.fastForward(600);
+      expect((await (await answered).json()).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      const rows = configView(testServer.configPath, 'torrentpotato') as [string, string, string][];
+      expect(rows).toHaveLength(3);
+      expect(rows[2].slice(0, 3)).toEqual(['1', 'https://placeholder-added.invalid/api', 'placeholder-pass-added']);
+      expect(configEnabled(testServer.configPath, 'torrentpotato').rows).not.toContain('raises');
+    });
+  });
+});
+
+test.describe('Settings: cells are trimmed on an edit, not before', () => {
+  test.use({ seedConfig: 'newznab_untrimmed#trim-on-edit' });
+
+  test('a space after a separator is untouched until the group is edited, then stored trimmed', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const before = configSha(testServer.configPath);
+    const raw = configColumns(testServer.configPath, 'newznab');
+    expect(raw.host).toContain(', ');
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    await settleDebounce(page);
+    expect(configSha(testServer.configPath)).toBe(before);
+    await expect(card.getByLabel('host for row 2', { exact: true })).toHaveValue('https://placeholder-two.invalid/api');
+
+    expect((await editCell(page, card, 'custom tag for row 1', 'tag-edited')).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+
+    const after = configColumns(testServer.configPath, 'newznab');
+    expect(after.host).toBe('https://placeholder-one.invalid/api,https://placeholder-two.invalid/api');
+    expect(after.api_key).toBe('placeholder-key-one,placeholder-key-two');
+    expect(after.use).toBe('1,0');
+  });
+});
+
+test.describe('Settings: percent-encoded text is stored as typed', () => {
+  test.use({ seedConfig: 'newznab_aligned#percent-cells' });
+
+  test('a%2Cb and a%252Cb survive a reload and an edit to a different row', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    await openSettings(page, 'Searchers');
+    let card = providerCard(page, 'Newznab');
+
+    expect((await editCell(page, card, 'custom tag for row 1', 'a%2Cb')).success).toBe(true);
+    expect((await editCell(page, card, 'custom tag for row 2', 'a%252Cb')).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+    expect(configColumns(testServer.configPath, 'newznab').custom_tag).toBe('a%2Cb,a%252Cb,tag-three');
+
+    await page.reload();
+    await expect(page.locator('h1')).toContainText('Settings');
+    await page.getByRole('tab', { name: 'Searchers' }).click();
+    card = providerCard(page, 'Newznab');
+    await expect(card.getByLabel('custom tag for row 2', { exact: true })).toHaveValue('a%252Cb');
+    expect((await editCell(page, card, 'extra score for row 3', '99')).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+
+    const columns = configColumns(testServer.configPath, 'newznab');
+    expect(columns.custom_tag).toBe('a%2Cb,a%252Cb,tag-three');
+    expect(columns.extra_score).toBe('5,10,99');
+    for (const value of Object.values(columns)) expect(cellsOf(value)).toHaveLength(3);
+  });
+});
+
+test.describe('Settings: a config stored with Python bytes literals', () => {
+  test.describe('opening it', () => {
+    test.use({ seedConfig: 'newznab_legacy_bytes#display' });
+
+    test('shows the rows unwrapped', async ({ page }) => {
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+
+      await expect(card.getByLabel('host for row 1', { exact: true })).toHaveValue(NEWZNAB_HOSTS[0]);
+      await expect(card.getByLabel('host for row 2', { exact: true })).toHaveValue(NEWZNAB_HOSTS[1]);
+      await expect(card.getByLabel('api key for row 2', { exact: true })).toHaveValue(NEWZNAB_KEYS[1]);
+      await expect(card.getByTestId('combine-misaligned-notice')).toHaveCount(0);
+    });
+  });
+
+  test.describe('editing it', () => {
+    test.use({ seedConfig: 'newznab_legacy_bytes#edit' });
+
+    test('saves clean values, every row keeping its own cells', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      expect(configColumns(testServer.configPath, 'newznab').host).toMatch(/^b'/);
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+
+      expect((await editCell(page, card, 'custom tag for row 2', 'tag-edited')).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+
+      const columns = configColumns(testServer.configPath, 'newznab');
+      expect(columns).toMatchObject({
+        use: '1,0',
+        host: NEWZNAB_HOSTS.slice(0, 2).join(','),
+        api_key: NEWZNAB_KEYS.slice(0, 2).join(','),
+      });
+      expect(Object.values(columns).some((value) => /b'/.test(value ?? ''))).toBe(false);
+      expect(cellsOf(columns.custom_tag)).toEqual(['', 'tag-edited']);
+    });
+  });
+});
+
+test.describe('Settings: saves are ordered, one in flight per group', () => {
+  test.use({ seedConfig: 'newznab_aligned#ordering' });
+
+  test('two edits while the first save is held end with the second edit on disk, never two requests at once', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let inFlight = 0;
+    let peak = 0;
+    let seenFirst = false;
+    await page.route('**/settings.save_group/**', async (route) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      if (!seenFirst) {
+        seenFirst = true;
+        await held;
+      }
+      await route.continue();
+      inFlight -= 1;
+    });
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+
+    await card.getByLabel('host for row 1', { exact: true }).fill('https://placeholder-first.invalid/api');
+    await page.clock.fastForward(600);
+    await expect.poll(() => net.groupSaves().length).toBe(1);
+    await card.getByLabel('host for row 1', { exact: true }).fill('https://placeholder-second.invalid/api');
+    await page.clock.fastForward(5000);
+    expect(net.groupSaves()).toHaveLength(1);
+
+    release();
+    await expect.poll(() => net.groupSaves().length).toBe(2);
+    await page.waitForLoadState('networkidle');
+
+    expect(peak).toBe(1);
+    expect(cellsOf(configColumns(testServer.configPath, 'newznab').host)[0]).toBe('https://placeholder-second.invalid/api');
+  });
+});
+
+test.describe('Settings: a button acts on saved rows, never on held ones', () => {
+  test.use({ seedConfig: 'torrentpotato_aligned#sync-button' });
+
+  test('the held edit is saved before the sync, and the sync\'s rows are then shown, not saved over', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    const synced: Record<string, string> = {
+      use: '1', host: 'https://placeholder-synced.invalid/api', pass_key: 'placeholder-pass-synced',
+      name: 'name-synced', seed_ratio: '1', seed_time: '40', extra_score: '0',
+    };
+    let reads = 0;
+    // The first read is the page's own load. The one after the sync returns one more row.
+    await page.route(/\/api\/[^/]+\/settings\/(\?.*)?$/, async (route) => {
+      reads += 1;
+      if (reads < 2) {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      const payload = await response.json();
+      for (const [column, cell] of Object.entries(synced)) {
+        payload.values.torrentpotato[column] = `${payload.values.torrentpotato[column]},${cell}`;
+      }
+      payload.combine_state.torrentpotato.rows = 4;
+      await route.fulfill({ response, json: payload });
+    });
+    await page.route('**/torrentpotato.jackett_sync/**', (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }),
+    }));
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'TorrentPotato');
+    await openCard(card);
+
+    await card.getByLabel('name for row 1', { exact: true }).fill('name-edited-before-sync');
+    await card.getByRole('button', { name: /Sync Indexers/ }).click();
+    await page.clock.fastForward(5000);
+    await page.waitForLoadState('networkidle');
+
+    const urls = net.seen.map((request) => request.url);
+    const save = urls.findIndex((url) => url.includes('settings.save_group'));
+    const sync = urls.findIndex((url) => url.includes('torrentpotato.jackett_sync'));
+    expect(save).toBeGreaterThanOrEqual(0);
+    expect(save).toBeLessThan(sync);
+    expect(cellsOf(configColumns(testServer.configPath, 'torrentpotato').name)[0]).toBe('name-edited-before-sync');
+    await expect(card.getByLabel('host for row 4', { exact: true })).toHaveValue('https://placeholder-synced.invalid/api');
+    expect(net.groupSaves()).toHaveLength(1);
+  });
+});
+
+test.describe('Settings: an unrelated save leaves a misaligned group byte for byte', () => {
+  test.use({ seedConfig: 'newznab_misaligned_key_short#unrelated-save' });
+
+  test('saving a setting in another section does not rewrite the group', async ({ page, testServer }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    const before = configColumns(testServer.configPath, 'newznab');
+    await openSettings(page, 'Searchers');
+
+    const saved = await page.evaluate(async () => {
+      const body = new URLSearchParams({ section: 'torrentpotato', name: 'jackett_url', value: 'http://jackett.invalid:9117' });
+      const response = await fetch((window as any).CP.apiBase + '/settings.save/', { method: 'POST', body });
+      return (await response.json()).success;
+    });
+
+    expect(saved).toBe(true);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(before);
+    expect(cellsOf(before.host)).toHaveLength(3);
+    expect(cellsOf(before.api_key)).toHaveLength(2);
+  });
+});
+
+test.describe('Settings: no combine column is ever saved on its own, and no cell travels in a URL', () => {
+  test.use({ seedConfig: 'all_groups_aligned#every-group-flow' });
+
+  const GROUPS: [string, string][] = [
+    ['Searchers', 'Newznab'], ['Searchers', 'TorrentPotato'],
+    ['Suggestions', 'IMDB Watchlist'], ['Suggestions', 'iTunes'], ['Suggestions', 'Letterboxd'],
+  ];
+
+  test('add, edit and delete a row in each of the five groups', async ({ page }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    await openSettings(page);
+
+    for (const [tab, heading] of GROUPS) {
+      await page.getByRole('tab', { name: tab }).click();
+      const card = providerCard(page, heading);
+      await openCard(card);
+      const row = (await card.getByRole('button', { name: /^Remove row/ }).count()) + 1;
+      await card.getByRole('button', { name: 'Add row' }).click();
+      const answered = groupSaveResponse(page);
+      for (const input of await card.locator(`input[aria-label$="for row ${row}"]`).all()) {
+        const label = (await input.getAttribute('aria-label')) ?? '';
+        await input.fill(`sentinel-${heading.replace(/\W/g, '')}-${label.split(' for ')[0].replace(/ /g, '-')}`);
+      }
+      await page.clock.fastForward(600);
+      expect((await (await answered).json()).success).toBe(true);
+      const removed = groupSaveResponse(page);
+      await card.getByRole('button', { name: `Remove row ${row}` }).click();
+      await page.clock.fastForward(600);
+      expect((await (await removed).json()).success).toBe(true);
+    }
+    await settleDebounce(page);
+
+    const writes = await net.pageWrites();
+    expect(writes.length).toBeGreaterThanOrEqual(GROUPS.length * 2);
+    expect(net.networkWrites().filter((request) => request.url.includes('settings.save/'))).toEqual([]);
+    expect(writes.filter((request) => request.url.includes('settings.save/'))).toEqual([]);
+    expect(net.networkWrites().every((request) => request.method === 'POST')).toBe(true);
+    expect(net.seen.filter((request) => request.url.includes('sentinel'))).toEqual([]);
   });
 });

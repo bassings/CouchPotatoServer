@@ -205,6 +205,15 @@ export function configView(configPath: string, section: string): unknown[] {
 }
 
 /**
+ * The real `isEnabled` run over every row of a newznab or torrentpotato group, with the
+ * provider forced on so that `int(use)` is really reached. A row that would crash a
+ * search is `'raises'`; a group the reader itself cannot read is `reader_raises`.
+ */
+export function configEnabled(configPath: string, section: string): { reader_raises: boolean; rows: (boolean | 'raises')[] } {
+  return readConfig('enabled', configPath, section) as { reader_raises: boolean; rows: (boolean | 'raises')[] };
+}
+
+/**
  * Stub `/partial/charts` with a representative poster card.
  *
  * Any test that visits `/suggestions/` (or navigates through it) should call

@@ -225,18 +225,38 @@
 <!-- Combined (multi-entry rows like newznab hosts/keys) -->
 <template x-if="opt.type === 'combined'">
   <div x-data="combinedField(group.section, opt)">
+    <!-- Misaligned stored rows (the server's flag): persistent until a save of
+         this group succeeds. Not a live region: it is there on load, and says
+         what is true of the rows now on screen. -->
+    <template x-if="held && held.notice">
+      <div class="mb-2 px-3 py-2 rounded-lg bg-cp-danger/10 border border-cp-danger/20" data-testid="combine-misaligned-notice">
+        <p class="text-xs text-cp-danger">The saved entries here do not line up: some columns have more entries than others. The rows shown are what will be saved when you change one, so check each row first.</p>
+      </div>
+    </template>
+
+    <!-- A save that failed for any reason other than a refused cell (the route
+         is missing, the server answered an error, the network failed). The
+         rows stay on screen and unsaved. Announced once by the panel, so this
+         carries no live role of its own. -->
+    <template x-if="held && held.error">
+      <div class="mb-2 px-3 py-2 rounded-lg bg-cp-danger/10 border border-cp-danger/20" data-testid="combine-save-error">
+        <p class="text-xs text-cp-danger" x-text="held.error"></p>
+      </div>
+    </template>
+
     <!-- Column headers -->
     <div class="flex gap-2 mb-2 items-center text-[10px] text-cp-muted font-medium" aria-hidden="true">
       <template x-for="(col, colIdx) in opt.combine" :key="'hdr-'+colIdx">
-        <span :class="col === 'use' ? 'w-10 shrink-0 text-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')" 
+        <span :class="col === 'use' ? 'w-10 shrink-0 text-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')"
               x-text="col === 'use' ? '' : col.replace(/_/g, ' ')"></span>
       </template>
       <span class="w-4 shrink-0"></span>
     </div>
-    
+
     <!-- Data rows -->
     <template x-for="(row, rowIdx) in rows" :key="rowIdx">
-      <div class="flex gap-2 mb-2 items-center">
+      <div class="mb-2">
+      <div class="flex gap-2 items-center">
         <template x-for="(col, colIdx) in opt.combine" :key="colIdx">
           <div :class="col === 'use' ? 'w-10 shrink-0 flex justify-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')">
             <!-- Toggle for 'use' column -->
@@ -251,24 +271,39 @@
                       class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5" aria-hidden="true"></span>
               </button>
             </template>
-            <!-- Text input for other columns -->
+            <!-- Text input for other columns. A refused cell is marked by
+                 aria-invalid, by its danger border AND by the text below the
+                 row that aria-describedby points at: never by colour alone. -->
             <template x-if="col !== 'use'">
-              <input type="text" 
+              <input type="text"
                      :placeholder="col.replace(/_/g, ' ')"
                      :value="row[colIdx] || ''"
                      @input="updateRow(rowIdx, colIdx, $event.target.value)"
                      :aria-label="col.replace(/_/g, ' ') + ' for row ' + (rowIdx + 1)"
-                     class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                     :aria-invalid="cellError(rowIdx, colIdx) ? 'true' : null"
+                     :aria-describedby="cellError(rowIdx, colIdx) ? errorId(cellError(rowIdx, colIdx)) : null"
+                     :class="cellError(rowIdx, colIdx) ? 'border-cp-danger focus:border-cp-danger' : 'border-white/[0.06] focus:border-cp-accent/30'"
+                     class="w-full bg-white/[0.03] border rounded-md px-3 py-1.5 text-xs focus:outline-none">
             </template>
           </div>
         </template>
-        <button @click="removeRow(rowIdx)" 
-                class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" 
+        <button @click="removeRow(rowIdx)"
+                class="text-cp-muted hover:text-cp-danger transition-colors shrink-0"
                 :aria-label="'Remove row ' + (rowIdx + 1)">
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
+      </div>
+      <!-- Refused cells of THIS row, directly below it. Persistent: removed only
+           when the group saves. No live role: the panel announces the refusal. -->
+      <template x-if="rowErrors(rowIdx).length">
+        <div class="mt-1 px-3 py-2 rounded-lg bg-cp-danger/10 border border-cp-danger/20" data-testid="combine-row-error">
+          <template x-for="entry in rowErrors(rowIdx)" :key="entry.column">
+            <p class="text-xs text-cp-danger" :id="errorId(entry)" x-text="entry.message"></p>
+          </template>
+        </div>
+      </template>
       </div>
     </template>
     
