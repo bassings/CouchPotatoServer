@@ -575,6 +575,8 @@ function settingsPanel() {
           refusalKey: '',
           error: '',
           discarded: '',
+          holding: false,
+          holdVersion: 0,
         };
       }
       return this.groupState[section];
@@ -609,6 +611,9 @@ function settingsPanel() {
       const group = this.groupState[section];
       clearTimeout(group.timer);
       group.timer = null;
+      // Held for a button action: nothing is sent, the group just stays dirty, and
+      // `endHold` decides what becomes of what was typed.
+      if (group.holding) return Promise.resolve(false);
       if (group.saving) {
         group.queued = true;
         return group.running;
@@ -677,7 +682,8 @@ function settingsPanel() {
       group.error = '';
       group.notice = false;
       // Edits made while this request was open are not saved by it.
-      if (group.version === sent) group.dirty = false;
+      if (group.version !== sent) return;
+      group.dirty = false;
       this.lastSaved = true;
       setTimeout(() => { this.lastSaved = false; }, 2000);
     },
@@ -735,7 +741,8 @@ function settingsPanel() {
     },
 
     async flushPendingGroups() {
-      const pending = Object.entries(this.groupState).filter(([, group]) => group.timer || group.saving);
+      const pending = Object.entries(this.groupState)
+        .filter(([, group]) => !group.holding && (group.timer || group.saving));
       await Promise.all(pending.map(([section]) => this.saveGroup(section)));
     },
 
@@ -748,14 +755,37 @@ function settingsPanel() {
       return this.saveGroup(section);
     },
 
+    /** A button action is about to run against this section's SAVED rows (the group
+     *  has just been flushed, so nothing is in flight). Until `endHold`, nothing of
+     *  this group is sent: a save during the action would land over, or under, what
+     *  the action writes (SEC-004 AC-DATA-21). */
+    beginHold(section) {
+      const group = this.groupState[section];
+      if (!group) return;
+      group.holding = true;
+      group.holdVersion = group.version;
+    },
+
+    /** The action is over. `mayHaveWritten`: it said it succeeded, or failed in a way
+     *  that leaves that unknowable (a thrown request error). Then the held rows are
+     *  dropped, and the note says so only if something was typed meanwhile. If it
+     *  plainly wrote nothing (it answered a refusal), what was typed stays and saves. */
+    endHold(section, mayHaveWritten) {
+      const group = this.groupState[section];
+      if (!group) return;
+      group.holding = false;
+      const typed = group.version !== group.holdVersion;
+      if (mayHaveWritten) this.discardGroup(section, typed);
+      else if (typed) group.timer = setTimeout(() => this.saveGroup(section), 500);
+    },
+
     /** Forget a group's unsaved state, so the re-read that follows an action
      *  shows the server's rows and nothing saves the old ones over them. */
-    discardGroup(section) {
+    discardGroup(section, lost) {
       const group = this.groupState[section];
       if (!group) return;
       // Rows typed while the action ran would be saved over what it wrote, so they
       // are dropped. Say so, in text and to a screen reader, rather than silently.
-      const lost = !!(group.timer || group.dirty);
       clearTimeout(group.timer);
       Object.assign(group, { timer: null, dirty: false, queued: false, refusal: [], refusalKey: '', error: '' });
       group.discarded = lost ? 'Changes typed while that action ran were not saved: the action replaced these rows.' : '';
@@ -1079,7 +1109,7 @@ function buttonField(section, opt) {
       this.running = true;
       this.result = '';
       try {
-        if (await this.heldRowsAreSaved()) await this.runAction();
+        if (await this.heldRowsAreSaved()) await this.runHeld();
       } catch (e) {
         this.success = false;
         this.result = 'Error: ' + e.message;
@@ -1098,18 +1128,30 @@ function buttonField(section, opt) {
       return false;
     },
 
+    /** Run the action with the section's group held, and release it whatever happens. */
+    async runHeld() {
+      const panel = this.getPanel();
+      if (panel) panel.beginHold(this.section);
+      // True until the action has plainly answered a refusal: after a thrown request
+      // error nobody can know whether the server wrote, so the safe side is to drop.
+      let mayHaveWritten = true;
+      try {
+        mayHaveWritten = await this.runAction();
+      } finally {
+        if (panel) panel.endHold(this.section, mayHaveWritten);
+      }
+    },
+
+    /** Returns whether the action may have written. */
     async runAction() {
       const resp = await fetch(CP.apiBase + '/' + opt.button_action + '/');
       const data = await resp.json();
       this.success = data.success === true;
       this.result = data.success ? (data.message || 'Success') : (data.error || data.message || 'Failed');
       const panel = this.getPanel();
-      if (data.success && panel) {
-        // The action may have rewritten the group: drop the held rows before the
-        // re-read, so nothing saves the old ones over what it just wrote.
-        panel.discardGroup(this.section);
-        setTimeout(() => panel.init(), 500);
-      }
+      // `endHold` (after this returns) drops the held rows before the re-read below.
+      if (data.success && panel) setTimeout(() => panel.init(), 500);
+      return data.success === true;
     },
 
     getPanel() {

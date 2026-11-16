@@ -603,6 +603,48 @@ describe('a verdict for rows that have since changed', () => {
     expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
   });
 
+  it('a network failure for rows that have since changed shows no error, and the next save\'s verdict stands', async () => {
+    const net = installFetch();
+    const held = deferred<Reply>();
+    const failed = held.promise;
+    net.replies.push(failed, { body: { success: false, error: 'x', invalid: [{ row: 0, column: 'host', reason: 'comma' }] } });
+    const panel = aligned();
+    const group = panel.ensureGroup('newznab', combinedOption(panel.options));
+    group.rows[0][1] = 'https://placeholder-first.invalid/api';
+    panel.editGroup('newznab');
+    await vi.advanceTimersByTimeAsync(500);
+    group.rows[0][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
+    panel.editGroup('newznab');
+
+    (held as any).resolve(Promise.reject(new TypeError('Failed to fetch')));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(group.error).toBe('');
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(group.refusal.map((entry: any) => entry.row)).toEqual([0]);
+    expect(group.error).toBe('');
+  });
+
+  it('shows no Saved while a newer edit is still unsaved', async () => {
+    const net = installFetch();
+    const first = deferred<Reply>();
+    net.replies.push(first.promise);
+    const panel = aligned();
+    const group = panel.ensureGroup('newznab', combinedOption(panel.options));
+    group.rows[0][1] = 'https://placeholder-first.invalid/api';
+    panel.editGroup('newznab');
+    await vi.advanceTimersByTimeAsync(500);
+    group.rows[0][1] = 'https://placeholder-second.invalid/api';
+    panel.editGroup('newznab');
+
+    first.resolve({ body: { success: true } });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(panel.lastSaved).toBe(false);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(panel.lastSaved).toBe(true);
+  });
+
   it('keeps an earlier refusal on the row it describes when a row above it is removed', () => {
     const panel = aligned();
     const { combinedField } = loadComponents();
@@ -857,6 +899,138 @@ describe('a button in a section with a combine group', () => {
     expect(group.discarded).toMatch(/not saved/);
     expect(panel.politeAnnouncement).toBe(group.discarded);
     expect(panel.lastSaved).toBe(false);
+  });
+
+  describe('while the action runs (the group is held)', () => {
+    async function slowAction(panel: any, net: ReturnType<typeof installFetch>, reply: Reply | Promise<Reply>) {
+      const action = deferred<Reply>();
+      net.replies.push(action.promise);
+      const running = button(panel).execute();
+      await vi.advanceTimersByTimeAsync(0);
+      return { action, running, reply };
+    }
+
+    it('sends no group save however long the action takes, and says the typed rows were dropped', async () => {
+      const net = installFetch();
+      const panel = torrentPanel();
+      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+      const { action, running } = await slowAction(panel, net, { body: {} });
+      await vi.advanceTimersByTimeAsync(200);
+      group.rows[0][1] = 'https://placeholder-typed.invalid/api';
+      panel.editGroup('torrentpotato');
+
+      await vi.advanceTimersByTimeAsync(600);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(net.groupSaves()).toEqual([]);
+
+      action.resolve({ body: { success: true, message: 'Synced' } });
+      await running;
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(net.groupSaves()).toEqual([]);
+      expect(group.discarded).toMatch(/not saved/);
+      expect(group.dirty).toBe(false);
+      expect(panel.lastSaved).toBe(false);
+    });
+
+    it('does not let a pending-save flush send a held group', async () => {
+      const net = installFetch();
+      const panel = torrentPanel();
+      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+      const { action, running } = await slowAction(panel, net, { body: {} });
+      group.rows[0][1] = 'https://placeholder-typed.invalid/api';
+      panel.editGroup('torrentpotato');
+
+      await panel.flushPendingSaves();
+
+      expect(net.groupSaves()).toEqual([]);
+      action.resolve({ body: { success: true } });
+      await running;
+    });
+
+    it('shows no note when nothing was typed: a fresh page, after a successful save, after a refusal that was fixed', async () => {
+      for (const prelude of ['fresh', 'saved', 'refused-then-fixed']) {
+        const net = installFetch();
+        const panel = torrentPanel();
+        const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+        if (prelude !== 'fresh') {
+          const refusal = { body: { success: false, error: 'x', invalid: [{ row: 0, column: 'host', reason: 'comma' }] } };
+          if (prelude === 'refused-then-fixed') {
+            net.replies.push(refusal);
+            group.rows[0][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
+            panel.editGroup('torrentpotato');
+            await vi.advanceTimersByTimeAsync(500);
+            expect(group.refusal).toHaveLength(1);
+          }
+          net.replies.push({ body: { success: true } });
+          group.rows[0][1] = 'https://placeholder-fixed.invalid/api';
+          panel.editGroup('torrentpotato');
+        }
+        net.replies.push({ body: { success: true, message: 'Synced' } });
+
+        await button(panel).execute();
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(group.discarded, prelude).toBe('');
+        expect(panel.politeAnnouncement, prelude).toBe('');
+      }
+    });
+
+    it('when the action is refused, keeps the typed rows and saves them afterwards, with no note', async () => {
+      const net = installFetch();
+      const panel = torrentPanel();
+      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+      const { action, running } = await slowAction(panel, net, { body: {} });
+      group.rows[0][1] = 'https://placeholder-typed.invalid/api';
+      panel.editGroup('torrentpotato');
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(net.groupSaves()).toEqual([]);
+
+      action.resolve({ body: { success: false, error: 'Jackett refused' } });
+      await running;
+      expect(group.discarded).toBe('');
+      expect(group.dirty).toBe(true);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(net.body(net.calls.length - 1).rows[0].host).toBe('https://placeholder-typed.invalid/api');
+    });
+
+    it('when the request itself fails the action may have written, so typed rows are dropped and it says so', async () => {
+      const net = installFetch();
+      const panel = torrentPanel();
+      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+      const failing = deferred<Reply>();
+      net.replies.push(failing.promise);
+      const running = button(panel).execute();
+      await vi.advanceTimersByTimeAsync(0);
+      group.rows[0][1] = 'https://placeholder-typed.invalid/api';
+      panel.editGroup('torrentpotato');
+      await vi.advanceTimersByTimeAsync(5000);
+
+      failing.resolve(Promise.reject(new TypeError('Failed to fetch')));
+      await running;
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(net.groupSaves()).toEqual([]);
+      expect(group.discarded).toMatch(/not saved/);
+    });
+
+    it('releases the hold when the flush before the action fails', async () => {
+      const net = installFetch();
+      net.replies.push({ body: { success: false, error: 'x', invalid: [{ row: 0, column: 'host', reason: 'comma' }] } });
+      const panel = torrentPanel();
+      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+      group.rows[0][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
+      panel.editGroup('torrentpotato');
+
+      await button(panel).execute();
+      group.rows[0][1] = 'https://placeholder-fixed.invalid/api';
+      panel.editGroup('torrentpotato');
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(net.groupSaves()).toHaveLength(2);
+    });
   });
 
   it('says nothing when nothing was typed during the action', async () => {

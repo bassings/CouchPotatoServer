@@ -1467,6 +1467,58 @@ test.describe('Settings: a button acts on saved rows, never on held ones', () =>
   });
 });
 
+test.describe('Settings: a slow button action holds its group', () => {
+  test.use({ seedConfig: 'torrentpotato_aligned#slow-sync' });
+
+  test('a keystroke during the action sends no group save, is announced as dropped, and the file holds what the action wrote', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    // The action stands in for Jackett sync: it is held open, then writes a fourth row
+    // to the real server (as the sync's own writer does) and answers success. Nothing here
+    // sleeps: the test releases it after the page's debounce has had every chance to fire.
+    await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
+      await gate;
+      const before = configColumns(testServer.configPath, 'torrentpotato');
+      const synced: Record<string, string> = {
+        use: '1', host: 'https://placeholder-synced.invalid/api', pass_key: 'placeholder-pass-synced',
+        name: 'name-synced', seed_ratio: '1', seed_time: '40', extra_score: '0',
+      };
+      const columns = Object.keys(synced);
+      const rows = [0, 1, 2, 3].map((index) => Object.fromEntries(columns.map((column) => [
+        column, index < 3 ? cellsOf(before[column])[index] : synced[column],
+      ])));
+      await fetch(`${testServer.apiBase}/settings.save_group/`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ section: 'torrentpotato', rows }),
+      });
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }) });
+    });
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'TorrentPotato');
+    await openCard(card);
+
+    await card.getByRole('button', { name: /Sync Indexers/ }).click();
+    await expect.poll(() => net.seen.some((request) => request.url.includes('jackett_sync'))).toBe(true);
+    await card.getByLabel('name for row 1', { exact: true }).fill('name-typed-during-the-action');
+    await page.clock.fastForward(5000);
+    expect(net.groupSaves()).toHaveLength(0);
+
+    release();
+    await expect(card.getByTestId('combine-discarded-note')).toContainText('not saved');
+    await page.clock.fastForward(5000);
+    await page.waitForLoadState('networkidle');
+
+    await expect(card.getByLabel('host for row 4', { exact: true })).toHaveValue('https://placeholder-synced.invalid/api');
+    expect(net.groupSaves()).toHaveLength(0);
+    const columns = configColumns(testServer.configPath, 'torrentpotato');
+    expect(cellsOf(columns.host)).toHaveLength(4);
+    expect(cellsOf(columns.name)).toEqual(['name-one', 'name-two', 'name-three', 'name-synced']);
+  });
+});
+
 test.describe('Settings: an unrelated save leaves a misaligned group byte for byte', () => {
   test.use({ seedConfig: 'newznab_misaligned_key_short#unrelated-save' });
 
