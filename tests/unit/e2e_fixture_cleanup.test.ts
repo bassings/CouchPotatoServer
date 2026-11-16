@@ -230,7 +230,9 @@ describe('settings fixture group-save coverage', () => {
   }
   const run = (annotations: { type: string }[], use: () => Promise<void> = async () => {}) => {
     const page = { route: vi.fn(), close: vi.fn() };
-    const result = mocks.fixtures.settingsPersistenceGuard[0]({ page, testServer: workerServer }, use, { annotations });
+    // A seeded server: a group changes only on a test's own server (see the shared-server tests).
+    const result = mocks.fixtures.settingsPersistenceGuard[0](
+      { page, testServer: workerServer, seedConfig: 'newznab_aligned#restore' }, use, { annotations });
     return { page, result };
   };
 
@@ -444,6 +446,29 @@ describe('group saves and the shared server', () => {
 
     expect(route.continue).toHaveBeenCalledOnce();
     expect(error).toBeUndefined();
+  });
+
+  it('fails a test whose group changed on the shared server by ANY channel, before restoring it', async () => {
+    const columns = ['use', 'host'];
+    const options = { newznab: { groups: [{ options: [{ name: 'host', type: 'combined', combine: columns }] }] } };
+    const before = { options, values: { newznab: { use: '1', host: 'https://placeholder-one.invalid' } }, combine_state: { newznab: { misaligned: false, rows: 1 } } };
+    const after = { options, values: { newznab: { use: '1', host: 'https://placeholder-changed.invalid' } }, combine_state: before.combine_state };
+    const writes: unknown[] = [];
+    let reads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+      if (init) writes.push(init);
+      return { ok: true, json: async () => (reads++ === 0 ? before : after) };
+    }));
+    const page = { route: vi.fn(), close: vi.fn() };
+
+    const error = await (mocks.fixtures.settingsPersistenceGuard[0] as any)(
+      { page, testServer: workerServer, seedConfig: '' }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },
+    ).catch((err: Error) => err);
+
+    expect(error?.message).toMatch(/shared server/);
+    expect(error?.message).toContain('newznab');
+    expect(error?.message).not.toContain('placeholder');
+    expect(writes).toEqual([]);
   });
 
   it('fails a combine-group writer that runs on the shared server', async () => {

@@ -24,7 +24,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { test as base, expect } from '@playwright/test';
+import { type Route, test as base, expect } from '@playwright/test';
 
 import { assertE2EPortAvailable, resolveE2EPort } from './port';
 import {
@@ -305,6 +305,112 @@ function assertWriterOwnsItsSeed(annotations: readonly { type: string }[], seedC
   writerSeeds.add(seedConfig);
 }
 
+type Tally = { blocked: number; sharedGroupSaves: number };
+type Annotations = readonly { type: string }[];
+type Snapshot = Awaited<ReturnType<typeof loadSettingsSnapshot>>;
+type Change = { section: string; name: string };
+
+/**
+ * The page's route for every settings write. A group save on the worker's SHARED server is
+ * never allowed, whatever the test declares (it would change rows every later test on that
+ * server starts from); any other write needs the persistence annotation.
+ */
+function guardRoute(tally: Tally, onSharedServer: boolean, annotations: Annotations) {
+  const refuse = (route: Route, error: string) => route.fulfill({
+    status: 409, contentType: 'application/json', body: JSON.stringify({ success: false, error }),
+  });
+  return async (route: Route) => {
+    if (onSharedServer && route.request().url().includes('settings.save_group')) {
+      tally.sharedGroupSaves += 1;
+      await refuse(route, 'E2E group saves need the test\'s own seedConfig server');
+    } else if (allowsSettingsPersistence(annotations)) {
+      await route.continue();
+    } else {
+      // The request URL contains the API key and may contain setting values.
+      tally.blocked += 1;
+      await refuse(route, `E2E test did not declare ${SETTINGS_PERSISTENCE_ANNOTATION}`);
+    }
+  };
+}
+
+/** Fail if any combine group changed on the shared server, by whatever channel. Names no value. */
+function assertNoSharedGroupChange(before: Snapshot, changed: Change[]) {
+  const { groups } = splitGroupWrites(before, changed);
+  if (groups.length > 0) {
+    throw new Error(
+      `A combine group changed on the worker's shared server (${groups.join(', ')}): `
+      + 'a group save must run on the test\'s own server. Seed the test with test.use({ seedConfig }).',
+    );
+  }
+}
+
+/**
+ * Put changed settings back and verify. A combine group is restored by ONE group save of its
+ * baseline rows, never per column (a per-column restore leaves a group half-restored when one
+ * request fails, and the per-column route refuses these columns from SEC-004 P6). A group the
+ * save cannot reproduce (misaligned, or a column shorter than the row count) is neither
+ * restored nor verified: safe only because a writer owns its server (AC-QA-10).
+ */
+async function restoreAndVerify(apiBase: string, settingsURL: string, before: Snapshot, changed: Change[]) {
+  const { groups, perColumn } = splitGroupWrites(before, changed);
+  const failures = new Set<string>();
+  const restorable = groups.filter((section) => baselineGroupRows(before, section) !== null);
+  for (const section of restorable) {
+    if (!await restoreGroup(apiBase, section, baselineGroupRows(before, section))) failures.add(`${section} (group)`);
+  }
+  for (const { section, name } of perColumn) {
+    if (!await restoreColumn(apiBase, section, name, before?.values?.[section]?.[name])) failures.add(`${section}.${name}`);
+  }
+  const columns = combineColumns(before);
+  const skipped = new Set(groups
+    .filter((section) => !restorable.includes(section))
+    .flatMap((section) => columns[section].map((name) => `${section}.${name}`)));
+  const verified = changed.filter(({ section, name }) => !skipped.has(`${section}.${name}`));
+  const verificationFailed = verified.length > 0
+    && await verifyRestored(settingsURL, before, verified, skipped, failures);
+  if (failures.size > 0) {
+    throw new Error(
+      `E2E setting restoration failed or could not safely restore: ${[...failures].join(', ')}`
+      + (verificationFailed ? '; snapshot verification failed' : ''),
+    );
+  }
+}
+
+/** Re-read and add anything still different to `failures`. True when the re-read itself failed. */
+async function verifyRestored(settingsURL: string, before: Snapshot, verified: Change[], skipped: Set<string>, failures: Set<string>) {
+  try {
+    const restored = await loadSettingsSnapshot(settingsURL, 'restored');
+    for (const { section, name } of changedSettings(before, restored)) {
+      if (!skipped.has(`${section}.${name}`)) failures.add(`${section}.${name}`);
+    }
+    return false;
+  } catch {
+    for (const { section, name } of verified) failures.add(`${section}.${name}`);
+    return true;
+  }
+}
+
+/** The checks that fail the test itself, after everything is restored. */
+function assertTeardownAudit(tally: Tally, changed: Change[], annotations: Annotations, seedConfig: string | undefined) {
+  if (tally.sharedGroupSaves > 0) {
+    throw new Error(
+      `This test sent ${tally.sharedGroupSaves} settings.save_group request(s) to the worker's shared server, `
+      + 'which is refused whatever the test declares. Seed the test onto its own server with '
+      + 'test.use({ seedConfig }).',
+    );
+  }
+  assertWriterOwnsItsSeed(annotations, seedConfig);
+  if (tally.blocked > 0 || (changed.length > 0 && !allowsSettingsPersistence(annotations))) {
+    throw new Error(
+      `This test sent ${Math.max(tally.blocked, changed.length)} unmocked settings.save request(s) `
+      + `(settings.save or settings.save_group), which would `
+      + `persist into the worker database and leak into later tests. Mock settings.save, `
+      + `or explicitly annotate an intentional persistence test with `
+      + `{ type: '${SETTINGS_PERSISTENCE_ANNOTATION}' }.`,
+    );
+  }
+}
+
 /** Put one combine group back with one group save. False on any failure. */
 async function restoreGroup(apiBase: string, section: string, rows: unknown): Promise<boolean> {
   try {
@@ -512,39 +618,11 @@ export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions
   },
 
   settingsPersistenceGuard: [async ({ page, testServer, seedConfig }, use, testInfo) => {
-    let blocked = 0;
-    let sharedGroupSaves = 0;
-    const onSharedServer = !seedConfig;
+    const tally = { blocked: 0, sharedGroupSaves: 0 };
     const settingsURL = `${testServer.apiBase}/settings/`;
     const before = await loadSettingsSnapshot(settingsURL, 'baseline');
 
-    await page.route(SETTINGS_WRITE_ROUTES, async (route) => {
-      // A group save on the worker's SHARED server is never allowed, whatever the test
-      // declares: it would change rows every later test on that server starts from.
-      if (onSharedServer && route.request().url().includes('settings.save_group')) {
-        sharedGroupSaves += 1;
-        await route.fulfill({
-          status: 409,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: false, error: 'E2E group saves need the test\'s own seedConfig server' }),
-        });
-        return;
-      }
-      if (allowsSettingsPersistence(testInfo.annotations)) {
-        await route.continue();
-        return;
-      }
-      // The request URL contains the API key and may contain setting values.
-      blocked += 1;
-      await route.fulfill({
-        status: 409,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          success: false,
-          error: `E2E test did not declare ${SETTINGS_PERSISTENCE_ANNOTATION}`,
-        }),
-      });
-    });
+    await page.route(SETTINGS_WRITE_ROUTES, guardRoute(tally, !seedConfig, testInfo.annotations));
 
     await use();
     // Closing the page cancels its debounce timers. Audit only after no later
@@ -553,69 +631,11 @@ export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions
 
     const after = await loadSettingsSnapshot(settingsURL, 'after');
     const changed = changedSettings(before, after);
-
-    // A combine group is restored by ONE group save of its baseline rows, never per
-    // column: a per-column restore leaves a group half-restored when one request fails,
-    // and the per-column route refuses these columns from SEC-004 P6.
-    const { groups, perColumn } = splitGroupWrites(before, changed);
-    const restoreFailures = new Set<string>();
-    const restorable = groups.filter((section) => baselineGroupRows(before, section) !== null);
-    for (const section of restorable) {
-      if (!await restoreGroup(testServer.apiBase, section, baselineGroupRows(before, section))) {
-        restoreFailures.add(`${section} (group)`);
-      }
-    }
-    for (const { section, name } of perColumn) {
-      if (!await restoreColumn(testServer.apiBase, section, name, before?.values?.[section]?.[name])) {
-        restoreFailures.add(`${section}.${name}`);
-      }
-    }
-
-    // A group the save cannot reproduce (misaligned, or a column shorter than the row
-    // count) is neither restored nor verified. That is safe only because a test that
-    // writes such a group owns its worker (AC-QA-10); the audit below still fails an
-    // unannotated write.
-    const columns = combineColumns(before);
-    const skipped = new Set(groups
-      .filter((section) => !restorable.includes(section))
-      .flatMap((section) => columns[section].map((name) => `${section}.${name}`)));
-    const verified = changed.filter(({ section, name }) => !skipped.has(`${section}.${name}`));
-    let verificationFailed = false;
-    if (verified.length > 0) {
-      try {
-        const restored = await loadSettingsSnapshot(settingsURL, 'restored');
-        for (const { section, name } of changedSettings(before, restored)) {
-          if (!skipped.has(`${section}.${name}`)) restoreFailures.add(`${section}.${name}`);
-        }
-      } catch {
-        verificationFailed = true;
-        for (const { section, name } of verified) restoreFailures.add(`${section}.${name}`);
-      }
-    }
-    if (restoreFailures.size > 0) {
-      throw new Error(
-        `E2E setting restoration failed or could not safely restore: ${[...restoreFailures].join(', ')}`
-        + (verificationFailed ? '; snapshot verification failed' : ''),
-      );
-    }
-
-    if (sharedGroupSaves > 0) {
-      throw new Error(
-        `This test sent ${sharedGroupSaves} settings.save_group request(s) to the worker's shared server, `
-        + 'which is refused whatever the test declares. Seed the test onto its own server with '
-        + 'test.use({ seedConfig }).',
-      );
-    }
-    assertWriterOwnsItsSeed(testInfo.annotations, seedConfig);
-    if (blocked > 0 || (changed.length > 0 && !allowsSettingsPersistence(testInfo.annotations))) {
-      throw new Error(
-        `This test sent ${Math.max(blocked, changed.length)} unmocked settings.save request(s) `
-        + `(settings.save or settings.save_group), which would `
-        + `persist into the worker database and leak into later tests. Mock settings.save, `
-        + `or explicitly annotate an intentional persistence test with `
-        + `{ type: '${SETTINGS_PERSISTENCE_ANNOTATION}' }.`,
-      );
-    }
+    // Channel-independent: a route of the test's own, or the `request` fixture, never
+    // passes through guardRoute. Checked BEFORE restoring, which would hide it.
+    if (!seedConfig) assertNoSharedGroupChange(before, changed);
+    await restoreAndVerify(testServer.apiBase, settingsURL, before, changed);
+    assertTeardownAudit(tally, changed, testInfo.annotations, seedConfig);
   }, { auto: true }],
 });
 
