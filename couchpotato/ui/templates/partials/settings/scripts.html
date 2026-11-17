@@ -743,12 +743,18 @@ function settingsPanel() {
     /** One announcement per refusal: a repeat of the same refused cells, which
      *  every further keystroke produces, is not announced again. */
     refuseGroup(group, entries) {
-      const key = entries.map(entry => entry.row + ':' + entry.column + ':' + entry.reason).join('|');
+      const key = this.refusalKeyOf(entries);
       group.refusal = entries;
       group.error = '';
       if (key === group.refusalKey) return;
       group.refusalKey = key;
       this.announce(entries.map(entry => entry.message).join(' '), true);
+    },
+
+    /** The identity of a refusal: which cells, and why. One definition, so the key a
+     *  verdict is compared with and the key a renumbering rebuilds cannot drift apart. */
+    refusalKeyOf(entries) {
+      return entries.map(entry => entry.row + ':' + entry.column + ':' + entry.reason).join('|');
     },
 
     failGroup(group, text) {
@@ -844,6 +850,9 @@ function settingsPanel() {
         .filter(entry => entry.row !== idx)
         .map(entry => (entry.row > idx ? { ...entry, row: entry.row - 1 } : entry))
         .map(entry => ({ ...entry, message: this.refusalText(group, entry) }));
+      // The key names rows by position too: left as it was, the server's identical verdict on
+      // the renumbered rows would look new and be announced, assertively, a second time.
+      group.refusalKey = this.refusalKeyOf(group.refusal);
     },
 
     async saveSingle(section, name, value) {

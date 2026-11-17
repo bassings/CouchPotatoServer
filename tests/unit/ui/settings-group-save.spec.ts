@@ -667,6 +667,32 @@ describe('a verdict for rows that have since changed', () => {
     expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
   });
 
+  it('does not announce the same refusal again when a row above it is removed and the server refuses it again', async () => {
+    const net = installFetch();
+    const comma = (row: number) => ({ body: { success: false, error: 'x', invalid: [{ row, column: 'host', reason: 'comma' }] } });
+    net.replies.push(comma(2), comma(1));
+    const panel = aligned();
+    const spoken: Array<[string, boolean | undefined]> = [];
+    const announce = panel.announce.bind(panel);
+    panel.announce = (message: string, assertive?: boolean) => { spoken.push([message, assertive]); announce(message, assertive); };
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    field.getPanel = () => panel;
+    withAlpineMagics(field);
+    field.init();
+    field.held.rows[2][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
+    panel.editGroup('newznab');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(spoken.filter(([, assertive]) => assertive)).toHaveLength(1);
+
+    field.removeRow(0);
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([1]);
+    expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
+    expect(spoken.filter(([, assertive]) => assertive)).toHaveLength(1);
+  });
+
   it('drops the marks of a removed row', () => {
     const panel = aligned();
     const { combinedField } = loadComponents();
@@ -684,7 +710,8 @@ describe('a verdict for rows that have since changed', () => {
 
 describe('what describes a cell', () => {
   function fieldFor(values: Record<string, string>, misaligned: boolean) {
-    const panel = makePanel({ newznab: values }, { newznab: { misaligned, rows: 3 } });
+    // A copy: the panel keeps and writes into the values it is given.
+    const panel = makePanel({ newznab: { ...values } }, { newznab: { misaligned, rows: 3 } });
     const { combinedField } = loadComponents();
     const field = combinedField('newznab', combinedOption(panel.options));
     field.getPanel = () => panel;
@@ -893,7 +920,7 @@ describe('a button in a section with a combine group: the rows are locked from t
   const serverRows = (hosts: string[]): Reply => ({
     body: {
       options: newznabOptions(),
-      values: { torrentpotato: torrentValues(hosts), newznab: ALIGNED_VALUES.newznab },
+      values: { torrentpotato: torrentValues(hosts), newznab: { ...ALIGNED_VALUES.newznab } },
       combine_state: { torrentpotato: { misaligned: false, rows: hosts.length }, newznab: { misaligned: false, rows: 3 } },
     },
   });
