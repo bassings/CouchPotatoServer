@@ -1894,8 +1894,10 @@ for (const { name, row, key, focus } of REMOVE_CASES) {
       // alone cannot tell a handover from none. The page's own focus() call on the target can.
       expect(await page.evaluate(() => (window as any).__focusCalls)).toContain(focus.replace('button:', ''));
       await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
-      // Bounded settle before the negative reads.
-      await page.waitForTimeout(300); // wait-for-timeout-ok: forbidden-event=second-removal-announcement
+      // Past every timer the page could use (the announcement is set on a timer), then two frames: only
+      // then is "heard once" a statement about the page and not about how early it was read.
+      await page.clock.fastForward(5000);
+      await nextFrames(page);
       expect(await page.evaluate(() => (window as any).__heard)).toEqual([`Row ${row} removed`]);
       await expect(page.getByTestId('settings-announcer-polite')).toHaveText(`Row ${row} removed`);
       expect(net.groupSaves()).toHaveLength(1);
@@ -1991,6 +1993,7 @@ for (const held of HELD) {
 
     test('removes exactly one row, adds none, saves once, and config.ini keeps the others aligned', async ({ page, testServer }) => {
       test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
       const net = await recordRequests(page);
       await openSettings(page, 'Searchers');
       const card = providerCard(page, 'Newznab');
@@ -2008,14 +2011,16 @@ for (const held of HELD) {
       } else {
         await holdKey(page, 'Enter');
       }
+      // The debounce that sends the save is on the fake clock: advance it, then wait for the response.
+      await page.clock.fastForward(600);
       expect((await (await saved).json()).success).toBe(true);
       await nextFrames(page);
 
       const counts = await rowCountHistory(page);
       expect(Math.min(...counts), `the row count fell to ${Math.min(...counts)} (history ${counts.join(',')})`).toBe(2);
       expect(Math.max(...counts), `a row was added (history ${counts.join(',')})`).toBe(3);
-      // Bounded settle: any save a later repeat scheduled would be sent by now.
-      await page.waitForTimeout(900); // wait-for-timeout-ok: forbidden-event=second-group-save
+      // Any save a later repeat scheduled would be sent by now: run the clock well past the debounce.
+      await settleDebounce(page);
       expect(net.groupSaves()).toHaveLength(1);
       expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(held.tabFrom - 1));
     });
@@ -2063,6 +2068,7 @@ test.describe('Settings: a held Space on Remove', () => {
 
   test('removes one row: Space activates on keyup, so the repeats are not guarded and do not act', async ({ page, testServer }) => {
     test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
     const net = await recordRequests(page);
     await openSettings(page, 'Searchers');
     const card = providerCard(page, 'Newznab');
@@ -2072,11 +2078,12 @@ test.describe('Settings: a held Space on Remove', () => {
     const saved = groupSaveResponse(page);
 
     await holdKey(page, 'Space');
+    await page.clock.fastForward(600);
     expect((await (await saved).json()).success).toBe(true);
     await nextFrames(page);
 
     expect(Math.min(...(await rowCountHistory(page)))).toBe(2);
-    await page.waitForTimeout(900); // wait-for-timeout-ok: forbidden-event=second-group-save
+    await settleDebounce(page);
     expect(net.groupSaves()).toHaveLength(1);
     expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(0));
   });
@@ -2087,13 +2094,15 @@ test.describe('Settings: a single Enter on Add still adds a row', () => {
 
   test('one press adds exactly one row and saves nothing', async ({ page }) => {
     test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
     const net = await recordRequests(page);
     await openSettings(page, 'Searchers');
     const card = providerCard(page, 'Newznab');
     await card.getByRole('button', { name: 'Add row', exact: true }).focus();
     await page.keyboard.press('Enter');
     await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(4);
-    await page.waitForTimeout(900); // wait-for-timeout-ok: forbidden-event=group-save-from-an-add
+    // An add that saved would do so on the debounce: run the clock past it before the negative read.
+    await settleDebounce(page);
     expect(net.groupSaves()).toHaveLength(0);
   });
 });
