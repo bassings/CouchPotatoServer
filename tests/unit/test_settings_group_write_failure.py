@@ -554,7 +554,7 @@ class TestRollbackIsARevert:
         return {section: sorted(parser.options(section)) for section in parser.sections()}
 
     @pytest.mark.parametrize('section', SECTIONS)
-    def test_a_group_save_writes_the_same_bytes_as_the_per_column_saves_it_replaces(
+    def test_a_group_save_writes_the_same_bytes_as_setting_each_column_and_saving_once(
             self, tmp_path, monkeypatch, section):
         (tmp_path / 'master').mkdir()
         (tmp_path / 'group').mkdir()
@@ -562,10 +562,11 @@ class TestRollbackIsARevert:
             columns = per_column.combine_groups()[section]
             rows = placeholder_rows(columns, 3)
             baseline = self.structure(per_column.file)
+            # What the per-column route wrote on master, minus the route: `settings.save`
+            # now refuses these columns (SEC-004 P6), so the baseline sets them directly.
             for column in columns:
-                result = per_column.saveView(
-                    section=section, name=column, value=','.join(r[column] for r in rows))
-                assert result['success'] is True
+                per_column.set(section, column, ','.join(r[column] for r in rows))
+            per_column.save()
             master_bytes = Path(per_column.file).read_bytes()
             master_structure = self.structure(per_column.file)
 

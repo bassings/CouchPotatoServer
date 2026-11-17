@@ -51,6 +51,18 @@ _GROUP_REFUSAL_TEXT = {
 GROUP_REFUSAL_REASONS = frozenset(_GROUP_REFUSAL_TEXT)
 
 
+#: What a per-column save of a combine column is told. It names the registered
+#: column (never the caller's spelling or value), the group-save route, and what
+#: a tab loaded before the upgrade should do.
+_COMBINE_COLUMN_REFUSAL = (
+    '"%s.%s" is saved together with the rest of its group, not on its own. '
+    'Nothing was saved. Use settings.save_group, or reload the page and edit '
+    'the rows there.')
+_BAD_OPTION_NAME_REFUSAL = (
+    'An option name cannot contain a space or a control character. '
+    'Nothing was saved.')
+
+
 class GroupMisaligned(Exception):
     """Raised by a group builder that finds the stored rows misaligned.
 
@@ -207,7 +219,9 @@ class Settings:
         })
 
         addApiView('settings.save', self.saveView, docs={
-            'desc': 'Save setting to config file (settings.conf)',
+            'desc': 'Save setting to config file (settings.conf). Refuses every column '
+                    'of a multi-row group (use settings.save_group) and any option name '
+                    'holding whitespace or a control character.',
             'params': {
                 'section': {'desc': 'The section name'},
                 'name': {'desc': 'The option name'},
@@ -973,19 +987,26 @@ class Settings:
             else:
                 self.p.set(section, column, previous)
 
-    def is_combine_option(self, section, option):
-        """Would `option` become a column of a combine group in `section`?
+    def combine_column(self, section, option):
+        """The declared column `option` would become in `section`, or None.
 
         The one membership test. The name is folded the way the config parser
         folds it (`optionxform`) after `strip()`, because that is the column it
         would become: a trailing space reloads as a duplicate option and `API_KEY`
-        writes `api_key`. A name that is not a string is not a member.
+        writes `api_key`. A name that is not a string is not a member. The answer
+        is the registered column, so a caller can name it without echoing what
+        was submitted.
         """
         columns = self.combine_groups().get(section)
         if not columns or not isinstance(option, str):
-            return False
+            return None
         fold = self.p.optionxform if self.p else str.lower
-        return fold(option.strip()) in {fold(column) for column in columns}
+        wanted = fold(option.strip())
+        return next((column for column in columns if fold(column) == wanted), None)
+
+    def is_combine_option(self, section, option):
+        """Would `option` become a column of a combine group in `section`?"""
+        return self.combine_column(section, option) is not None
 
     def _parse_directories(self, value, soft_chroot):
         """Normalise a `directories` setting value and map it into the chroot.
@@ -1009,7 +1030,38 @@ class Settings:
 
         return self.directories_delimiter.join(map(soft_chroot.chroot2abs, value))
 
+    def _refuse_per_column(self, section, name):
+        """The refusal for a per-column save that must not reach the file, or None.
+
+        Two refusals, in this order. A column of a combine group is refused first,
+        so `host ` in a combine section gets the combine text (the membership
+        test folds `strip()`: that is the column it would become). Then any name
+        holding whitespace or a C0 control character, for every section: the
+        parser reloads a trailing space as a duplicate option, which stops the
+        server starting, and a leading one as a continuation of the previous
+        option's value.
+
+        Both return before anything is set, hooked or saved. Neither log line nor
+        either body carries the submitted value, and the combine refusal names
+        the registered column rather than the caller's spelling.
+        """
+        column = self.combine_column(section, name)
+        if column is not None:
+            self.log.warning('Refused a per-column save of "%s.%s": it is saved '
+                             'with its group, not on its own', section, column)
+            return {'success': False,
+                    'error': _COMBINE_COLUMN_REFUSAL % (section, column)}
+        if isinstance(name, str) and any(c.isspace() or ord(c) < 0x20 for c in name):
+            # `%r` escapes a control character, so the caller's text cannot forge a log line.
+            self.log.warning('Refused a settings save: the option name holds '
+                             'whitespace or a control character (section=%.40r)', section)
+            return {'success': False, 'error': _BAD_OPTION_NAME_REFUSAL}
+        return None
+
     def saveView(self, **kwargs):
+        refusal = self._refuse_per_column(kwargs.get('section'), kwargs.get('name'))
+        if refusal is not None:
+            return refusal
         if (kwargs.get('section') == 'core'
                 and kwargs.get('name') in ('password', 'auth_required')):
             with _PASSWORD_SAVE_LOCK:
