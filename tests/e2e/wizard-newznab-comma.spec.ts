@@ -111,8 +111,8 @@ async function expectRefused(page: Page, message: string, at: { n: number; field
   await expect(input).toHaveAttribute('aria-invalid', 'true');
   await expect(input).toHaveAttribute('aria-describedby', 'wizard-newznab-error');
   await expect(page.locator('[aria-invalid="true"]')).toHaveCount(1);
-  // ONE visible message: no toast beside it, and no "Failed to save" stacked on it.
-  await expect(toastText(page)).toBeHidden();
+  // ONE visible message: no toast beside it, and no "Failed to save" stacked on it. Read at once: a toast clears itself after 3s, so waiting for it to be hidden would pass while it was there.
+  expect(await toastText(page).isVisible(), 'a toast is showing beside the inline message').toBe(false);
   await expect(page.locator('body')).not.toContainText('Failed to save');
   await expect(page.getByTestId('toast-announcer-assertive')).toContainText(message);
   for (const value of notShown) {
@@ -347,7 +347,7 @@ test.describe('any other answer from the group-save route is a visible error', (
       await expect(providersHeading(page)).toBeVisible();
       await expect(urlInput(page, 1)).toHaveValue('https://indexer-a.invalid');
       await expect(keyInput(page, 1)).toHaveValue('placeholder-key-a');
-      await expect(toastText(page)).toBeHidden();
+      expect(await toastText(page).isVisible(), 'a toast is showing beside the inline message').toBe(false);
       expect(singles, 'something was saved beside a group that was not').toEqual([]);
       await expect(page.getByTestId('toast-announcer-polite')).not.toContainText('Saved');
     });

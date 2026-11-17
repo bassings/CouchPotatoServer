@@ -520,10 +520,13 @@ result. Getting it wrong the other way files a bug against working code.
   that `getHosts` in `newznab.py` pairs BY POSITION. The wizard builds `host`,
   `api_key` and `use` from one filtered list of rows, so a key no longer
   shifts onto another indexer (#587, contained in the v3.278.0 tag).
-  Closed here: the wizard refuses a literal comma or an encoded one (`%2C`,
-  `%2c`) inside a kept row's URL or API key before issuing any save, and names
-  the row and field (not the value) in its error toast
+  Closed here: the wizard refuses a literal comma inside a kept row's URL or
+  API key before issuing any request, and names the row and field (not the
+  value) in a persistent message in the Newznab card
   (`tests/e2e/wizard-newznab-comma.spec.ts`). It can only ever refuse a save.
+  Since SEC-004 P5 the wizard saves Newznab as one group through
+  `settings.save_group`, which the server also refuses a comma in, and an
+  encoded comma (`%2C`) is no longer refused: it is stored as typed.
   Still open, and deliberately not fixed on the server:
   a. The Settings page (`combinedField`) accepts a comma in a URL or a key.
      After a comma in a URL, `getHosts` raises `IndexError` (the host list is

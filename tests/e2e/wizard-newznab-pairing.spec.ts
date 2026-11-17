@@ -688,6 +688,28 @@ test.describe('Continue pressed twice, or held', () => {
 
 });
 
+test.describe('Continue held with Enter after a save that failed', () => {
+  test.use({ seedConfig: 'newznab_two_stored#wizard-held-enter-after-failure' });
+
+  test('does not retry the save on every repeat', async ({ page }) => {
+    const requests = await recordWizardRequests(page);
+    await page.route('**/settings.save_group/**', (route) => route.fulfill({
+      status: 500, contentType: 'application/json', body: '{"success": false}',
+    }));
+    await openProvidersStep(page);
+    await urlInput(page, 1).fill('https://placeholder-one-held.invalid/api');
+    await continueButton(page).focus();
+
+    await page.keyboard.down('Enter');                       // the first press: one save, which fails
+    await expect(page.getByTestId('wizard-newznab-error')).toContainText('were not saved');
+    for (let i = 0; i < 5; i++) await page.keyboard.down('Enter');   // the key still held: repeats
+    await page.keyboard.up('Enter');
+    await page.waitForLoadState('networkidle');
+
+    expect(requests.groupSaves(), 'a held key retried the failed save').toHaveLength(1);
+  });
+});
+
 test.describe('Continue held with Enter', () => {
   test.use({ seedConfig: 'newznab_two_stored#wizard-held-enter' });
 
