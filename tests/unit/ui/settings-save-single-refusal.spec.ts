@@ -83,10 +83,19 @@ describe('a tab loaded before the upgrade saving a combine column', () => {
 
     await panel.saveSingle('newznab', 'host', 'x');
 
-    // The toast is bound with x-text (modals.html), which assigns textContent; the string is relayed untouched.
-    expect(panel.message).toBe(`Could not save host: ${markup}`);
+    // The elements that render these strings are the ones bound to them. Each must be
+    // an element whose only content binding is x-text (textContent), never x-html.
     const modals = fs.readFileSync(TEMPLATE.replace('scripts.html', 'modals.html'), 'utf8');
-    expect(modals).toMatch(/x-text="message"/);
-    expect(modals).not.toMatch(/x-html="message"/);
+    const element = (binding: string) => {
+      const found = modals.match(new RegExp(`<div\\b[^>]*\\bx-text="${binding}"[^>]*>`, 's'));
+      expect(found, `no element is bound to ${binding}`).not.toBeNull();
+      return found![0];
+    };
+    expect(element('message')).toContain('x-show="message"');
+    expect(element('assertiveAnnouncement')).toContain('aria-live="assertive"');
+    for (const binding of ['message', 'assertiveAnnouncement', 'politeAnnouncement']) {
+      expect(element(binding)).not.toMatch(/x-html/);
+    }
+    expect(modals).not.toMatch(/x-html="(message|assertiveAnnouncement|politeAnnouncement)"/);
   });
 });

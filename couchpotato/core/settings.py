@@ -59,8 +59,22 @@ _COMBINE_COLUMN_REFUSAL = (
     'Nothing was saved. Use settings.save_group, or reload the page and edit '
     'the rows there.')
 _BAD_OPTION_NAME_REFUSAL = (
-    'An option name cannot contain a space or a control character. '
-    'Nothing was saved.')
+    'An option name cannot contain a space, a control character, "=" or ":", '
+    'or start with "[", "#" or ";". Nothing was saved.')
+_NOT_TEXT_REFUSAL = 'The section and the option name must each be text. Nothing was saved.'
+
+
+def _unsafe_option_name(name):
+    """Would the config parser mangle, or fail to write back, an option with this name?
+
+    Whitespace and C0 control characters: a trailing space reloads as a duplicate
+    option and a leading one as a continuation line. `=` and `:` are delimiters the
+    writer refuses (`InvalidWriteError`, after the name is already in memory, so every
+    later save fails). A leading `[` can read as a section header, and a leading `#`
+    or `;` reloads as a comment, so the value is silently lost.
+    """
+    return (any(c.isspace() or ord(c) < 0x20 or c in '=:' for c in name)
+            or name.startswith(('[', '#', ';')))
 
 
 class GroupMisaligned(Exception):
@@ -220,8 +234,9 @@ class Settings:
 
         addApiView('settings.save', self.saveView, docs={
             'desc': 'Save setting to config file (settings.conf). Refuses every column '
-                    'of a multi-row group (use settings.save_group) and any option name '
-                    'holding whitespace or a control character.',
+                    'of a multi-row group (use settings.save_group), any option name with '
+                    'whitespace, a control character, "=" or ":" or starting with "[", '
+                    '"#" or ";", and a section or name that is not text.',
             'params': {
                 'section': {'desc': 'The section name'},
                 'name': {'desc': 'The option name'},
@@ -1045,16 +1060,22 @@ class Settings:
         either body carries the submitted value, and the combine refusal names
         the registered column rather than the caller's spelling.
         """
+        if not (isinstance(section, str) and isinstance(name, str)):
+            # A list (`section[0]=...`), an object, a number, or no name at all. Nothing of
+            # the caller's is logged: it is not text, and may be anything.
+            self.log.warning('Refused a settings save: the section or the option name '
+                             'was not text')
+            return {'success': False, 'error': _NOT_TEXT_REFUSAL}
         column = self.combine_column(section, name)
         if column is not None:
             self.log.warning('Refused a per-column save of "%s.%s": it is saved '
                              'with its group, not on its own', section, column)
             return {'success': False,
                     'error': _COMBINE_COLUMN_REFUSAL % (section, column)}
-        if isinstance(name, str) and any(c.isspace() or ord(c) < 0x20 for c in name):
+        if _unsafe_option_name(name):
             # `%r` escapes a control character, so the caller's text cannot forge a log line.
-            self.log.warning('Refused a settings save: the option name holds '
-                             'whitespace or a control character (section=%.40r)', section)
+            self.log.warning('Refused a settings save: the option name is not allowed '
+                             '(section=%.40r)', section)
             return {'success': False, 'error': _BAD_OPTION_NAME_REFUSAL}
         return None
 

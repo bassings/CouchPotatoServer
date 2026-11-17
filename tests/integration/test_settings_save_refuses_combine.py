@@ -18,7 +18,7 @@ import logging
 import pytest
 
 from couchpotato.core.event import addEvent
-from tests.helpers.combine_groups import LogCapture, sha
+from tests.helpers.combine_groups import LogCapture, sha, three_rows
 from tests.integration.test_settings_group_save_route import API_KEY, live_world, url
 
 pytestmark = pytest.mark.integration
@@ -26,6 +26,17 @@ pytestmark = pytest.mark.integration
 ROUTE = 'settings.save'
 CANARY = 'canary-value-must-never-come-back'
 TRANSPORTS = ('form', 'json', 'query')
+
+COMBINE_TEXT = (
+    '"newznab.%s" is saved together with the rest of its group, not on its own. '
+    'Nothing was saved. Use settings.save_group, or reload the page and edit the rows there.')
+COMBINE_WARNING = ('Refused a per-column save of "newznab.%s": it is saved with its group, '
+                   'not on its own')
+NAME_TEXT = ('An option name cannot contain a space, a control character, "=" or ":", '
+             'or start with "[", "#" or ";". Nothing was saved.')
+NAME_WARNING = "Refused a settings save: the option name is not allowed (section='%s')"
+NOT_TEXT_TEXT = 'The section and the option name must each be text. Nothing was saved.'
+NOT_TEXT_WARNING = 'Refused a settings save: the section or the option name was not text'
 
 
 @pytest.fixture
@@ -42,6 +53,32 @@ def send(client, section, name, value=CANARY, transport='form'):
     if transport == 'query':
         return client.get(url(route=ROUTE), params=fields)
     return client.post(url(route=ROUTE), data=fields)
+
+
+def server_log(logs):
+    """The server's own records. The HTTP client logs the URL it requested (a GET carries
+    the name and value in its query), which is the test harness, not the code under test."""
+    return '\n'.join(r.getMessage() for r in logs.records if r.name.startswith('couchpotato'))
+
+
+def bare(records):
+    """The messages as written at the call site: the logger's own `[module]` prefix removed."""
+    return [record.getMessage().split('] ', 1)[-1] for record in records]
+
+
+def send_fields(client, fields, transport):
+    """Send `fields` as given (lists and all); a bracketed key is how a browser sends a list."""
+    if transport == 'json':
+        return client.post(url(route=ROUTE), json=fields)
+    flat = {}
+    for key, value in fields.items():
+        if isinstance(value, list):
+            flat.update({'%s[%d]' % (key, i): item for i, item in enumerate(value)})
+        else:
+            flat[key] = value
+    if transport == 'query':
+        return client.get(url(route=ROUTE), params=flat)
+    return client.post(url(route=ROUTE), data=flat)
 
 
 def declared(settings):
@@ -164,39 +201,49 @@ class TestTheRefusalTellsTheUserWhatToDo:
             '"newznab.host" is saved together with the rest of its group, not on its own. '
             'Nothing was saved. Use settings.save_group, or reload the page and edit the rows there.')
 
-    def test_exactly_one_warning_names_section_and_option_and_no_value(self, world):
+    def test_exactly_one_warning_is_exactly_the_registered_column_and_no_value(self, world):
         settings, client = world
 
         with LogCapture() as logs:
             send(client, 'newznab', ' Host ', value=CANARY)
 
         warnings = logs.at_or_above(logging.WARNING)
-        assert len(warnings) == 1, [r.getMessage() for r in warnings]
+        assert bare(r for r in warnings if r.name.startswith('couchpotato')) == [COMBINE_WARNING % 'host']
         assert warnings[0].levelno == logging.WARNING
-        assert 'newznab.host' in warnings[0].getMessage()
-        assert CANARY not in logs.text()
+        assert CANARY not in server_log(logs)
 
-    def test_the_caller_s_spelling_is_never_echoed_in_the_log_or_the_body(self, world):
+    @pytest.mark.parametrize('transport', TRANSPORTS)
+    def test_the_caller_s_spelling_is_in_no_log_record_and_not_in_the_body(self, world, transport):
         settings, client = world
+        spelling = 'ApI_kEy \x1f'
 
         with LogCapture() as logs:
-            response = send(client, 'newznab', '\tHOST\x1f\n', value=CANARY)
+            response = send(client, 'newznab', spelling, value=CANARY, transport=transport)
 
-        assert response.json()['success'] is False
-        assert '\x1f' not in response.text and '\x1f' not in logs.text()
-        assert 'newznab.host' in logs.text()
+        assert bare(r for r in logs.at_or_above(logging.WARNING) if r.name.startswith('couchpotato')) == [
+            COMBINE_WARNING % 'api_key']
+        ours = server_log(logs)
+        for echoed in ('ApI_kEy', repr(spelling), repr(spelling)[1:-1], 'kEy'):
+            assert echoed not in ours, echoed
+            assert echoed not in response.text, echoed
+        assert response.json() == {'success': False, 'error': COMBINE_TEXT % 'api_key'}
 
 
 class TestAnyNameWithWhitespaceOrAControlCharacterIsRefused:
-    """AC-SEC-3, second half: for every section, combine or not."""
+    """AC-SEC-3, second half: for every section, combine or not.
+
+    The sections are made to exist first, so an unrefused save would WRITE (and the
+    file would change): the refusal is the only thing that can leave it alone.
+    """
 
     BAD_NAMES = ['enabled ', ' enabled', 'en abled', 'enabled\t', 'enabled\n', 'enabled\r',
-                 'enab\x00led', 'enab\x1fled', '\x01enabled', 'enab\x0bled', 'enab\x0cled']
+                 'enab\x0bled', 'enab\x0cled', 'en\u00a0abled', 'en\u2003abled']
 
     @pytest.mark.parametrize('transport', TRANSPORTS)
-    @pytest.mark.parametrize('section', ['core', 'newznab', 'torrentpotato', 'imdb', 'zz_unregistered'])
+    @pytest.mark.parametrize('section', ['core', 'newznab', 'torrentpotato', 'imdb', 'zz_present'])
     def test_each_bad_name_is_refused_and_the_file_is_unchanged(self, world, transport, section):
         settings, client = world
+        settings.addSection(section)
         for name in self.BAD_NAMES:
             before = sha(settings.file)
             fired = hooks_for('setting.save.%s.%s' % (section, name),
@@ -204,9 +251,23 @@ class TestAnyNameWithWhitespaceOrAControlCharacterIsRefused:
 
             response = send(client, section, name, value='1', transport=transport)
 
-            assert response.json()['success'] is False, (section, repr(name))
+            assert response.json() == {'success': False, 'error': NAME_TEXT}, (section, repr(name))
             assert sha(settings.file) == before, (section, repr(name))
             assert fired == [], (section, repr(name))
+
+    @pytest.mark.parametrize('transport', TRANSPORTS)
+    @pytest.mark.parametrize('section', ['core', 'newznab'])
+    @pytest.mark.parametrize('code', range(0x20))
+    def test_every_c0_character_anywhere_in_a_name_is_refused(self, world, transport, section, code):
+        settings, client = world
+        settings.addSection(section)
+        before = sha(settings.file)
+
+        for name in ('enab%sled' % chr(code), chr(code) + 'enabled', 'enabled' + chr(code)):
+            response = send(client, section, name, value='1', transport=transport)
+            # A combine column with trailing whitespace is the column it would become.
+            assert response.json()['success'] is False, (section, repr(name))
+            assert sha(settings.file) == before, (section, repr(name))
 
     def test_the_file_still_loads_after_a_trailing_space_name_was_sent(self, world):
         settings, client = world
@@ -223,20 +284,109 @@ class TestAnyNameWithWhitespaceOrAControlCharacterIsRefused:
         combine = send(client, 'newznab', 'host ').json()['error']
         other = send(client, 'newznab', 'ho st').json()['error']
 
-        assert 'settings.save_group' in combine
-        assert 'settings.save_group' not in other
-        assert combine != other
+        assert combine == COMBINE_TEXT % 'host'
+        assert other == NAME_TEXT
 
-    def test_the_name_refusal_logs_one_warning_without_the_value_or_raw_control_characters(self, world):
+    def test_the_name_refusal_logs_exactly_one_warning_without_the_value_or_the_name(self, world):
         settings, client = world
+        settings.addSection('core')
 
         with LogCapture() as logs:
-            send(client, 'core', 'bad\x1bname', value=CANARY)
+            response = send(client, 'core', 'bad\x1bname', value=CANARY)
 
-        warnings = logs.at_or_above(logging.WARNING)
-        assert len(warnings) == 1, [r.getMessage() for r in warnings]
-        assert CANARY not in logs.text()
-        assert '\x1b' not in logs.text()
+        assert response.json() == {'success': False, 'error': NAME_TEXT}
+        assert bare(r for r in logs.at_or_above(logging.WARNING) if r.name.startswith('couchpotato')) == [NAME_WARNING % 'core']
+        assert CANARY not in server_log(logs)
+        assert 'bad' not in server_log(logs) and '\x1b' not in server_log(logs)
+
+
+class TestNamesTheParserCannotWriteBackAreRefused:
+    """A name with `=` or `:` is accepted into memory and then every later save raises
+    `InvalidWriteError` until restart, so the refusal is judged by the saves that FOLLOW it."""
+
+    DELIMITED = ['debug:x', 'debug=1', 'a=b', 'a:b', 'x=', ':x', '=x', '[x', '[x]', '[', '#x',
+                 ';x', '#', ';']
+
+    @pytest.mark.parametrize('transport', TRANSPORTS)
+    @pytest.mark.parametrize('section', ['core', 'newznab'])
+    def test_each_is_refused_and_the_next_saves_still_work(self, world, transport, section):
+        settings, client = world
+        settings.addSection(section)
+        for name in self.DELIMITED:
+            before = sha(settings.file)
+            options = list(settings.p.options(section))
+
+            response = send(client, section, name, value='1', transport=transport)
+
+            assert response.json() == {'success': False, 'error': NAME_TEXT}, repr(name)
+            assert sha(settings.file) == before, repr(name)
+            assert list(settings.p.options(section)) == options, repr(name)
+
+            later = send(client, 'newznab', 'enabled', value='0', transport=transport)
+            group = client.post(url(route='settings.save_group'), json={
+                'section': 'newznab', 'rows': three_rows(settings, 'newznab')})
+            assert later.json()['success'] is True, repr(name)
+            assert group.json() == {'success': True}, repr(name)
+
+    def test_a_name_that_only_contains_a_hash_or_a_bracket_inside_is_still_saved(self, world):
+        settings, client = world
+        settings.addSection('core')
+
+        for name in ('a#b', 'a;b', 'x[', 'a]b'):
+            assert send(client, 'core', name, value='1').json() == {'success': True}, name
+            assert settings.p.get('core', name) == '1'
+
+    def test_a_leading_hash_would_have_been_lost_on_reload(self, tmp_path):
+        """Why `#` and `;` are refused: the measurement, not an assumption."""
+        parser = configparser.RawConfigParser()
+        parser.add_section('core')
+        parser.set('core', '#x', 'value')
+        path = tmp_path / 'probe.ini'
+        with open(path, 'w', encoding='utf-8') as handle:
+            parser.write(handle)
+
+        reloaded = configparser.RawConfigParser()
+        reloaded.read(path, encoding='utf-8')
+
+        assert reloaded.get('core', '#x', fallback=None) is None
+
+
+class TestASectionOrNameThatIsNotTextIsRefusedCleanly:
+    """`section[0]=newznab` arrives as a list; an absent name is None. Neither may raise."""
+
+    @pytest.mark.parametrize('transport', TRANSPORTS)
+    @pytest.mark.parametrize('fields', [
+        {'section': ['newznab'], 'name': 'enabled'},
+        {'section': 'newznab', 'name': ['enabled']},
+        {'section': 'newznab'},
+        {'name': 'enabled'},
+    ])
+    def test_it_is_refused_with_one_warning_and_no_error(self, world, transport, fields):
+        self.assert_refused_cleanly(world, fields, transport)
+
+    @pytest.mark.parametrize('fields', [
+        {'section': {'a': 'newznab'}, 'name': 'enabled'},
+        {'section': 'newznab', 'name': 7},
+        {'section': 'newznab', 'name': None},
+        {'section': True, 'name': 'enabled'},
+    ])
+    def test_a_json_object_number_or_null_is_refused_the_same_way(self, world, fields):
+        self.assert_refused_cleanly(world, fields, 'json')
+
+    @staticmethod
+    def assert_refused_cleanly(world, fields, transport):
+        settings, client = world
+        before = sha(settings.file)
+
+        with LogCapture() as logs:
+            response = send_fields(client, dict(fields, value=CANARY), transport)
+
+        assert response.json() == {'success': False, 'error': NOT_TEXT_TEXT}
+        assert sha(settings.file) == before
+        assert bare(r for r in logs.at_or_above(logging.WARNING)
+                    if r.name.startswith('couchpotato')) == [NOT_TEXT_WARNING]
+        assert [r for r in logs.records if r.levelno >= logging.ERROR] == []
+        assert CANARY not in server_log(logs) + response.text
 
 
 class TestOptionsOutsideAGroupStillSavePerColumn:
