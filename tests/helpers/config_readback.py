@@ -49,6 +49,10 @@ class _AttributePatch:
         self._undo = []
 
     def setattr(self, target, name, value):
+        # As MonkeyPatch does by default: a name the target does not have is an
+        # error, so a renamed method cannot be "patched" into a new attribute
+        # nobody calls while the real one runs.
+        getattr(target, name)
         self._undo.append((target, name, target.__dict__.get(name, _MISSING)))
         setattr(target, name, value)
 
