@@ -175,26 +175,68 @@
           <h3 class="text-sm font-medium text-cp-accent">Usenet Providers</h3>
           
           <!-- Newznab -->
-          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]" data-newznab-card :data-newznab-status="newznabStatus">
             <div class="flex items-center justify-between mb-3">
               <div>
                 <span class="text-sm font-medium">Newznab Indexers</span>
                 <p class="text-[10px] text-cp-muted mt-0.5">Search usenet indexers like NZBGeek, DrunkenSlug, NZB.su</p>
               </div>
-              {% set toggle_click = "formData.newznab.enabled = !formData.newznab.enabled" %}
-              {% set toggle_model = "formData.newznab.enabled" %}
-              {% set toggle_label = "Enable Newznab Indexers" %}
-              {% set toggle_label_expr = "" %}
-              {% include "partials/settings/toggle.html" %}
+              {#- The switch exists only once the saved indexers have been read: before that, or if the
+                  read failed or the rows do not line up, it would say something about a group the
+                  wizard does not know, and it is never written. -#}
+              <template x-if="newznabStatus === 'ready'">
+                <div>
+                  {% set toggle_click = "toggleNewznab()" %}
+                  {% set toggle_model = "formData.newznab.enabled" %}
+                  {% set toggle_label = "Enable Newznab Indexers" %}
+                  {% set toggle_label_expr = "" %}
+                  {% include "partials/settings/toggle.html" %}
+                </div>
+              </template>
             </div>
+            {#- Loading: plain text, not a live region. The wizard writes nothing newznab until the read is in. -#}
+            {#- The busy region is this line only. A message or the Retry button is never inside a busy region
+                (AC-A11Y-15): they are siblings of it, not children. -#}
+            <div data-newznab-loading-region :aria-busy="newznabStatus === 'loading' ? 'true' : null">
+              <p x-show="newznabStatus === 'loading'" class="mb-3 text-xs text-cp-muted" data-testid="wizard-newznab-loading">Loading your saved indexers…</p>
+            </div>
+            {#- A misaligned stored group: the wizard shows no rows for it and writes nothing, `enabled` included.
+                The first sentence is the Settings page's notice (partials/settings/field_types.html); the rest is
+                what is true here. Same danger border and text as there, without the tint (4.81:1 on the card,
+                where the tint measured 4.47:1). -#}
+            <div x-show="newznabStatus === 'misaligned'" class="mb-3 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-misaligned-notice">
+              <p class="text-xs text-cp-danger">The saved entries here do not line up: some columns have more entries than others. Nothing was changed, and Setup will leave your Newznab indexers exactly as they are. Fix the rows in Settings, under Searchers, then Newznab.</p>
+            </div>
+            {#- The ONE message for anything wrong with Newznab in this step: a read that failed, a refused or
+                failed save. Persistent (no timer), not a live region (it is announced once, through the shared
+                assertive region), and what each marked input is described by. -#}
+            <div x-show="newznabMessage() || newznabRetrying" class="mb-3 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="wizard-newznab-error">
+              <p id="wizard-newznab-error" x-show="newznabMessage()" class="text-xs text-cp-danger" x-text="newznabMessage()"></p>
+              {#- Stays rendered while a retry runs (aria-disabled, not hidden), so focus is not dropped and a failed
+                  retry leaves it here. Its visible text is its name. -#}
+              <button type="button" x-show="newznabStatus === 'failed' || newznabRetrying" @click="retryNewznabRead()" @keydown="ignoreHeldKey($event)"
+                      data-newznab-retry :aria-disabled="newznabRetrying ? 'true' : 'false'"
+                      x-text="newznabRetrying ? 'Loading saved indexers…' : 'Try loading saved indexers again'"
+                      class="mt-2 inline-flex items-center justify-center min-h-[44px] px-4 rounded-md border border-cp-danger text-xs text-cp-text"></button>
+            </div>
+            {#- Not rendered at all until the rows are read: a blank row shown before that would invite typing over
+                a group the wizard has not seen. -#}
+            <template x-if="newznabStatus === 'ready'">
             <div x-show="formData.newznab.enabled" x-transition class="space-y-3" data-indexer-list>
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
                 <div class="flex gap-2 items-center">
                   <input type="text" :aria-label="'Newznab indexer URL ' + (idx + 1)" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'"
-                         x-model="entry.host"
-                         class="flex-[2] min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                         x-model="entry.host" @input="clearNewznabMark(idx, 'host')" :readonly="saving" data-newznab-host
+                         :aria-invalid="newznabMarked(idx, 'host') ? 'true' : null"
+                         :aria-describedby="newznabMarked(idx, 'host') ? 'wizard-newznab-error' : null"
+                         :class="newznabMarked(idx, 'host') ? 'border-cp-danger' : 'border-white/[0.06]'"
+                         class="flex-[2] min-w-0 bg-white/[0.03] border rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <input type="password" :aria-label="'Newznab API key ' + (idx + 1)" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
-                         class="flex-1 min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                         @input="clearNewznabMark(idx, 'api_key')" :readonly="saving" data-newznab-key
+                         :aria-invalid="newznabMarked(idx, 'api_key') ? 'true' : null"
+                         :aria-describedby="newznabMarked(idx, 'api_key') ? 'wizard-newznab-error' : null"
+                         :class="newznabMarked(idx, 'api_key') ? 'border-cp-danger' : 'border-white/[0.06]'"
+                         class="flex-1 min-w-0 bg-white/[0.03] border rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   {#- w-6 h-6 is a 24px target (WCAG 2.5.8). -ml-1 centres the icon in it; no right margin, so the target ends inside the row and cannot overflow it. -#}
                   <button type="button" @click="removeIndexer(idx)" @keydown="ignoreHeldKey($event)" :aria-disabled="saving.toString()" x-show="formData.newznab.entries.length > 1"
                           data-indexer-remove
@@ -213,6 +255,7 @@
                 <a href="https://nzb.su" target="_blank" class="text-cp-accent hover:underline">NZB.su</a>
               </p>
             </div>
+            </template>
           </div>
 
           <!-- BinSearch -->
@@ -915,7 +958,7 @@
               natively disabled button drops keyboard focus to <body>, and a
               keyboard user then restarts from the top of the page on every
               step. The opacity-50 is the look `disabled:` used to give it. -#}
-          <button @click="nextStep()" type="button"
+          <button @click="nextStep()" @keydown="ignoreHeldKey($event)" data-wizard-continue type="button"
                   :aria-disabled="saving.toString()"
                   :class="saving ? 'opacity-50 cursor-default' : ''"
                   class="px-6 py-2 rounded-md text-sm font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors">
@@ -998,6 +1041,230 @@
 </div>
 
 <script>
+/* ── Newznab rows: the pure logic (SEC-004 P5) ───────────────────────────────
+   The wizard LOADS the stored Newznab group and saves it back as one group, so
+   re-running it must lose nothing. Everything that decides WHAT is written is
+   here, with no DOM and no network, so tests/unit/ui/wizard-newznab-rows.spec.ts
+   can pin it against the server's own read of every stored shape.
+
+   Terms (spec Definitions). A STORED INDEXER is a row with a host AND a key. Any
+   other stored row is HIDDEN: not displayed, and written back unchanged at its
+   stored position with every cell (a keyless shipped default, a host with no key,
+   a key with no host). `baseline` is `{rows, shown}`: the rows last read or last
+   written, and which of them have an entry on screen. An ENTRY is one row on
+   screen, `{host, api_key, source}`, `source` being the baseline row it shows
+   (null for a row added in the wizard). Nothing here trims a stored cell. */
+
+const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
+const NEWZNAB_ADDED_ROW = { use: '1', extra_score: '0', custom_tag: '' };
+const NEWZNAB_READ_TIMEOUT_MS = 15000;
+const NEWZNAB_NOT_LOADED = 'Your saved Newznab indexers could not be loaded, so nothing was changed. Usenet cannot continue until they load. Try loading saved indexers again.';
+const NEWZNAB_PENDING = 'Your saved Newznab indexers are still loading. Wait a moment, then press Continue again.';
+const NEWZNAB_LOADED = 'Your saved Newznab indexers have loaded.';
+const NEWZNAB_RETRYING = 'Loading your saved Newznab indexers…';
+const NEWZNAB_MISALIGNED_SAID = 'The saved entries here do not line up. Nothing was changed. Fix the rows in Settings, under Searchers, then Newznab.';
+// Where a message with no input to carry it says the rows CAN be fixed. Never a value.
+const NEWZNAB_SETTINGS_POINTER = ' Check them in Settings, under Searchers, then Newznab.';
+
+function newznabIsStoredIndexer(row) {
+  return row.host.trim() !== '' && row.api_key.trim() !== '';
+}
+
+function newznabCombinedOption(options) {
+  const section = options && options.newznab;
+  const groups = (section && section.groups) || [];
+  for (const group of groups) {
+    for (const option of (group.options || [])) {
+      if (option.type === 'combined' && Array.isArray(option.combine)) return option;
+    }
+  }
+  return null;
+}
+
+// A stored cell is text; a number is what a typed read could make of a lone `1`.
+// Anything else is not something the server stores, so the read is not trusted.
+function newznabCellText(value) {
+  if (typeof value === 'string') return value;
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : null;
+}
+
+function newznabDeclaredDefault(options, column) {
+  for (const group of ((options.newznab && options.newznab.groups) || [])) {
+    for (const option of (group.options || [])) {
+      if (option.name === column && option.default != null) return String(option.default).split(',')[0];
+    }
+  }
+  return '';
+}
+
+// What a column with no cell for a row supplies: off for `use` (an empty one makes
+// the provider raise), empty for a pairing column, the declared default otherwise.
+function newznabMissingCell(payload, pairing, column) {
+  if (column === 'use') return '0';
+  return pairing.includes(column) ? '' : newznabDeclaredDefault(payload.options, column);
+}
+
+function newznabEnabledValue(value) {
+  return value === true || value === 'True' || value === '1' || value === 1 || value === 'true';
+}
+
+function newznabSplitColumns(values) {
+  const cells = {};
+  for (const column of NEWZNAB_COLUMNS) {
+    const text = newznabCellText(values[column]);
+    if (text === null) return null;
+    cells[column] = text.split(',');
+  }
+  return cells;
+}
+
+// The server's verdict (misaligned or not, and the row count) is the authority, and a
+// short column is padded as the server's group_stored_rows pads it, so a stored shape the
+// server calls aligned is never refused here (an all-empty column longer than the others
+// is aligned: it is ignored). What is checked is only that the answer is consistent in a
+// way that padding could not make safe: no pairing column has more cells than rows, and
+// the pairing columns that hold anything agree with each other (else padding would pair
+// them wrongly). A group of all-empty pairing columns is trusted: padding it writes blank
+// rows, never a mispaired one.
+function newznabCountsAgree(cells, pairing, count) {
+  if (pairing.some((column) => cells[column].length > count)) return false;
+  const filled = pairing.filter((column) => cells[column].some((cell) => cell.trim() !== ''));
+  return new Set(filled.map((column) => cells[column].length)).size <= 1;
+}
+
+function newznabStoredRows(payload, cells, pairing, count) {
+  const rows = [];
+  for (let index = 0; index < count; index += 1) {
+    const row = {};
+    for (const column of NEWZNAB_COLUMNS) {
+      row[column] = index < cells[column].length ? cells[column][index] : newznabMissingCell(payload, pairing, column);
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+function newznabDeclaredColumnsAreKnown(declared) {
+  return [...declared.combine].sort().join() === [...NEWZNAB_COLUMNS].sort().join();
+}
+
+// The settings read, as the wizard may rely on it: `{ok: false}` for anything that is
+// not a complete answer (never an install with no indexers), `{ok: true, misaligned: true}`
+// for a group whose rows do not line up (no rows are offered), else the stored rows and
+// which of them are shown.
+function newznabReadStored(payload) {
+  const bad = { ok: false };
+  if (!payload || typeof payload !== 'object') return bad;
+  const values = payload.values && payload.values.newznab;
+  const state = payload.combine_state && payload.combine_state.newznab;
+  const declared = newznabCombinedOption(payload.options);
+  if (!values || typeof values !== 'object' || !state || typeof state.misaligned !== 'boolean') return bad;
+  if (!declared || !newznabDeclaredColumnsAreKnown(declared) || values.enabled === undefined) return bad;
+  const enabled = newznabEnabledValue(values.enabled);
+  if (state.misaligned) return { ok: true, misaligned: true, enabled, rows: [], shown: [] };
+  const count = state.rows;
+  const cells = newznabSplitColumns(values);
+  const pairing = Array.isArray(declared.pairing) ? declared.pairing : declared.combine;
+  if (!Number.isInteger(count) || count < 1 || !cells || !newznabCountsAgree(cells, pairing, count)) return bad;
+  const rows = newznabStoredRows(payload, cells, pairing, count);
+  return { ok: true, misaligned: false, enabled, rows, shown: rows.map(newznabIsStoredIndexer) };
+}
+
+// An Error the wizard shows inside the Newznab card rather than as a toast: `marks` are the
+// on-screen inputs at fault, `{index, field}` with field `host` or `api_key`.
+function newznabStepError(message, marks) {
+  const error = new Error(message);
+  error.newznab = { marks };
+  return error;
+}
+
+// One refused cell, in this page's words: the row as numbered on screen, the field as labelled
+// here (URL, API key), the rule and the fix. Empty when the reason or column is not one this page
+// can say, so the caller falls back to the server's text. Never the submitted value.
+function newznabRefusalSentence(index, entry) {
+  const rules = {
+    comma: ' cannot contain a comma. Remove it to save.',
+    control_character: ' cannot contain a line break or other control character. Remove it to save.',
+    not_encodable: ' contains a character that cannot be saved. Remove it to save.',
+  };
+  const labels = { host: 'URL', api_key: 'API key' };
+  if (!Object.hasOwn(labels, entry.column) || !Object.hasOwn(rules, entry.reason)) return '';
+  return 'Indexer ' + (index + 1) + ': the ' + labels[entry.column] + rules[entry.reason];
+}
+
+function newznabShownEnabled(read) {
+  return !!read.enabled && read.shown.some(Boolean);
+}
+
+// One entry per stored indexer in stored order; one blank entry when there is none.
+function newznabInitialEntries(read) {
+  const entries = [];
+  read.rows.forEach((row, index) => {
+    if (read.shown[index]) entries.push({ host: row.host, api_key: row.api_key, source: index });
+  });
+  return entries.length ? entries : [{ host: '', api_key: '', source: null }];
+}
+
+// The row an entry shows, or null when the entry yields none (a cleared URL).
+function newznabRowForEntry(entry, own) {
+  if (own && entry.host === own.host && entry.api_key === own.api_key) return { ...own };
+  const host = entry.host.trim();
+  if (!host) return null;
+  return { ...(own || NEWZNAB_ADDED_ROW), host, api_key: entry.api_key.trim() };
+}
+
+// The WHOLE group to save, from the baseline and the entries on screen. `origins` is
+// parallel to `rows`: the entry a row came from, or null for a hidden row, so a row
+// number the server names can be mapped back to the screen.
+function newznabBuildRows(baseline, entries) {
+  const entryFor = new Map();
+  entries.forEach((entry, at) => { if (Number.isInteger(entry.source)) entryFor.set(entry.source, at); });
+  const rows = [];
+  const origins = [];
+  baseline.rows.forEach((row, index) => {
+    const at = entryFor.get(index);
+    if (at === undefined) {
+      // Not on screen: a hidden row stays; a shown row the user removed goes.
+      if (!baseline.shown[index]) { rows.push({ ...row }); origins.push(null); }
+      return;
+    }
+    const built = newznabRowForEntry(entries[at], row);
+    if (built) { rows.push(built); origins.push(at); }
+  });
+  entries.forEach((entry, at) => {
+    const built = Number.isInteger(entry.source) ? null : newznabRowForEntry(entry, null);
+    if (built) { rows.push(built); origins.push(at); }
+  });
+  if (!rows.length) {
+    rows.push(Object.fromEntries(NEWZNAB_COLUMNS.map((column) => [column, ''])));
+    origins.push(null);
+  }
+  return { rows, origins };
+}
+
+function newznabRowsChanged(baseline, rows) {
+  return rows.length !== baseline.rows.length
+    || rows.some((row, index) => NEWZNAB_COLUMNS.some((column) => row[column] !== baseline.rows[index][column]));
+}
+
+function newznabEntryForRow(origins, row) {
+  const at = Number.isInteger(row) && row >= 0 && row < origins.length ? origins[row] : null;
+  return at === null ? -1 : at;
+}
+
+// After the server accepted `built`: those rows are the baseline, and each entry
+// follows the row it produced (an entry that produced none is a plain added one).
+function newznabAfterSave(built, entries) {
+  const baseline = { rows: built.rows.map((row) => ({ ...row })), shown: built.origins.map((at) => at !== null) };
+  const next = entries.map((entry, at) => {
+    const row = built.origins.indexOf(at);
+    return row === -1
+      ? { host: entry.host, api_key: entry.api_key, source: null }
+      : { host: built.rows[row].host, api_key: built.rows[row].api_key, source: row };
+  });
+  return { baseline, entries: next };
+}
+
 function setupWizard() {
   return {
     currentStep: 0,
@@ -1019,6 +1286,19 @@ function setupWizard() {
     jackettSyncResult: '',
     jackettSyncSuccess: false,
 
+    // The stored Newznab group (SEC-004 P5). `newznabStatus` is `loading` until the read of
+    // the saved rows is in, then `ready`, `misaligned` or `failed`; nothing newznab is ever
+    // written in any state but `ready` (a misaligned group is left exactly as stored).
+    // `newznabBaseline` is the rows last read or written; `newznabError` is the one message for
+    // a refused or failed save; `newznabMarks` is `{'host:0': true}` for each offending input.
+    newznabStatus: 'loading',
+    newznabBaseline: { rows: [], shown: [] },
+    newznabError: '',
+    newznabMarks: {},
+    newznabRetrying: false,
+    newznabReadStarted: false,
+    newznabReadToken: 0,
+
     // Form data
     formData: {
       username: '',
@@ -1028,7 +1308,7 @@ function setupWizard() {
       // Usenet providers
       newznab: {
         enabled: false,
-        entries: [{ host: '', api_key: '' }]
+        entries: [{ host: '', api_key: '', source: null }]
       },
       binsearch: { enabled: false },
       
@@ -1192,6 +1472,11 @@ function setupWizard() {
           this.formData.privateTrackers[tracker.id][field.name] = '';
         }
       }
+      // Alpine calls init() itself and x-init calls it again: read once.
+      if (!this.newznabReadStarted) {
+        this.newznabReadStarted = true;
+        this.loadNewznab();
+      }
     },
 
     // Every step change goes through here so focus follows the content. The
@@ -1294,12 +1579,15 @@ function setupWizard() {
       // browser no longer swallows a second Enter or Space while it is busy.
       if (this.saving) return;
       this.saving = true;
+      this.clearNewznabError();
       this.announce('Saving…');
       try {
         await this.saveCurrentStep();
         this.enterStep(this.currentStep + 1);
       } catch (e) {
-        this.toast('Failed to save: ' + e.message, 'error');
+        // A Newznab problem is shown in its own card, once; anything else is a toast.
+        if (e && e.newznab) this.showNewznabError(e);
+        else this.toast('Failed to save: ' + e.message, 'error');
       }
       this.saving = false;
       // Cleared, not filled in: success moves focus to the next heading and a
@@ -1331,27 +1619,10 @@ function setupWizard() {
         case 2: // Providers
           // Usenet providers
           if (this.formData.searchType === 'usenet' || this.formData.searchType === 'both') {
-            // Newznab. Validated before the first save is issued: nothing is
-            // written for a step that is refused.
-            if (this.formData.newznab.enabled) this.assertNewznabHasNoCommas();
-            saves.push(this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0'));
-            if (this.formData.newznab.enabled) {
-              // The server pairs host, api_key and use BY POSITION, so all three
-              // lists come from one filtered list of rows. A row with no URL is
-              // dropped whole (its key too); a kept row with no key leaves an
-              // empty slot rather than letting a later key shift onto it.
-              const rows = this.formData.newznab.entries
-                .map(e => ({ host: (e.host || '').trim(), api_key: (e.api_key || '').trim() }))
-                .filter(r => r.host);
-              const hosts = rows.map(r => r.host).join(',');
-              const keys = rows.map(r => r.api_key).join(',');
-              const use = rows.map(() => '1').join(',');
-              saves.push(
-                this.saveSetting('newznab', 'host', hosts),
-                this.saveSetting('newznab', 'api_key', keys),
-                this.saveSetting('newznab', 'use', use),
-              );
-            }
+            // Newznab, in order: the group (AWAITED), then `enabled`. Nothing is
+            // written for a step that is refused, and nothing newznab until the
+            // saved rows have been read (see newznabStepSaves).
+            saves.push(...await this.newznabStepSaves());
             // BinSearch
             saves.push(this.saveSetting('binsearch', 'enabled', this.formData.binsearch.enabled ? '1' : '0'));
           }
@@ -1700,6 +1971,7 @@ function setupWizard() {
     removeIndexer(idx) {
       const entries = this.formData.newznab.entries;
       if (this.saving || entries.length <= 1) return;
+      this.clearNewznabError();
       const list = document.querySelector('[data-indexer-list]');
       const wasInList = !!list && list.contains(document.activeElement);
       entries.splice(idx, 1);
@@ -1720,32 +1992,267 @@ function setupWizard() {
       });
     },
 
+    // The step may not go on while the saved rows are unknown: a read that is
+    // pending or failed is never an install with no indexers.
+    assertNewznabReadable() {
+      if (this.newznabStatus === 'ready' || this.newznabStatus === 'misaligned') return;
+      // Pending is not failed: say it is still loading and offer no retry; a failed read says so.
+      throw newznabStepError(this.newznabStatus === 'loading' ? NEWZNAB_PENDING : NEWZNAB_NOT_LOADED, []);
+    },
+
+    // Show a Newznab problem where it belongs: one persistent message in the
+    // card, the offending inputs marked and described by it, the first of them
+    // focused, and ONE assertive announcement (no toast, so one visible message).
+    showNewznabError(error) {
+      this.newznabError = error.message;
+      this.newznabMarks = Object.fromEntries(error.newznab.marks.map((mark) => [mark.field + ':' + mark.index, true]));
+      const first = error.newznab.marks[0];
+      if (!first) {
+        // No input carries this message, so it is announced (once); and focus goes to the way
+        // out when there is one, as a refusal's goes to its input.
+        this.speak(error.message, 'error');
+        if (this.newznabStatus === 'failed') {
+          this.$nextTick(() => {
+            const retry = document.querySelector('[data-newznab-retry]');
+            if (retry) retry.focus();
+          });
+        }
+        return;
+      }
+      // An input is marked, focused and DESCRIBED by the message: a screen reader reads it
+      // as that input's description, so it is not also announced.
+      this.$nextTick(() => {
+        const attribute = first.field === 'host' ? '[data-newznab-host]' : '[data-newznab-key]';
+        const input = document.querySelectorAll('[data-indexer-list] ' + attribute)[first.index];
+        if (input) input.focus();
+      });
+    },
+
     // The server splits the saved lists on every comma, so a comma INSIDE a
     // URL or a key would turn one row into two positions (the text after a
     // comma in a key goes to the NEXT indexer). Refuse it here, naming the row
-    // as shown and the field, never the value. Only rows that will be saved
-    // are checked: a row with no URL is dropped whole, key and all. Throws,
-    // like any failed save, so nextStep() shows its error and keeps the step.
+    // as shown and the field, never the value, before any request is made. Only
+    // rows that will be saved are checked: a row with no URL is dropped whole,
+    // key and all. Throws, like any failed save, so nextStep() shows the error
+    // and keeps the step; the error carries the offending input for marking.
     //
-    // `%2C` / `%2c` counts as a comma: the server URL-decodes saved values a
-    // second time (getParams -> unquote), so an encoded one is stored as a
-    // real comma.
+    // A literal comma only. The group is saved as JSON and taken as sent, no
+    // second decode applies, so `%2C` is three ordinary characters. The server
+    // refuses a comma too (and the wizard shows that), so this is the first of
+    // two guards, not the only one.
     assertNewznabHasNoCommas() {
-      const hasComma = (text) => /,|%2c/i.test(text);
       const entries = this.formData.newznab.entries;
       for (let i = 0; i < entries.length; i++) {
         const host = (entries[i].host || '').trim();
         if (!host) continue;
-        if (hasComma(host)) throw new Error('Indexer ' + (i + 1) + ': the URL cannot contain a comma');
-        if (hasComma(entries[i].api_key || '')) {
-          throw new Error('Indexer ' + (i + 1) + ': the API key cannot contain a comma');
+        if (host.includes(',')) {
+          throw newznabStepError('Indexer ' + (i + 1) + ': the URL cannot contain a comma', [{ index: i, field: 'host' }]);
+        }
+        if ((entries[i].api_key || '').includes(',')) {
+          throw newznabStepError('Indexer ' + (i + 1) + ': the API key cannot contain a comma', [{ index: i, field: 'api_key' }]);
         }
       }
     },
 
+    /* ── Newznab: the save (SEC-004 P5) ──────────────────────────────────────
+       One group save, only when a row changed against the baseline (the rows
+       last read or written), AWAITED, and only then the `enabled` save: a
+       refused or failed group leaves every newznab line as it was. A misaligned
+       group writes nothing at all. Returns the saves still to issue. */
+    async newznabStepSaves() {
+      this.assertNewznabReadable();
+      if (this.newznabStatus === 'misaligned') return [];
+      if (this.formData.newznab.enabled) {
+        this.assertNewznabHasNoCommas();
+        await this.saveNewznabGroup();
+      }
+      return [this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0')];
+    },
+
+    async saveNewznabGroup() {
+      const entries = this.formData.newznab.entries.map((entry) => ({ ...entry }));
+      const built = newznabBuildRows(this.newznabBaseline, entries);
+      if (!newznabRowsChanged(this.newznabBaseline, built.rows)) return;
+      await this.postNewznabGroup(built);
+      const next = newznabAfterSave(built, entries);
+      this.newznabBaseline = next.baseline;
+      this.formData.newznab.entries = next.entries;
+    },
+
+    async postNewznabGroup(built) {
+      let resp = null;
+      let data = null;
+      try {
+        resp = await fetch(CP.apiBase + '/settings.save_group/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ section: 'newznab', rows: built.rows }),
+        });
+        data = await resp.json();
+      } catch (e) {
+        // Nothing is logged or shown from the failure itself: it can carry the URL.
+        data = null;
+      }
+      if (resp && resp.ok && data && data.success === true) return;
+      throw this.newznabSaveError(resp, data, built.origins);
+    },
+
+    // The message for a group save that was not accepted, as a Newznab error. A
+    // structured refusal is composed here from the row, the column and the reason
+    // with this page's nouns, and the server's row is mapped to the row on screen
+    // first; the server's own text is only the fallback. Never a submitted value.
+    newznabSaveError(resp, data, origins) {
+      const invalid = data && Array.isArray(data.invalid) ? data.invalid : [];
+      const marks = [];
+      const sentences = [];
+      for (const entry of invalid) {
+        const at = newznabEntryForRow(origins, entry.row);
+        const sentence = at < 0 ? '' : newznabRefusalSentence(at, entry);
+        if (!sentence) { marks.length = 0; break; }
+        sentences.push(sentence);
+        marks.push({ index: at, field: entry.column });
+      }
+      if (invalid.length && sentences.length === invalid.length) return newznabStepError(sentences.join(' '), marks);
+      const reason = resp && resp.ok && data && typeof data.error === 'string' ? data.error.slice(0, 200) : '';
+      // No input to mark (a hidden row, a route that is missing, an HTTP error, a dropped
+      // connection that may or may not have landed): say where the rows CAN be checked.
+      return newznabStepError('Newznab indexers were not saved.' + (reason ? ' ' + reason : '') + NEWZNAB_SETTINGS_POINTER, []);
+    },
+
     addIndexer() {
       if (this.saving) return;
-      this.formData.newznab.entries.push({ host: '', api_key: '' });
+      this.clearNewznabError();
+      this.formData.newznab.entries.push({ host: '', api_key: '', source: null });
+    },
+
+    /* ── Newznab: the read of the stored rows (SEC-004 P5) ───────────────────
+       Read through the same settings API the Settings page uses, never from
+       values rendered into this page. A read that failed, is malformed or has
+       not finished is NEVER "no stored indexers": the step then writes nothing
+       newznab and does not advance (Torrents only is not affected: it writes no
+       newznab line). The answer holds API keys, so nothing here logs it, and a
+       failure is shown as fixed text. */
+    async loadNewznab() {
+      const token = ++this.newznabReadToken;
+      this.newznabStatus = 'loading';
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), NEWZNAB_READ_TIMEOUT_MS);
+      let read = { ok: false };
+      try {
+        const resp = await fetch(CP.apiBase + '/settings/', { signal: controller.signal });
+        if (resp.ok) read = newznabReadStored(await resp.json());
+      } catch (e) {
+        read = { ok: false };
+      } finally {
+        clearTimeout(timer);
+      }
+      // A newer read has taken over: this answer says nothing about the rows now.
+      if (token === this.newznabReadToken) this.applyNewznabRead(read);
+    },
+
+    // Where a read lands, every message that depends on the READ's state is settled here, once:
+    // the visible text, the one announcement and the Retry control all follow `newznabStatus`.
+    // A "still loading" or "could not be loaded" message left over from an earlier state is
+    // cleared first, so it can never survive the change (a pending read that then fails must
+    // show the failure, not "still loading" beside a Retry).
+    applyNewznabRead(read) {
+      const reported = this.newznabReadMessageShown();
+      this.clearNewznabReadMessage();
+      if (!read.ok) {
+        this.newznabStatus = 'failed';
+        // Only where the card is on screen: with Torrents chosen it is hidden, and a failure
+        // nobody can see is not announced.
+        if (this.currentStep === 2 && this.newznabSearchesUsenet()) this.speak(NEWZNAB_NOT_LOADED, 'error');
+        return;
+      }
+      // Said once, when a pending or failed message had been shown or when this answers a retry:
+      // what the read turned out to be. On a first load nothing was said, so nothing is.
+      if (reported || this.newznabRetrying) this.speak(read.misaligned ? NEWZNAB_MISALIGNED_SAID : NEWZNAB_LOADED, 'polite');
+      if (read.misaligned) {
+        this.newznabStatus = 'misaligned';
+        return;
+      }
+      this.newznabBaseline = { rows: read.rows, shown: read.shown };
+      this.formData.newznab.entries = newznabInitialEntries(read);
+      this.formData.newznab.enabled = newznabShownEnabled(read);
+      this.newznabStatus = 'ready';
+    },
+
+    // The messages that describe the read, as opposed to a save: the ones a change of the
+    // read's state makes untrue.
+    newznabReadMessageShown() {
+      return this.newznabError === NEWZNAB_NOT_LOADED || this.newznabError === NEWZNAB_PENDING;
+    },
+
+    clearNewznabReadMessage() {
+      if (this.newznabReadMessageShown()) this.clearNewznabError();
+    },
+
+    // The button stays rendered and focused while this runs (aria-disabled), so a failed
+    // retry leaves focus where it was; a successful one hands it on by STATE.
+    async retryNewznabRead() {
+      if (this.newznabStatus !== 'failed' || this.newznabRetrying) return;
+      this.newznabRetrying = true;
+      // The failure text is untrue from here and is not shown beside a button that says it is
+      // loading; the retry starts with one polite announcement.
+      this.clearNewznabReadMessage();
+      this.speak(NEWZNAB_RETRYING, 'polite');
+      await this.loadNewznab();
+      this.newznabRetrying = false;
+      this.$nextTick(() => this.focusAfterNewznabRead());
+    },
+
+    // After a retry: a loaded group goes to the first URL when the rows are shown (Newznab on),
+    // else to the switch; a misaligned one is announced and focus goes to Continue, not to a
+    // control that has just been hidden; a failed one leaves focus on Retry.
+    focusAfterNewznabRead() {
+      if (this.newznabStatus === 'ready') {
+        const target = this.formData.newznab.enabled
+          ? document.querySelector('[data-indexer-list] [data-newznab-host]')
+          : document.querySelector('[data-newznab-card] [role=switch]');
+        if (target) target.focus();
+      } else if (this.newznabStatus === 'misaligned') {
+        const next = document.querySelector('[data-wizard-continue]');
+        if (next) next.focus();
+      }
+    },
+
+    newznabSearchesUsenet() {
+      return this.formData.searchType === 'usenet' || this.formData.searchType === 'both';
+    },
+
+    toggleNewznab() {
+      if (this.saving || this.newznabStatus !== 'ready') return;
+      this.formData.newznab.enabled = !this.formData.newznab.enabled;
+      // Off: its rows are not saved, so a refusal about them no longer applies.
+      if (!this.formData.newznab.enabled) this.clearNewznabError();
+    },
+
+    // The one message for Newznab in this step: a failed save, or a read that failed.
+    newznabMessage() {
+      // While a retry runs the read is not failed any more: no failure text beside a button that
+      // says it is loading (the loading line and the busy Retry are the signal).
+      const notLoaded = this.newznabStatus === 'failed' && !this.newznabRetrying;
+      return this.newznabError || (notLoaded ? NEWZNAB_NOT_LOADED : '');
+    },
+
+    newznabMarked(idx, field) {
+      return !!this.newznabMarks[field + ':' + idx];
+    },
+
+    // The user changed an input: its mark is out of date. When no input is marked any more,
+    // the message about them goes too.
+    clearNewznabMark(idx, field) {
+      const key = field + ':' + idx;
+      if (!this.newznabMarks[key]) return;
+      const { [key]: _gone, ...rest } = this.newznabMarks;
+      this.newznabMarks = rest;
+      if (Object.keys(rest).length === 0) this.newznabError = '';
+    },
+
+    clearNewznabError() {
+      this.newznabError = '';
+      this.newznabMarks = {};
     },
 
     // A held Enter repeats its keydown, and Enter activates a button on keydown.
@@ -1931,13 +2438,19 @@ function setupWizard() {
       // this branch makes it the ONLY channel reporting a refused save, which
       // is the security-critical path: no password stored, authentication not
       // enabled. Announcing it is not polish.
+      this.speak(msg, type);
+
+      setTimeout(() => this.message = '', 3000);
+    },
+
+    // Say `msg` through the persistent regions without showing a toast: for a
+    // message that is already visible and persistent on the page.
+    speak(msg, type) {
       const region = type === 'error' ? 'assertiveAnnouncement' : 'politeAnnouncement';
       if (region in this) {
         this[region] = '';            // re-announce an identical repeat
         this.$nextTick(() => { this[region] = msg; });
       }
-
-      setTimeout(() => this.message = '', 3000);
     }
   };
 }

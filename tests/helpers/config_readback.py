@@ -2,6 +2,7 @@
 
     python -m tests.helpers.config_readback sha <config.ini>
     python -m tests.helpers.config_readback columns <config.ini> <section>
+    python -m tests.helpers.config_readback section <config.ini> <section>
     python -m tests.helpers.config_readback view <config.ini> <section>
     python -m tests.helpers.config_readback enabled <config.ini> <section>
 
@@ -154,6 +155,8 @@ def main(argv):
         result = file_sha(path)
     elif command == 'columns':
         result = group_columns(path, rest[0])
+    elif command == 'section':
+        result = _stored(path).get(rest[0], {})
     elif command == 'view':
         result = group_view(path, rest[0])
     elif command == 'enabled':

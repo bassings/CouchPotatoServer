@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
+import { expectVisualTransitionsToSettle, mockSettingsSave, waitForNewznabRead } from './helpers';
 
 /**
  * The setup wizard's inline icons (WCAG 2.2 AA 1.1.1 Non-text Content, 4.1.2
@@ -121,6 +121,8 @@ async function openWizard(page: Page, theme: 'light' | 'dark' = 'light') {
   await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
   await page.goto('/wizard/');
   await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
+  // The wizard reads the saved Newznab rows on load; a scene set before the answer lands would be overwritten by it.
+  await waitForNewznabRead(page);
   await expect.poll(
     () => page.evaluate(() => document.documentElement.classList.contains('light')),
     { message: `${theme} theme was not applied` },

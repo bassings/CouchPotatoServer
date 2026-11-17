@@ -197,6 +197,15 @@ export function configColumns(configPath: string, section: string): Record<strin
 }
 
 /**
+ * Every option of one section as stored in the file, raw: the columns AND the rest of the
+ * section (`enabled`), for "nothing newznab was written" claims that `configColumns` alone
+ * cannot make. A section the file lacks is `{}`.
+ */
+export function configSection(configPath: string, section: string): Record<string, string> {
+  return readConfig('section', configPath, section) as Record<string, string>;
+}
+
+/**
  * What the provider's real reader sees for the group stored in the file: `getHosts`
  * for newznab and torrentpotato, the URLs the automation reader would fetch otherwise.
  */
@@ -403,3 +412,127 @@ export function layoutPx(px: number): number {
 /** WCAG 2.2 target-size thresholds in CSS pixels. */
 export const TARGET_SIZE_MIN = 24;
 export const TARGET_SIZE_MIN_LARGE = 44;
+
+// ── The setup wizard (SEC-004 P5) ────────────────────────────────────────────
+
+/**
+ * Wait until the wizard's read of the saved Newznab rows has finished, one way or the
+ * other. The wizard reads on load and a script that rewrites its state before the answer
+ * lands would be overwritten by it; `data-newznab-status` is the page's own signal.
+ */
+export async function waitForNewznabRead(page: Page): Promise<void> {
+  await expect(page.locator('[data-newznab-card]')).not.toHaveAttribute('data-newznab-status', 'loading');
+}
+
+/** Welcome, then Security, then Providers, with the source chosen. Writes nothing. */
+export async function openProvidersStep(page: Page, source: RegExp = /^Usenet/): Promise<void> {
+  await page.goto('/wizard/');
+  await page.getByRole('button', { name: /Continue/i }).click();           // Welcome -> Security
+  await page.getByRole('button', { name: /Continue/i }).click();           // Security -> Providers (saves nothing)
+  await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible({ timeout: 10000 });
+  await page.getByRole('radio', { name: source }).click();
+}
+
+export type SeenRequest = { url: string; method: string; body: string };
+
+/**
+ * Every request the wizard makes, seen at the network AND from inside the page (a
+ * wrapper round `fetch`, armed before any script runs): a request one vantage point
+ * missed is not read as "no request". Call before `page.goto`.
+ */
+export async function recordWizardRequests(page: Page) {
+  const seen: SeenRequest[] = [];
+  page.on('request', (request) => seen.push({
+    url: request.url(), method: request.method(), body: request.postData() ?? '',
+  }));
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    const log: { url: string; method: string; body: string }[] = [];
+    (window as any).__wizardFetches = log;
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      log.push({
+        url: String(input instanceof Request ? input.url : input),
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : String(init?.body ?? ''),
+      });
+      return original(input, init);
+    };
+  });
+  const isRead = (request: SeenRequest) => /\/settings\/(\?|$)/.test(request.url);
+  const isGroupSave = (request: SeenRequest) => request.url.includes('settings.save_group') && request.method === 'POST';
+  const isColumnSave = (request: SeenRequest) => /settings\.save\//.test(request.url) && request.method === 'POST';
+  const fromPage = () => page.evaluate(() => (window as any).__wizardFetches as SeenRequest[]);
+  return {
+    seen,
+    settingsReads: () => seen.filter(isRead),
+    groupSaves: () => seen.filter(isGroupSave),
+    columnSaves: () => seen.filter(isColumnSave),
+    pageGroupSaves: async () => (await fromPage()).filter(isGroupSave),
+    pageWrites: async () => (await fromPage()).filter((request) => isGroupSave(request) || isColumnSave(request)),
+    /** The rows a group save carried, as the browser sent them. */
+    groupBodies: () => seen.filter(isGroupSave).map((request) => JSON.parse(request.body)),
+  };
+}
+
+/** In-page: contrast of an element's text against the opaque surface behind it, translucent layers composited. */
+export const TEXT_CONTRAST = (element: HTMLElement) => {
+  type Rgba = { r: number; g: number; b: number; a: number };
+  const parse = (value: string): Rgba => {
+    const channels = (value.match(/rgba?\(([^)]+)\)/)?.[1] ?? '').split(/[,/ ]+/).filter(Boolean).map(Number.parseFloat);
+    return { r: channels[0], g: channels[1], b: channels[2], a: channels.length > 3 ? channels[3] : 1 };
+  };
+  const over = (top: Rgba, below: Rgba): Rgba => ({
+    r: top.r * top.a + below.r * (1 - top.a),
+    g: top.g * top.a + below.g * (1 - top.a),
+    b: top.b * top.a + below.b * (1 - top.a),
+    a: 1,
+  });
+  const luminance = (c: Rgba) => {
+    const ch = (v: number) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+  };
+  const layers: Rgba[] = [];
+  for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+    const layer = parse(getComputedStyle(node).backgroundColor);
+    if (layer.a > 0) layers.push(layer);
+    if (layer.a === 1) break;
+  }
+  let backdrop = layers.length ? layers[layers.length - 1] : { r: 255, g: 255, b: 255, a: 1 };
+  for (let i = layers.length - 2; i >= 0; i -= 1) backdrop = over(layers[i], backdrop);
+  const text = over(parse(getComputedStyle(element).color), backdrop);
+  const [hi, lo] = [luminance(text), luminance(backdrop)].sort((a, b) => b - a);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+/**
+ * The wizard's Providers step in its refused state, in `theme`: Usenet chosen, Newznab on with
+ * one URL and key typed, and the group save answered with a refusal of that row's URL in the
+ * server's own structured shape (the first row after the six hidden defaults). Saves never
+ * reach the server. Ends with the error shown and the offending input marked.
+ */
+export async function showWizardRefusal(page: Page, theme: 'light' | 'dark'): Promise<void> {
+  await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+  await page.route('**/settings.save_group/**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      success: false,
+      error: 'A value contains a comma, which would split it across rows. Nothing was saved.',
+      invalid: [{ row: 6, column: 'host', reason: 'comma' }],
+    }),
+  }));
+  await page.route(/\/settings\.save\//, (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+  }));
+  await openProvidersStep(page);
+  await expect.poll(
+    () => page.evaluate(() => document.documentElement.classList.contains('light')),
+    { message: `${theme} theme was not applied` },
+  ).toBe(theme === 'light');
+  await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
+  await page.getByLabel('Newznab indexer URL 1').fill('https://placeholder-refused.invalid/api');
+  await page.getByLabel('Newznab API key 1').fill('placeholder-key-refused');
+  await page.getByRole('button', { name: /^Continue$/ }).click();
+  await expect(page.getByTestId('wizard-newznab-error')).toContainText('cannot contain a comma');
+  await expect(page.locator('[aria-invalid="true"]')).toHaveCount(1);
+}

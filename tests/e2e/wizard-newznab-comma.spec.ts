@@ -1,45 +1,61 @@
 import { test, expect, type Page } from './fixtures';
+import { configSection, openProvidersStep, recordWizardRequests } from './helpers';
+import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
- * The Newznab lists are saved as comma-separated strings and the server splits
+ * The Newznab rows are saved as comma-separated strings and the server splits
  * them on every comma (`splitString` in couchpotato/core/helpers/variable.py),
  * so a comma typed INSIDE a URL or an API key turns one row into two
  * positions: with a comma in a key, the text after it is sent to the NEXT
- * indexer. The wizard rejects it at the source.
+ * indexer. Two guards stand against it and each is proven here on its own:
  *
- * The contract these cases pin: when any KEPT row (one with a URL, see
- * wizard-newznab-pairing.spec.ts) has a comma in its URL or its key, the step
- * saves NOTHING, the user stays on the step, and the existing error toast
- * names the row and the field, never the value. A row with no URL is dropped
- * whole, so a comma in its key does not block anything.
+ *  - the wizard's own check (`assertNewznabHasNoCommas`) refuses a literal comma
+ *    before ANY request is made, and
+ *  - the server refuses it too (`settings.save_group`), and the wizard shows that
+ *    refusal even when its own check is switched off.
  *
- * Saves are intercepted with `page.route`; keys and hosts are placeholders.
+ * What the user sees is ONE persistent message in the Newznab card that names the
+ * indexer as shown and the field, never the value; the offending input is marked
+ * (`aria-invalid`, described by the message) and holds focus; the step does not
+ * advance and nothing newznab is written, `newznab.enabled` included. An ENCODED
+ * comma (`%2C`) is not a comma: the group is saved as JSON and taken as sent.
+ *
+ * Saves are intercepted with `page.route` unless a case says it uses the real
+ * server; keys and hosts are placeholders.
  */
 
 type Row = { host?: string; key?: string };
 
 const SECRET_PART = 'placeholder-secret-part';
+const DEFAULT_ROW_COUNT = 6;
 
-/** Record every settings save as `section.name=value` and accept it. */
-async function recordSaves(page: Page): Promise<string[]> {
+const continueButton = (page: Page) => page.getByRole('button', { name: /^(Continue|Saving…)$/ });
+const errorMessage = (page: Page) => page.getByTestId('wizard-newznab-error');
+const toastText = (page: Page) => page.locator('[x-text="message"]');
+const urlInput = (page: Page, n: number) => page.getByLabel(`Newznab indexer URL ${n}`);
+const keyInput = (page: Page, n: number) => page.getByLabel(`Newznab API key ${n}`);
+const providersHeading = (page: Page) => page.getByRole('heading', { name: 'Where to Search' });
+
+/** Accept every settings save and record it: the group as its JSON body, the rest as `section.name=value`. */
+async function recordSaves(page: Page) {
   const saves: string[] = [];
+  const groups: any[] = [];
+  await page.route('**/settings.save_group/**', async (route) => {
+    groups.push(JSON.parse(route.request().postData() || '{}'));
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
+  });
   await page.route('**/settings.save/**', async (route) => {
     const params = new URLSearchParams(route.request().postData() || '');
     saves.push(`${params.get('section')}.${params.get('name')}=${params.get('value')}`);
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: true }),
-    });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
   });
-  return saves;
+  return { saves, groups };
 }
 
 /**
- * Count settings saves from INSIDE the page, synchronously at the moment
- * `fetch` is called. The route recorder above sees a request only once
- * Playwright has been told about it, so a save issued and then abandoned by a
- * refused step could be missed by it; this list cannot be.
+ * Count settings saves from INSIDE the page, synchronously at the moment `fetch` is
+ * called. The route recorder sees a request only once Playwright has been told about
+ * it, so a save issued and then abandoned by a refused step could be missed by it.
  */
 async function countFetchedSaves(page: Page) {
   await page.addInitScript(() => {
@@ -56,13 +72,32 @@ async function countFetchedSaves(page: Page) {
 
 const fetchedSaves = (page: Page): Promise<string[]> => page.evaluate(() => (window as any).__saveFetches);
 
-async function openProviders(page: Page, rows: Row[], source: RegExp = /^Usenet/) {
+/** Every text change in the assertive live region, from before the first script runs (AC-A11Y-4's counting, for the wizard). */
+async function watchAssertive(page: Page) {
+  await page.addInitScript(() => {
+    const texts: string[] = [];
+    (window as any).__assertiveTexts = texts;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const node = record.target instanceof Element ? record.target : record.target.parentElement;
+        const region = node?.closest('[data-testid="toast-announcer-assertive"]');
+        if (region?.textContent) texts.push(region.textContent);
+      }
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+  return () => page.evaluate(() => (window as any).__assertiveTexts as string[]);
+}
+
+async function fillRows(page: Page, rows: Row[]) {
+  for (const [i, row] of rows.entries()) {
+    if (row.host !== undefined) await urlInput(page, i + 1).fill(row.host);
+    if (row.key !== undefined) await keyInput(page, i + 1).fill(row.key);
+  }
+}
+
+async function openWithRows(page: Page, rows: Row[], source: RegExp = /^Usenet/) {
   await countFetchedSaves(page);
-  await page.goto('/wizard/');
-  await page.getByRole('button', { name: /Continue/i }).click();           // Welcome -> Security
-  await page.getByRole('button', { name: /Continue/i }).click();           // Security -> Providers
-  await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible({ timeout: 10000 });
-  await page.getByRole('radio', { name: source }).click();
+  await openProvidersStep(page, source);
   await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
   for (let i = 1; i < rows.length; i++) {
     await page.getByRole('button', { name: '+ Add another indexer' }).click();
@@ -70,149 +105,301 @@ async function openProviders(page: Page, rows: Row[], source: RegExp = /^Usenet/
   await fillRows(page, rows);
 }
 
-async function fillRows(page: Page, rows: Row[]) {
-  for (const [i, row] of rows.entries()) {
-    if (row.host !== undefined) await page.getByLabel(`Newznab indexer URL ${i + 1}`).fill(row.host);
-    if (row.key !== undefined) await page.getByLabel(`Newznab API key ${i + 1}`).fill(row.key);
-  }
-}
-
-const continueButton = (page: Page) => page.getByRole('button', { name: /^(Continue|Saving…)$/ });
-const toastText = (page: Page) => page.locator('[x-text="message"]');
-
-/** Two frames: any request issued before the toast would have been recorded by now. */
+/** Two frames: any request issued before the message would have been recorded by now. */
 async function settle(page: Page) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
-/** Continue, then assert the step refused: error shown, still on the step, no save of any kind. */
-async function expectRefused(page: Page, saves: string[], message: string, notShown: string[] = [SECRET_PART]) {
+/**
+ * Continue, then assert the step refused: ONE message, naming the row and the field,
+ * on the offending input (marked, described by it, focused), still on the step, and
+ * the value never repeated on screen or to a screen reader.
+ */
+async function expectRefused(page: Page, message: string, at: { n: number; field: 'URL' | 'API key' }, notShown: string[] = [SECRET_PART]) {
   await continueButton(page).click();
-  await expect(toastText(page)).toContainText(message);
+  await expect(errorMessage(page)).toContainText(message);
   await settle(page);
+  // The template of AC-DESIGN-5: no option key, no section.name pair, no "Error:", no HTTP status, nothing URL-shaped.
+  expect(await errorMessage(page).innerText()).not.toMatch(/api_key|pass_key|\w\.\w|Error:|HTTP \d/);
 
-  expect(await fetchedSaves(page), 'a refused step must not even call fetch for a save').toEqual([]);
-  expect(saves, 'a refused step must issue no save requests at all').toEqual([]);
-  await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
-  await expect(continueButton(page)).toBeFocused();
+  await expect(providersHeading(page)).toBeVisible();
   await expect(continueButton(page)).toHaveAttribute('aria-disabled', 'false');
-
-  // The value typed is never repeated, on screen or to a screen reader.
-  await expect(page.getByTestId('toast-announcer-assertive')).toContainText(message);
+  const input = at.field === 'URL' ? urlInput(page, at.n) : keyInput(page, at.n);
+  await expect(input).toBeFocused();
+  await expect(input).toHaveAttribute('aria-invalid', 'true');
+  await expect(input).toHaveAttribute('aria-describedby', 'wizard-newznab-error');
+  await expect(page.locator('[aria-invalid="true"]')).toHaveCount(1);
+  // ONE visible message: no toast beside it, and no "Failed to save" stacked on it. Read at once: a toast clears itself after 3s, so waiting for it to be hidden would pass while it was there.
+  expect(await toastText(page).isVisible(), 'a toast is showing beside the inline message').toBe(false);
+  await expect(page.locator('body')).not.toContainText('Failed to save');
+  // Spoken ONCE: the focused input is described by the message, so a screen reader reads it as
+  // the input's description. The assertive region stays silent when an input carries the message.
+  await expect(page.getByTestId('toast-announcer-assertive')).toHaveText('');
   for (const value of notShown) {
-    await expect(toastText(page)).not.toContainText(value);
-    await expect(page.getByTestId('toast-announcer-assertive')).not.toContainText(value);
+    await expect(errorMessage(page)).not.toContainText(value);
   }
 }
 
 test.describe('a comma inside a Newznab URL or API key is refused by the wizard', () => {
   test('a comma in an API key: nothing is saved, the user stays and is told which indexer', async ({ page }) => {
-    const saves = await recordSaves(page);
-    await openProviders(page, [
-      { host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` },
-    ]);
+    const { saves, groups } = await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
 
-    await expectRefused(page, saves, 'Indexer 1: the API key cannot contain a comma');
+    await expectRefused(page, 'Indexer 1: the API key cannot contain a comma', { n: 1, field: 'API key' });
+
+    expect(await fetchedSaves(page), 'a refused step must not even call fetch for a save').toEqual([]);
+    expect(saves).toEqual([]);
+    expect(groups).toEqual([]);
   });
 
   test('a comma in a URL: nothing is saved, and the position named is the row as shown', async ({ page }) => {
-    const saves = await recordSaves(page);
-    await openProviders(page, [
+    const { saves, groups } = await recordSaves(page);
+    await openWithRows(page, [
       { host: 'https://indexer-a.invalid', key: 'placeholder-key-a' },
       { host: 'https://indexer-b.invalid,https://indexer-c.invalid', key: 'placeholder-key-b' },
     ]);
 
-    await expectRefused(page, saves, 'Indexer 2: the URL cannot contain a comma');
+    await expectRefused(page, 'Indexer 2: the URL cannot contain a comma', { n: 2, field: 'URL' });
+
+    expect(await fetchedSaves(page)).toEqual([]);
+    expect(saves).toEqual([]);
+    expect(groups).toEqual([]);
   });
 
   test('a comma in the key of a row with no URL is dropped with the row and does not block', async ({ page }) => {
-    const saves = await recordSaves(page);
-    await openProviders(page, [
+    const { groups } = await recordSaves(page);
+    await openWithRows(page, [
       { key: `placeholder-orphan,${SECRET_PART}` },
       { host: 'https://indexer-b.invalid', key: 'placeholder-key-b' },
     ]);
 
     await continueButton(page).click();
-    await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeHidden({ timeout: 10000 });
+    await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
 
-    expect(saves).toContain('newznab.host=https://indexer-b.invalid');
-    expect(saves).toContain('newznab.api_key=placeholder-key-b');
-    expect(saves).toContain('newznab.use=1');
-    expect(saves.join('\n')).not.toContain(SECRET_PART);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].rows.slice(DEFAULT_ROW_COUNT)).toEqual([
+      { use: '1', host: 'https://indexer-b.invalid', api_key: 'placeholder-key-b', extra_score: '0', custom_tag: '' },
+    ]);
+    expect(JSON.stringify(groups)).not.toContain(SECRET_PART);
   });
 
-  test('fixing the field and pressing Continue again saves normally', async ({ page }) => {
-    const saves = await recordSaves(page);
-    await openProviders(page, [
-      { host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` },
-    ]);
-    await expectRefused(page, saves, 'Indexer 1: the API key cannot contain a comma');
+  test('fixing the field and pressing Continue again saves normally and clears the message', async ({ page }) => {
+    const { groups } = await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
+    await expectRefused(page, 'Indexer 1: the API key cannot contain a comma', { n: 1, field: 'API key' });
 
     await fillRows(page, [{ key: 'placeholder-key-a' }]);
     await continueButton(page).click();
-    await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeHidden({ timeout: 10000 });
+    await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
 
-    expect(saves).toContain('newznab.host=https://indexer-a.invalid');
-    expect(saves).toContain('newznab.api_key=placeholder-key-a');
-    expect(saves).toContain('newznab.use=1');
+    expect(groups).toHaveLength(1);
+    expect(groups[0].rows[DEFAULT_ROW_COUNT].api_key).toBe('placeholder-key-a');
   });
 
   test('a whitespace-only URL is a dropped row: a comma in its key does not block', async ({ page }) => {
-    const saves = await recordSaves(page);
-    await openProviders(page, [
+    const { groups } = await recordSaves(page);
+    await openWithRows(page, [
       { host: '   ', key: `placeholder-orphan,${SECRET_PART}` },
       { host: 'https://indexer-b.invalid', key: 'placeholder-key-b' },
     ]);
 
     await continueButton(page).click();
-    await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeHidden({ timeout: 10000 });
+    await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
 
-    expect(saves).toContain('newznab.host=https://indexer-b.invalid');
-    expect(saves.join('\n')).not.toContain(SECRET_PART);
+    expect(JSON.stringify(groups)).not.toContain(SECRET_PART);
+    expect(groups[0].rows.slice(DEFAULT_ROW_COUNT).map((row: any) => row.host)).toEqual(['https://indexer-b.invalid']);
   });
 
   test('the URL message names the row and field but never repeats the URL', async ({ page }) => {
-    const saves = await recordSaves(page);
-    await openProviders(page, [
-      { host: 'https://placeholder-url-marker.invalid/api?x=1,other', key: 'placeholder-key-a' },
-    ]);
+    await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://placeholder-url-marker.invalid/api?x=1,other', key: 'placeholder-key-a' }]);
 
-    await expectRefused(page, saves, 'Indexer 1: the URL cannot contain a comma', ['placeholder-url-marker']);
+    await expectRefused(page, 'Indexer 1: the URL cannot contain a comma', { n: 1, field: 'URL' }, ['placeholder-url-marker']);
   });
 
-  // The server decodes saved values a second time (`getParams` -> `unquote`), so
-  // an encoded comma typed here becomes a real one in config.ini.
+  // The group is saved as JSON and taken as sent: no second decode applies, so an
+  // encoded comma is three ordinary characters and is stored exactly as typed.
   for (const encoded of ['%2C', '%2c']) {
-    test(`an encoded comma (${encoded}) in an API key is refused like a literal one`, async ({ page }) => {
-      const saves = await recordSaves(page);
-      await openProviders(page, [
-        { host: 'https://indexer-a.invalid', key: `placeholder-key-a${encoded}${SECRET_PART}` },
-      ]);
+    test(`an encoded comma (${encoded}) in an API key is saved as typed, not refused`, async ({ page }) => {
+      const { groups } = await recordSaves(page);
+      await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a${encoded}${SECRET_PART}` }]);
 
-      await expectRefused(page, saves, 'Indexer 1: the API key cannot contain a comma');
+      await continueButton(page).click();
+      await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+
+      expect(groups[0].rows[DEFAULT_ROW_COUNT].api_key).toBe(`placeholder-key-a${encoded}${SECRET_PART}`);
     });
 
-    test(`an encoded comma (${encoded}) in a URL is refused like a literal one`, async ({ page }) => {
-      const saves = await recordSaves(page);
-      await openProviders(page, [
-        { host: 'https://indexer-a.invalid', key: 'placeholder-key-a' },
-        { host: `https://indexer-b.invalid/api?x=1${encoded}placeholder-url-marker`, key: 'placeholder-key-b' },
-      ]);
+    test(`an encoded comma (${encoded}) in a URL is saved as typed, not refused`, async ({ page }) => {
+      const { groups } = await recordSaves(page);
+      await openWithRows(page, [{ host: `https://indexer-b.invalid/api?x=1${encoded}marker`, key: 'placeholder-key-b' }]);
 
-      await expectRefused(page, saves, 'Indexer 2: the URL cannot contain a comma', ['placeholder-url-marker']);
+      await continueButton(page).click();
+      await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+
+      expect(groups[0].rows[DEFAULT_ROW_COUNT].host).toBe(`https://indexer-b.invalid/api?x=1${encoded}marker`);
     });
   }
 
   test('in Both mode a refused step saves nothing on the torrent side either', async ({ page }) => {
-    const saves = await recordSaves(page);
-    await openProviders(page, [
-      { host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` },
-    ], /^Both/);
+    const { saves, groups } = await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }], /^Both/);
     await page.getByRole('switch', { name: 'Enable ThePirateBay' }).click();
     await page.getByRole('switch', { name: 'Enable Jackett / TorrentPotato' }).click();
     await page.locator('#wizard-jackett-url').fill('http://jackett.invalid:9117');
     await page.locator('#wizard-jackett-api-key').fill('placeholder-jackett-key');
 
-    await expectRefused(page, saves, 'Indexer 1: the API key cannot contain a comma');
+    await expectRefused(page, 'Indexer 1: the API key cannot contain a comma', { n: 1, field: 'API key' });
+
+    expect(await fetchedSaves(page)).toEqual([]);
+    expect(saves).toEqual([]);
+    expect(groups).toEqual([]);
   });
+});
+
+// The server's refusal reaches the wizard in the structured form of the group-save
+// response: `invalid: [{row, column, reason}]`, `row` the 0-based row AS SENT. The
+// wizard sends hidden rows at their stored positions, so that number is not the
+// number on screen, and it is mapped back before anything is named, marked or focused.
+test.describe('a refusal from the server is shown on the row it is about', () => {
+  const refusal = (row: number, column: string, reason = 'comma') => ({
+    success: false,
+    error: 'A value contains a comma, which would split it across rows. Nothing was saved.',
+    invalid: [{ row, column, reason }],
+  });
+
+  test('with blank rows above, the row numbered by the server is the one shown as Indexer 2', async ({ page }) => {
+    const bodies: any[] = [];
+    await page.route('**/settings.save_group/**', async (route) => {
+      bodies.push(JSON.parse(route.request().postData() || '{}'));
+      // The first row the wizard adds follows the six hidden defaults.
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(refusal(DEFAULT_ROW_COUNT, 'host')) });
+    });
+    await page.route('**/settings.save/**', (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+    }));
+    await openWithRows(page, [{}, { host: 'https://indexer-b.invalid', key: 'placeholder-key-b' }]);
+
+    await expectRefused(page, 'Indexer 2: the URL cannot contain a comma. Remove it to save.', { n: 2, field: 'URL' });
+
+    expect(bodies).toHaveLength(1);
+  });
+
+  test.describe('the interleaved fixture', () => {
+    test.use({ seedConfig: 'newznab_interleaved#wizard-refusal-mapping' });
+
+    test('a refusal naming row 3 is indexer B, the second row on screen, and not the hidden row at 3', async ({ page }) => {
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(refusal(3, 'api_key')),
+      }));
+      await openProvidersStep(page);
+      await urlInput(page, 2).fill('https://placeholder-bravo-edited.invalid/api');
+
+      await expectRefused(page, 'Indexer 2: the API key cannot contain a comma. Remove it to save.', { n: 2, field: 'API key' });
+    });
+
+    test('a refusal naming a hidden row is not pinned on any indexer: the server\'s own text is shown', async ({ page }) => {
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(refusal(0, 'host')),
+      }));
+      await openProvidersStep(page);
+      await urlInput(page, 2).fill('https://placeholder-bravo-edited.invalid/api');
+
+      await continueButton(page).click();
+
+      await expect(errorMessage(page)).toContainText('A value contains a comma');
+      // No input to carry it: the message says where it CAN be fixed, and is announced assertively once.
+      await expect(errorMessage(page)).toContainText('Check them in Settings, under Searchers, then Newznab.');
+      await expect(page.getByTestId('toast-announcer-assertive')).toContainText('Check them in Settings');
+      await expect(page.locator('[aria-invalid="true"]')).toHaveCount(0);
+      await expect(providersHeading(page)).toBeVisible();
+    });
+  });
+
+  test.describe('the real server, with the wizard\'s own check switched off', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-real-refusal' });
+
+    test('refuses the comma itself: shows its row and field, advances nowhere and leaves every newznab line alone', async ({ page, testServer }) => {
+      test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+      const requests = await recordWizardRequests(page);
+      const before = configSection(testServer.configPath, 'newznab');
+      await openProvidersStep(page);
+      await expect(urlInput(page, 2)).toHaveValue('https://placeholder-two.invalid/api');
+      await page.evaluate(() => {
+        const root = document.querySelector('[x-data="setupWizard()"]') as HTMLElement;
+        (window as any).Alpine.$data(root).assertNewznabHasNoCommas = () => undefined;
+      });
+      await urlInput(page, 2).fill(`https://placeholder-two.invalid/api,${SECRET_PART}`);
+
+      await expectRefused(page, 'Indexer 2: the URL cannot contain a comma. Remove it to save.', { n: 2, field: 'URL' });
+
+      expect(requests.groupSaves()).toHaveLength(1);
+      const sections = requests.columnSaves().map((request) => `${new URLSearchParams(request.body).get('section')}`);
+      expect(sections, 'newznab.enabled was written beside a refused group').not.toContain('newznab');
+      expect(configSection(testServer.configPath, 'newznab')).toEqual(before);
+    });
+  });
+});
+
+test.describe('the marks and the message clear when the cause does', () => {
+  test('typing in the marked input clears its mark and the message; switching Newznab off clears the rest', async ({ page }) => {
+    await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
+    await continueButton(page).click();
+    await expect(keyInput(page, 1)).toHaveAttribute('aria-invalid', 'true');
+
+    await keyInput(page, 1).fill('placeholder-key-a');
+
+    await expect(keyInput(page, 1)).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(keyInput(page, 1)).not.toHaveAttribute('aria-describedby', /./);
+    await expect(errorMessage(page)).toBeHidden();
+
+    await keyInput(page, 1).fill(`placeholder-key-a,${SECRET_PART}`);
+    await continueButton(page).click();
+    await expect(errorMessage(page)).toBeVisible();
+    await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
+    await expect(errorMessage(page)).toBeHidden();
+  });
+});
+
+// AC-OPS-4: the route is missing (a page on the new version talking to a rolled-back
+// server) or the server fails. Never "saved", never advance, rows kept as typed.
+test.describe('any other answer from the group-save route is a visible error', () => {
+  // `null` is a dropped connection: the request never gets an answer at all.
+  const ANSWERS: [string, { status: number; body: string } | null][] = [
+    ['the API call does not exist', { status: 200, body: '{"success": false, "error": "API call doesn\'t exist"}' }],
+    ['an HTTP 500', { status: 500, body: '{"success": false, "error": "boom"}' }],
+    ['an answer that is not JSON', { status: 502, body: '<html>bad gateway</html>' }],
+    ['a dropped connection', null],
+  ];
+
+  for (const [name, reply] of ANSWERS) {
+    test(`${name}: an error stays on screen, the rows stay as typed, nothing else is saved`, async ({ page }) => {
+      const singles: string[] = [];
+      const liveTexts = await watchAssertive(page);
+      await page.route('**/settings.save_group/**', (route) => (reply
+        ? route.fulfill({ status: reply.status, contentType: 'application/json', body: reply.body })
+        : route.abort('connectionreset')));
+      await page.route('**/settings.save/**', async (route) => {
+        singles.push(new URLSearchParams(route.request().postData() || '').get('name') || '');
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
+      });
+      await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: 'placeholder-key-a' }]);
+
+      await continueButton(page).click();
+
+      await expect(errorMessage(page)).toContainText('Newznab indexers were not saved');
+      await expect(errorMessage(page)).toContainText('Check them in Settings, under Searchers, then Newznab.');
+      await expect(page.getByTestId('toast-announcer-assertive')).toContainText('were not saved');
+      await settle(page);
+      // Announced once: a message no input carries is spoken a single time.
+      expect((await liveTexts()).filter((text) => text.includes('were not saved')), 'the failure was announced more than once').toHaveLength(1);
+      await expect(providersHeading(page)).toBeVisible();
+      await expect(urlInput(page, 1)).toHaveValue('https://indexer-a.invalid');
+      await expect(keyInput(page, 1)).toHaveValue('placeholder-key-a');
+      expect(await toastText(page).isVisible(), 'a toast is showing beside the inline message').toBe(false);
+      expect(singles, 'something was saved beside a group that was not').toEqual([]);
+      await expect(page.getByTestId('toast-announcer-polite')).not.toContainText('Saved');
+    });
+  }
 });

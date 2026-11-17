@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { expectDialogNamedByUniqueHeading, expectVisualTransitionsToSettle } from './helpers';
+import { expectDialogNamedByUniqueHeading, expectVisualTransitionsToSettle, waitForNewznabRead } from './helpers';
 
 /**
  * The setup wizard for keyboard and screen-reader users (WCAG 2.2 AA: 2.1.1
@@ -61,6 +61,8 @@ async function openWizard(page: Page, theme: 'light' | 'dark' = 'light') {
   await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
   await page.goto('/wizard/');
   await expect(page.getByRole('heading', { name: STEP_HEADINGS[0] })).toBeVisible();
+  // The wizard reads the saved Newznab rows on load; a scene set before the answer lands would be overwritten by it.
+  await waitForNewznabRead(page);
   await expect.poll(
     () => page.evaluate(() => document.documentElement.classList.contains('light')),
     { message: `${theme} theme was not applied` },
@@ -1862,5 +1864,35 @@ test.describe('Remove and Add are inert while a save is in flight', () => {
     await tabTo(page, addIndexerButton(page));
     await page.keyboard.press('Enter');
     await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(3);
+  });
+});
+
+// SEC-004 P5: a keyboard user who presses Retry keeps focus on it while the read runs. If the
+// button were hidden for the duration, focus would fall to the page ("the skip link").
+test.describe('Retry keeps keyboard focus while the saved indexers are read again', () => {
+  test('Tab to Retry, Enter: the same button is still there, focused and aria-disabled, then settles back', async ({ page }) => {
+    let answered = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(/\/settings\/(\?.*)?$/, async (route) => {
+      answered += 1;
+      if (answered === 2) await held;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+    });
+    await openWizard(page);
+    await expect(page.locator('[data-newznab-card]')).toHaveAttribute('data-newznab-status', 'failed');
+    await mountStep(page, 2, 'state.formData.searchType = "usenet";');
+    const retry = page.getByRole('button', { name: 'Try loading saved indexers again' });
+    await tabTo(page, retry);
+
+    await page.keyboard.press('Enter');
+
+    const busy = page.getByRole('button', { name: 'Loading saved indexers…' });
+    await expect(busy).toBeVisible();
+    await expect(busy).toHaveAttribute('aria-disabled', 'true');
+    await expect(busy).toBeFocused();
+    release();
+    await expect(retry).toBeFocused();
+    await expect(retry).toHaveAttribute('aria-disabled', 'false');
   });
 });

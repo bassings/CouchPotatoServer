@@ -9,6 +9,7 @@ against a reader that is gentler than the one the server runs.
 The one property that matters most is that reading NEVER writes: the helper loads
 a copy, because loading registers defaults and saves.
 """
+import configparser
 import hashlib
 import json
 import subprocess
@@ -57,6 +58,27 @@ def test_columns_are_the_raw_stored_strings_of_the_group(config_path):
     assert columns['use'] == '1,0,1'
     assert columns['host'].count(',') == 2
     assert set(columns) == {'use', 'host', 'api_key', 'extra_score', 'custom_tag'}
+
+
+def test_section_is_every_option_of_the_section_raw_including_the_enabler(config_path):
+    """A wizard run writes `newznab.enabled` as well as the columns: "nothing newznab was
+    written" has to cover it, and `columns` does not."""
+    parser = configparser.RawConfigParser()
+    parser.read(config_path, encoding='utf-8')
+    parser.set('newznab', 'enabled', '0')
+    parser.add_section('zz_other')
+    parser.set('zz_other', 'value', '1')
+    with open(config_path, 'w', encoding='utf-8') as handle:
+        parser.write(handle)
+    stored = run_helper('section', config_path, 'newznab')
+
+    assert stored['use'] == '1,0,1'
+    assert stored['enabled'] == '0'
+    assert 'value' not in stored
+
+
+def test_section_of_a_section_the_file_lacks_is_empty_not_an_error(config_path):
+    assert run_helper('section', config_path, 'zz_absent') == {}
 
 
 def test_the_view_is_what_the_real_getHosts_returns(config_path):

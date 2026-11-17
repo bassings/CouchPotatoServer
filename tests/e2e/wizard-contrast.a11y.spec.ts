@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
+import { expectVisualTransitionsToSettle, mockSettingsSave, openProvidersStep, showWizardRefusal, TEXT_CONTRAST, waitForNewznabRead } from './helpers';
 
 /**
  * Text contrast (WCAG 2.2 AA 1.4.3) on every step of the setup wizard, in both
@@ -87,6 +87,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.setViewportSize(viewport);
       await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
       await page.goto('/wizard/');
+      await waitForNewznabRead(page);
       await expect.poll(
         () => page.evaluate(() => document.documentElement.classList.contains('light')),
         { message: `${theme} theme was not applied` },
@@ -106,4 +107,76 @@ for (const theme of ['light', 'dark'] as const) {
       expect(failures, `text below its required contrast (${theme}, ${viewport.width}px):\n${failures.join('\n')}`).toEqual([]);
     });
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEC-004 P5: the Newznab messages the Providers step can show (AC-A11Y-10, -11).
+// A refused save, a misaligned stored group and a failed read each put a message
+// in the card. Each is measured at 4.5:1 against its own rendered background and
+// scanned with axe, in both themes. The refused state's scan FAILS, not skips,
+// when no input is marked invalid (showWizardRefusal asserts it first).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
+
+async function expectReadableAndClean(page: Page, message: Locator, label: string, theme: string) {
+  await expectVisualTransitionsToSettle(page, `${theme} theme, ${label}`);
+  const ratio = await message.evaluate(TEXT_CONTRAST);
+  expect(ratio, `${theme}: ${label} text contrast ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+  const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
+  expect(results.violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.html.slice(0, 80)).join(' | ')}`)).toEqual([]);
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test.describe(`the Newznab card's messages (${theme} theme)`, () => {
+    test('a refused save: the text is at least 4.5:1, the input is marked and described by it, and axe is clean', async ({ page }) => {
+      await showWizardRefusal(page, theme);
+      const input = page.getByLabel('Newznab indexer URL 1');
+
+      await expect(input).toHaveAttribute('aria-invalid', 'true');
+      await expect(page.locator(`[id="${await input.getAttribute('aria-describedby')}"]`)).toBeVisible();
+      await expectReadableAndClean(page, page.locator('#wizard-newznab-error'), 'refusal', theme);
+    });
+
+    test.describe('a failed read', () => {
+      test.use({ seedConfig: `newznab_two_stored#wizard-a11y-read-failed-${theme}` });
+
+      test('the message is at least 4.5:1, the retry button is named, and axe is clean', async ({ page }) => {
+        await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+        await page.route(/\/settings\/(\?.*)?$/, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+        await openProvidersStep(page);
+
+        await expect(page.getByRole('button', { name: 'Try loading saved indexers again' })).toBeVisible();
+        await expectReadableAndClean(page, page.locator('#wizard-newznab-error'), 'load error', theme);
+      });
+    });
+
+    test.describe('a read still pending when Continue is pressed', () => {
+      test.use({ seedConfig: `newznab_two_stored#wizard-a11y-pending-${theme}` });
+
+      test('the pending message is at least 4.5:1, has no Retry beside it, and axe is clean', async ({ page }) => {
+        await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+        await page.route(/\/settings\/(\?.*)?$/, () => new Promise(() => undefined));
+        await openProvidersStep(page);
+        await page.getByRole('button', { name: /^Continue$/ }).click();
+
+        await expect(page.locator('#wizard-newznab-error')).toContainText('still loading');
+        await expect(page.getByRole('button', { name: /Try loading saved indexers again/ })).toBeHidden();
+        await expectReadableAndClean(page, page.locator('#wizard-newznab-error'), 'pending message', theme);
+      });
+    });
+
+    test.describe('a misaligned stored group', () => {
+      test.use({ seedConfig: `newznab_misaligned_key_short#wizard-a11y-notice-${theme}` });
+
+      test('the notice is at least 4.5:1 and axe is clean with it shown', async ({ page }) => {
+        await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+        await openProvidersStep(page);
+
+        const notice = page.getByTestId('combine-misaligned-notice');
+        await expect(notice).toBeVisible();
+        await expectReadableAndClean(page, notice.locator('p'), 'misaligned notice', theme);
+      });
+    });
+  });
 }

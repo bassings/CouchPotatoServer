@@ -715,6 +715,94 @@ def _fixture_newznab_legacy_bytes():
     )
 
 
+def _fixture_newznab_two_stored():
+    """Two stored indexers and no hidden row, each differing from the other in every
+    column, so a cell moved to the wrong row cannot land on an equal one."""
+    return _newznab(
+        use=_cells('1', '0'),
+        host=_cells('https://placeholder-one.invalid/api', 'https://placeholder-two.invalid/api'),
+        api_key=_cells('placeholder-key-one', 'placeholder-key-two'),
+        extra_score=_cells('5', '10'),
+        custom_tag=_cells('tag-one', 'tag-two'),
+    )
+
+
+def _fixture_newznab_interleaved():
+    """AC-PROD-4's fixture: hidden rows (keyless hosts D1, D2, D3) between the stored
+    indexers A and B. Every row has its own `use`, `extra_score` and `custom_tag`, and A
+    and B differ in `use` (A on, B off), so a shifted or dropped cell is always visible."""
+    return _newznab(
+        use=_cells('1', '1', '0', '0', '1'),
+        host=_cells(*('https://placeholder-%s.invalid/api' % word
+                      for word in ('default-one', 'alpha', 'default-two', 'bravo', 'default-three'))),
+        api_key=_cells('', 'placeholder-key-alpha', '', 'placeholder-key-bravo', ''),
+        extra_score=_cells('1', '5', '2', '10', '3'),
+        custom_tag=_cells('tag-d1', 'tag-alpha', 'tag-d2', 'tag-bravo', 'tag-d3'),
+    )
+
+
+def _fixture_newznab_hostless():
+    """A keyless default, a stored indexer, a HOSTLESS row that carries a key, then a
+    second stored indexer. The hostless row's credential must survive a wizard save."""
+    return _newznab(
+        use=_cells('0', '1', '1', '0'),
+        host=_cells('https://placeholder-default-one.invalid/api', 'https://placeholder-alpha.invalid/api',
+                    '', 'https://placeholder-bravo.invalid/api'),
+        api_key=_cells('', 'placeholder-key-alpha', 'placeholder-key-hostless', 'placeholder-key-bravo'),
+        extra_score=_cells('1', '5', '2', '10'),
+        custom_tag=_cells('tag-d1', 'tag-alpha', 'tag-hostless', 'tag-bravo'),
+    )
+
+
+def _fixture_newznab_hostile_cells():
+    """Three stored indexers whose cells hold every character a second decode, a form
+    encoder or a trim would alter: `%`, `+`, `&`, `=`, an encoded comma (`%2C`) and, in
+    the middle row (where the parser keeps them), leading and trailing spaces."""
+    return _newznab(
+        use=_cells('1', '1', '1'),
+        host=_cells('https://placeholder-one.invalid/api?x=a%2Cb&y=1+2=z',
+                    ' https://placeholder-two.invalid/api ',
+                    'https://placeholder-three.invalid/api?q=%41'),
+        api_key=_cells('placeholder%2Ckey+and&equals=', ' placeholder key two ', 'placeholder-key-three%41'),
+        extra_score=_cells('5', '10', '15'),
+        custom_tag=_cells('tag%2Cone', 'tag two', 'tag+three'),
+    )
+
+
+def _fixture_newznab_sentinels():
+    """Two stored indexers with a distinctive word in every free-text cell (host, key and
+    tag), so a test can search every request URL, console line, live region and
+    visible text for one and know that it is a credential, not a coincidence."""
+    return _newznab(
+        use=_cells('1', '1'),
+        host=_cells('https://placeholder-sentinel-host-one.invalid/api', 'https://placeholder-sentinel-host-two.invalid/api'),
+        api_key=_cells('placeholder-sentinel-key-one', 'placeholder-sentinel-key-two'),
+        extra_score=_cells('5', '10'),
+        custom_tag=_cells('placeholder-sentinel-tag-one', 'placeholder-sentinel-tag-two'),
+    )
+
+
+def _fixture_newznab_use_column_long():
+    """Two stored indexers whose `use` column is all-empty and LONGER than `host` and
+    `api_key`. The Definitions ignore an all-empty pairing column, so this is aligned,
+    and its row count is the longest column's: six."""
+    return _newznab(
+        use=_cells('', '', '', '', '', ''),
+        host=_cells('https://placeholder-one.invalid/api', 'https://placeholder-two.invalid/api'),
+        api_key=_cells('placeholder-key-one', 'placeholder-key-two'),
+    )
+
+
+def _fixture_newznab_key_column_long():
+    """Two hosts and an all-empty `api_key` of six cells: aligned, six rows, and no stored
+    indexer (a host with no key is hidden)."""
+    return _newznab(
+        use=_cells('1', '0'),
+        host=_cells('https://placeholder-one.invalid/api', 'https://placeholder-two.invalid/api'),
+        api_key=_cells('', '', '', '', '', ''),
+    )
+
+
 def _fixture_itunes_shipped():
     """The shipped iTunes default, written explicitly: a URL then a comma."""
     return {'itunes': {
@@ -793,6 +881,13 @@ _CONFIG_FIXTURES = {
     'newznab_misaligned_use_short': _fixture_newznab_misaligned_use_short,
     'newznab_untrimmed': _fixture_newznab_untrimmed,
     'newznab_legacy_bytes': _fixture_newznab_legacy_bytes,
+    'newznab_two_stored': _fixture_newznab_two_stored,
+    'newznab_interleaved': _fixture_newznab_interleaved,
+    'newznab_hostless': _fixture_newznab_hostless,
+    'newznab_hostile_cells': _fixture_newznab_hostile_cells,
+    'newznab_sentinels': _fixture_newznab_sentinels,
+    'newznab_use_column_long': _fixture_newznab_use_column_long,
+    'newznab_key_column_long': _fixture_newznab_key_column_long,
     'itunes_shipped': _fixture_itunes_shipped,
     'torrentpotato_aligned': _fixture_torrentpotato_aligned,
     'torrentpotato_misaligned': _fixture_torrentpotato_misaligned,

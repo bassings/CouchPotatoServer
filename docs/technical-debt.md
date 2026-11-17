@@ -514,16 +514,43 @@ result. Getting it wrong the other way files a bug against working code.
      key fields and the Newznab toggle can still be changed. The save has
      already read its lists, so the server keeps the old values and the page
      shows the new ones.
+- **The setup wizard's Newznab group (SEC-004 P5): four things left open, 2026-11-17.**
+  1. The wizard reads the stored rows once, at page load. A Settings edit in
+     another tab, or a Jackett sync, made before the wizard's Continue is
+     overwritten by a wizard edit, with no warning (reproduced: a row added in
+     Settings after the wizard loaded was deleted by a wizard edit). This is
+     decision D5 (no stale-save protection), with a longer window than on the
+     Settings page; a run that changes no row sends no save, so only a run that
+     edits a row is exposed.
+  2. A control character in a HIDDEN row's cell (a hand-edited `config.ini`)
+     makes every wizard group save refuse, with no row the user can see to fix.
+     The message points to Settings, where the same refusal applies.
+  3. "Newznab indexers were not saved" is also shown when the network dropped
+     and the save may have landed. Pressing Continue again re-sends the same
+     rows, which is harmless.
+  4. Autofill and password-manager behaviour on the now-prefilled URL and key
+     inputs is unmeasured.
+  5. (2026-11-18) If the server ever reported a row count higher than every
+     column's cell count (never observed from the real server), the wizard
+     trusts it and an edit appends blank padded rows. No mispairing was found
+     in a million such answers.
+  6. (2026-11-18) The Newznab error message clears on the first keystroke in the
+     last marked input, before the cause is gone; Continue re-validates. In the
+     masked API-key field the user can then no longer read what the message
+     said.
 - **Newznab positional lists: what the pairing fixes did not close.**
   Newznab stores each indexer as parallel comma-separated lists (`host`,
   `api_key`, `use`, plus `extra_score`, `custom_tag`, `custom_categories`)
   that `getHosts` in `newznab.py` pairs BY POSITION. The wizard builds `host`,
   `api_key` and `use` from one filtered list of rows, so a key no longer
   shifts onto another indexer (#587, contained in the v3.278.0 tag).
-  Closed here: the wizard refuses a literal comma or an encoded one (`%2C`,
-  `%2c`) inside a kept row's URL or API key before issuing any save, and names
-  the row and field (not the value) in its error toast
+  Closed here: the wizard refuses a literal comma inside a kept row's URL or
+  API key before issuing any request, and names the row and field (not the
+  value) in a persistent message in the Newznab card
   (`tests/e2e/wizard-newznab-comma.spec.ts`). It can only ever refuse a save.
+  Since SEC-004 P5 the wizard saves Newznab as one group through
+  `settings.save_group`, which the server also refuses a comma in, and an
+  encoded comma (`%2C`) is no longer refused: it is stored as typed.
   Still open, and deliberately not fixed on the server:
   a. The Settings page (`combinedField`) accepts a comma in a URL or a key.
      After a comma in a URL, `getHosts` raises `IndexError` (the host list is
