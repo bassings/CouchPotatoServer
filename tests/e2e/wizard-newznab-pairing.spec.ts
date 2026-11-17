@@ -541,8 +541,12 @@ for (const fixture of ['newznab_misaligned_key_short', 'newznab_misaligned_use_s
       await expect(newznabSwitch(page)).toHaveCount(0);
       await expect(page.getByTestId('wizard-newznab-error')).toBeHidden();
 
+      // The whole wizard, as AC-DESIGN-12 says: Providers, Downloader, Library, Done.
       await continueButton(page).click();
       await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+      await continueButton(page).click();
+      await page.getByRole('button', { name: 'Finish Setup' }).click();
+      await expect(page.getByRole('heading', { name: "You're All Set!" })).toBeVisible({ timeout: 10000 });
 
       expect(requests.groupSaves(), 'a misaligned group was saved').toEqual([]);
       const sections = requests.columnSaves().map((request) => new URLSearchParams(request.body).get('section'));
@@ -886,14 +890,18 @@ test.describe('Continue pressed twice, or held', () => {
   test('sends one group save', async ({ page }) => {
     test.info().annotations.push(...combineGroupWriter());
     const requests = await recordWizardRequests(page);
+    // The first save is held in flight until the test has pressed twice, then let through.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
     await page.route('**/settings.save_group/**', async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 300));   // keeps the first save in flight while the second press lands
+      await held;
       await route.continue();
     });
     await openProvidersStep(page);
     await urlInput(page, 1).fill('https://placeholder-one-edited.invalid/api');
 
     await continueButton(page).dblclick();
+    release();
     await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
 
     expect(requests.groupSaves()).toHaveLength(1);
@@ -905,6 +913,7 @@ test.describe('Continue held with Enter after a save that failed', () => {
   test.use({ seedConfig: 'newznab_two_stored#wizard-held-enter-after-failure' });
 
   test('does not retry the save on every repeat', async ({ page }) => {
+    await page.clock.install();
     const requests = await recordWizardRequests(page);
     await page.route('**/settings.save_group/**', (route) => route.fulfill({
       status: 500, contentType: 'application/json', body: '{"success": false}',
@@ -917,9 +926,10 @@ test.describe('Continue held with Enter after a save that failed', () => {
     await expect(page.getByTestId('wizard-newznab-error')).toContainText('were not saved');
     for (let i = 0; i < 5; i++) await page.keyboard.down('Enter');   // the key still held: repeats
     await page.keyboard.up('Enter');
-    await page.waitForLoadState('networkidle');
+    // A retry would have been sent by now: let every pending timer fire, then read the page's own request log.
+    await page.clock.fastForward(5000);
 
-    expect(requests.groupSaves(), 'a held key retried the failed save').toHaveLength(1);
+    expect((await requests.pageGroupSaves()).length, 'a held key retried the failed save').toBe(1);
   });
 });
 
@@ -1106,10 +1116,11 @@ test.describe('what must never leave the page (a distinctive word in every cell)
     expect(requests.groupSaves().length).toBeGreaterThan(0);
     expect(markup, 'a stored key is in the page markup').not.toContain('sentinel-key');
     expect(markup, 'a stored tag is in the page markup').not.toContain('sentinel-tag');
+    const live = await liveTexts();
     for (const word of sentinels) {
       expect(requests.seen.filter((request) => request.url.includes(word)), `${word} in a request URL`).toEqual([]);
       expect(consoleLines.filter((line) => line.includes(word)), `${word} in the console`).toEqual([]);
-      expect((await liveTexts()).filter((text) => text.includes(word)), `${word} in a live region`).toEqual([]);
+      expect(live.filter((text) => text.includes(word)), `${word} in a live region`).toEqual([]);
       expect(visible.filter((text) => text.includes(word)), `${word} in visible text`).toEqual([]);
     }
     expect(configView(testServer.configPath, 'newznab')).toHaveLength(2);
