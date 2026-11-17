@@ -197,6 +197,15 @@ export function configColumns(configPath: string, section: string): Record<strin
 }
 
 /**
+ * Every option of one section as stored in the file, raw: the columns AND the rest of the
+ * section (`enabled`), for "nothing newznab was written" claims that `configColumns` alone
+ * cannot make. A section the file lacks is `{}`.
+ */
+export function configSection(configPath: string, section: string): Record<string, string> {
+  return readConfig('section', configPath, section) as Record<string, string>;
+}
+
+/**
  * What the provider's real reader sees for the group stored in the file: `getHosts`
  * for newznab and torrentpotato, the URLs the automation reader would fetch otherwise.
  */

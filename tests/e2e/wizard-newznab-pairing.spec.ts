@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { configColumns, configSha, openProvidersStep, recordWizardRequests } from './helpers';
+import { configColumns, configSection, configSha, openProvidersStep, recordWizardRequests } from './helpers';
 import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
@@ -384,3 +384,37 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
     });
   });
 });
+
+// A misaligned stored group (the server's flag) is never written by the wizard: a
+// save would turn rows whose keys are paired with the wrong hosts into an aligned
+// group, keeping each key against the wrong host for good.
+for (const fixture of ['newznab_misaligned_key_short', 'newznab_misaligned_use_short']) {
+  test.describe(`a misaligned stored group (${fixture})`, () => {
+    test.use({ seedConfig: `${fixture}#wizard-misaligned` });
+
+    test('shows the notice and no rows, writes nothing newznab, and lets the step advance', async ({ page, testServer }) => {
+      test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+      const requests = await recordWizardRequests(page);
+      const before = configSection(testServer.configPath, 'newznab');
+
+      await openProvidersStep(page);
+
+      const notice = page.getByTestId('combine-misaligned-notice');
+      await expect(notice).toBeVisible();
+      await expect(notice).toContainText('do not line up');
+      await expect(notice).toContainText('Fix the rows in Settings');
+      await expect(page.locator('[data-newznab-host]')).toHaveCount(0);
+      await expect(page.locator('[data-newznab-key]')).toHaveCount(0);
+      await expect(newznabSwitch(page)).toHaveCount(0);
+      await expect(page.getByTestId('wizard-newznab-error')).toBeHidden();
+
+      await continueButton(page).click();
+      await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+
+      expect(requests.groupSaves(), 'a misaligned group was saved').toEqual([]);
+      const sections = requests.columnSaves().map((request) => new URLSearchParams(request.body).get('section'));
+      expect(sections, 'a newznab setting (enabled included) was written').not.toContain('newznab');
+      expect(configSection(testServer.configPath, 'newznab')).toEqual(before);
+    });
+  });
+}
