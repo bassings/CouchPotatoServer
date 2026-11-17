@@ -1190,6 +1190,7 @@ describe('a button in a section with a combine group: the rows are locked from t
       expect(group.rows).toHaveLength(4);
       expect(group.locked).toBe(false);
       expect(group.reloadError).toBe('');
+      expect(group.stale).toBe(false);
       expect(again.success).toBe(true);
     });
 
