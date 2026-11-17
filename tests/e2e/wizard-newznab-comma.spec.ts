@@ -103,6 +103,8 @@ async function expectRefused(page: Page, message: string, at: { n: number; field
   await continueButton(page).click();
   await expect(errorMessage(page)).toContainText(message);
   await settle(page);
+  // The template of AC-DESIGN-5: no option key, no section.name pair, no "Error:", no HTTP status, nothing URL-shaped.
+  expect(await errorMessage(page).innerText()).not.toMatch(/api_key|pass_key|\w\.\w|Error:|HTTP \d/);
 
   await expect(providersHeading(page)).toBeVisible();
   await expect(continueButton(page)).toHaveAttribute('aria-disabled', 'false');
