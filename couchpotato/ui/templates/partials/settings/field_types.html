@@ -316,8 +316,10 @@
              (the wizard does the same). The spacer keeps the row's cells under the column headers. -->
         <template x-if="canRemove">
           <button @click="removeRow(rowIdx)"
+                  @keydown="ignoreHeldKey($event)"
                   type="button"
                   :data-row-remove="rowIdx"
+                  :class="locked ? 'cursor-not-allowed' : ''"
                   class="text-cp-muted hover:text-cp-danger transition-colors shrink-0"
                   :aria-label="'Remove row ' + (rowIdx + 1)"
                   :aria-disabled="locked ? 'true' : null"
@@ -344,6 +346,7 @@
     </template>
     
     <button @click="addRow()"
+            @keydown="ignoreHeldKey($event)"
             type="button"
             data-row-add
             :aria-disabled="locked ? 'true' : null"

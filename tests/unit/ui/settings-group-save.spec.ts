@@ -1507,3 +1507,36 @@ describe('removing a row from a combined field (SEC-004 AC-DESIGN-8, AC-A11Y-7)'
     expect(net.groupSaves()).toHaveLength(0);
   });
 });
+
+describe('a held key on the Remove and Add buttons (SEC-004 AC-A11Y-7)', () => {
+  const press = (key: string, repeat: boolean) => ({ key, repeat, preventDefault: vi.fn() });
+  function heldKeyField() {
+    const panel = aligned();
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    field.getPanel = () => panel;
+    return field;
+  }
+
+  it('prevents the repeat of an Enter, which would otherwise activate the next control focus lands on', () => {
+    const event = press('Enter', true);
+
+    heldKeyField().ignoreHeldKey(event);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  for (const [name, event] of [
+    ['the first keydown of an Enter', press('Enter', false)],
+    ['a repeated Space', press(' ', true)],
+    ['a first Space', press(' ', false)],
+    ['a repeated Tab, which must keep moving focus', press('Tab', true)],
+    ['a first Tab', press('Tab', false)],
+  ] as const) {
+    it(`leaves ${name} alone`, () => {
+      heldKeyField().ignoreHeldKey(event);
+
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    });
+  }
+});

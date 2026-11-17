@@ -1548,6 +1548,15 @@ function combinedField(section, opt) {
       this.$nextTick(() => this.applyFocus());
     },
 
+    // A held Enter repeats its keydown, and Enter activates a button on keydown. A removal
+    // hands focus on, so without this the held key would carry on into the next Remove (deleting
+    // row after row, each one saved) and then into Add (adding blank rows). Enter only: Space
+    // activates on keyup, so holding it never repeated the activation (measured, settings.spec.ts).
+    // A held Tab must still move on. Same as the wizard's ignoreHeldKey (PR #586).
+    ignoreHeldKey(event) {
+      if (event.repeat && event.key === 'Enter') event.preventDefault();
+    },
+
     applyFocus() {
       const target = this.focusTarget;
       this.focusTarget = null;
