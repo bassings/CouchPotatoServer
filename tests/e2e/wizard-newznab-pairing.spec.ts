@@ -459,6 +459,52 @@ test.describe('editing one displayed row changes that row only', () => {
     });
   });
 
+  test.describe('several rows edited in one Continue', () => {
+    test.use({ seedConfig: 'newznab_interleaved#wizard-edit-both' });
+
+    test('A and B both get a new URL and B a new key: each row keeps its own cells, read through getHosts', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await openProvidersStep(page);
+
+      await urlInput(page, 1).fill('https://placeholder-alpha-moved.invalid/api');
+      await urlInput(page, 2).fill('https://placeholder-bravo-moved.invalid/api');
+      await keyInput(page, 2).fill('placeholder-key-bravo-new');
+      await advance(page);
+
+      const expected = original.map((row, i) => {
+        if (i === 1) return { ...row, host: 'https://placeholder-alpha-moved.invalid/api' };
+        if (i === 3) return { ...row, host: 'https://placeholder-bravo-moved.invalid/api', api_key: 'placeholder-key-bravo-new' };
+        return row;
+      });
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+      expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+    });
+  });
+
+  test.describe('three stored indexers', () => {
+    test.use({ seedConfig: 'newznab_aligned#wizard-edit-three' });
+
+    test('two URLs and a third row\'s key in one Continue: no key lands beside another row\'s host', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await openProvidersStep(page);
+
+      await urlInput(page, 1).fill('https://placeholder-one-moved.invalid/api');
+      await urlInput(page, 2).fill('https://placeholder-two-moved.invalid/api');
+      await keyInput(page, 3).fill('placeholder-key-three-new');
+      await advance(page);
+
+      const expected = [
+        { ...original[0], host: 'https://placeholder-one-moved.invalid/api' },
+        { ...original[1], host: 'https://placeholder-two-moved.invalid/api' },
+        { ...original[2], api_key: 'placeholder-key-three-new' },
+      ];
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+      expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+    });
+  });
+
   test.describe('two stored indexers', () => {
     test.use({ seedConfig: 'newznab_two_stored#wizard-url-keeps-key' });
 
@@ -885,8 +931,14 @@ test.describe('what must never leave the page (a distinctive word in every cell)
     await page.getByRole('button', { name: 'Finish Setup' }).click();
     await expect(page.getByRole('heading', { name: "You're All Set!" })).toBeVisible({ timeout: 10000 });
     visible.push(await page.locator('body').innerText());
+    // The markup as it stands: an input's `value` is a property, not an attribute, so the
+    // password field that legitimately holds a key does not appear here; a key copied into
+    // any attribute (data-*, title, aria-*) would.
+    const markup = await page.evaluate(() => document.documentElement.outerHTML);
 
     expect(requests.groupSaves().length).toBeGreaterThan(0);
+    expect(markup, 'a stored key is in the page markup').not.toContain('sentinel-key');
+    expect(markup, 'a stored tag is in the page markup').not.toContain('sentinel-tag');
     for (const word of sentinels) {
       expect(requests.seen.filter((request) => request.url.includes(word)), `${word} in a request URL`).toEqual([]);
       expect(consoleLines.filter((line) => line.includes(word)), `${word} in the console`).toEqual([]);

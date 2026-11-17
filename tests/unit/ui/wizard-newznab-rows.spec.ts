@@ -271,6 +271,22 @@ describe('no change: loading and building with nothing edited changes nothing (e
     expect(logic.newznabRowsChanged(baseline, built.rows)).toBe(false);
   });
 
+  it('a group with fewer rows is a change even when every row it still has is identical to the baseline', () => {
+    const { baseline } = start('newznab_interleaved');
+
+    const shorter = baseline.rows.slice(0, -1).map((row) => ({ ...row }));
+
+    expect(logic.newznabRowsChanged(baseline, shorter)).toBe(true);
+  });
+
+  it('a group with more rows is a change, and comparing them does not throw', () => {
+    const { baseline } = start('newznab_two_stored');
+
+    const longer = [...baseline.rows.map((row) => ({ ...row })), { ...baseline.rows[0] }];
+
+    expect(logic.newznabRowsChanged(baseline, longer)).toBe(true);
+  });
+
   it('padding only: a trim-only edit that stores the same text is not a change', () => {
     const { baseline, entries } = start('newznab_two_stored');
     entries[0].host = ` ${entries[0].host} `;
@@ -599,22 +615,71 @@ function generator(seed: number) {
 describe('property: whatever is done on screen, hidden rows and untouched rows are never altered', () => {
   const WITH_ROWS = ALIGNED.filter((fixture) => fixture !== 'fresh_defaults');
 
+  // The test's own account of what each entry must become, kept by entry OBJECT and
+  // never read from `built.origins`, so a wrong origin cannot vouch for itself.
+  function modelRows(baseline: Baseline, entries: Entry[]): Row[] {
+    const out: Row[] = [];
+    baseline.rows.forEach((row, index) => {
+      const entry = entries.find((candidate) => candidate.source === index);
+      if (!entry) {
+        if (!baseline.shown[index]) out.push({ ...row });
+        return;
+      }
+      if (entry.host === row.host && entry.api_key === row.api_key) { out.push({ ...row }); return; }
+      const host = entry.host.trim();
+      if (host) out.push({ ...row, host, api_key: entry.api_key.trim() });
+    });
+    for (const entry of entries) {
+      if (entry.source === null && entry.host.trim()) {
+        out.push({ ...DEFAULTS, host: entry.host.trim(), api_key: entry.api_key.trim() } as Row);
+      }
+    }
+    return out.length ? out : [{ ...EMPTY_ROW }];
+  }
+
   it.each(WITH_ROWS)('%s: 200 random sequences of edits, removals and additions', (fixture) => {
     const random = generator(fixture.length * 7919);
     for (let round = 0; round < 200; round += 1) {
       const { baseline, entries } = start(fixture);
-      const steps = 1 + Math.floor(random() * 5);
+      const steps = 1 + Math.floor(random() * 6);
+      let serial = 0;
+      // Every typed value is unique to its entry and field, so a cell that lands on the
+      // wrong row is never equal to the one it should have been.
+      const token = (kind: string) => `${kind}-${round}-${serial++}`;
       for (let step = 0; step < steps; step += 1) {
         const pick = Math.floor(random() * entries.length);
-        const action = Math.floor(random() * 5);
-        if (action === 0 && entries[pick]) { entries[pick].host = `https://placeholder-r${round}.invalid/api`; }
-        else if (action === 1 && entries[pick]) { entries[pick].api_key = `placeholder-key-r${round}`; }
+        const action = Math.floor(random() * 7);
+        if (action === 0 && entries[pick]) { entries[pick].host = `https://placeholder-${token('host')}.invalid/api`; }
+        else if (action === 1 && entries[pick]) { entries[pick].api_key = `placeholder-${token('key')}`; }
         else if (action === 2 && entries.length > 1) entries.splice(pick, 1);
-        else if (action === 3) entries.push({ host: `https://placeholder-add${round}.invalid/api`, api_key: 'placeholder-key-add', source: null });
+        else if (action === 3) entries.push({ host: `https://placeholder-${token('add')}.invalid/api`, api_key: `placeholder-${token('addkey')}`, source: null });
+        else if (action === 4) {
+          // Two or three stored rows edited in one round, host and key each.
+          for (const entry of entries.slice(0, 2 + Math.floor(random() * 2))) {
+            entry.host = `https://placeholder-${token('multi')}.invalid/api`;
+            entry.api_key = ` placeholder-${token('multikey')} `;
+          }
+        }
+        else if (action === 5) {
+          // Two rows added in one round.
+          for (let added = 0; added < 2; added += 1) {
+            entries.push({ host: ` https://placeholder-${token('pair')}.invalid/api `, api_key: `placeholder-${token('pairkey')}`, source: null });
+          }
+        }
         else if (entries[pick]) { entries[pick].host = ''; }
       }
 
       const built = build(baseline, entries);
+
+      expect(built.rows, `${fixture} round ${round}: rows against the independent model`).toEqual(modelRows(baseline, entries));
+      // Host and key travel together: a unique typed host is saved beside the key typed in the SAME entry.
+      for (const entry of entries) {
+        const host = entry.host.trim();
+        if (!host || !/-\d+-\d+\.invalid/.test(host)) continue;
+        const rows = built.rows.filter((row) => row.host === host);
+        expect(rows, `${fixture} round ${round}: ${host} saved once`).toHaveLength(1);
+        expect(rows[0].api_key, `${fixture} round ${round}: key beside ${host}`).toBe(entry.api_key.trim());
+      }
 
       const hiddenBefore = baseline.rows.filter((_, index) => !baseline.shown[index]);
       const synthetic = built.rows.length === 1 && built.rows[0].host === '' && built.rows[0].use === '';
