@@ -226,13 +226,13 @@
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
                 <div class="flex gap-2 items-center">
                   <input type="text" :aria-label="'Newznab indexer URL ' + (idx + 1)" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'"
-                         x-model="entry.host" @input="clearNewznabMark(idx, 'host')" :readonly="saving" data-newznab-host
+                         x-model="entry.host" :readonly="saving" data-newznab-host
                          :aria-invalid="newznabMarked(idx, 'host') ? 'true' : null"
                          :aria-describedby="newznabMarked(idx, 'host') ? 'wizard-newznab-error' : null"
                          :class="newznabMarked(idx, 'host') ? 'border-cp-danger' : 'border-white/[0.06]'"
                          class="flex-[2] min-w-0 bg-white/[0.03] border rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <input type="password" :aria-label="'Newznab API key ' + (idx + 1)" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
-                         @input="clearNewznabMark(idx, 'api_key')" :readonly="saving" data-newznab-key
+                         :readonly="saving" data-newznab-key
                          :aria-invalid="newznabMarked(idx, 'api_key') ? 'true' : null"
                          :aria-describedby="newznabMarked(idx, 'api_key') ? 'wizard-newznab-error' : null"
                          :class="newznabMarked(idx, 'api_key') ? 'border-cp-danger' : 'border-white/[0.06]'"
@@ -2241,17 +2241,11 @@ function setupWizard() {
       return !!this.newznabMarks[field + ':' + idx];
     },
 
-    // The user changed an input: its mark is out of date. When no input is marked any more,
-    // the message about them goes too.
-    clearNewznabMark(idx, field) {
-      const key = field + ':' + idx;
-      if (!this.newznabMarks[key]) return;
-      const rest = { ...this.newznabMarks };
-      delete rest[key];
-      this.newznabMarks = rest;
-      if (Object.keys(rest).length === 0) this.newznabError = '';
-    },
-
+    // A refusal stays, message and marks, while the user edits (AC-A11Y-17): typing never clears
+    // it, so the instruction is still there when the problem is fixed. It is cleared here only
+    // when Continue next runs its check (and shown again if the problem remains), when Newznab is
+    // switched off, and on ANY row add or remove: marks and "Indexer N" are by position, which an
+    // add or remove shifts, so a kept message could name the wrong row.
     clearNewznabError() {
       this.newznabError = '';
       this.newznabMarks = {};

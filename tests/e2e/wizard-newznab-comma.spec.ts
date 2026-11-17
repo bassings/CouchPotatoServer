@@ -341,24 +341,114 @@ test.describe('a refusal from the server is shown on the row it is about', () =>
   });
 });
 
-test.describe('the marks and the message clear when the cause does', () => {
-  test('typing in the marked input clears its mark and the message; switching Newznab off clears the rest', async ({ page }) => {
+// Owner decision 2026-11-18 (AC-A11Y-17): a refusal stays, message and marks, while the user
+// edits. It goes when Continue next runs its check (and comes back if the problem remains),
+// when Newznab is switched off, and when a row is added or removed.
+test.describe('the message and the marks stay until the next Continue', () => {
+  const REFUSED_KEY = 'Indexer 1: the API key cannot contain a comma';
+
+  test('typing in the marked input changes neither the mark nor the message, and announces nothing', async ({ page }) => {
+    await recordSaves(page);
+    const assertive = await watchAssertive(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
+    await expectRefused(page, REFUSED_KEY, { n: 1, field: 'API key' });
+    const before = await assertive();
+
+    await keyInput(page, 1).fill('placeholder-key-a');
+    await keyInput(page, 1).pressSequentially('-more');
+    await settle(page);
+
+    await expect(keyInput(page, 1)).toHaveAttribute('aria-invalid', 'true');
+    await expect(keyInput(page, 1)).toHaveAttribute('aria-describedby', 'wizard-newznab-error');
+    await expect(errorMessage(page)).toContainText(REFUSED_KEY);
+    expect(await assertive(), 'typing made a live region speak').toEqual(before);
+  });
+
+  test('typing in another input leaves the marked one marked and the message in place', async ({ page }) => {
+    await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
+    await continueButton(page).click();
+    await expect(errorMessage(page)).toContainText(REFUSED_KEY);
+
+    await urlInput(page, 1).fill('https://indexer-z.invalid');
+
+    await expect(keyInput(page, 1)).toHaveAttribute('aria-invalid', 'true');
+    await expect(errorMessage(page)).toContainText(REFUSED_KEY);
+  });
+
+  test('Continue replaces the old message and marks with what is now wrong', async ({ page }) => {
     await recordSaves(page);
     await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
     await continueButton(page).click();
     await expect(keyInput(page, 1)).toHaveAttribute('aria-invalid', 'true');
 
     await keyInput(page, 1).fill('placeholder-key-a');
+    await urlInput(page, 1).fill('https://indexer-a.invalid,https://indexer-b.invalid');
+    await continueButton(page).click();
 
+    await expect(errorMessage(page)).toContainText('Indexer 1: the URL cannot contain a comma');
+    await expect(errorMessage(page)).not.toContainText('API key');
+    await expect(urlInput(page, 1)).toHaveAttribute('aria-invalid', 'true');
     await expect(keyInput(page, 1)).not.toHaveAttribute('aria-invalid', 'true');
-    await expect(keyInput(page, 1)).not.toHaveAttribute('aria-describedby', /./);
-    await expect(errorMessage(page)).toBeHidden();
+    await expect(page.locator('[aria-invalid="true"]')).toHaveCount(1);
+  });
 
-    await keyInput(page, 1).fill(`placeholder-key-a,${SECRET_PART}`);
+  test('a Continue that goes through leaves no message or mark behind when the user comes back', async ({ page }) => {
+    await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
     await continueButton(page).click();
     await expect(errorMessage(page)).toBeVisible();
-    await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
+
+    await keyInput(page, 1).fill('placeholder-key-a');
+    await continueButton(page).click();
+    await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+    await page.getByRole('button', { name: /Back/ }).click();
+    await expect(providersHeading(page)).toBeVisible();
+
     await expect(errorMessage(page)).toBeHidden();
+    await expect(page.locator('[aria-invalid="true"]')).toHaveCount(0);
+    await expect(page.locator('[data-newznab-card] [aria-describedby="wizard-newznab-error"]')).toHaveCount(0);
+  });
+
+  test('switching Newznab off clears it', async ({ page }) => {
+    await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
+    await continueButton(page).click();
+    await expect(errorMessage(page)).toBeVisible();
+
+    await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
+
+    await expect(errorMessage(page)).toBeHidden();
+  });
+
+  // Marks and the "Indexer N" wording are by row position, and a removed or added row shifts or
+  // adds positions, so ANY add or remove clears the message and every mark (a message must never
+  // name the wrong row, and a mark on a removed row has nothing to mark).
+  test('removing a row clears the message and every mark, so it never names the wrong row', async ({ page }) => {
+    await recordSaves(page);
+    await openWithRows(page, [
+      { host: 'https://indexer-a.invalid', key: 'placeholder-key-a' },
+      { host: 'https://indexer-b.invalid', key: `placeholder-key-b,${SECRET_PART}` },
+    ]);
+    await continueButton(page).click();
+    await expect(errorMessage(page)).toContainText('Indexer 2: the API key cannot contain a comma');
+
+    await page.getByRole('button', { name: /^Remove indexer 1$/i }).click();
+
+    await expect(errorMessage(page)).toBeHidden();
+    await expect(page.locator('[aria-invalid="true"]')).toHaveCount(0);
+  });
+
+  test('adding a row clears the message and every mark', async ({ page }) => {
+    await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
+    await continueButton(page).click();
+    await expect(errorMessage(page)).toBeVisible();
+
+    await page.getByRole('button', { name: '+ Add another indexer' }).click();
+
+    await expect(errorMessage(page)).toBeHidden();
+    await expect(page.locator('[aria-invalid="true"]')).toHaveCount(0);
   });
 });
 
