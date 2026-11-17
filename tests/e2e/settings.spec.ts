@@ -1877,7 +1877,7 @@ for (const { name, row, key, focus } of REMOVE_CASES) {
       expect(await focusedControl(page)).toBe(focus);
       await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
       // Bounded settle before the negative reads.
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(300); // wait-for-timeout-ok: forbidden-event=second-removal-announcement
       expect(await page.evaluate(() => (window as any).__heard)).toEqual([`Row ${row} removed`]);
       await expect(page.getByTestId('settings-announcer-polite')).toHaveText(`Row ${row} removed`);
       expect(net.groupSaves()).toHaveLength(1);
