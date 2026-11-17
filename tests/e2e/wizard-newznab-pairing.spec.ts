@@ -222,6 +222,69 @@ test.describe('the stored shapes, as the wizard shows them', () => {
   });
 });
 
+// The server's verdict decides: an all-empty column LONGER than the others is aligned (the
+// Definitions ignore it), so the wizard must load it, not call it unreadable.
+test.describe('an all-empty `use` column longer than host and key', () => {
+  test.describe('no change', () => {
+    test.use({ seedConfig: 'newznab_use_column_long#wizard-long-use-no-change' });
+
+    test('loads both indexers and a run that changes nothing writes nothing', async ({ page, testServer }) => {
+      test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+      const requests = await recordWizardRequests(page);
+      const before = configColumns(testServer.configPath, 'newznab');
+
+      await openProvidersStep(page);
+      await expect(page.getByTestId('wizard-newznab-error')).toBeHidden();
+      await expect(urlInput(page, 1)).toHaveValue(TWO_HOSTS[0]);
+      await expect(urlInput(page, 2)).toHaveValue(TWO_HOSTS[1]);
+      await expect(urlInput(page, 3)).toHaveCount(0);
+      await advance(page);
+
+      expect(requests.groupSaves()).toEqual([]);
+      expect(configColumns(testServer.configPath, 'newznab')).toEqual(before);
+    });
+  });
+
+  test.describe('one edit', () => {
+    test.use({ seedConfig: 'newznab_use_column_long#wizard-long-use-edit' });
+
+    test('changes that row only; the other rows keep their cells, the short columns are padded to six', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      expect(original).toHaveLength(6);
+      await openProvidersStep(page);
+
+      await urlInput(page, 1).fill('https://placeholder-one-moved.invalid/api');
+      await advance(page);
+
+      const expected = original.map((row, i) => (i === 0 ? { ...row, host: 'https://placeholder-one-moved.invalid/api' } : row));
+      const after = configColumns(testServer.configPath, 'newznab');
+      expect(rowsOf(after)).toEqual(expected);
+      for (const name of NEWZNAB_COLUMNS) expect((after[name] ?? '').split(','), `${name} is not padded to six cells`).toHaveLength(6);
+      expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+    });
+  });
+});
+
+test.describe('two hosts and an all-empty key column of six cells', () => {
+  test.use({ seedConfig: 'newznab_key_column_long#wizard-long-key' });
+
+  test('loads as one blank row, and nothing is written when nothing is typed', async ({ page, testServer }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    const requests = await recordWizardRequests(page);
+    const before = configColumns(testServer.configPath, 'newznab');
+
+    await openProvidersStep(page);
+    await expect(page.getByTestId('wizard-newznab-error')).toBeHidden();
+    await newznabSwitch(page).click();
+    await expect(urlInput(page, 1)).toHaveValue('');
+    await advance(page);
+
+    expect(requests.groupSaves()).toEqual([]);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(before);
+  });
+});
+
 test.describe('a read that has not completed is never "no stored indexers"', () => {
   const FAILURES: [string, { status: number; body: string }][] = [
     ['an HTTP 500', { status: 500, body: '{"success": false}' }],

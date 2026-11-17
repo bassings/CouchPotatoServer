@@ -72,6 +72,8 @@ const ALIGNED = [
   'newznab_interleaved',
   'newznab_hostless',
   'newznab_hostile_cells',
+  'newznab_use_column_long',
+  'newznab_key_column_long',
 ];
 const MISALIGNED = ['newznab_misaligned_key_short', 'newznab_misaligned_use_short'];
 const COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
@@ -183,6 +185,54 @@ describe('reading the stored rows', () => {
 
     expect(read.ok).toBe(true);
     expect(read.rows!.map((row) => row.use)).toEqual(['', '0']);
+  });
+
+  describe('the server\'s verdict is the authority: an all-empty column longer than the others is aligned', () => {
+    it('an all-empty `use` column of six cells beside two stored indexers: six rows, two shown, the rest padded blank', () => {
+      const { read, entries } = start('newznab_use_column_long');
+
+      expect(read.rows).toHaveLength(6);
+      expect(read.shown).toEqual([true, true, false, false, false, false]);
+      expect(read.rows![2]).toEqual({ use: '', host: '', api_key: '', extra_score: '0', custom_tag: '' });
+      expect(entries.map((entry) => entry.source)).toEqual([0, 1]);
+      expect(logic.newznabShownEnabled(read)).toBe(true);
+    });
+
+    it('two hosts and an all-empty `api_key` of six cells: six rows, none a stored indexer, one blank entry', () => {
+      const { read, entries } = start('newznab_key_column_long');
+
+      expect(read.rows).toHaveLength(6);
+      expect(read.shown).toEqual([false, false, false, false, false, false]);
+      expect(read.rows![1].host).toBe('https://placeholder-two.invalid/api');
+      expect(entries).toEqual([{ host: '', api_key: '', source: null }]);
+    });
+
+    it('every pairing column empty and the row count one too high: the server is trusted, one blank row is padded, no indexer is touched', () => {
+      const payload = view('fresh_defaults');
+      for (const column of ['host', 'api_key', 'use']) payload.values.newznab[column] = ',';
+      payload.combine_state.newznab.rows = 3;
+
+      const read = logic.newznabReadStored(payload);
+
+      expect(read.ok).toBe(true);
+      expect(read.rows).toHaveLength(3);
+      expect(read.shown).toEqual([false, false, false]);
+      expect(read.rows![2]).toMatchObject({ host: '', api_key: '' });
+    });
+
+    it('a pairing column with MORE cells than the row count is malformed, never padded or cut', () => {
+      const payload = view('newznab_two_stored');
+      payload.values.newznab.host = `${payload.values.newznab.host},https://placeholder-three.invalid/api`;
+
+      expect(logic.newznabReadStored(payload).ok).toBe(false);
+    });
+
+    it('two filled pairing columns of different lengths that the server did not flag are malformed (padding would mispair them)', () => {
+      const payload = view('newznab_use_column_long');
+      payload.values.newznab.use = '1,0,1,0';
+
+      expect(logic.newznabReadStored(payload).ok).toBe(false);
+    });
   });
 
   describe('a read that is not a complete, trustworthy answer is NOT an empty install', () => {

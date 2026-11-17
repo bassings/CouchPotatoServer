@@ -782,6 +782,27 @@ def _fixture_newznab_sentinels():
     )
 
 
+def _fixture_newznab_use_column_long():
+    """Two stored indexers whose `use` column is all-empty and LONGER than `host` and
+    `api_key`. The Definitions ignore an all-empty pairing column, so this is aligned,
+    and its row count is the longest column's: six."""
+    return _newznab(
+        use=_cells('', '', '', '', '', ''),
+        host=_cells('https://placeholder-one.invalid/api', 'https://placeholder-two.invalid/api'),
+        api_key=_cells('placeholder-key-one', 'placeholder-key-two'),
+    )
+
+
+def _fixture_newznab_key_column_long():
+    """Two hosts and an all-empty `api_key` of six cells: aligned, six rows, and no stored
+    indexer (a host with no key is hidden)."""
+    return _newznab(
+        use=_cells('1', '0'),
+        host=_cells('https://placeholder-one.invalid/api', 'https://placeholder-two.invalid/api'),
+        api_key=_cells('', '', '', '', '', ''),
+    )
+
+
 def _fixture_itunes_shipped():
     """The shipped iTunes default, written explicitly: a URL then a comma."""
     return {'itunes': {
@@ -865,6 +886,8 @@ _CONFIG_FIXTURES = {
     'newznab_hostless': _fixture_newznab_hostless,
     'newznab_hostile_cells': _fixture_newznab_hostile_cells,
     'newznab_sentinels': _fixture_newznab_sentinels,
+    'newznab_use_column_long': _fixture_newznab_use_column_long,
+    'newznab_key_column_long': _fixture_newznab_key_column_long,
     'itunes_shipped': _fixture_itunes_shipped,
     'torrentpotato_aligned': _fixture_torrentpotato_aligned,
     'torrentpotato_misaligned': _fixture_torrentpotato_misaligned,

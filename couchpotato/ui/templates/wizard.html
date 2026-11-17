@@ -1105,11 +1105,18 @@ function newznabSplitColumns(values) {
   return cells;
 }
 
-// A pairing column that holds anything must have exactly the row count. The server
-// flags a group where they differ as misaligned; if it did not and they differ, the
-// read is inconsistent and is not trusted.
+// The server's verdict (misaligned or not, and the row count) is the authority, and a
+// short column is padded as the server's group_stored_rows pads it, so a stored shape the
+// server calls aligned is never refused here (an all-empty column longer than the others
+// is aligned: it is ignored). What is checked is only that the answer is consistent in a
+// way that padding could not make safe: no pairing column has more cells than rows, and
+// the pairing columns that hold anything agree with each other (else padding would pair
+// them wrongly). A group of all-empty pairing columns is trusted: padding it writes blank
+// rows, never a mispaired one.
 function newznabCountsAgree(cells, pairing, count) {
-  return pairing.every((column) => !cells[column].some((cell) => cell.trim() !== '') || cells[column].length === count);
+  if (pairing.some((column) => cells[column].length > count)) return false;
+  const filled = pairing.filter((column) => cells[column].some((cell) => cell.trim() !== ''));
+  return new Set(filled.map((column) => cells[column].length)).size <= 1;
 }
 
 function newznabStoredRows(payload, cells, pairing, count) {
