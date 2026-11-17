@@ -126,7 +126,75 @@ When running, FastAPI provides automatic OpenAPI documentation:
 | Endpoint | Description |
 |----------|-------------|
 | `settings` | Get all settings |
-| `settings.save` | Save settings |
+| `settings.save` | Save one setting. Refuses the columns of a multi-row group, and option names the config file cannot hold, such as an empty one (see below) |
+| `settings.save_group` | Save every column of one multi-row group in one request |
+
+#### Multi-row groups: `settings.save_group`
+
+Newznab and Torrentpotato indexers, and the IMDB, iTunes and Letterboxd
+automation lists, are stored as comma-separated columns that the readers pair
+by position. They are saved as a unit, so a row can never be paired with another
+row's key. Which settings these are comes from the `combine` declarations the
+providers register (`settings` returns each group's columns and state), not from
+a list kept here.
+
+**Request.** `POST /api/<api_key>/settings.save_group/` with
+`Content-Type: application/json` and a body of exactly two keys:
+
+```json
+{"section": "newznab", "rows": [{"use": "1", "host": "https://indexer.example", "api_key": "...", "extra_score": "0", "custom_tag": ""}]}
+```
+
+Each row is an object holding every column of the group as a string (a comma, a
+control character or a missing or unknown column is refused). The server writes
+every column from the rows and saves once, or saves nothing. Any other method,
+any content type but `application/json`, any query parameter other than the
+cache-buster `t`, or an extra or missing top-level key is refused with HTTP 400.
+
+**Success.** `{"success": true}`. The body never carries a cell value.
+
+**Refusal.** `{"success": false, "error": "<fixed text>", "invalid": [{"row": 1,
+"column": "host", "reason": "comma"}]}`. `row` is the 0-based row as sent and
+`column` the column name; both are `null` when the whole request is at fault.
+`reason` is one of `comma`, `control_character`, `not_string`, `not_encodable`,
+`missing_column`, `unknown_column`, `not_writable`, `unknown_section`,
+`malformed`, `misaligned`. The response names rows and columns and never a
+value. A refused save leaves `config.ini` and the in-memory settings unchanged.
+A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
+
+**Events.** A group save fires no `setting.save.<section>.<option>` event (nor
+`.after` or `.committed`): it sets the columns and saves directly. No hook is
+registered for any column of these groups today.
+
+**Where an operator finds a refusal.** One WARNING per refused save in the log,
+with no value, in one of three forms:
+
+- a refused group save: `Refused a settings group save: section=... first_row=...
+  first_column=... reason=... offences=N`;
+- a request that was not a JSON POST of exactly `section` and `rows` (HTTP 400):
+  `Refused a settings group save: the request was not a JSON POST of exactly the
+  expected keys`, which names nothing the caller sent;
+- a per-column save through `settings.save` that was refused: `Refused a
+  per-column save of "section.option": it is saved with its group, not on its
+  own` (the registered column, never the caller's spelling), or `Refused a
+  settings save: the option name is not allowed (section=...)`, or `Refused a
+  settings save: the section or the option name was not text`.
+
+> **Breaking change for scripts.** `settings.save` now refuses every column of
+> a multi-row group, in any case or with leading or trailing whitespace in the
+> name (`host`, `API_KEY`, ` host `). It returns
+> `{"success": false, "error": "\"newznab.host\" is saved together with the rest
+> of its group, not on its own. ..."}`, writes nothing, fires no hook and logs
+> one WARNING naming `section.option` and no value. Scripts that wrote these
+> columns one at a time must send the whole group to `settings.save_group`. A
+> Settings tab opened before the upgrade shows the same text in its error toast
+> until it is reloaded. Options outside a group (`newznab.enabled`,
+> `newznab.custom_categories`, `torrentpotato.jackett_url`, and every other
+> setting) still save one at a time. Separately, `settings.save` refuses, for every section, any
+> option name that is empty, contains whitespace, a control character, `=` or `:`, or starts
+> with `[`, `#` or `;` (the config file cannot hold them: `=` and `:` break every
+> later save until restart, and a leading `#` or `;` reloads as a comment), and a
+> `section` or `name` that is not text. The name is never echoed in the refusal.
 
 ### Downloaders
 
