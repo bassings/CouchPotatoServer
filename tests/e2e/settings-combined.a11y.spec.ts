@@ -287,6 +287,72 @@ for (const theme of THEMES) {
     });
   });
 
+  test.describe(`removing a row from the Newznab field (${theme} theme)`, () => {
+    test.use({ seedConfig: `newznab_aligned#a11y-removal-${theme}` });
+
+    /** Save stubbed as a success: nothing is written, and the page behaves as after a real one. */
+    async function stubSave(page: Page) {
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+      }));
+    }
+
+    async function removeByKeyboard(page: Page, card: Locator, row: number) {
+      await card.getByLabel(`custom tag for row ${row}`, { exact: true }).focus();
+      await page.keyboard.press('Tab');
+      await expect(card.getByRole('button', { name: `Remove row ${row}`, exact: true })).toBeFocused();
+      const saved = page.waitForResponse((response) => response.url().includes('settings.save_group'));
+      await page.keyboard.press('Enter');
+      await saved;
+    }
+
+    const axeViolations = async (page: Page) => (await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze()).violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(' ')).join(' | ')}`);
+
+    test('after a removal the polite region says so, focus is on a control, and axe reports nothing', async ({ page }) => {
+      await stubSave(page);
+      const card = await openSearchers(page, theme);
+
+      await removeByKeyboard(page, card, 3);
+
+      // Preconditions: the removal happened, so the state axe reads is the one under test.
+      await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+      await expect(page.getByTestId('settings-announcer-polite')).toHaveText('Row 3 removed');
+      await expect(page.getByTestId('settings-announcer-assertive')).toHaveText('');
+      await expect(card.getByRole('button', { name: 'Remove row 2', exact: true })).toBeFocused();
+      await expectVisualTransitionsToSettle(page, `${theme} theme, row removed`);
+      expect(await axeViolations(page)).toEqual([]);
+    });
+
+    test('down to one row at 375px: no Remove control, focus on Add, columns still under their headers, no sideways scroll, axe clean', async ({ page }) => {
+      await stubSave(page);
+      await page.setViewportSize({ width: 375, height: 800 });
+      const card = await openSearchers(page, theme);
+
+      await removeByKeyboard(page, card, 1);
+      await removeByKeyboard(page, card, 1);
+
+      await expect(card.locator('button[aria-label^="Remove row"]')).toHaveCount(0);
+      await expect(card.getByRole('button', { name: 'Add row', exact: true })).toBeFocused();
+      await expectVisualTransitionsToSettle(page, `${theme} theme, one row at 375px`);
+      const layout = await card.evaluate((root) => {
+        const box = (element: Element) => { const { left, right } = element.getBoundingClientRect(); return { left, right }; };
+        const headers = [...root.querySelectorAll('[data-testid="combine-headers"] > span')].map(box);
+        const cells = [...root.querySelectorAll('[data-testid="combine-row-cells"] > :not(template)')].map(box);
+        return { headers, cells, scroll: document.scrollingElement!.scrollWidth, viewport: document.documentElement.clientWidth };
+      });
+      expect(layout.cells.length).toBeGreaterThan(4);
+      expect(layout.headers).toHaveLength(layout.cells.length);
+      layout.cells.forEach((cell, index) => {
+        expect(Math.abs(cell.left - layout.headers[index].left), `column ${index} left edge`).toBeLessThanOrEqual(1);
+        expect(Math.abs(cell.right - layout.headers[index].right), `column ${index} right edge`).toBeLessThanOrEqual(1);
+      });
+      expect(layout.scroll).toBeLessThanOrEqual(layout.viewport);
+      expect(await axeViolations(page)).toEqual([]);
+    });
+  });
+
   for (const [name, width] of [['a 320px viewport', 320], ['200% zoom on a 1280px viewport (640 CSS px)', 640]] as const) {
     test.describe(`reflow at ${name} (${theme} theme)`, () => {
       test.use({ seedConfig: `newznab_misaligned_key_short#a11y-reflow-${theme}-${width}` });

@@ -1806,3 +1806,118 @@ test.describe('Settings: no combine column is ever saved on its own, and no cell
     expect(net.seen.filter((request) => request.url.includes('sentinel'))).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEC-004 P4: removing a row. No Remove control on a single row (AC-DESIGN-8), and focus
+// lands on a live control with the removal announced once (AC-A11Y-7). Every removal here
+// is driven by the keyboard, the way the criterion is worded.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SEEDED_ROWS = {
+  use: ['1', '0', '1'],
+  host: NEWZNAB_HOSTS,
+  api_key: NEWZNAB_KEYS,
+  extra_score: ['5', '10', '15'],
+  custom_tag: ['tag-one', 'tag-two', 'tag-three'],
+};
+
+/** What config.ini must hold once the rows at `removed` (0-based) are gone: every column, same rows. */
+function rowsWithout(...removed: number[]) {
+  const keep = (cells: string[]) => cells.filter((_, index) => !removed.includes(index)).join(',');
+  return Object.fromEntries(Object.entries(SEEDED_ROWS).map(([column, cells]) => [column, keep(cells)]));
+}
+
+/** Where focus is, as a name a failure message can show: the body is the failure this guards. */
+const focusedControl = (page: Page) => page.evaluate(() => {
+  const active = document.activeElement;
+  if (!active || active === document.body) return 'body';
+  return `${active.tagName.toLowerCase()}:${active.getAttribute('aria-label') ?? ''}`;
+});
+
+/** Reach Remove for `row` (1-based) with the keyboard alone, press it, and wait for the one group save. */
+async function removeRowByKeyboard(page: Page, card: Locator, row: number, key = 'Enter') {
+  await card.getByLabel(`custom tag for row ${row}`, { exact: true }).focus();
+  await page.keyboard.press('Tab');
+  expect(await focusedControl(page)).toBe(`button:Remove row ${row}`);
+  const answered = groupSaveResponse(page);
+  await page.keyboard.press(key);
+  await page.clock.fastForward(600);
+  expect((await (await answered).json()).success).toBe(true);
+  await page.waitForLoadState('networkidle');
+}
+
+const REMOVE_CASES = [
+  { name: 'first', row: 1, key: 'Enter', focus: 'button:Remove row 1' },
+  { name: 'middle', row: 2, key: 'Space', focus: 'button:Remove row 2' },
+  { name: 'last', row: 3, key: 'Enter', focus: 'button:Remove row 2' },
+] as const;
+
+for (const { name, row, key, focus } of REMOVE_CASES) {
+  test.describe(`Settings: removing the ${name} of three newznab rows by keyboard`, () => {
+    test.use({ seedConfig: `newznab_aligned#remove-${name}-by-keyboard` });
+
+    test('focus stays on a Remove control, the removal is announced once, one group save, rows still aligned', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      const net = await recordRequests(page);
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+      await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(3);
+      // Armed before the keypress: every time the polite region comes to hold the text.
+      await page.evaluate(() => {
+        const heard: string[] = [];
+        (window as any).__heard = heard;
+        const region = document.querySelector('[data-testid="settings-announcer-polite"]') as HTMLElement;
+        new MutationObserver(() => { if (region.textContent) heard.push(region.textContent); })
+          .observe(region, { subtree: true, childList: true, characterData: true });
+      });
+
+      await removeRowByKeyboard(page, card, row, key);
+
+      expect(await focusedControl(page)).toBe(focus);
+      await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+      // Bounded settle before the negative reads.
+      await page.waitForTimeout(300);
+      expect(await page.evaluate(() => (window as any).__heard)).toEqual([`Row ${row} removed`]);
+      await expect(page.getByTestId('settings-announcer-polite')).toHaveText(`Row ${row} removed`);
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(row - 1));
+      const columns = configColumns(testServer.configPath, 'newznab');
+      const keptHosts = (columns.host ?? '').split(',');
+      const keptKeys = (columns.api_key ?? '').split(',');
+      expect(keptKeys).toEqual(keptHosts.map((host) => NEWZNAB_KEYS[NEWZNAB_HOSTS.indexOf(host)]));
+    });
+  });
+}
+
+test.describe('Settings: removing down to one newznab row', () => {
+  test.use({ seedConfig: 'newznab_aligned#remove-down-to-one' });
+
+  test('the last Remove control is gone, focus goes to Add, and a new row brings Remove back on both', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    const removes = card.getByRole('button', { name: /^Remove row/ });
+
+    await removeRowByKeyboard(page, card, 1);
+    await expect(removes).toHaveCount(2);
+    await removeRowByKeyboard(page, card, 1);
+
+    expect(await focusedControl(page)).toBe('button:Add row');
+    await expect(removes).toHaveCount(0);
+    expect(await card.locator('button[aria-label^="Remove row"]').count()).toBe(0);
+    expect(net.groupSaves()).toHaveLength(2);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(0, 1));
+
+    await page.keyboard.press('Enter');
+    await expect(removes).toHaveCount(2);
+    await expect(card.getByRole('button', { name: 'Remove row 1', exact: true })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Remove row 2', exact: true })).toBeVisible();
+    // Adding saves nothing by itself.
+    await page.clock.fastForward(5000);
+    await page.waitForLoadState('networkidle');
+    expect(net.groupSaves()).toHaveLength(2);
+  });
+});
