@@ -31,6 +31,7 @@ import sys
 import time
 
 ALREADY_PRESENT = 'already present'
+CONFIG_FILE_NAME = 'config.ini'
 
 # --- sys.path bootstrap -----------------------------------------------------
 # Mirrors scripts/migrate_codernity_to_sqlite.py: this script must be
@@ -555,7 +556,7 @@ def _bind_to_loopback(data_dir):
               'host)' % data_dir)
         return False
 
-    config_file = os.path.join(data_dir, 'config.ini')
+    config_file = os.path.join(data_dir, CONFIG_FILE_NAME)
     parser = configparser.RawConfigParser()
     if os.path.exists(config_file):
         parser.read(config_file, encoding='utf-8')
@@ -611,7 +612,7 @@ def _enable_authentication(data_dir, plaintext):
             'a credential from a test script' % data_dir
         )
 
-    config_file = os.path.join(data_dir, 'config.ini')
+    config_file = os.path.join(data_dir, CONFIG_FILE_NAME)
     parser = configparser.RawConfigParser()
     if os.path.exists(config_file):
         parser.read(config_file, encoding='utf-8')
@@ -832,7 +833,7 @@ def apply_config_fixture(data_dir, name):
             'and the fixture would overwrite real settings' % data_dir
         )
 
-    config_file = os.path.join(data_dir, 'config.ini')
+    config_file = os.path.join(data_dir, CONFIG_FILE_NAME)
     parser = configparser.RawConfigParser()
     if os.path.exists(config_file):
         parser.read(config_file, encoding='utf-8')

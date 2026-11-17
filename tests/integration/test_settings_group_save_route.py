@@ -666,7 +666,7 @@ class TestTheSettingsReadCarriesGroupState:
         return response.json()
 
     def test_a_misaligned_group_is_flagged_through_the_real_http_read(self, tmp_path, monkeypatch):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'scripts'))
+        monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent.parent / 'scripts'))
         import seed_e2e_data
 
         stored = seed_e2e_data.config_fixture('newznab_misaligned_key_short')

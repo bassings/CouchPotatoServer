@@ -725,7 +725,7 @@ function settingsPanel() {
       const known = Number.isInteger(entry.row) && entry.row >= 0 && entry.row < group.rows.length
         && (group.opt.combine || []).includes(entry.column) && rules[entry.reason];
       if (!known) return '';
-      return 'Row ' + (entry.row + 1) + ': the ' + entry.column.replace(/_/g, ' ') + rules[entry.reason];
+      return 'Row ' + (entry.row + 1) + ': the ' + entry.column.replaceAll('_', ' ') + rules[entry.reason];
     },
 
     rejectGroup(group, payload) {
