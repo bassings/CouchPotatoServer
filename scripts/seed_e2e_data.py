@@ -769,6 +769,19 @@ def _fixture_newznab_hostile_cells():
     )
 
 
+def _fixture_newznab_sentinels():
+    """Two stored indexers with a distinctive word in every free-text cell (host, key and
+    tag), so a test can search every request URL, console line, live region and
+    visible text for one and know that it is a credential, not a coincidence."""
+    return _newznab(
+        use=_cells('1', '1'),
+        host=_cells('https://placeholder-sentinel-host-one.invalid/api', 'https://placeholder-sentinel-host-two.invalid/api'),
+        api_key=_cells('placeholder-sentinel-key-one', 'placeholder-sentinel-key-two'),
+        extra_score=_cells('5', '10'),
+        custom_tag=_cells('placeholder-sentinel-tag-one', 'placeholder-sentinel-tag-two'),
+    )
+
+
 def _fixture_itunes_shipped():
     """The shipped iTunes default, written explicitly: a URL then a comma."""
     return {'itunes': {
@@ -851,6 +864,7 @@ _CONFIG_FIXTURES = {
     'newznab_interleaved': _fixture_newznab_interleaved,
     'newznab_hostless': _fixture_newznab_hostless,
     'newznab_hostile_cells': _fixture_newznab_hostile_cells,
+    'newznab_sentinels': _fixture_newznab_sentinels,
     'itunes_shipped': _fixture_itunes_shipped,
     'torrentpotato_aligned': _fixture_torrentpotato_aligned,
     'torrentpotato_misaligned': _fixture_torrentpotato_misaligned,

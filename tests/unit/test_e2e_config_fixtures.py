@@ -41,6 +41,7 @@ CLASSIFICATION = {
     ('newznab_interleaved', 'newznab'): (False, 5),
     ('newznab_hostless', 'newznab'): (False, 4),
     ('newznab_hostile_cells', 'newznab'): (False, 3),
+    ('newznab_sentinels', 'newznab'): (False, 2),
     ('itunes_shipped', 'itunes'): (False, 2),
     ('torrentpotato_aligned', 'torrentpotato'): (False, 3),
     ('torrentpotato_misaligned', 'torrentpotato'): (True, 3),

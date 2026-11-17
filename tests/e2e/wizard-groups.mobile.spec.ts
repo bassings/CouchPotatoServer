@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import { Locator, Page } from '@playwright/test';
-import { mockSettingsSave } from './helpers';
+import { expectVisualTransitionsToSettle, mockSettingsSave, openProvidersStep, showWizardRefusal } from './helpers';
 
 
 async function expectGroupFitsPhone(group: Locator, page: Page, name: string) {
@@ -88,4 +88,70 @@ for (const theme of ['light', 'dark'] as const) {
     await expectGroupFitsPhone(usenet, page, 'Usenet client group');
     await expectGroupFitsPhone(torrent, page, 'Torrent client group');
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEC-004 P5 (AC-A11Y-12): the Newznab messages at 320 CSS px and at 640 CSS px (the
+// layout width of 200% zoom on a 1280px window, which Playwright cannot set directly),
+// in both themes. The full text is shown, nothing scrolls sideways, and the message's
+// box lies inside the viewport.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function expectMessageFits(page: Page, message: Locator, label: string) {
+  await expect(message).toBeVisible();
+  // The card fades in with a scale: measured mid-animation every box is a few percent short.
+  await expectVisualTransitionsToSettle(page, label);
+  const text = (await message.textContent())?.trim() ?? '';
+  expect(text.length, `${label} has no text`).toBeGreaterThan(20);
+  const box = await message.boundingBox();
+  const width = page.viewportSize()!.width;
+  expect(box, `${label} has no box`).not.toBeNull();
+  expect(Math.floor(box!.x), `${label} starts left of the viewport`).toBeGreaterThanOrEqual(0);
+  expect(Math.ceil(box!.x + box!.width), `${label} runs past the ${width}px viewport`).toBeLessThanOrEqual(width);
+  const scroll = await page.evaluate(() => ({ client: document.scrollingElement!.clientWidth, scroll: document.scrollingElement!.scrollWidth }));
+  expect(scroll.scroll, `${label} makes the page scroll sideways`).toBeLessThanOrEqual(scroll.client);
+  // Every word of it is rendered: nothing is clipped by an ancestor with overflow hidden.
+  const clipped = await message.evaluate((element) => element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1);
+  expect(clipped, `${label} is clipped`).toBe(false);
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  for (const width of [320, 640]) {
+    test.describe(`the Newznab card's messages at ${width}px (${theme} theme)`, () => {
+      test.use({ viewport: { width, height: 800 } });
+
+      test('a refused save shows its whole text inside the viewport', async ({ page }) => {
+        await showWizardRefusal(page, theme);
+
+        await expectMessageFits(page, page.locator('#wizard-newznab-error'), 'refusal');
+        await expect(page.getByLabel('Newznab indexer URL 1')).toBeFocused();
+      });
+
+      test.describe('a failed read', () => {
+        test.use({ seedConfig: `newznab_two_stored#wizard-reflow-read-failed-${theme}-${width}` });
+
+        test('shows its whole text and its retry button inside the viewport', async ({ page }) => {
+          await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+          await page.route(/\/settings\/(\?.*)?$/, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+          await openProvidersStep(page);
+
+          await expectMessageFits(page, page.locator('#wizard-newznab-error'), 'load error');
+          const retry = await page.getByRole('button', { name: 'Try loading them again' }).boundingBox();
+          expect(retry!.x + retry!.width).toBeLessThanOrEqual(width);
+          expect(retry!.height, 'the retry target is under 44px').toBeGreaterThanOrEqual(44);
+        });
+      });
+
+      test.describe('a misaligned stored group', () => {
+        test.use({ seedConfig: `newznab_misaligned_key_short#wizard-reflow-notice-${theme}-${width}` });
+
+        test('shows its whole notice inside the viewport', async ({ page }) => {
+          await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+          await openProvidersStep(page);
+
+          await expectMessageFits(page, page.getByTestId('combine-misaligned-notice').locator('p'), 'notice');
+        });
+      });
+    });
+  }
 }

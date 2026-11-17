@@ -406,8 +406,8 @@ function rowsOf(columns: Columns): StoredRow[] {
   return Array.from({ length: count }, (_, i) => Object.fromEntries(NEWZNAB_COLUMNS.map((name) => [name, cells[name][i] ?? ''])));
 }
 
-/** What `getHosts` must return for `rows`: (use, host, api_key, extra_score, custom_tag), in order. */
-const viewOf = (rows: StoredRow[]) => rows.map((row) => [row.use, row.host, row.api_key, Number(row.extra_score), row.custom_tag]);
+/** What `getHosts` must return for `rows`: (use, host, api_key, extra_score, custom_tag), in order. Every reader strips each cell, so the stored spaces are not in it. */
+const viewOf = (rows: StoredRow[]) => rows.map((row) => [row.use.trim(), row.host.trim(), row.api_key.trim(), Number(row.extra_score), row.custom_tag.trim()]);
 
 async function advance(page: Page) {
   await continueButton(page).click();
@@ -703,5 +703,174 @@ test.describe('Continue held with Enter', () => {
     await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
 
     expect(requests.groupSaves()).toHaveLength(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEC-004 P5 (stage 5): cells the wizard must not alter, the shapes only the
+// real reader can judge, and what must never leave the page.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test.describe('cells with %, +, &, = and an encoded comma', () => {
+  test.use({ seedConfig: 'newznab_hostile_cells#wizard-hostile-key' });
+
+  test('a key typed with them is stored as typed, and a later edit elsewhere leaves every cell byte-identical', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+    const typed = 'placeholder%key+and&equals=%2Cend';
+    await openProvidersStep(page);
+
+    await page.getByRole('button', { name: '+ Add another indexer' }).click();
+    await urlInput(page, 4).fill('https://placeholder-four.invalid/api?a=b&c=d+e');
+    await keyInput(page, 4).fill(typed);
+    await advance(page);
+
+    const afterFirst = rowsOf(configColumns(testServer.configPath, 'newznab'));
+    expect(afterFirst.slice(0, 3)).toEqual(original);
+    expect(afterFirst[3]).toEqual({ use: '1', host: 'https://placeholder-four.invalid/api?a=b&c=d+e', api_key: typed, extra_score: '0', custom_tag: '' });
+
+    // A reload, then an edit to a DIFFERENT row: every other cell, every column's count, unchanged.
+    await openProvidersStep(page);
+    await expect(keyInput(page, 4)).toHaveValue(typed);
+    await urlInput(page, 1).fill('https://placeholder-one-moved.invalid/api?x=a%2Cb&y=1+2=z');
+    await advance(page);
+
+    const afterSecond = rowsOf(configColumns(testServer.configPath, 'newznab'));
+    expect(afterSecond).toHaveLength(4);
+    expect(afterSecond.slice(1)).toEqual(afterFirst.slice(1));
+    expect(afterSecond[0]).toEqual({ ...afterFirst[0], host: 'https://placeholder-one-moved.invalid/api?x=a%2Cb&y=1+2=z' });
+    expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(afterSecond));
+  });
+});
+
+test.describe('a legacy bytes-literal stored group', () => {
+  test.use({ seedConfig: 'newznab_legacy_bytes#wizard-legacy-edit' });
+
+  test('is read as the rows it holds, and an edit rewrites it as plain rows with the other row intact', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await openProvidersStep(page);
+    await expect(urlInput(page, 2)).toHaveValue('https://placeholder-two.invalid/api');
+
+    await urlInput(page, 1).fill('https://placeholder-one-edited.invalid/api');
+    await advance(page);
+
+    const columns = configColumns(testServer.configPath, 'newznab');
+    for (const name of NEWZNAB_COLUMNS) expect(columns[name], `${name} still wrapped as a bytes literal`).not.toMatch(/^b'/);
+    const expected = [
+      { use: '1', host: 'https://placeholder-one-edited.invalid/api', api_key: 'placeholder-key-one', extra_score: '0', custom_tag: '' },
+      { use: '0', host: 'https://placeholder-two.invalid/api', api_key: 'placeholder-key-two', extra_score: '0', custom_tag: '' },
+    ];
+    expect(rowsOf(columns)).toEqual(expected);
+    expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+  });
+});
+
+test.describe('a hostless row that carries a key', () => {
+  test.use({ seedConfig: 'newznab_hostless#wizard-hostless-edit' });
+
+  test('survives an edit of a stored indexer: its key is still at its position, beside no host', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+    await openProvidersStep(page);
+
+    await urlInput(page, 2).fill('https://placeholder-bravo-moved.invalid/api');
+    await advance(page);
+
+    const expected = original.map((row, i) => (i === 3 ? { ...row, host: 'https://placeholder-bravo-moved.invalid/api' } : row));
+    expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+    expect(expected[2].api_key).toBe('placeholder-key-hostless');
+    expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+  });
+});
+
+test.describe('a whole wizard with two Newznab rows', () => {
+  test.use({ seedConfig: 'fresh_defaults#wizard-complete-two-rows' });
+
+  test('saves the group once, never a combine column on its own, and the reader pairs each key with its host', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const requests = await recordWizardRequests(page);
+    await openProvidersStep(page);
+    await newznabSwitch(page).click();
+    await page.getByRole('button', { name: '+ Add another indexer' }).click();
+    await urlInput(page, 1).fill('https://placeholder-first.invalid/api');
+    await keyInput(page, 1).fill('placeholder-key-first');
+    await urlInput(page, 2).fill('https://placeholder-second.invalid/api');
+    await keyInput(page, 2).fill('placeholder-key-second');
+
+    await advance(page);                                                   // Providers -> Downloader
+    await continueButton(page).click();                                    // Downloader -> Library
+    await page.getByRole('button', { name: 'Finish Setup' }).click();      // Library -> Done
+    await expect(page.getByRole('heading', { name: "You're All Set!" })).toBeVisible({ timeout: 10000 });
+
+    const combineNames = new Set(NEWZNAB_COLUMNS);
+    const perColumn = requests.columnSaves()
+      .map((request) => new URLSearchParams(request.body))
+      .filter((params) => params.get('section') === 'newznab' && combineNames.has(params.get('name') || ''));
+    expect(perColumn, 'a combine column was saved on its own').toEqual([]);
+    expect(requests.groupSaves()).toHaveLength(1);
+    const view = configView(testServer.configPath, 'newznab') as unknown[][];
+    expect(view.slice(-2).map((row) => [row[1], row[2]])).toEqual([
+      ['https://placeholder-first.invalid/api', 'placeholder-key-first'],
+      ['https://placeholder-second.invalid/api', 'placeholder-key-second'],
+    ]);
+  });
+});
+
+/** Every text change in a live region, from before the first script runs. */
+async function watchLiveRegions(page: Page) {
+  await page.addInitScript(() => {
+    const texts: string[] = [];
+    (window as any).__liveTexts = texts;
+    const selector = '[aria-live], [role="status"], [role="alert"], output';
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const node = record.target instanceof Element ? record.target : record.target.parentElement;
+        const region = node?.closest(selector);
+        if (region?.textContent) texts.push(region.textContent);
+      }
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+  return () => page.evaluate(() => (window as any).__liveTexts as string[]);
+}
+
+test.describe('what must never leave the page (a distinctive word in every cell)', () => {
+  test.use({ seedConfig: 'newznab_sentinels#wizard-sentinels' });
+
+  test('no request URL, console line, live-region text or visible text holds a stored key, tag or host', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const requests = await recordWizardRequests(page);
+    const liveTexts = await watchLiveRegions(page);
+    const consoleLines: string[] = [];
+    page.on('console', (message) => consoleLines.push(message.text()));
+    page.on('pageerror', (error) => consoleLines.push(error.message));
+    const visible: string[] = [];
+    const sentinels = ['sentinel-key', 'sentinel-tag', 'sentinel-host'];
+
+    await openProvidersStep(page);
+    visible.push(await page.locator('body').innerText());
+    await page.evaluate(() => {
+      const root = document.querySelector('[x-data="setupWizard()"]') as HTMLElement;
+      (window as any).Alpine.$data(root).assertNewznabHasNoCommas = () => undefined;
+    });
+    await urlInput(page, 1).fill('https://placeholder-sentinel-host-one.invalid/api,x');   // the server refuses it
+    await continueButton(page).click();
+    await expect(page.getByTestId('wizard-newznab-error')).toContainText('cannot contain a comma');
+    visible.push(await page.locator('body').innerText());
+
+    await urlInput(page, 1).fill('https://placeholder-sentinel-host-one.invalid/api?moved=1');
+    await advance(page);
+    await continueButton(page).click();
+    await page.getByRole('button', { name: 'Finish Setup' }).click();
+    await expect(page.getByRole('heading', { name: "You're All Set!" })).toBeVisible({ timeout: 10000 });
+    visible.push(await page.locator('body').innerText());
+
+    expect(requests.groupSaves().length).toBeGreaterThan(0);
+    for (const word of sentinels) {
+      expect(requests.seen.filter((request) => request.url.includes(word)), `${word} in a request URL`).toEqual([]);
+      expect(consoleLines.filter((line) => line.includes(word)), `${word} in the console`).toEqual([]);
+      expect((await liveTexts()).filter((text) => text.includes(word)), `${word} in a live region`).toEqual([]);
+      expect(visible.filter((text) => text.includes(word)), `${word} in visible text`).toEqual([]);
+    }
+    expect(configView(testServer.configPath, 'newznab')).toHaveLength(2);
   });
 });

@@ -210,7 +210,7 @@
               <p id="wizard-newznab-error" class="text-xs text-cp-danger" x-text="newznabMessage()"></p>
               <button type="button" x-show="newznabStatus === 'failed'" @click="retryNewznabRead()" @keydown="ignoreHeldKey($event)"
                       data-newznab-retry
-                      class="mt-2 inline-flex items-center min-h-6 px-3 rounded-md border border-cp-danger text-xs text-cp-text">Try loading them again</button>
+                      class="mt-2 inline-flex items-center justify-center min-h-[44px] px-4 rounded-md border border-cp-danger text-xs text-cp-text">Try loading them again</button>
             </div>
             {#- Not rendered at all until the rows are read: a blank row shown before that would invite typing over
                 a group the wizard has not seen. -#}

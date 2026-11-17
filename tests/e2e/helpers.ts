@@ -473,3 +473,66 @@ export async function recordWizardRequests(page: Page) {
     groupBodies: () => seen.filter(isGroupSave).map((request) => JSON.parse(request.body)),
   };
 }
+
+/** In-page: contrast of an element's text against the opaque surface behind it, translucent layers composited. */
+export const TEXT_CONTRAST = (element: HTMLElement) => {
+  type Rgba = { r: number; g: number; b: number; a: number };
+  const parse = (value: string): Rgba => {
+    const channels = (value.match(/rgba?\(([^)]+)\)/)?.[1] ?? '').split(/[,/ ]+/).filter(Boolean).map(Number.parseFloat);
+    return { r: channels[0], g: channels[1], b: channels[2], a: channels.length > 3 ? channels[3] : 1 };
+  };
+  const over = (top: Rgba, below: Rgba): Rgba => ({
+    r: top.r * top.a + below.r * (1 - top.a),
+    g: top.g * top.a + below.g * (1 - top.a),
+    b: top.b * top.a + below.b * (1 - top.a),
+    a: 1,
+  });
+  const luminance = (c: Rgba) => {
+    const ch = (v: number) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
+  };
+  const layers: Rgba[] = [];
+  for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+    const layer = parse(getComputedStyle(node).backgroundColor);
+    if (layer.a > 0) layers.push(layer);
+    if (layer.a === 1) break;
+  }
+  let backdrop = layers.length ? layers[layers.length - 1] : { r: 255, g: 255, b: 255, a: 1 };
+  for (let i = layers.length - 2; i >= 0; i -= 1) backdrop = over(layers[i], backdrop);
+  const text = over(parse(getComputedStyle(element).color), backdrop);
+  const [hi, lo] = [luminance(text), luminance(backdrop)].sort((a, b) => b - a);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+/**
+ * The wizard's Providers step in its refused state, in `theme`: Usenet chosen, Newznab on with
+ * one URL and key typed, and the group save answered with a refusal of that row's URL in the
+ * server's own structured shape (the first row after the six hidden defaults). Saves never
+ * reach the server. Ends with the error shown and the offending input marked.
+ */
+export async function showWizardRefusal(page: Page, theme: 'light' | 'dark'): Promise<void> {
+  await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+  await page.route('**/settings.save_group/**', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      success: false,
+      error: 'A value contains a comma, which would split it across rows. Nothing was saved.',
+      invalid: [{ row: 6, column: 'host', reason: 'comma' }],
+    }),
+  }));
+  await page.route(/\/settings\.save\//, (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+  }));
+  await openProvidersStep(page);
+  await expect.poll(
+    () => page.evaluate(() => document.documentElement.classList.contains('light')),
+    { message: `${theme} theme was not applied` },
+  ).toBe(theme === 'light');
+  await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
+  await page.getByLabel('Newznab indexer URL 1').fill('https://placeholder-refused.invalid/api');
+  await page.getByLabel('Newznab API key 1').fill('placeholder-key-refused');
+  await page.getByRole('button', { name: /^Continue$/ }).click();
+  await expect(page.getByTestId('wizard-newznab-error')).toContainText('cannot contain a comma');
+  await expect(page.locator('[aria-invalid="true"]')).toHaveCount(1);
+}
