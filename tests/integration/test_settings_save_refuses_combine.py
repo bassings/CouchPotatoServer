@@ -297,7 +297,8 @@ class TestAnyNameWithWhitespaceOrAControlCharacterIsRefused:
         assert response.json() == {'success': False, 'error': NAME_TEXT}
         assert bare(r for r in logs.at_or_above(logging.WARNING) if r.name.startswith('couchpotato')) == [NAME_WARNING % 'core']
         assert CANARY not in server_log(logs)
-        assert 'bad' not in server_log(logs) and '\x1b' not in server_log(logs)
+        assert 'bad' not in server_log(logs)
+        assert '\x1b' not in server_log(logs)
 
 
 class TestNamesTheParserCannotWriteBackAreRefused:
