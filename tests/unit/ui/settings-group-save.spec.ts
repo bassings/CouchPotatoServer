@@ -1162,6 +1162,162 @@ describe('a button in a section with a combine group: the rows are locked from t
     expect(spoken).toEqual([]);
   });
 
+  describe('after a re-read that did not give the section\'s rows back', () => {
+    /** One press whose action succeeds and whose re-read answers `reread`. */
+    async function pressedOnce(reread: Reply | Promise<Reply>) {
+      const net = installFetch();
+      net.replies.push({ body: { success: true, message: 'Synced' } }, reread);
+      const ctx = torrentPanel();
+      const field = button(ctx.panel);
+      await field.execute();
+      return { net, field, ...ctx };
+    }
+
+    const FAILED_READ: Reply = { status: 500, text: 'no' };
+
+    it('1: a second press takes the stale lock again, runs the action, re-reads, and clears the error', async () => {
+      const { net, panel, group } = await pressedOnce(FAILED_READ);
+      expect(group.locked).toBe(true);
+      expect(group.actionRunning).toBe(false);
+      const before = net.groupSaves().length;
+      net.replies.push({ body: { success: true, message: 'Synced' } }, serverRows([...HOSTS, SYNCED]));
+      const again = button(panel);
+
+      await again.execute();
+
+      expect(calls(net).filter((name) => name === 'torrentpotato.jackett_sync')).toHaveLength(2);
+      expect(net.groupSaves()).toHaveLength(before);
+      expect(group.rows).toHaveLength(4);
+      expect(group.locked).toBe(false);
+      expect(group.reloadError).toBe('');
+      expect(again.success).toBe(true);
+    });
+
+    it('1: a stale group is re-read even when the second action answers success false, and never unlocks on stale rows', async () => {
+      const { net, panel, group } = await pressedOnce(FAILED_READ);
+      net.replies.push({ body: { success: false, error: 'Jackett refused' } }, FAILED_READ);
+
+      await button(panel).execute();
+      expect(group.locked).toBe(true);
+      expect(group.reloadError).toMatch(/Could not reload/);
+
+      net.replies.push({ body: { success: false, error: 'Jackett refused' } }, serverRows([...HOSTS, SYNCED]));
+      await button(panel).execute();
+      expect(group.rows).toHaveLength(4);
+      expect(group.locked).toBe(false);
+    });
+
+    it('1: a second re-read that also fails leaves it locked with the error', async () => {
+      const { net, panel, group } = await pressedOnce(FAILED_READ);
+      net.replies.push({ body: { success: true } }, FAILED_READ);
+
+      await button(panel).execute();
+
+      expect(group.locked).toBe(true);
+      expect(group.actionRunning).toBe(false);
+      expect(group.reloadError).toMatch(/Could not reload/);
+    });
+
+    it('1: the stale group is not busy, so a pressed button is not shown as running', async () => {
+      const { panel, option } = await pressedOnce(FAILED_READ);
+
+      expect(button(panel).busy).toBe(false);
+      const field = fieldOf(panel, option);
+      expect(field.locked).toBe(true);
+      expect(field.running).toBe(false);
+    });
+
+    it('2: aria-busy (running) is true while the action runs and false once it ends', async () => {
+      const { action, running, panel, option } = await startedAction();
+      const field = fieldOf(panel, option);
+
+      expect(field.running).toBe(true);
+      action.resolve({ body: { success: false, error: 'x' } });
+      await running;
+      expect(field.running).toBe(false);
+    });
+
+    for (const [name, body] of [
+      ['an empty values object', { values: {}, combine_state: {} }],
+      ['values without this section\'s combine state', { values: { torrentpotato: torrentValues(HOSTS) }, combine_state: {} }],
+      ['a combine state without this section\'s values', { values: {}, combine_state: { torrentpotato: { misaligned: false, rows: 4 } } }],
+    ] as const) {
+      it(`3: ${name} counts as a failed re-read: stays locked, says so, replaces nothing, saves nothing`, async () => {
+        const { net, panel, option, group } = await pressedOnce({ body });
+
+        expect(group.locked).toBe(true);
+        expect(group.reloadError).toMatch(/Could not reload/);
+        expect(group.rows).toHaveLength(3);
+        fieldOf(panel, option).updateRow(0, 1, 'https://placeholder-typed.invalid/api');
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(net.groupSaves()).toEqual([]);
+      });
+    }
+
+    it('3: a failed re-read leaves the panel\'s values as they were', async () => {
+      const { panel } = await pressedOnce({ body: { values: {}, combine_state: {} } });
+
+      expect(panel.values.torrentpotato.host).toBe(HOSTS.join(','));
+    });
+
+    it('4: a re-read that never answers fails after the timeout, instead of showing Running for ever', async () => {
+      const net = installFetch();
+      net.replies.push({ body: { success: true } });
+      (globalThis.fetch as any).mockImplementation(async (url: string, init?: any) => {
+        net.calls.push({ url, init });
+        if (!url.includes('/settings/')) return { ok: true, status: 200, json: async () => ({ success: true }) };
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      });
+      const { panel, group } = torrentPanel();
+      const field = button(panel);
+
+      const running = field.execute();
+      await vi.advanceTimersByTimeAsync(14000);
+      expect(field.running).toBe(true);
+      expect(group.reloadError).toBe('');
+      await vi.advanceTimersByTimeAsync(1500);
+      await running;
+
+      expect(field.running).toBe(false);
+      expect(group.locked).toBe(true);
+      expect(group.reloadError).toMatch(/Could not reload/);
+      expect(panel.assertiveAnnouncement).toBe(group.reloadError);
+    });
+
+    it('5: the button stops running even when ending the action throws', async () => {
+      installFetch();
+      const { panel } = torrentPanel();
+      panel.endAction = async () => { throw new Error('boom'); };
+      const field = button(panel);
+
+      await field.execute().catch(() => {});
+
+      expect(field.running).toBe(false);
+    });
+  });
+
+  describe('the panel reporting a failed settings read', () => {
+    for (const [name, reply] of [
+      ['a JSON 401', { status: 401, body: { success: false, error: 'Unauthorized' } }],
+      ['a 200 without values', { body: { success: true } }],
+    ] as const) {
+      it(`shows the load-failed state for ${name}`, async () => {
+        installFetch().replies.push(reply as Reply);
+        const { panel } = torrentPanel();
+        panel.toast = vi.fn();
+        panel.loadVersionInfo = vi.fn();
+
+        await panel.init();
+
+        expect(panel.toast).toHaveBeenCalledWith('Failed to load settings', 'error');
+        expect(panel.loadVersionInfo).not.toHaveBeenCalled();
+        expect(panel.loading).toBe(false);
+      });
+    }
+  });
+
   it('a section with no combine group is not locked, and runs the action', async () => {
     const net = installFetch();
     net.replies.push({ body: { success: true, message: 'Done' } });

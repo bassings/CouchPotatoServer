@@ -1428,11 +1428,12 @@ test.describe('Settings: a button acts on saved rows, never on held ones', () =>
       use: '1', host: 'https://placeholder-synced.invalid/api', pass_key: 'placeholder-pass-synced',
       name: 'name-synced', seed_ratio: '1', seed_time: '40', extra_score: '0',
     };
-    let reads = 0;
-    // The first read is the page's own load. The one after the sync returns one more row.
+    // Counted from the CLICK, not from the load: the page reads settings twice when it
+    // loads (Alpine calls init() and x-init calls it again), so "the second read" is a
+    // load read. The first read after the click is the re-read after the sync.
+    let afterClick = false;
     await page.route(/\/api\/[^/]+\/settings\/(\?.*)?$/, async (route) => {
-      reads += 1;
-      if (reads < 2) {
+      if (!afterClick) {
         await route.continue();
         return;
       }
@@ -1452,6 +1453,7 @@ test.describe('Settings: a button acts on saved rows, never on held ones', () =>
     await openCard(card);
 
     await card.getByLabel('name for row 1', { exact: true }).fill('name-edited-before-sync');
+    afterClick = true;
     await card.getByRole('button', { name: /Sync Indexers/ }).click();
     await page.clock.fastForward(5000);
     await page.waitForLoadState('networkidle');
@@ -1648,25 +1650,36 @@ test.describe('Settings: the rows are locked while a button acts, and until the 
       test.info().annotations.push(...combineGroupWriter());
       const net = await recordRequests(page);
       const sync = await stubSync(page, testServer.apiBase, testServer.configPath, 'success');
-      let reads = 0;
+      // Only reads after the click fail (the page reads twice at load).
+      let failReads = false;
       await page.route(/\/api\/[^/]+\/settings\/(\?.*)?$/, async (route) => {
-        reads += 1;
-        if (reads === 1) await route.continue();
-        else await route.fulfill({ status: 500, contentType: 'text/html', body: '<html>no</html>' });
+        if (failReads) await route.fulfill({ status: 500, contentType: 'text/html', body: '<html>no</html>' });
+        else await route.continue();
       });
       const card = await openTorrentCard(page);
 
+      failReads = true;
       await syncButton(card).click();
       await expect.poll(() => sync.hits.length).toBe(1);
       sync.release();
 
       await expect(card.getByTestId('combine-reload-error')).toHaveText('Could not reload these rows. Reload the page before changing them.');
+      // Stale, not busy: the error is not inside a busy region, and the button is pressable.
+      await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);
+      await expect(syncButton(card)).not.toHaveAttribute('aria-disabled', 'true');
       await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', true);
       await card.getByLabel('name for row 1', { exact: true }).focus();
       await page.keyboard.type('typed-while-stale');
       await page.clock.fastForward(5000);
       await page.waitForLoadState('networkidle');
       expect(net.groupSaves()).toHaveLength(0);
+
+      // Pressing Sync again takes the stale lock, re-reads, and lifts it.
+      failReads = false;
+      await syncButton(card).click();
+      await expect(card.getByTestId('combine-reload-error')).toHaveCount(0);
+      await expect(card.getByLabel('host for row 4', { exact: true })).toHaveValue(SYNCED_HOST);
+      await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', false);
     });
   });
 
@@ -1720,6 +1733,9 @@ test.describe('Settings: the rows are locked while a button acts, and until the 
 
       await expect(card.getByTestId('combine-row-error')).toBeVisible();
       await expect(host).toHaveJSProperty('readOnly', false);
+      // After a bounded settle: the action request, had there been one, has been sent by now.
+      await page.clock.fastForward(2000);
+      await page.waitForLoadState('networkidle');
       expect(sync.hits).toHaveLength(0);
       expect((await editCell(page, card, 'host for row 1', 'https://placeholder-fixed.invalid/api')).success).toBe(true);
     });

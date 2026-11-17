@@ -109,6 +109,9 @@ function logsPanel() {
   };
 }
 
+/** How long the re-read at the end of a button action may take before it counts as failed. */
+const REREAD_TIMEOUT_MS = 15000;
+
 /* ── Settings panel (main) ── */
 function settingsPanel() {
   return {
@@ -267,11 +270,14 @@ function settingsPanel() {
 
     /** Read the settings from the server into the panel. True only for a real answer:
      *  a failed or malformed read changes nothing and says so. */
-    async fetchSettings() {
+    async fetchSettings(section = null, signal = undefined) {
       try {
-        const resp = await fetch(CP.apiBase + '/settings/');
+        const resp = await fetch(CP.apiBase + '/settings/', { signal });
         const data = await resp.json();
         if (!resp.ok || !data || typeof data.values !== 'object') return false;
+        // A caller that needs one section's rows back (the end of a button action)
+        // says which: an answer without it in BOTH places is not a re-read.
+        if (section && !(data.values && data.values[section] && data.combine_state && data.combine_state[section])) return false;
         this.options = data.options || {};
         this.values = data.values || {};
         this.combineState = data.combine_state || {};
@@ -592,6 +598,7 @@ function settingsPanel() {
           locked: false,
           actionRunning: false,
           reloadError: '',
+          stale: false,
         };
       }
       return this.groupState[section];
@@ -781,7 +788,10 @@ function settingsPanel() {
      *  Returns false when the section has no group, or the lock is already taken. */
     lockGroup(section) {
       const group = this.groupState[section];
-      if (!group || group.locked) return false;
+      // Refused only while an action is running. A group left locked by a failed
+      // re-read is STALE, and pressing the button again takes it back (its end
+      // re-reads again), which is the way out without reloading the page.
+      if (!group || group.actionRunning) return false;
       group.locked = true;
       group.actionRunning = true;
       group.reloadError = '';
@@ -798,17 +808,32 @@ function settingsPanel() {
       const group = this.groupState[section];
       if (!group) return;
       try {
-        if (mayHaveWritten) {
-          if (!(await this.fetchSettings())) {
+        // A stale group (an earlier re-read failed) is re-read whatever this action said.
+        if (mayHaveWritten || group.stale) {
+          if (!(await this.rereadSection(section))) {
+            group.stale = true;
             group.reloadError = 'Could not reload these rows. Reload the page before changing them.';
             this.announce(group.reloadError, true);
             return;
           }
+          group.stale = false;
           this.replaceGroupRows(section, group);
         }
         group.locked = false;
       } finally {
         group.actionRunning = false;
+      }
+    },
+
+    /** The re-read at the end of an action: it must answer within a time, and carry the
+     *  section in values and combine_state, or it counts as failed. */
+    async rereadSection(section) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REREAD_TIMEOUT_MS);
+      try {
+        return await this.fetchSettings(section, controller.signal);
+      } finally {
+        clearTimeout(timer);
       }
     },
 
@@ -1151,8 +1176,12 @@ function buttonField(section, opt) {
         this.success = false;
         this.result = 'Error: ' + e.message;
       } finally {
-        if (locked) await panel.endAction(this.section, mayHaveWritten);
-        this.running = false;
+        // `running` is cleared even if ending the action throws.
+        try {
+          if (locked) await panel.endAction(this.section, mayHaveWritten);
+        } finally {
+          this.running = false;
+        }
       }
     },
 
@@ -1478,6 +1507,10 @@ function combinedField(section, opt) {
      *  rows are back. Every mutator refuses on this, so the lock does not rest on the
      *  attributes the template sets (readonly, aria-disabled). */
     get locked() { return !!(this.held && this.held.locked); },
+
+    /** An action is running (not merely a stale lock after a failed re-read): what
+     *  `aria-busy` says, so the error that follows is not inside a busy region. */
+    get running() { return !!(this.held && this.held.actionRunning); },
 
     updateRow(rowIdx, colIdx, value) {
       if (this.locked) return;

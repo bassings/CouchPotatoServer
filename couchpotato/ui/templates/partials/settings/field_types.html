@@ -229,7 +229,7 @@
 
 <!-- Combined (multi-entry rows like newznab hosts/keys) -->
 <template x-if="opt.type === 'combined'">
-  <div x-data="combinedField(group.section, opt)" :aria-busy="locked ? 'true' : null">
+  <div x-data="combinedField(group.section, opt)" :aria-busy="running ? 'true' : null">
     <!-- Misaligned stored rows (the server's flag): persistent until a save of
          this group succeeds. Not a live region: it is there on load, and says
          what is true of the rows now on screen.

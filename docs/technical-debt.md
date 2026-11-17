@@ -588,6 +588,30 @@ result. Getting it wrong the other way files a bug against working code.
   (2026-11-17).** That includes a group write's file sync and the password
   save's hashing, so the settings page's read can stall behind them. Unmeasured
   on a slow volume.
+- **The settings page reads settings twice at load (2026-11-17).** Alpine calls
+  `init()` automatically and `x-init="init()"` calls it again, so every load makes two
+  `GET settings/` reads. Found while writing the SEC-004 P3 sync tests, which
+  had mistaken the second load read for the post-sync one. Not fixed on that branch.
+- **The sync lock is page memory (2026-11-17).** Leaving Settings and returning, or
+  a second tab, during a running sync gives an unlocked page with pre-sync rows, and
+  the next edit saves them over what the sync wrote (reproduced: the file went from
+  4 rows to 3, with no error). Covered by owner decision D5 (no stale-save token);
+  the durable fix is a server-side token on `save_group`. Recoverable by pressing
+  Sync again.
+- **After a button action only that section's group is re-derived (2026-11-17).**
+  Other unedited combine groups are not refreshed until the next load.
+- **A plain field can show an old value after a slow re-read (2026-11-17).** A
+  plain (non-combine) field edited while a slow re-read is in flight can be shown
+  with its old value although the file holds the new one. Predates SEC-004.
+- **A failed pre-action flush with nothing marked (2026-11-17).** The button says
+  "Fix the rows marked in this section first" when the flush failed because the
+  network is down and no row is marked.
+- **The dark-theme error toast measured 3.91:1 mid-appearance (2026-11-17).**
+  `#f04848` on `#422022`, caught during the transition; the settled contrast was
+  not measured.
+- **A `button_action` in a section with no combine group gets no re-read
+  (2026-11-17).** The 500 ms `panel.init()` after an action was removed by the
+  SEC-004 P3 lock; only `torrentpotato.jackett_sync` exists today.
 - **A settings button's result text does not survive a tab change (2026-11-17).**
   The rows lock and the busy state are panel-level (SEC-004 P3, owner decision
   "Lock rows during sync"), so a button rebuilt mid-action is still busy and
