@@ -109,6 +109,9 @@ function logsPanel() {
   };
 }
 
+/** How long the re-read at the end of a button action may take before it counts as failed. */
+const REREAD_TIMEOUT_MS = 15000;
+
 /* ── Settings panel (main) ── */
 function settingsPanel() {
   return {
@@ -136,6 +139,12 @@ function settingsPanel() {
     lastSaved: false,
     saveTimers: {},
     pendingSaves: {},
+    // Combine groups (SEC-004 P3). `combineState` is what the settings read says
+    // about each group (`misaligned`, `rows`); the page never derives either.
+    // `groupState` holds each group's rows, refusal and in-flight save at PANEL
+    // level, so they outlive the field that shows them being rebuilt.
+    combineState: {},
+    groupState: {},
     version: '',
     updateAvailable: null,
     _watchersRegistered: false,
@@ -259,6 +268,25 @@ function settingsPanel() {
       return help ? help.learnMore : '';
     },
 
+    /** Read the settings from the server into the panel. True only for a real answer:
+     *  a failed or malformed read changes nothing and says so. */
+    async fetchSettings(section = null, signal = undefined) {
+      try {
+        const resp = await fetch(CP.apiBase + '/settings/', { signal });
+        const data = await resp.json();
+        if (!resp.ok || !data || typeof data.values !== 'object') return false;
+        // A caller that needs one section's rows back (the end of a button action)
+        // says which: an answer without it in BOTH places is not a re-read.
+        if (section && !(data.values && data.values[section] && data.combine_state && data.combine_state[section])) return false;
+        this.options = data.options || {};
+        this.values = data.values || {};
+        this.combineState = data.combine_state || {};
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
     async init() {
       // Register synchronously before the first await. Action buttons can
       // start overlapping refreshes; registering after fetch completion lets
@@ -271,10 +299,8 @@ function settingsPanel() {
       }
 
       try {
-        const resp = await fetch(CP.apiBase + '/settings/');
-        const data = await resp.json();
-        this.options = data.options || {};
-        this.values = data.values || {};
+        if (!(await this.fetchSettings())) throw new Error('settings read failed');
+        this.reloadCleanGroups();
 
         await this.loadVersionInfo();
         this.computeTabOrder();
@@ -484,16 +510,340 @@ function settingsPanel() {
      */
     async flushPendingSaves() {
       const pending = Object.entries(this.pendingSaves);
-      if (!pending.length) return;
-
       this.pendingSaves = {};
-      await Promise.all(pending.map(([key, s]) => {
-        if (this.saveTimers[key]) {
-          clearTimeout(this.saveTimers[key]);
-          delete this.saveTimers[key];
+      await Promise.all([
+        ...pending.map(([key, s]) => {
+          if (this.saveTimers[key]) {
+            clearTimeout(this.saveTimers[key]);
+            delete this.saveTimers[key];
+          }
+          return this.saveSingle(s.section, s.name, s.value);
+        }),
+        // A combine group is one pending save keyed by the group, not one per
+        // column (SEC-004 AC-ARCH-8), so nothing awaiting this can run ahead
+        // of an unsaved group.
+        this.flushPendingGroups(),
+      ]);
+    },
+
+    /* ── Combine groups: one save per group, as rows (SEC-004) ──────────────
+       A group is edited as rows but stored as one comma-separated list per
+       column. It is saved as ROWS in one request, so the server can refuse a
+       cell that would add a position, and no column is ever saved apart from
+       its neighbours. Nothing here is written on load, on a tab change or on a
+       re-render: only an edit schedules a save. */
+
+    groupMisaligned(section) {
+      const state = this.combineState[section];
+      return !!(state && state.misaligned);
+    },
+
+    groupRowCount(section) {
+      const state = this.combineState[section];
+      return state && state.rows > 0 ? state.rows : 1;
+    },
+
+    declaredDefaultCell(section, col) {
+      for (const group of ((this.options[section] || {}).groups || [])) {
+        for (const option of (group.options || [])) {
+          if (option.name === col && option.default != null) return String(option.default).split(',')[0].trim();
         }
-        return this.saveSingle(s.section, s.name, s.value);
-      }));
+      }
+      return '';
+    },
+
+    /** What a cell with nothing stored shows, and is saved as. A missing `use`
+     *  cell is off (an empty one makes the provider raise); a missing cell of a
+     *  pairing column is empty; any other column shows its declared default. */
+    missingCell(section, opt, col) {
+      if (col === 'use') return '0';
+      if ((opt.pairing || opt.combine || []).includes(col)) return '';
+      return this.declaredDefaultCell(section, col);
+    },
+
+    blankGroupRow(section, opt) {
+      return (opt.combine || []).map(col => this.missingCell(section, opt, col));
+    },
+
+    /** The rows a stored group shows: the server's row count, each column split
+     *  on the comma and trimmed, a column shorter than that supplying its
+     *  missing cell. A cell past the row count is not a row and is not shown. */
+    deriveGroupRows(section, opt) {
+      const columns = opt.combine || [];
+      const cells = columns.map(col => String(this.getVal(section, col) ?? '').split(',').map(cell => cell.trim()));
+      return Array.from({ length: this.groupRowCount(section) }, (_, index) =>
+        columns.map((col, position) => (index < cells[position].length
+          ? cells[position][index] : this.missingCell(section, opt, col))));
+    },
+
+    /** The panel's one held state for a group, made on first use and kept. */
+    ensureGroup(section, opt) {
+      if (!this.groupState[section]) {
+        this.groupState[section] = {
+          opt,
+          rows: this.deriveGroupRows(section, opt),
+          notice: this.groupMisaligned(section),
+          dirty: false,
+          version: 0,
+          timer: null,
+          saving: false,
+          queued: false,
+          running: null,
+          refusal: [],
+          refusalKey: '',
+          error: '',
+          // The rows cannot be edited or saved from the click of a button in this
+          // section until the page has the server's rows back. Panel state, keyed
+          // by section, so it outlives the button and the field being rebuilt.
+          locked: false,
+          actionRunning: false,
+          reloadError: '',
+          stale: false,
+        };
+      }
+      return this.groupState[section];
+    },
+
+    groupIsClean(group) {
+      return !group.dirty && !group.saving && !group.timer && !group.queued && !group.error && !group.refusal.length;
+    },
+
+    /** After a re-read, a group nobody has edited shows what the server now has.
+     *  An edited one keeps the user's rows: a re-read must not drop them. */
+    reloadCleanGroups() {
+      for (const [section, group] of Object.entries(this.groupState)) {
+        // A locked group is always replaceable: it cannot be dirty (it was flushed).
+        if (this.groupIsClean(group)) this.replaceGroupRows(section, group);
+      }
+    },
+
+    replaceGroupRows(section, group) {
+      group.rows = this.deriveGroupRows(section, group.opt);
+      group.notice = this.groupMisaligned(section);
+    },
+
+    editGroup(section) {
+      const group = this.groupState[section];
+      if (group.locked) return;
+      group.dirty = true;
+      group.version += 1;
+      clearTimeout(group.timer);
+      group.timer = setTimeout(() => this.saveGroup(section), 500);
+    },
+
+    /** Save now, or queue behind the save already in flight. Resolves to
+     *  whether the rows are saved. One request per group is ever open. */
+    saveGroup(section, forced = false) {
+      const group = this.groupState[section];
+      clearTimeout(group.timer);
+      group.timer = null;
+      // Locked for a button action: nothing is sent, the one exception being the
+      // action's own flush of the rows that were already there (`forced`).
+      if (group.locked && !forced) return Promise.resolve(false);
+      if (group.saving) {
+        group.queued = true;
+        return group.running;
+      }
+      group.running = this.runGroupSaves(section, group);
+      return group.running;
+    },
+
+    async runGroupSaves(section, group) {
+      group.saving = true;
+      this.saving = true;
+      this.lastSaved = false;
+      let ok;
+      do {
+        group.queued = false;
+        ok = await this.sendGroup(section, group);
+      // Whatever the outcome: a correction typed while a refused save was open
+      // is the very edit that can clear the refusal, so it must still be sent.
+      } while (group.queued);
+      group.saving = false;
+      this.saving = Object.values(this.groupState).some(other => other.saving);
+      return ok;
+    },
+
+    groupPayloadRows(group) {
+      const columns = group.opt.combine || [];
+      // A `use` cell that is empty is saved as 0, as it is shown (off): an empty
+      // one makes the provider's isEnabled raise. Only on an edited group, which
+      // is the only kind sent. Other columns, `automation_urls_use` included, are
+      // sent as they are.
+      return group.rows.map(row => Object.fromEntries(columns.map((col, position) => {
+        const cell = String(row[position] ?? '').trim();
+        return [col, col === 'use' && cell === '' ? '0' : cell];
+      })));
+    },
+
+    async sendGroup(section, group) {
+      const sent = group.version;
+      const rows = this.groupPayloadRows(group);
+      try {
+        const resp = await fetch(CP.apiBase + '/settings.save_group/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ section, rows }),
+        });
+        const payload = await this.readSavePayload(resp);
+        if (resp.ok && payload && payload.success === true) {
+          this.acceptGroup(section, group, rows, sent);
+          return true;
+        }
+        // A verdict on rows the user has since changed says nothing about the
+        // rows now on screen (its row numbers may even have moved): the save
+        // that follows gives the current one.
+        if (group.version === sent) this.rejectGroup(group, payload);
+      } catch {
+        if (group.version === sent) this.failGroup(group, 'Could not reach the server, so these rows were not saved.');
+      }
+      return false;
+    },
+
+    acceptGroup(section, group, rows, sent) {
+      if (!this.values[section]) this.values[section] = {};
+      for (const col of (group.opt.combine || [])) this.values[section][col] = rows.map(row => row[col]).join(',');
+      group.refusal = [];
+      group.refusalKey = '';
+      group.error = '';
+      group.notice = false;
+      // Edits made while this request was open are not saved by it.
+      if (group.version !== sent) return;
+      group.dirty = false;
+      this.lastSaved = true;
+      setTimeout(() => { this.lastSaved = false; }, 2000);
+    },
+
+    /** Text for one refused cell, composed here from the structured refusal
+     *  with this page's row noun and field label. Never the submitted value. */
+    refusalText(group, entry) {
+      const rules = {
+        comma: ' cannot contain a comma. Remove it to save.',
+        control_character: ' cannot contain a line break or other control character. Remove it to save.',
+        not_encodable: ' contains a character that cannot be saved. Remove it to save.',
+      };
+      const known = Number.isInteger(entry.row) && entry.row >= 0 && entry.row < group.rows.length
+        && (group.opt.combine || []).includes(entry.column) && rules[entry.reason];
+      if (!known) return '';
+      return 'Row ' + (entry.row + 1) + ': the ' + entry.column.replace(/_/g, ' ') + rules[entry.reason];
+    },
+
+    rejectGroup(group, payload) {
+      const invalid = payload && Array.isArray(payload.invalid) ? payload.invalid : [];
+      const entries = invalid.map(entry => ({ row: entry.row, column: entry.column, reason: entry.reason, message: this.refusalText(group, entry) }));
+      if (entries.length && entries.every(entry => entry.message)) {
+        this.refuseGroup(group, entries);
+        return;
+      }
+      // The server's own text is the fallback: no structured list, or a reason
+      // this page does not know.
+      this.failGroup(group, (payload && payload.error) || 'The server did not accept the save.');
+    },
+
+    /** One announcement per refusal: a repeat of the same refused cells, which
+     *  every further keystroke produces, is not announced again. */
+    refuseGroup(group, entries) {
+      const key = entries.map(entry => entry.row + ':' + entry.column + ':' + entry.reason).join('|');
+      group.refusal = entries;
+      group.error = '';
+      if (key === group.refusalKey) return;
+      group.refusalKey = key;
+      this.announce(entries.map(entry => entry.message).join(' '), true);
+    },
+
+    failGroup(group, text) {
+      group.refusal = [];
+      group.refusalKey = '';
+      if (text !== group.error) this.announce(text, true);
+      group.error = text;
+    },
+
+    /** Say something to a screen reader without a visible toast. The region is
+     *  cleared first so identical text still mutates it (see `toast`). */
+    announce(message, assertive) {
+      const region = assertive ? 'assertiveAnnouncement' : 'politeAnnouncement';
+      this[region] = '';
+      this.$nextTick(() => { this[region] = message; });
+    },
+
+    async flushPendingGroups() {
+      // A locked group sends nothing here: saveGroup refuses it.
+      const pending = Object.entries(this.groupState).filter(([, group]) => group.timer || group.saving);
+      await Promise.all(pending.map(([section]) => this.saveGroup(section)));
+    },
+
+    /** For a button that acts on the saved settings of its section: save a
+     *  group that has unsaved rows first, and say whether it is safe to go on.
+     *  A group nobody has touched is already saved. */
+    async flushGroupFor(section) {
+      const group = this.groupState[section];
+      if (!group || !(group.timer || group.saving || group.dirty)) return true;
+      return this.saveGroup(section, true);
+    },
+
+    /** A button in this section was pressed: lock the group's rows NOW, before any
+     *  await, so nothing can be typed while the action's own flush is in flight, nor
+     *  while the action runs, nor in the gap before the server's rows are back
+     *  (SEC-004 AC-DATA-21, an owner decision of 2026-11-17: "Lock rows during sync").
+     *  Returns false when the section has no group, or the lock is already taken. */
+    lockGroup(section) {
+      const group = this.groupState[section];
+      // Refused only while an action is running. A group left locked by a failed
+      // re-read is STALE, and pressing the button again takes it back (its end
+      // re-reads again), which is the way out without reloading the page.
+      if (!group || group.actionRunning) return false;
+      group.locked = true;
+      group.actionRunning = true;
+      group.reloadError = '';
+      this.announce('These rows are locked while the action runs.', false);
+      return true;
+    },
+
+    /** The action is over. `mayHaveWritten`: it said it succeeded, or it threw or answered
+     *  something that is not JSON, so nobody can know. Then the server's rows are read
+     *  NOW and replace the group's, and only then is it unlocked; if that read fails the
+     *  group stays locked, because rows that may be stale must never be editable. An
+     *  action that plainly wrote nothing (it answered success false) unlocks at once. */
+    async endAction(section, mayHaveWritten) {
+      const group = this.groupState[section];
+      if (!group) return;
+      try {
+        // A stale group (an earlier re-read failed) is re-read whatever this action said.
+        if (mayHaveWritten || group.stale) {
+          if (!(await this.rereadSection(section))) {
+            group.stale = true;
+            group.reloadError = 'Could not reload these rows. Reload the page before changing them.';
+            this.announce(group.reloadError, true);
+            return;
+          }
+          group.stale = false;
+          this.replaceGroupRows(section, group);
+        }
+        group.locked = false;
+      } finally {
+        group.actionRunning = false;
+      }
+    },
+
+    /** The re-read at the end of an action: it must answer within a time, and carry the
+     *  section in values and combine_state, or it counts as failed. */
+    async rereadSection(section) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REREAD_TIMEOUT_MS);
+      try {
+        return await this.fetchSettings(section, controller.signal);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+
+    /** Row `idx` was removed: drop its marks and move the later rows' up, so the
+     *  marks stay on the rows they describe until the next save gives a verdict. */
+    shiftRefusal(group, idx) {
+      group.refusal = group.refusal
+        .filter(entry => entry.row !== idx)
+        .map(entry => (entry.row > idx ? { ...entry, row: entry.row - 1 } : entry))
+        .map(entry => ({ ...entry, message: this.refusalText(group, entry) }));
     },
 
     async saveSingle(section, name, value) {
@@ -801,22 +1151,55 @@ function buttonField(section, opt) {
         this.result = 'No action configured';
         return;
       }
+      // The panel is captured NOW: a tab change removes this button's element, after
+      // which `getPanel()` finds nothing, and the re-read below must still happen.
+      const panel = this.getPanel();
+      // Busy is the PANEL's state for the section, so a button rebuilt mid-action is
+      // busy too and a second press does nothing.
+      if (this.busy) return;
       this.running = true;
       this.result = '';
+      // Locked before the first await. False when the section has no combine group.
+      const locked = !!panel && panel.lockGroup(this.section);
+      // Whether the server may have written, for the lock's end: set before the
+      // request is sent, so a throw or a non-JSON answer re-reads.
+      let mayHaveWritten = false;
       try {
-        const resp = await fetch(CP.apiBase + '/' + opt.button_action + '/');
-        const data = await resp.json();
-        this.success = data.success === true;
-        this.result = data.success ? (data.message || 'Success') : (data.error || data.message || 'Failed');
-        if (data.success) {
-          const panel = this.getPanel();
-          if (panel) setTimeout(() => panel.init(), 500);
+        if (locked && !(await panel.flushGroupFor(this.section))) {
+          this.success = false;
+          this.result = 'Fix the rows marked in this section first: they could not be saved.';
+          return;
         }
+        mayHaveWritten = true;
+        mayHaveWritten = await this.runAction();
       } catch (e) {
         this.success = false;
         this.result = 'Error: ' + e.message;
+      } finally {
+        // `running` is cleared even if ending the action throws.
+        try {
+          if (locked) await panel.endAction(this.section, mayHaveWritten);
+        } finally {
+          this.running = false;
+        }
       }
-      this.running = false;
+    },
+
+    /** Busy: this button's own action is running, or the panel says the section's
+     *  group is locked for one (read from the panel, so it survives a rebuild). */
+    get busy() {
+      const panel = this.getPanel();
+      const group = panel && panel.groupState[this.section];
+      return this.running || !!(group && group.actionRunning);
+    },
+
+    /** Returns whether the action may have written. */
+    async runAction() {
+      const resp = await fetch(CP.apiBase + '/' + opt.button_action + '/');
+      const data = await resp.json();
+      this.success = data.success === true;
+      this.result = data.success ? (data.message || 'Success') : (data.error || data.message || 'Failed');
+      return data.success === true;
     },
 
     getPanel() {
@@ -1061,24 +1444,46 @@ function traktDeviceAuth() {
 /* ── Combined field (multi-row entries) ── */
 function combinedField(section, opt) {
   return {
-    rows: [],
+    // The group's rows, refusal and in-flight save live on the settings PANEL
+    // (`ensureGroup`), not here: this component is rebuilt on every tab change.
+    // Named `held`, not `group`: the settings group the template is rendered in
+    // is already `group` there.
+    held: null,
     section,
     opt,
-    
+
     init() {
-      const panel = this.getPanel();
-      const cols = opt.combine || [];
-      const colVals = cols.map(col => {
-        const raw = panel.getVal(section, col) || '';
-        return String(raw).split(',').map(s => s.trim());
-      });
-      const maxRows = Math.max(1, ...colVals.map(c => c.length));
-      this.rows = [];
-      for (let i = 0; i < maxRows; i++) {
-        this.rows.push(cols.map((_, ci) => colVals[ci][i] || ''));
-      }
+      this.held = this.getPanel().ensureGroup(section, opt);
     },
-    
+
+    get rows() { return this.held ? this.held.rows : []; },
+
+    /** The refusal entry for a cell, or undefined. */
+    cellError(rowIdx, colIdx) {
+      const column = (this.opt.combine || [])[colIdx];
+      return this.held ? this.held.refusal.find(entry => entry.row === rowIdx && entry.column === column) : undefined;
+    },
+
+    rowErrors(rowIdx) {
+      return this.held ? this.held.refusal.filter(entry => entry.row === rowIdx) : [];
+    },
+
+    errorId(entry) {
+      return 'cf-err-' + this.section + '-' + entry.row + '-' + entry.column;
+    },
+
+    noticeId() { return 'cf-notice-' + this.section; },
+
+    /** What describes a cell: the misaligned notice while it is shown, then its
+     *  own refusal. Null when neither, so the attribute is absent. */
+    describedBy(rowIdx, colIdx) {
+      const ids = [];
+      if (this.held && this.held.notice) ids.push(this.noticeId());
+      const entry = this.cellError(rowIdx, colIdx);
+      if (entry) ids.push(this.errorId(entry));
+      return ids.length ? ids.join(' ') : null;
+    },
+
     getPanel() {
       return getSettingsPanel(this.$el);
     },
@@ -1098,25 +1503,34 @@ function combinedField(section, opt) {
       return panel ? panel.getLearnMore(this.section, this.opt.name) : '';
     },
     
-    sync() {
-      const panel = this.getPanel();
-      if (!panel) return;
-      (this.opt.combine || []).forEach((col, ci) => {
-        panel.setVal(this.section, col, this.rows.map(r => r[ci] || '').join(','));
-      });
-    },
-    
+    /** Rows are locked from the click of a button in this section until the server's
+     *  rows are back. Every mutator refuses on this, so the lock does not rest on the
+     *  attributes the template sets (readonly, aria-disabled). */
+    get locked() { return !!(this.held && this.held.locked); },
+
+    /** An action is running (not merely a stale lock after a failed re-read): what
+     *  `aria-busy` says, so the error that follows is not inside a busy region. */
+    get running() { return !!(this.held && this.held.actionRunning); },
+
     updateRow(rowIdx, colIdx, value) {
-      this.rows[rowIdx][colIdx] = value;
-      this.sync();
+      if (this.locked) return;
+      this.held.rows[rowIdx][colIdx] = value;
+      this.getPanel().editGroup(this.section);
     },
-    
-    addRow() { this.rows.push(this.opt.combine.map(() => '')); },
-    
+
+    // Adding a row saves nothing by itself: only an edit does.
+    addRow() {
+      if (this.locked) return;
+      this.held.rows.push(this.getPanel().blankGroupRow(this.section, this.opt));
+    },
+
     removeRow(idx) {
+      if (this.locked) return;
       if (this.rows.length > 1) {
-        this.rows.splice(idx, 1);
-        this.sync();
+        this.held.rows.splice(idx, 1);
+        // The marks name rows by position, and the positions have just moved.
+        this.getPanel().shiftRefusal(this.held, idx);
+        this.getPanel().editGroup(this.section);
       }
     },
   };

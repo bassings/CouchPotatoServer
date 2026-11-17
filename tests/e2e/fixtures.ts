@@ -24,14 +24,19 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { test as base, expect } from '@playwright/test';
+import { type Route, test as base, expect } from '@playwright/test';
 
 import { assertE2EPortAvailable, resolveE2EPort } from './port';
 import {
   allowsSettingsPersistence,
+  baselineGroupRows,
   changedSettings,
+  COMBINE_WRITER_ANNOTATION,
+  combineColumns,
   serializeSettingValue,
   SETTINGS_PERSISTENCE_ANNOTATION,
+  SETTINGS_WRITE_ROUTES,
+  splitGroupWrites,
 } from './settings_persistence';
 
 // Same interpreter-resolution order as playwright.config.ts used to apply
@@ -85,7 +90,12 @@ const LOG_DIR = 'test-results';
 // tests) and the seed script is Python.
 const SEEDED_MOVIE_ID = 'e2e-seed-movie-001';
 
-type WorkerServer = { baseURL: string; apiBase: string };
+/**
+ * `configPath` is the worker's real `config.ini`, for a test that asserts on the FILE
+ * (through tests/e2e/helpers.ts' `configSha`, `configColumns` and `configView`) rather
+ * than on a request body or the page's own state.
+ */
+type WorkerServer = { baseURL: string; apiBase: string; configPath: string };
 type Exit = { code: number | null; signal: NodeJS.Signals | null };
 
 async function loadSettingsSnapshot(
@@ -276,14 +286,180 @@ async function stopServer(proc: ChildProcess): Promise<void> {
   }
 }
 
-export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServer: WorkerServer }>({
-  workerServer: [async ({}, use, workerInfo) => {
-    // parallelIndex (not workerIndex): bounded to the actual concurrency
-    // level (0..workers-1) and STABLE across a worker restart after a
+/**
+ * The seedConfig values combine-group writers have used in this worker process. The
+ * static check (tests/unit/e2e_seed_config_ownership.test.ts) cannot see through a helper
+ * in another file, a bare annotation or a looped constant, so this is the guard for those:
+ * a writer on the shared server, or on a value another writer already used, fails.
+ */
+const writerSeeds = new Set<string>();
+
+function assertWriterOwnsItsSeed(annotations: readonly { type: string }[], seedConfig: string | undefined) {
+  if (!annotations.some(({ type }) => type === COMBINE_WRITER_ANNOTATION)) return;
+  if (!seedConfig) {
+    throw new Error('A combine-group writer must run on its own seedConfig server, not the shared one.');
+  }
+  if (writerSeeds.has(seedConfig)) {
+    throw new Error(`seedConfig ${JSON.stringify(seedConfig)} is already owned by another combine-group writer; give this test its own value.`);
+  }
+  writerSeeds.add(seedConfig);
+}
+
+type Tally = { blocked: number; sharedGroupSaves: number };
+type Annotations = readonly { type: string }[];
+type Snapshot = Awaited<ReturnType<typeof loadSettingsSnapshot>>;
+type Change = { section: string; name: string };
+
+/**
+ * The page's route for every settings write. A group save on the worker's SHARED server is
+ * never allowed, whatever the test declares (it would change rows every later test on that
+ * server starts from); any other write needs the persistence annotation.
+ */
+function guardRoute(tally: Tally, onSharedServer: boolean, annotations: Annotations) {
+  const refuse = (route: Route, error: string) => route.fulfill({
+    status: 409, contentType: 'application/json', body: JSON.stringify({ success: false, error }),
+  });
+  return async (route: Route) => {
+    if (onSharedServer && route.request().url().includes('settings.save_group')) {
+      tally.sharedGroupSaves += 1;
+      await refuse(route, 'E2E group saves need the test\'s own seedConfig server');
+    } else if (allowsSettingsPersistence(annotations)) {
+      await route.continue();
+    } else {
+      // The request URL contains the API key and may contain setting values.
+      tally.blocked += 1;
+      await refuse(route, `E2E test did not declare ${SETTINGS_PERSISTENCE_ANNOTATION}`);
+    }
+  };
+}
+
+/** Fail if any combine group changed on the shared server, by whatever channel. Names no value. */
+function assertNoSharedGroupChange(before: Snapshot, changed: Change[]) {
+  const { groups } = splitGroupWrites(before, changed);
+  if (groups.length > 0) {
+    throw new Error(
+      `A combine group changed on the worker's shared server (${groups.join(', ')}): `
+      + 'a group save must run on the test\'s own server. Seed the test with test.use({ seedConfig }).',
+    );
+  }
+}
+
+/**
+ * Put changed settings back and verify. A combine group is restored by ONE group save of its
+ * baseline rows, never per column (a per-column restore leaves a group half-restored when one
+ * request fails, and the per-column route refuses these columns from SEC-004 P6). A group the
+ * save cannot reproduce (misaligned, or a column shorter than the row count) is neither
+ * restored nor verified: safe only because a writer owns its server (AC-QA-10).
+ */
+async function restoreAndVerify(apiBase: string, settingsURL: string, before: Snapshot, changed: Change[]) {
+  const { groups, perColumn } = splitGroupWrites(before, changed);
+  const failures = new Set<string>();
+  const restorable = groups.filter((section) => baselineGroupRows(before, section) !== null);
+  for (const section of restorable) {
+    if (!await restoreGroup(apiBase, section, baselineGroupRows(before, section))) failures.add(`${section} (group)`);
+  }
+  for (const { section, name } of perColumn) {
+    if (!await restoreColumn(apiBase, section, name, before?.values?.[section]?.[name])) failures.add(`${section}.${name}`);
+  }
+  const columns = combineColumns(before);
+  const skipped = new Set(groups
+    .filter((section) => !restorable.includes(section))
+    .flatMap((section) => columns[section].map((name) => `${section}.${name}`)));
+  const verified = changed.filter(({ section, name }) => !skipped.has(`${section}.${name}`));
+  const verificationFailed = verified.length > 0
+    && await verifyRestored(settingsURL, before, verified, skipped, failures);
+  if (failures.size > 0) {
+    throw new Error(
+      `E2E setting restoration failed or could not safely restore: ${[...failures].join(', ')}`
+      + (verificationFailed ? '; snapshot verification failed' : ''),
+    );
+  }
+}
+
+/** Re-read and add anything still different to `failures`. True when the re-read itself failed. */
+async function verifyRestored(settingsURL: string, before: Snapshot, verified: Change[], skipped: Set<string>, failures: Set<string>) {
+  try {
+    const restored = await loadSettingsSnapshot(settingsURL, 'restored');
+    for (const { section, name } of changedSettings(before, restored)) {
+      if (!skipped.has(`${section}.${name}`)) failures.add(`${section}.${name}`);
+    }
+    return false;
+  } catch {
+    for (const { section, name } of verified) failures.add(`${section}.${name}`);
+    return true;
+  }
+}
+
+/** The checks that fail the test itself, after everything is restored. */
+function assertTeardownAudit(tally: Tally, changed: Change[], annotations: Annotations, seedConfig: string | undefined) {
+  if (tally.sharedGroupSaves > 0) {
+    throw new Error(
+      `This test sent ${tally.sharedGroupSaves} settings.save_group request(s) to the worker's shared server, `
+      + 'which is refused whatever the test declares. Seed the test onto its own server with '
+      + 'test.use({ seedConfig }).',
+    );
+  }
+  assertWriterOwnsItsSeed(annotations, seedConfig);
+  if (tally.blocked > 0 || (changed.length > 0 && !allowsSettingsPersistence(annotations))) {
+    throw new Error(
+      `This test sent ${Math.max(tally.blocked, changed.length)} unmocked settings.save request(s) `
+      + `(settings.save or settings.save_group), which would `
+      + `persist into the worker database and leak into later tests. Mock settings.save, `
+      + `or explicitly annotate an intentional persistence test with `
+      + `{ type: '${SETTINGS_PERSISTENCE_ANNOTATION}' }.`,
+    );
+  }
+}
+
+/** Put one combine group back with one group save. False on any failure. */
+async function restoreGroup(apiBase: string, section: string, rows: unknown): Promise<boolean> {
+  try {
+    const response = await fetch(`${apiBase}/settings.save_group/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ section, rows }),
+    });
+    const payload = await response.json().catch(() => null);
+    return response.ok && payload?.success !== false;
+  } catch {
+    return false;
+  }
+}
+
+/** Put one setting back by its own save. False on any failure, or a masked baseline. */
+async function restoreColumn(apiBase: string, section: string, name: string, value: unknown): Promise<boolean> {
+  if (typeof value === 'string' && /^\*+$/.test(value)) return false;
+  try {
+    const body = new URLSearchParams({ section, name, value: serializeSettingValue(value) });
+    const response = await fetch(`${apiBase}/settings.save/`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body,
+    });
+    const payload = await response.json().catch(() => null);
+    return response.ok && payload?.success !== false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One CouchPotato server on its own port and data dir, for as long as `use` runs.
+ *
+ * The worker's own server is one of these, and so is the dedicated server a test gets
+ * when it names a `seedConfig`: one lifecycle, so a startup failure, a mid-run crash and
+ * a data-dir cleanup are handled once. `index` selects the port (BASE_PORT + index) and
+ * the data dir (`e2e_worker_data.py`'s `.e2e-w<index>-data`).
+ */
+type ServeOptions = { index: number; workerIndex: number; seedConfig: string };
+
+const serverLifecycle = {
+  async serve({ index: idx, workerIndex, seedConfig }: ServeOptions, use: (server: WorkerServer) => Promise<void>) {
+    // The worker's index is parallelIndex (not workerIndex): bounded to the actual
+    // concurrency level (0..workers-1) and STABLE across a worker restart after a
     // crash, so a retried worker reserves the SAME data dir its crashed
     // predecessor had -- which is exactly the case cleanup-on-failure
     // below exists for.
-    const idx = workerInfo.parallelIndex;
     const port = resolveE2EPort(process.env.BASE_PORT, idx);
     const baseURL = `http://localhost:${port}`;
 
@@ -308,7 +484,9 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
       // fail the worker, never start a server against an empty database
       // (same ordering and the same "no || true" contract
       // scripts/seed_e2e_data.py's own docstring establishes).
-      execFileSync(PYTHON, ['scripts/seed_e2e_data.py', `--data_dir=${dataDir}`], { stdio: 'pipe' });
+      const seedArgs = ['scripts/seed_e2e_data.py', `--data_dir=${dataDir}`];
+      if (seedConfig) seedArgs.push(`--config-fixture=${seedConfig}`);
+      execFileSync(PYTHON, seedArgs, { stdio: 'pipe' });
 
       // --console_log is load-bearing, not noise. runner.py computes
       // `console = (debug or options.console_log) and not quiet and not
@@ -337,7 +515,11 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
       if (!apiBaseMatch) {
         throw new Error(`worker ${idx}: rendered root did not expose CP.apiBase`);
       }
-      await use({ baseURL, apiBase: new URL(apiBaseMatch[1], baseURL).toString().replace(/\/$/, '') });
+      await use({
+        baseURL,
+        apiBase: new URL(apiBaseMatch[1], baseURL).toString().replace(/\/$/, ''),
+        configPath: path.resolve(dataDir, 'config.ini'),
+      });
     } catch (err) {
       try {
         if (proc) await stopServer(proc);
@@ -347,7 +529,7 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
       // Persist BEFORE the cleanup below removes the data dir. The startup
       // path is the one the fixture can spend 60 seconds in, and it was the
       // one path that kept nothing.
-      writeServerLog(idx, workerInfo.workerIndex, output);
+      writeServerLog(idx, workerIndex, output);
       // Best-effort: a worker that failed to start still frees its data
       // dir, so a Playwright retry of this same worker slot (AC-QA-56's
       // `retries: 2`) does not immediately fail a SECOND time on
@@ -370,7 +552,7 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
     // explain a mid-run failure was the one thing the run never kept.
     // test-results/ is Playwright's own output dir, already gitignored and
     // already where traces and screenshots land.
-    const logPath = writeServerLog(idx, workerInfo.workerIndex, output);
+    const logPath = writeServerLog(idx, workerIndex, output);
 
     await stopServer(proc);
     execFileSync(PYTHON, ['scripts/e2e_worker_data.py', 'cleanup', String(idx)], { stdio: 'pipe' });
@@ -387,34 +569,60 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
         `Last output:\n${output.slice(-4000)}`,
       );
     }
+  },
+};
+
+/**
+ * A dedicated server for a test that names a `seedConfig` starts at BASE_PORT + this
+ * + the worker's parallelIndex, with the data dir of the same index, so it can never
+ * collide with a worker's own server (BASE_PORT + parallelIndex) inside 5150-5200.
+ */
+const SEEDED_SERVER_INDEX_BASE = 20;
+
+type TestOptions = { seedConfig: string; testServer: WorkerServer };
+
+export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions, { workerServer: WorkerServer }>({
+  workerServer: [async ({}, use, workerInfo) => {
+    await serverLifecycle.serve(
+      { index: workerInfo.parallelIndex, workerIndex: workerInfo.workerIndex, seedConfig: '' },
+      use,
+    );
   }, { scope: 'worker', auto: true }],
 
-  baseURL: async ({ workerServer }, use) => {
-    await use(workerServer.baseURL);
+  // The named starting configuration (scripts/seed_e2e_data.py `--config-fixture`) this
+  // test's server is seeded with BEFORE it starts, set per `describe` with
+  // `test.use({ seedConfig })` (SEC-004 AC-QA-10). Empty: the worker's shared server.
+  //
+  // TEST-scoped, not worker-scoped as the spec's AC-QA-10 words it: Playwright refuses
+  // `test.use({ seedConfig })` inside a describe for a worker-scoped option ("it forces
+  // a new worker"; measured on this repo's Playwright). A test that names a fixture gets
+  // its OWN server, started for that test and stopped after it, so no test can start from
+  // another's saved rows. The one-writer-per-value rule is then belt and braces, kept
+  // and checked statically (tests/unit/e2e_seed_config_ownership.test.ts).
+  seedConfig: ['', { option: true }],
+
+  // The server THIS test talks to: its own seeded one, or the worker's.
+  testServer: async ({ seedConfig, workerServer }, use, testInfo) => {
+    if (!seedConfig) {
+      await use(workerServer);
+      return;
+    }
+    await serverLifecycle.serve(
+      { index: SEEDED_SERVER_INDEX_BASE + testInfo.parallelIndex, workerIndex: testInfo.workerIndex, seedConfig },
+      use,
+    );
   },
 
-  settingsPersistenceGuard: [async ({ page, workerServer }, use, testInfo) => {
-    let blocked = 0;
-    const pattern = '**/settings.save/**';
-    const settingsURL = `${workerServer.apiBase}/settings/`;
+  baseURL: async ({ testServer }, use) => {
+    await use(testServer.baseURL);
+  },
+
+  settingsPersistenceGuard: [async ({ page, testServer, seedConfig }, use, testInfo) => {
+    const tally = { blocked: 0, sharedGroupSaves: 0 };
+    const settingsURL = `${testServer.apiBase}/settings/`;
     const before = await loadSettingsSnapshot(settingsURL, 'baseline');
 
-    await page.route(pattern, async (route) => {
-      if (allowsSettingsPersistence(testInfo.annotations)) {
-        await route.continue();
-        return;
-      }
-      // The request URL contains the API key and may contain setting values.
-      blocked += 1;
-      await route.fulfill({
-        status: 409,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          success: false,
-          error: `E2E test did not declare ${SETTINGS_PERSISTENCE_ANNOTATION}`,
-        }),
-      });
-    });
+    await page.route(SETTINGS_WRITE_ROUTES, guardRoute(tally, !seedConfig, testInfo.annotations));
 
     await use();
     // Closing the page cancels its debounce timers. Audit only after no later
@@ -423,57 +631,15 @@ export const test = base.extend<{ settingsPersistenceGuard: void }, { workerServ
 
     const after = await loadSettingsSnapshot(settingsURL, 'after');
     const changed = changedSettings(before, after);
-
-    const restoreFailures = new Set<string>();
-    for (const { section, name } of changed) {
-      const value = before?.values?.[section]?.[name];
-      if (typeof value === 'string' && /^\*+$/.test(value)) {
-        restoreFailures.add(`${section}.${name}`);
-        continue;
-      }
-      try {
-        const body = new URLSearchParams({ section, name, value: serializeSettingValue(value) });
-        const response = await fetch(`${workerServer.apiBase}/settings.save/`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-          body,
-        });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok || payload?.success === false) {
-          restoreFailures.add(`${section}.${name}`);
-        }
-      } catch {
-        restoreFailures.add(`${section}.${name}`);
-      }
+    // Channel-independent: a route of the test's own, or the `request` fixture, never
+    // passes through guardRoute. Restored first (the shared server must not be left
+    // changed), and its error still wins over a restore failure.
+    try {
+      await restoreAndVerify(testServer.apiBase, settingsURL, before, changed);
+    } finally {
+      if (!seedConfig) assertNoSharedGroupChange(before, changed);
     }
-
-    let verificationFailed = false;
-    if (changed.length > 0) {
-      try {
-        const restored = await loadSettingsSnapshot(settingsURL, 'restored');
-        for (const { section, name } of changedSettings(before, restored)) {
-          restoreFailures.add(`${section}.${name}`);
-        }
-      } catch {
-        verificationFailed = true;
-        for (const { section, name } of changed) restoreFailures.add(`${section}.${name}`);
-      }
-    }
-    if (restoreFailures.size > 0) {
-      throw new Error(
-        `E2E setting restoration failed or could not safely restore: ${[...restoreFailures].join(', ')}`
-        + (verificationFailed ? '; snapshot verification failed' : ''),
-      );
-    }
-
-    if (blocked > 0 || (changed.length > 0 && !allowsSettingsPersistence(testInfo.annotations))) {
-      throw new Error(
-        `This test sent ${Math.max(blocked, changed.length)} unmocked settings.save request(s), which would `
-        + `persist into the worker database and leak into later tests. Mock settings.save, `
-        + `or explicitly annotate an intentional persistence test with `
-        + `{ type: '${SETTINGS_PERSISTENCE_ANNOTATION}' }.`,
-      );
-    }
+    assertTeardownAudit(tally, changed, testInfo.annotations, seedConfig);
   }, { auto: true }],
 });
 

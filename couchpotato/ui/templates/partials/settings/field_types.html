@@ -139,12 +139,17 @@
 <!-- Button (action button like Jackett sync) -->
 <template x-if="opt.type === 'button'">
   <div x-data="buttonField(group.section, opt)">
-    <button @click="execute()" 
-            :disabled="running"
-            :aria-label="opt.button_text || opt.label || 'Execute'"
-            class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors disabled:opacity-50">
-      <span x-show="!running" x-text="opt.button_text || 'Execute'"></span>
-      <span x-show="running" class="flex items-center gap-2">
+    {#- aria-disabled, not disabled: the button holds focus while the action runs, and the
+        busy state is the PANEL's for the section, so a button rebuilt by a tab change
+        mid-action is still busy. execute() ignores a press while busy. -#}
+    <button @click="execute()"
+            type="button"
+            :aria-disabled="busy ? 'true' : null"
+            :class="busy ? 'cursor-not-allowed' : ''"
+            :aria-label="(busy ? 'Running… ' : '') + (opt.button_text || opt.label || 'Execute')"
+            class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:underline transition-colors">
+      <span x-show="!busy" x-text="opt.button_text || 'Execute'"></span>
+      <span x-show="busy" class="flex items-center gap-2">
         <svg aria-hidden="true" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
@@ -224,19 +229,56 @@
 
 <!-- Combined (multi-entry rows like newznab hosts/keys) -->
 <template x-if="opt.type === 'combined'">
-  <div x-data="combinedField(group.section, opt)">
+  <div x-data="combinedField(group.section, opt)" :aria-busy="running ? 'true' : null">
+    <!-- Misaligned stored rows (the server's flag): persistent until a save of
+         this group succeeds. Not a live region: it is there on load, and says
+         what is true of the rows now on screen.
+
+         The message boxes below use the validation box of profiles.html WITHOUT its
+         bg-cp-danger/10 tint: with it, text-cp-danger measures 4.47:1 on the dark
+         card (WCAG 1.4.3 needs 4.5:1, measured by settings-combined.a11y.spec.ts);
+         without it, 4.81:1. The border and the text still carry the danger colour. -->
+    <template x-if="held && held.notice">
+      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" :id="noticeId()" data-testid="combine-misaligned-notice">
+        <p class="text-xs text-cp-danger">The saved entries here do not line up: some columns have more entries than others. The rows shown are what will be saved when you change one, so check each row first.</p>
+      </div>
+    </template>
+
+    <!-- A save that failed for any reason other than a refused cell (the route
+         is missing, the server answered an error, the network failed). The
+         rows stay on screen and unsaved. Announced once by the panel, so this
+         carries no live role of its own. -->
+    <template x-if="held && held.error">
+      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-save-error">
+        <p class="text-xs text-cp-danger" x-text="held.error"></p>
+      </div>
+    </template>
+
+    <!-- Locked from the click of a button in this section until the server's rows are
+         back. Static text; the panel announces the lock once, politely. -->
+    <template x-if="locked && !held.reloadError">
+      <p class="mb-2 text-xs text-cp-muted" data-testid="combine-locked-note">These rows are locked while the action runs.</p>
+    </template>
+    <!-- The re-read after the action failed: stays locked, because the rows may be stale. -->
+    <template x-if="held && held.reloadError">
+      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-reload-error">
+        <p class="text-xs text-cp-danger" x-text="held.reloadError"></p>
+      </div>
+    </template>
+
     <!-- Column headers -->
     <div class="flex gap-2 mb-2 items-center text-[10px] text-cp-muted font-medium" aria-hidden="true">
       <template x-for="(col, colIdx) in opt.combine" :key="'hdr-'+colIdx">
-        <span :class="col === 'use' ? 'w-10 shrink-0 text-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')" 
+        <span :class="col === 'use' ? 'w-10 shrink-0 text-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')"
               x-text="col === 'use' ? '' : col.replace(/_/g, ' ')"></span>
       </template>
       <span class="w-4 shrink-0"></span>
     </div>
-    
+
     <!-- Data rows -->
     <template x-for="(row, rowIdx) in rows" :key="rowIdx">
-      <div class="flex gap-2 mb-2 items-center">
+      <div class="mb-2">
+      <div class="flex gap-2 items-center">
         <template x-for="(col, colIdx) in opt.combine" :key="colIdx">
           <div :class="col === 'use' ? 'w-10 shrink-0 flex justify-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')">
             <!-- Toggle for 'use' column -->
@@ -246,33 +288,56 @@
                       class="relative w-8 h-4 rounded-full transition-colors shrink-0"
                       role="switch"
                       :aria-checked="(row[colIdx] === '1' || row[colIdx] === 1).toString()"
-                      :aria-label="'Enable row ' + (rowIdx + 1)">
+                      :aria-label="'Enable row ' + (rowIdx + 1)"
+                      :aria-disabled="locked ? 'true' : null"
+                      :aria-describedby="describedBy(rowIdx, colIdx)">
                 <span :class="(row[colIdx] === '1' || row[colIdx] === 1) ? 'translate-x-4' : 'translate-x-0.5'"
                       class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5" aria-hidden="true"></span>
               </button>
             </template>
-            <!-- Text input for other columns -->
+            <!-- Text input for other columns. A refused cell is marked by
+                 aria-invalid, by its danger border AND by the text below the
+                 row that aria-describedby points at: never by colour alone. -->
             <template x-if="col !== 'use'">
-              <input type="text" 
+              <input type="text"
                      :placeholder="col.replace(/_/g, ' ')"
                      :value="row[colIdx] || ''"
                      @input="updateRow(rowIdx, colIdx, $event.target.value)"
                      :aria-label="col.replace(/_/g, ' ') + ' for row ' + (rowIdx + 1)"
-                     class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                     :readonly="locked"
+                     :aria-invalid="cellError(rowIdx, colIdx) ? 'true' : null"
+                     :aria-describedby="describedBy(rowIdx, colIdx)"
+                     :class="cellError(rowIdx, colIdx) ? 'border-cp-danger focus:border-cp-danger' : 'border-white/[0.06] focus:border-cp-accent/30'"
+                     class="w-full bg-white/[0.03] border rounded-md px-3 py-1.5 text-xs focus:outline-none">
             </template>
           </div>
         </template>
-        <button @click="removeRow(rowIdx)" 
-                class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" 
-                :aria-label="'Remove row ' + (rowIdx + 1)">
+        <button @click="removeRow(rowIdx)"
+                class="text-cp-muted hover:text-cp-danger transition-colors shrink-0"
+                :aria-label="'Remove row ' + (rowIdx + 1)"
+                :aria-disabled="locked ? 'true' : null"
+                :aria-describedby="held && held.notice ? noticeId() : null">
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
       </div>
+      <!-- Refused cells of THIS row, directly below it. Persistent: removed only
+           when the group saves. No live role: the panel announces the refusal. -->
+      <template x-if="rowErrors(rowIdx).length">
+        <div class="mt-1 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-row-error">
+          <template x-for="entry in rowErrors(rowIdx)" :key="entry.column">
+            <p class="text-xs text-cp-danger" :id="errorId(entry)" x-text="entry.message"></p>
+          </template>
+        </div>
+      </template>
+      </div>
     </template>
     
     <button @click="addRow()"
+            type="button"
+            :aria-disabled="locked ? 'true' : null"
+            :class="locked ? 'cursor-not-allowed' : ''"
             class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors"
             aria-label="Add row">+ Add</button>
     <p x-show="buildDescription()" class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>

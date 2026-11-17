@@ -85,3 +85,85 @@ for (const theme of ['light', 'dark'] as const) {
     });
   }
 }
+
+// SEC-004 P3: the refused combined field and the misaligned-group notice at phone
+// width. The refusal is stubbed in the server's own shape; nothing is written.
+for (const theme of ['light', 'dark'] as const) {
+  test.describe(`a refused combined field at 375px in ${theme} theme`, () => {
+    test.use({ seedConfig: `newznab_misaligned_key_short#mobile-reflow-${theme}` });
+
+    test('the notice and the inline refusal show in full inside the viewport', async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 800 });
+      await page.addInitScript((selectedTheme) => {
+        localStorage.setItem('cp-theme', selectedTheme);
+      }, theme);
+      await page.route('**/settings.save_group/**', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false, error: 'A cell cannot contain a comma.',
+          invalid: [{ row: 1, column: 'host', reason: 'comma' }],
+        }),
+      }));
+      await page.goto('/settings/');
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      const card = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
+      const notice = card.getByTestId('combine-misaligned-notice');
+      await expect(notice).toBeVisible();
+      // The notice is what describes each cell, at phone width as everywhere.
+      await expect(card.getByLabel('host for row 1', { exact: true })).toHaveAttribute('aria-describedby', await notice.getAttribute('id') ?? 'missing');
+
+      await card.getByLabel('host for row 2', { exact: true }).fill('https://placeholder-two.invalid/api,x');
+      const error = card.getByTestId('combine-row-error');
+      await expect(error).toBeVisible();
+      await expect(card.locator('[aria-invalid="true"]')).toHaveCount(1);
+
+      await expectNoHorizontalDocumentOverflow(page, `refused combined field, ${theme}`);
+      for (const box of [notice, error]) {
+        const fits = await box.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const text = element.querySelector('p') as HTMLElement;
+          return {
+            inside: rect.left >= 0 && rect.right <= document.documentElement.clientWidth,
+            clipped: text.scrollWidth > text.clientWidth,
+          };
+        });
+        expect(fits).toEqual({ inside: true, clipped: false });
+      }
+    });
+  });
+
+  test.describe(`locked rows during a button action at 375px in ${theme} theme`, () => {
+    test.use({ seedConfig: `torrentpotato_aligned#mobile-locked-${theme}` });
+
+    test('the lock note fits, the inputs are readonly, and nothing overflows', async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 800 });
+      await page.addInitScript((selectedTheme) => {
+        localStorage.setItem('cp-theme', selectedTheme);
+      }, theme);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
+        await gate;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'Jackett refused' }) });
+      });
+      await page.goto('/settings/');
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      const card = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'TorrentPotato', exact: true }) });
+      await card.locator('h3 button[aria-expanded="false"]').click();
+
+      await card.getByRole('button', { name: /Sync Indexers/ }).click();
+      const note = card.getByTestId('combine-locked-note');
+      await expect(note).toBeVisible();
+      await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', true);
+      await expectNoHorizontalDocumentOverflow(page, `locked combined field, ${theme}`);
+      const fits = await note.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= document.documentElement.clientWidth && element.scrollWidth <= element.clientWidth;
+      });
+      expect(fits).toBe(true);
+      release();
+      await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);
+    });
+  });
+}

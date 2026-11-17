@@ -340,6 +340,19 @@ jobs:
         node-version: '24'
         cache: 'npm'
     
+    # The unit project also tests the E2E helpers, one of which runs the Python
+    # read-back module (tests/helpers/config_readback.py) against a real config
+    # file. Without Python and the runtime dependencies those tests cannot run.
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.15'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
     - name: Install dependencies
       run: npm ci
     
