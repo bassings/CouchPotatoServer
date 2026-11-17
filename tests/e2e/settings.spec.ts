@@ -1416,10 +1416,7 @@ test.describe('Settings: a button acts on saved rows, never on held ones', () =>
   test.use({ seedConfig: 'torrentpotato_aligned#sync-button' });
 
   // What this proves: the edit is saved BEFORE the sync, and the sync's rows are shown with
-  // no later group save. What it does NOT prove: that held rows are discarded after the sync.
-  // With nothing typed during the action there is nothing to discard, so that guard is the
-  // JS unit test in tests/unit/ui/settings-group-save.spec.ts ("drops rows typed while the
-  // action ran"), which fails when the discard is removed; this E2E does not.
+  // no later group save. The lock that stops typing during the action has its own tests below.
   test('the held edit is saved before the sync, and the sync\'s rows are then shown, not saved over', async ({ page, testServer }) => {
     test.info().annotations.push(...combineGroupWriter());
     await page.clock.install();
@@ -1456,11 +1453,15 @@ test.describe('Settings: a button acts on saved rows, never on held ones', () =>
     afterClick = true;
     await card.getByRole('button', { name: /Sync Indexers/ }).click();
     await page.clock.fastForward(5000);
+    // The sync is sent only after the pre-action save has answered, which on a slow
+    // runner can be after the network first goes idle: wait for the request itself
+    // before comparing the order (seen in CI as "expected < -1").
+    const indexOf = (part: string) => net.seen.map((request) => request.url).findIndex((url) => url.includes(part));
+    await expect.poll(() => indexOf('torrentpotato.jackett_sync')).toBeGreaterThanOrEqual(0);
     await page.waitForLoadState('networkidle');
 
-    const urls = net.seen.map((request) => request.url);
-    const save = urls.findIndex((url) => url.includes('settings.save_group'));
-    const sync = urls.findIndex((url) => url.includes('torrentpotato.jackett_sync'));
+    const save = indexOf('settings.save_group');
+    const sync = indexOf('torrentpotato.jackett_sync');
     expect(save).toBeGreaterThanOrEqual(0);
     expect(save).toBeLessThan(sync);
     expect(cellsOf(configColumns(testServer.configPath, 'torrentpotato').name)[0]).toBe('name-edited-before-sync');
