@@ -59,7 +59,7 @@ _COMBINE_COLUMN_REFUSAL = (
     'Nothing was saved. Use settings.save_group, or reload the page and edit '
     'the rows there.')
 _BAD_OPTION_NAME_REFUSAL = (
-    'An option name cannot contain a space, a control character, "=" or ":", '
+    'An option name cannot be empty, contain a space, a control character, "=" or ":", '
     'or start with "[", "#" or ";". Nothing was saved.')
 _NOT_TEXT_REFUSAL = 'The section and the option name must each be text. Nothing was saved.'
 
@@ -67,13 +67,14 @@ _NOT_TEXT_REFUSAL = 'The section and the option name must each be text. Nothing 
 def _unsafe_option_name(name):
     """Would the config parser mangle, or fail to write back, an option with this name?
 
-    Whitespace and C0 control characters: a trailing space reloads as a duplicate
+    An empty name is written as `\t= value`, which reloads as a continuation of the
+    previous option's value. Whitespace and C0 control characters: a trailing space reloads as a duplicate
     option and a leading one as a continuation line. `=` and `:` are delimiters the
     writer refuses (`InvalidWriteError`, after the name is already in memory, so every
     later save fails). A leading `[` can read as a section header, and a leading `#`
     or `;` reloads as a comment, so the value is silently lost.
     """
-    return (any(c.isspace() or ord(c) < 0x20 or c in '=:' for c in name)
+    return (not name or any(c.isspace() or ord(c) < 0x20 or c in '=:' for c in name)
             or name.startswith(('[', '#', ';')))
 
 
@@ -235,8 +236,8 @@ class Settings:
         addApiView('settings.save', self.saveView, docs={
             'desc': 'Save setting to config file (settings.conf). Refuses every column '
                     'of a multi-row group (use settings.save_group), any option name with '
-                    'whitespace, a control character, "=" or ":" or starting with "[", '
-                    '"#" or ";", and a section or name that is not text.',
+                    'whitespace, a control character, "=" or ":", an empty name or one starting '
+                    'with "[", "#" or ";", and a section or name that is not text.',
             'params': {
                 'section': {'desc': 'The section name'},
                 'name': {'desc': 'The option name'},

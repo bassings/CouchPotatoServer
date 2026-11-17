@@ -83,6 +83,10 @@ describe('a tab loaded before the upgrade saving a combine column', () => {
 
     await panel.saveSingle('newznab', 'host', 'x');
 
+    // Relayed untouched: escaping is the element's job, below.
+    expect(panel.message).toBe(`Could not save host: ${markup}`);
+    expect(panel.assertiveAnnouncement).toBe(`Could not save host: ${markup}`);
+
     // The elements that render these strings are the ones bound to them. Each must be
     // an element whose only content binding is x-text (textContent), never x-html.
     const modals = fs.readFileSync(TEMPLATE.replace('scripts.html', 'modals.html'), 'utf8');

@@ -32,7 +32,7 @@ COMBINE_TEXT = (
     'Nothing was saved. Use settings.save_group, or reload the page and edit the rows there.')
 COMBINE_WARNING = ('Refused a per-column save of "newznab.%s": it is saved with its group, '
                    'not on its own')
-NAME_TEXT = ('An option name cannot contain a space, a control character, "=" or ":", '
+NAME_TEXT = ('An option name cannot be empty, contain a space, a control character, "=" or ":", '
              'or start with "[", "#" or ";". Nothing was saved.')
 NAME_WARNING = "Refused a settings save: the option name is not allowed (section='%s')"
 NOT_TEXT_TEXT = 'The section and the option name must each be text. Nothing was saved.'
@@ -328,6 +328,20 @@ class TestNamesTheParserCannotWriteBackAreRefused:
             assert later.json()['success'] is True, repr(name)
             assert group.json() == {'success': True}, repr(name)
 
+    @pytest.mark.parametrize('transport', TRANSPORTS)
+    def test_an_empty_name_is_refused_and_the_next_save_still_works(self, world, transport):
+        """An empty name was written as `\\t= 1`, which reloads as a continuation of the
+        previous option's value."""
+        settings, client = world
+        settings.addSection('core')
+        before = sha(settings.file)
+
+        response = send(client, 'core', '', value='1', transport=transport)
+
+        assert response.json() == {'success': False, 'error': NAME_TEXT}
+        assert sha(settings.file) == before
+        assert send(client, 'newznab', 'enabled', value='0', transport=transport).json()['success'] is True
+
     def test_a_name_that_only_contains_a_hash_or_a_bracket_inside_is_still_saved(self, world):
         settings, client = world
         settings.addSection('core')
@@ -336,8 +350,9 @@ class TestNamesTheParserCannotWriteBackAreRefused:
             assert send(client, 'core', name, value='1').json() == {'success': True}, name
             assert settings.p.get('core', name) == '1'
 
-    def test_a_leading_hash_would_have_been_lost_on_reload(self, tmp_path):
-        """Why `#` and `;` are refused: the measurement, not an assumption."""
+    def test_parser_behaviour_pin_a_leading_hash_reloads_as_a_comment(self, tmp_path):
+        """A pin of the stdlib parser, not a guard of our code: it records why `#` and `;` are
+        refused. If a Python upgrade changes it, the refusal's reason needs revisiting."""
         parser = configparser.RawConfigParser()
         parser.add_section('core')
         parser.set('core', '#x', 'value')

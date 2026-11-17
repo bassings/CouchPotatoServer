@@ -126,7 +126,7 @@ When running, FastAPI provides automatic OpenAPI documentation:
 | Endpoint | Description |
 |----------|-------------|
 | `settings` | Get all settings |
-| `settings.save` | Save one setting. Refuses the columns of a multi-row group, and option names the config file cannot hold (see below) |
+| `settings.save` | Save one setting. Refuses the columns of a multi-row group, and option names the config file cannot hold, such as an empty one (see below) |
 | `settings.save_group` | Save every column of one multi-row group in one request |
 
 #### Multi-row groups: `settings.save_group`
@@ -191,7 +191,7 @@ with no value, in one of three forms:
 > until it is reloaded. Options outside a group (`newznab.enabled`,
 > `newznab.custom_categories`, `torrentpotato.jackett_url`, and every other
 > setting) still save one at a time. Separately, `settings.save` refuses, for every section, any
-> option name containing whitespace, a control character, `=` or `:`, or starting
+> option name that is empty, contains whitespace, a control character, `=` or `:`, or starts
 > with `[`, `#` or `;` (the config file cannot hold them: `=` and `:` break every
 > later save until restart, and a leading `#` or `;` reloads as a comment), and a
 > `section` or `name` that is not text. The name is never echoed in the refusal.
