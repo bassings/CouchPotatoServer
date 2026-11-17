@@ -103,6 +103,12 @@ function installFetch() {
   };
 }
 
+/** The Alpine magics a real component has and a bare object does not; removeRow hands focus over with them. */
+function withAlpineMagics(field: any) {
+  field.$nextTick = (callback: () => void) => callback();
+  field.$el = { querySelector: () => null };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
@@ -587,6 +593,7 @@ describe('a verdict for rows that have since changed', () => {
     const { combinedField } = loadComponents();
     const field = combinedField('newznab', combinedOption(panel.options));
     field.getPanel = () => panel;
+    withAlpineMagics(field);
     field.init();
     field.held.rows[2][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
     panel.editGroup('newznab');
@@ -650,6 +657,7 @@ describe('a verdict for rows that have since changed', () => {
     const { combinedField } = loadComponents();
     const field = combinedField('newznab', combinedOption(panel.options));
     field.getPanel = () => panel;
+    withAlpineMagics(field);
     field.init();
     field.held.refusal = [{ row: 2, column: 'host', reason: 'comma', message: 'Row 3: the host cannot contain a comma. Remove it to save.' }];
 
@@ -659,11 +667,38 @@ describe('a verdict for rows that have since changed', () => {
     expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
   });
 
+  it('does not announce the same refusal again when a row above it is removed and the server refuses it again', async () => {
+    const net = installFetch();
+    const comma = (row: number) => ({ body: { success: false, error: 'x', invalid: [{ row, column: 'host', reason: 'comma' }] } });
+    net.replies.push(comma(2), comma(1));
+    const panel = aligned();
+    const spoken: Array<[string, boolean | undefined]> = [];
+    const announce = panel.announce.bind(panel);
+    panel.announce = (message: string, assertive?: boolean) => { spoken.push([message, assertive]); announce(message, assertive); };
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    field.getPanel = () => panel;
+    withAlpineMagics(field);
+    field.init();
+    field.held.rows[2][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
+    panel.editGroup('newznab');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(spoken.filter(([, assertive]) => assertive)).toHaveLength(1);
+
+    field.removeRow(0);
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([1]);
+    expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
+    expect(spoken.filter(([, assertive]) => assertive)).toHaveLength(1);
+  });
+
   it('drops the marks of a removed row', () => {
     const panel = aligned();
     const { combinedField } = loadComponents();
     const field = combinedField('newznab', combinedOption(panel.options));
     field.getPanel = () => panel;
+    withAlpineMagics(field);
     field.init();
     field.held.refusal = [{ row: 1, column: 'host', reason: 'comma', message: 'Row 2: x' }];
 
@@ -675,7 +710,8 @@ describe('a verdict for rows that have since changed', () => {
 
 describe('what describes a cell', () => {
   function fieldFor(values: Record<string, string>, misaligned: boolean) {
-    const panel = makePanel({ newznab: values }, { newznab: { misaligned, rows: 3 } });
+    // A copy: the panel keeps and writes into the values it is given.
+    const panel = makePanel({ newznab: { ...values } }, { newznab: { misaligned, rows: 3 } });
     const { combinedField } = loadComponents();
     const field = combinedField('newznab', combinedOption(panel.options));
     field.getPanel = () => panel;
@@ -884,14 +920,16 @@ describe('a button in a section with a combine group: the rows are locked from t
   const serverRows = (hosts: string[]): Reply => ({
     body: {
       options: newznabOptions(),
-      values: { torrentpotato: torrentValues(hosts), newznab: ALIGNED_VALUES.newznab },
+      values: { torrentpotato: torrentValues(hosts), newznab: { ...ALIGNED_VALUES.newznab } },
       combine_state: { torrentpotato: { misaligned: false, rows: hosts.length }, newznab: { misaligned: false, rows: 3 } },
     },
   });
 
   function torrentPanel() {
     const panel = makePanel(
-      { torrentpotato: torrentValues(HOSTS), newznab: ALIGNED_VALUES.newznab },
+      // A copy: a save writes its rows back into the values it was given, and the shared
+      // constant would carry one test's edit into the next.
+      { torrentpotato: torrentValues(HOSTS), newznab: { ...ALIGNED_VALUES.newznab } },
       { torrentpotato: { misaligned: false, rows: 3 }, newznab: { misaligned: false, rows: 3 } },
     );
     const option = combinedOption(panel.options, 'torrentpotato');
@@ -1332,4 +1370,200 @@ describe('a button in a section with a combine group: the rows are locked from t
     expect(calls(net)).toEqual(['core.something']);
     expect(field.busy).toBe(false);
   });
+});
+
+describe('removing a row from a combined field (SEC-004 AC-DESIGN-8, AC-A11Y-7)', () => {
+  /**
+   * A field over the real panel, with a stand-in for the part of the page this file does not
+   * have: a root whose querySelector hands back one focus spy per selector, and a $nextTick
+   * the test flushes by hand, so "after Alpine has re-rendered" is a moment the test controls.
+   */
+  function fieldWith(rows: number) {
+    const panel = aligned();
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    const spies = new Map<string, { focus: ReturnType<typeof vi.fn> }>();
+    const queued: Array<() => void> = [];
+    field.getPanel = () => panel;
+    field.$nextTick = (callback: () => void) => { queued.push(callback); };
+    // In init() Alpine's $el is the field's root. From a click handler it is the button that
+    // was pressed, which the removal has just taken out of the page: its querySelector finds
+    // nothing. So the root is given to init() and $el is then swapped for the dead button.
+    field.$el = {
+      querySelector: (selector: string) => {
+        if (!spies.has(selector)) spies.set(selector, { focus: vi.fn() });
+        return spies.get(selector);
+      },
+    };
+    field.init();
+    field.$el = { querySelector: () => null };
+    while (field.held.rows.length > rows) field.held.rows.pop();
+    return {
+      field,
+      panel,
+      focused: () => [...spies.entries()].filter(([, spy]) => spy.focus.mock.calls.length > 0).map(([selector]) => selector),
+      render: () => { while (queued.length) queued.shift()!(); },
+    };
+  }
+
+  const polite = (panel: any) => {
+    // The panel's announce() clears the region then sets it on the next tick; the unit
+    // harness runs $nextTick at once, so the final text is what a reader would hear.
+    return panel.politeAnnouncement;
+  };
+
+  for (const [name, index, target] of [
+    ['the first', 0, '[data-row-remove="0"]'],
+    ['a middle', 1, '[data-row-remove="1"]'],
+  ] as const) {
+    it(`removing ${name} of three rows hands focus to the Remove button now at that index, after the render`, () => {
+      const { field, focused, render } = fieldWith(3);
+
+      field.removeRow(index);
+
+      expect(field.focusTarget).toEqual({ kind: 'remove', index });
+      expect(focused()).toEqual([]);
+      render();
+      expect(focused()).toEqual([target]);
+    });
+  }
+
+  it('removing the last of three rows hands focus to the previous row\'s Remove button', () => {
+    const { field, focused, render } = fieldWith(3);
+
+    field.removeRow(2);
+
+    expect(field.focusTarget).toEqual({ kind: 'remove', index: 1 });
+    render();
+    expect(focused()).toEqual(['[data-row-remove="1"]']);
+  });
+
+  for (const index of [0, 1]) {
+    it(`removing row ${index + 1} of two rows leaves one row, so no Remove button: focus goes to Add`, () => {
+      const { field, focused, render } = fieldWith(2);
+
+      field.removeRow(index);
+
+      expect(field.rows).toHaveLength(1);
+      expect(field.focusTarget).toEqual({ kind: 'add' });
+      render();
+      expect(focused()).toEqual(['[data-row-add]']);
+    });
+  }
+
+  it('the target is spent once it has been used', () => {
+    const { field, render } = fieldWith(3);
+
+    field.removeRow(0);
+    render();
+
+    expect(field.focusTarget).toBeNull();
+  });
+
+  for (const [index, text] of [[0, 'Row 1 removed'], [1, 'Row 2 removed'], [2, 'Row 3 removed']] as const) {
+    it(`announces "${text}" once, politely`, () => {
+      const { field, panel, render } = fieldWith(3);
+      const spoken: Array<[string, boolean | undefined]> = [];
+      const announce = panel.announce.bind(panel);
+      panel.announce = (message: string, assertive?: boolean) => { spoken.push([message, assertive]); announce(message, assertive); };
+
+      field.removeRow(index);
+      render();
+
+      expect(spoken.filter(([message]) => message.endsWith('removed'))).toEqual([[text, false]]);
+      expect(polite(panel)).toBe(text);
+      expect(panel.assertiveAnnouncement).toBe('');
+    });
+  }
+
+  for (const index of [0, 1, 2]) {
+    it(`removing row ${index + 1} of three removes exactly that row, and saves the rest as one group save`, async () => {
+      const net = installFetch();
+      const { field } = fieldWith(3);
+      const hosts = ['one', 'two', 'three'].map((word) => `https://placeholder-${word}.invalid/api`);
+      const kept = hosts.filter((_, position) => position !== index);
+
+      field.removeRow(index);
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(field.rows.map((row: string[]) => row[1])).toEqual(kept);
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(net.body(0).rows.map((row: any) => row.host)).toEqual(kept);
+    });
+  }
+
+  it('offers a Remove control only while more than one row remains', () => {
+    const { field } = fieldWith(3);
+
+    expect(field.canRemove).toBe(true);
+    field.removeRow(0);
+    expect(field.canRemove).toBe(true);
+    field.removeRow(0);
+    expect(field.rows).toHaveLength(1);
+    expect(field.canRemove).toBe(false);
+  });
+
+  it('a removal on the last row does nothing: no change, no focus move, no announcement, no save', async () => {
+    const net = installFetch();
+    const { field, panel, focused, render } = fieldWith(1);
+
+    field.removeRow(0);
+    render();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(field.rows).toHaveLength(1);
+    expect(field.focusTarget).toBeNull();
+    expect(focused()).toEqual([]);
+    expect(polite(panel)).toBe('');
+    expect(net.groupSaves()).toHaveLength(0);
+  });
+
+  it('a locked group\'s removal does nothing and announces nothing', async () => {
+    const net = installFetch();
+    const { field, panel, focused, render } = fieldWith(3);
+    field.held.locked = true;
+
+    field.removeRow(1);
+    render();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(field.rows).toHaveLength(3);
+    expect(field.focusTarget).toBeNull();
+    expect(focused()).toEqual([]);
+    expect(polite(panel)).toBe('');
+    expect(net.groupSaves()).toHaveLength(0);
+  });
+});
+
+describe('a held key on the Remove and Add buttons (SEC-004 AC-A11Y-7)', () => {
+  const press = (key: string, repeat: boolean) => ({ key, repeat, preventDefault: vi.fn() });
+  function heldKeyField() {
+    const panel = aligned();
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    field.getPanel = () => panel;
+    return field;
+  }
+
+  it('prevents the repeat of an Enter, which would otherwise activate the next control focus lands on', () => {
+    const event = press('Enter', true);
+
+    heldKeyField().ignoreHeldKey(event);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  for (const [name, event] of [
+    ['the first keydown of an Enter', press('Enter', false)],
+    ['a repeated Space', press(' ', true)],
+    ['a first Space', press(' ', false)],
+    ['a repeated Tab, which must keep moving focus', press('Tab', true)],
+    ['a first Tab', press('Tab', false)],
+  ] as const) {
+    it(`leaves ${name} alone`, () => {
+      heldKeyField().ignoreHeldKey(event);
+
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    });
+  }
 });

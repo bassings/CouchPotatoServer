@@ -388,6 +388,18 @@ result. Getting it wrong the other way files a bug against working code.
   the current re-keying, so that has to be re-verified (and its tests kept)
   before changing the key.
 
+- **Settings combined field: small targets, and removal has no undo (2026-11-17,
+  open, found at the SEC-004 P4 review).** The Remove icon is 16px and "+ Add" is
+  under 24px tall. Both pass WCAG 2.2 SC 2.5.8 (Target Size, Minimum) only through
+  the spacing exception: 8px between Remove and the input beside it, 38px between
+  rows. Add's spacing to a neighbouring "Learn more" is borderline and unmeasured.
+  The wizard's controls are 24px (`w-6 h-6`, `min-h-6`); matching them here is a
+  visible design change, so it was not made in P4. Separately, two deliberate
+  presses of Remove on row 1 remove two rows with no confirmation and no undo, and
+  a removed host and key are saved to `config.ini` 500ms later. A held Enter no
+  longer does this (P4 review), but a deliberate double press still does. That is
+  a design question (confirm, undo, or hold the save), not built here.
+
 - **Restart-duplicate E2E test can leave an orphan server (2026-11-12,
   pre-existing).** `tests/e2e/settings_restart_failure.spec.ts` "a second
   keyboard activation cannot start a conflicting restart request": when its

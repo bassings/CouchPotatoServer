@@ -743,12 +743,18 @@ function settingsPanel() {
     /** One announcement per refusal: a repeat of the same refused cells, which
      *  every further keystroke produces, is not announced again. */
     refuseGroup(group, entries) {
-      const key = entries.map(entry => entry.row + ':' + entry.column + ':' + entry.reason).join('|');
+      const key = this.refusalKeyOf(entries);
       group.refusal = entries;
       group.error = '';
       if (key === group.refusalKey) return;
       group.refusalKey = key;
       this.announce(entries.map(entry => entry.message).join(' '), true);
+    },
+
+    /** The identity of a refusal: which cells, and why. One definition, so the key a
+     *  verdict is compared with and the key a renumbering rebuilds cannot drift apart. */
+    refusalKeyOf(entries) {
+      return entries.map(entry => entry.row + ':' + entry.column + ':' + entry.reason).join('|');
     },
 
     failGroup(group, text) {
@@ -844,6 +850,9 @@ function settingsPanel() {
         .filter(entry => entry.row !== idx)
         .map(entry => (entry.row > idx ? { ...entry, row: entry.row - 1 } : entry))
         .map(entry => ({ ...entry, message: this.refusalText(group, entry) }));
+      // The key names rows by position too: left as it was, the server's identical verdict on
+      // the renumbered rows would look new and be announced, assertively, a second time.
+      group.refusalKey = this.refusalKeyOf(group.refusal);
     },
 
     async saveSingle(section, name, value) {
@@ -1449,11 +1458,15 @@ function combinedField(section, opt) {
     // Named `held`, not `group`: the settings group the template is rendered in
     // is already `group` there.
     held: null,
+    // Where focus goes after the render that follows a removal (see removeRow).
+    focusTarget: null,
+    fieldRoot: null,
     section,
     opt,
 
     init() {
       this.held = this.getPanel().ensureGroup(section, opt);
+      this.fieldRoot = this.$el;
     },
 
     get rows() { return this.held ? this.held.rows : []; },
@@ -1524,14 +1537,44 @@ function combinedField(section, opt) {
       this.held.rows.push(this.getPanel().blankGroupRow(this.section, this.opt));
     },
 
+    /** A Remove control is offered only while there is another row to keep: the last
+     *  row cannot be removed, so a control for it would do nothing. */
+    get canRemove() { return this.rows.length > 1; },
+
     removeRow(idx) {
-      if (this.locked) return;
-      if (this.rows.length > 1) {
-        this.held.rows.splice(idx, 1);
-        // The marks name rows by position, and the positions have just moved.
-        this.getPanel().shiftRefusal(this.held, idx);
-        this.getPanel().editGroup(this.section);
-      }
+      if (this.locked || !this.canRemove) return;
+      this.held.rows.splice(idx, 1);
+      // The marks name rows by position, and the positions have just moved.
+      this.getPanel().shiftRefusal(this.held, idx);
+      this.getPanel().editGroup(this.section);
+      // Focus goes where the wizard's removeIndexer puts it: the Remove button now at
+      // this index, else the previous row's, else (one row left, so none are drawn) Add.
+      // Stated as data and applied after the render, not found by a query that races it.
+      this.focusTarget = this.canRemove
+        ? { kind: 'remove', index: Math.min(idx, this.rows.length - 1) }
+        : { kind: 'add' };
+      this.getPanel().announce('Row ' + (idx + 1) + ' removed', false);
+      this.$nextTick(() => this.applyFocus());
+    },
+
+    // A held Enter repeats its keydown, and Enter activates a button on keydown. A removal
+    // hands focus on, so without this the held key would carry on into the next Remove (deleting
+    // row after row, each one saved) and then into Add (adding blank rows). Enter only: Space
+    // activates on keyup, so holding it never repeated the activation (measured, settings.spec.ts).
+    // A held Tab must still move on. Same as the wizard's ignoreHeldKey (PR #586).
+    ignoreHeldKey(event) {
+      if (event.repeat && event.key === 'Enter') event.preventDefault();
+    },
+
+    applyFocus() {
+      const target = this.focusTarget;
+      this.focusTarget = null;
+      if (!target) return;
+      const selector = target.kind === 'add' ? '[data-row-add]' : '[data-row-remove="' + target.index + '"]';
+      // The field's own root, kept by init(): from a click handler $el is the Remove button,
+      // which this removal may just have taken out of the page.
+      const control = this.fieldRoot.querySelector(selector);
+      if (control) control.focus();
     },
   };
 }

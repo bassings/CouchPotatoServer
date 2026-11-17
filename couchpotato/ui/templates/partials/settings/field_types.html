@@ -267,7 +267,7 @@
     </template>
 
     <!-- Column headers -->
-    <div class="flex gap-2 mb-2 items-center text-[10px] text-cp-muted font-medium" aria-hidden="true">
+    <div class="flex gap-2 mb-2 items-center text-[10px] text-cp-muted font-medium" aria-hidden="true" data-testid="combine-headers">
       <template x-for="(col, colIdx) in opt.combine" :key="'hdr-'+colIdx">
         <span :class="col === 'use' ? 'w-10 shrink-0 text-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')"
               x-text="col === 'use' ? '' : col.replace(/_/g, ' ')"></span>
@@ -278,7 +278,7 @@
     <!-- Data rows -->
     <template x-for="(row, rowIdx) in rows" :key="rowIdx">
       <div class="mb-2">
-      <div class="flex gap-2 items-center">
+      <div class="flex gap-2 items-center" data-testid="combine-row-cells">
         <template x-for="(col, colIdx) in opt.combine" :key="colIdx">
           <div :class="col === 'use' ? 'w-10 shrink-0 flex justify-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')">
             <!-- Toggle for 'use' column -->
@@ -312,15 +312,26 @@
             </template>
           </div>
         </template>
-        <button @click="removeRow(rowIdx)"
-                class="text-cp-muted hover:text-cp-danger transition-colors shrink-0"
-                :aria-label="'Remove row ' + (rowIdx + 1)"
-                :aria-disabled="locked ? 'true' : null"
-                :aria-describedby="held && held.notice ? noticeId() : null">
-          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
-          </svg>
-        </button>
+        <!-- Not drawn for the last row: it cannot be removed, so a control for it would do nothing
+             (the wizard does the same). The spacer keeps the row's cells under the column headers. -->
+        <template x-if="canRemove">
+          <button @click="removeRow(rowIdx)"
+                  @keydown="ignoreHeldKey($event)"
+                  type="button"
+                  :data-row-remove="rowIdx"
+                  :class="locked ? 'cursor-not-allowed' : ''"
+                  class="text-cp-muted hover:text-cp-danger transition-colors shrink-0"
+                  :aria-label="'Remove row ' + (rowIdx + 1)"
+                  :aria-disabled="locked ? 'true' : null"
+                  :aria-describedby="held && held.notice ? noticeId() : null">
+            <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </template>
+        <template x-if="!canRemove">
+          <span class="w-4 shrink-0" aria-hidden="true"></span>
+        </template>
       </div>
       <!-- Refused cells of THIS row, directly below it. Persistent: removed only
            when the group saves. No live role: the panel announces the refusal. -->
@@ -335,7 +346,9 @@
     </template>
     
     <button @click="addRow()"
+            @keydown="ignoreHeldKey($event)"
             type="button"
+            data-row-add
             :aria-disabled="locked ? 'true' : null"
             :class="locked ? 'cursor-not-allowed' : ''"
             class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors"
