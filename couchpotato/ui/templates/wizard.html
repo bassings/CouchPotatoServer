@@ -1171,10 +1171,11 @@ function newznabReadStored(payload) {
 }
 
 // An Error the wizard shows inside the Newznab card rather than as a toast: `marks` are the
-// on-screen inputs at fault, `{index, field}` with field `host` or `api_key`.
-function newznabStepError(message, marks) {
+// on-screen inputs at fault, `{index, field}` with field `host` or `api_key`. `reloaded` is set
+// when the rows on screen were just replaced, so focus goes to them (there is no input at fault).
+function newznabStepError(message, marks, reloaded = false) {
   const error = new Error(message);
-  error.newznab = { marks };
+  error.newznab = { marks, reloaded };
   return error;
 }
 
@@ -1245,6 +1246,23 @@ function newznabBuildRows(baseline, entries) {
 function newznabRowsChanged(baseline, rows) {
   return rows.length !== baseline.rows.length
     || rows.some((row, index) => NEWZNAB_COLUMNS.some((column) => row[column] !== baseline.rows[index][column]));
+}
+
+// Has the store moved since the page opened (AC-DATA-23)? `fresh` is a read that landed
+// (`ok`); `baseline` is what this page's edits were built on. Every cell of every row is
+// compared, hidden rows included, and so are the row count and a group that has become
+// misaligned. API keys are compared as text: the read returns a combine column's key
+// unmasked, so a key rotated to another value of the same length is a change too.
+function newznabStoredChanged(baseline, fresh) {
+  return fresh.misaligned || newznabRowsChanged(baseline, fresh.rows);
+}
+
+// What the page says after it found the store changed and reloaded it. Never a cell.
+function newznabChangedMessage(fresh) {
+  const said = 'Your saved Newznab indexers changed since this page opened, so nothing was saved and your unsaved edits to them were discarded.';
+  return fresh.misaligned
+    ? said + ' The saved entries now do not line up. Fix the rows in Settings, under Searchers, then Newznab.'
+    : said + ' The rows shown have been reloaded. Check them, then press Continue again.';
 }
 
 function newznabEntryForRow(origins, row) {
@@ -2011,11 +2029,18 @@ function setupWizard() {
         // No input carries this message, so it is announced (once); and focus goes to the way
         // out when there is one, as a refusal's goes to its input.
         this.speak(error.message, 'error');
+        // Alpine SHOWS an x-show element a frame after the state change, and a hidden element
+        // cannot take focus, so focus waits one frame after the update (as removeIndexer's
+        // "lost" check does for hiding).
         if (this.newznabStatus === 'failed') {
-          this.$nextTick(() => {
+          this.$nextTick(() => requestAnimationFrame(() => {
             const retry = document.querySelector('[data-newznab-retry]');
             if (retry) retry.focus();
-          });
+          }));
+        } else if (error.newznab.reloaded) {
+          // The rows were replaced under the user: focus goes to the first of them (or the
+          // switch, or Continue), chosen from state, never left on a node that is gone.
+          this.$nextTick(() => requestAnimationFrame(() => this.focusAfterNewznabRead()));
         }
         return;
       }
@@ -2073,10 +2098,29 @@ function setupWizard() {
       const entries = this.formData.newznab.entries.map((entry) => ({ ...entry }));
       const built = newznabBuildRows(this.newznabBaseline, entries);
       if (!newznabRowsChanged(this.newznabBaseline, built.rows)) return;
+      await this.assertNewznabStoreUnchanged();
       await this.postNewznabGroup(built);
       const next = newznabAfterSave(built, entries);
       this.newznabBaseline = next.baseline;
       this.formData.newznab.entries = next.entries;
+    },
+
+    // Only when a group save is about to be sent (AC-DATA-23): read the store again and compare
+    // it with the baseline the edits were built on. Throws, like any refused save, so nothing
+    // newznab is written (`enabled` included) and the step does not advance:
+    //  - the read failed, was malformed or timed out: the existing read-failure state, with Retry;
+    //  - the store changed (another tab, a Jackett sync): the fresh rows and baseline replace
+    //    what is on screen, so the user's unsaved edits are discarded, and the message says so.
+    // This narrows the window between a read and a save; it does not close it.
+    async assertNewznabStoreUnchanged() {
+      const fresh = await this.fetchNewznabRead();
+      if (!fresh.ok) {
+        this.newznabStatus = 'failed';
+        throw newznabStepError(NEWZNAB_NOT_LOADED, []);
+      }
+      if (!newznabStoredChanged(this.newznabBaseline, fresh)) return;
+      this.applyNewznabRead(fresh);
+      throw newznabStepError(newznabChangedMessage(fresh), [], true);
     },
 
     async postNewznabGroup(built) {
@@ -2135,6 +2179,14 @@ function setupWizard() {
     async loadNewznab() {
       const token = ++this.newznabReadToken;
       this.newznabStatus = 'loading';
+      const read = await this.fetchNewznabRead();
+      // A newer read has taken over: this answer says nothing about the rows now.
+      if (token === this.newznabReadToken) this.applyNewznabRead(read);
+    },
+
+    // One read of the stored rows, whoever asks: `{ ok: false }` for anything that is not a
+    // complete answer, a timeout (15 s) and an abort included. Changes no state.
+    async fetchNewznabRead() {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), NEWZNAB_READ_TIMEOUT_MS);
       let read = { ok: false };
@@ -2147,8 +2199,7 @@ function setupWizard() {
       } finally {
         clearTimeout(timer);
       }
-      // A newer read has taken over: this answer says nothing about the rows now.
-      if (token === this.newznabReadToken) this.applyNewznabRead(read);
+      return read;
     },
 
     // Where a read lands, every message that depends on the READ's state is settled here, once:
