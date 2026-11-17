@@ -2089,9 +2089,9 @@ function setupWizard() {
           body: JSON.stringify({ section: 'newznab', rows: built.rows }),
         });
         data = await resp.json();
-      } catch (e) {
+      } catch {
         // Nothing is logged or shown from the failure itself: it can carry the URL.
-        data = null;
+        // `data` stays null, which the check below reads as "not saved".
       }
       if (resp && resp.ok && data && data.success === true) return;
       throw this.newznabSaveError(resp, data, built.origins);
@@ -2141,8 +2141,9 @@ function setupWizard() {
       try {
         const resp = await fetch(CP.apiBase + '/settings/', { signal: controller.signal });
         if (resp.ok) read = newznabReadStored(await resp.json());
-      } catch (e) {
-        read = { ok: false };
+      } catch {
+        // A thrown or aborted read is a failed read: `read` stays `{ ok: false }`.
+        // Nothing from the failure is logged or shown.
       } finally {
         clearTimeout(timer);
       }
@@ -2245,7 +2246,8 @@ function setupWizard() {
     clearNewznabMark(idx, field) {
       const key = field + ':' + idx;
       if (!this.newznabMarks[key]) return;
-      const { [key]: _gone, ...rest } = this.newznabMarks;
+      const rest = { ...this.newznabMarks };
+      delete rest[key];
       this.newznabMarks = rest;
       if (Object.keys(rest).length === 0) this.newznabError = '';
     },

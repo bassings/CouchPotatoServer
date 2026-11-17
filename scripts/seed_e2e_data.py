@@ -32,6 +32,8 @@ import time
 
 ALREADY_PRESENT = 'already present'
 CONFIG_FILE_NAME = 'config.ini'
+PLACEHOLDER_HOST_ONE = 'https://placeholder-one.invalid/api'
+PLACEHOLDER_HOST_TWO = 'https://placeholder-two.invalid/api'
 
 # --- sys.path bootstrap -----------------------------------------------------
 # Mirrors scripts/migrate_codernity_to_sqlite.py: this script must be
@@ -720,7 +722,7 @@ def _fixture_newznab_two_stored():
     column, so a cell moved to the wrong row cannot land on an equal one."""
     return _newznab(
         use=_cells('1', '0'),
-        host=_cells('https://placeholder-one.invalid/api', 'https://placeholder-two.invalid/api'),
+        host=_cells(PLACEHOLDER_HOST_ONE, PLACEHOLDER_HOST_TWO),
         api_key=_cells('placeholder-key-one', 'placeholder-key-two'),
         extra_score=_cells('5', '10'),
         custom_tag=_cells('tag-one', 'tag-two'),
@@ -788,7 +790,7 @@ def _fixture_newznab_use_column_long():
     and its row count is the longest column's: six."""
     return _newznab(
         use=_cells('', '', '', '', '', ''),
-        host=_cells('https://placeholder-one.invalid/api', 'https://placeholder-two.invalid/api'),
+        host=_cells(PLACEHOLDER_HOST_ONE, PLACEHOLDER_HOST_TWO),
         api_key=_cells('placeholder-key-one', 'placeholder-key-two'),
     )
 
@@ -798,7 +800,7 @@ def _fixture_newznab_key_column_long():
     indexer (a host with no key is hidden)."""
     return _newznab(
         use=_cells('1', '0'),
-        host=_cells('https://placeholder-one.invalid/api', 'https://placeholder-two.invalid/api'),
+        host=_cells(PLACEHOLDER_HOST_ONE, PLACEHOLDER_HOST_TWO),
         api_key=_cells('', '', '', '', '', ''),
     )
 
