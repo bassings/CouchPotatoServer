@@ -1866,3 +1866,33 @@ test.describe('Remove and Add are inert while a save is in flight', () => {
     await expect(page.getByLabel(/^Newznab indexer URL/)).toHaveCount(3);
   });
 });
+
+// SEC-004 P5: a keyboard user who presses Retry keeps focus on it while the read runs. If the
+// button were hidden for the duration, focus would fall to the page ("the skip link").
+test.describe('Retry keeps keyboard focus while the saved indexers are read again', () => {
+  test('Tab to Retry, Enter: the same button is still there, focused and aria-disabled, then settles back', async ({ page }) => {
+    let answered = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(/\/settings\/(\?.*)?$/, async (route) => {
+      answered += 1;
+      if (answered === 2) await held;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+    });
+    await openWizard(page);
+    await expect(page.locator('[data-newznab-card]')).toHaveAttribute('data-newznab-status', 'failed');
+    await mountStep(page, 2, 'state.formData.searchType = "usenet";');
+    const retry = page.getByRole('button', { name: 'Try loading saved indexers again' });
+    await tabTo(page, retry);
+
+    await page.keyboard.press('Enter');
+
+    const busy = page.getByRole('button', { name: 'Loading saved indexers…' });
+    await expect(busy).toBeVisible();
+    await expect(busy).toHaveAttribute('aria-disabled', 'true');
+    await expect(busy).toBeFocused();
+    release();
+    await expect(retry).toBeFocused();
+    await expect(retry).toHaveAttribute('aria-disabled', 'false');
+  });
+});

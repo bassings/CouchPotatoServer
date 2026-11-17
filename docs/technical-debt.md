@@ -530,6 +530,14 @@ result. Getting it wrong the other way files a bug against working code.
      rows, which is harmless.
   4. Autofill and password-manager behaviour on the now-prefilled URL and key
      inputs is unmeasured.
+  5. (2026-11-18) If the server ever reported a row count higher than every
+     column's cell count (never observed from the real server), the wizard
+     trusts it and an edit appends blank padded rows. No mispairing was found
+     in a million such answers.
+  6. (2026-11-18) The Newznab error message clears on the first keystroke in the
+     last marked input, before the cause is gone; Continue re-validates. In the
+     masked API-key field the user can then no longer read what the message
+     said.
 - **Newznab positional lists: what the pairing fixes did not close.**
   Newznab stores each indexer as parallel comma-separated lists (`host`,
   `api_key`, `use`, plus `extra_score`, `custom_tag`, `custom_categories`)

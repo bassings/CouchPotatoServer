@@ -338,7 +338,9 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
 
       await openProvidersStep(page);
       await expect(page.getByTestId('wizard-newznab-loading')).toBeVisible();
-      await expect(card(page)).toHaveAttribute('aria-busy', 'true');
+      // The busy region is the loading line, not the card: an error is never inside a busy region.
+      await expect(page.locator('[data-newznab-loading-region]')).toHaveAttribute('aria-busy', 'true');
+      await expect(card(page)).not.toHaveAttribute('aria-busy', 'true');
       await expect(urlInput(page, 1)).toHaveCount(0);
 
       const baseline = configSha(testServer.configPath);
@@ -349,6 +351,7 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
       await expect(providersHeading(page)).toBeVisible();
       // Pending is not failed: no "could not be loaded", and no Retry to press.
       await expect(page.getByTestId('wizard-newznab-error')).toContainText(STILL_LOADING);
+      await expect(page.getByTestId('toast-announcer-assertive')).toContainText(STILL_LOADING);
       await expect(page.getByTestId('wizard-newznab-error')).not.toContainText('could not be loaded');
       await expect(retryButton(page)).toHaveCount(0);
       expect(await requests.pageWrites(), 'a pending read was followed by a save').toEqual([]);
@@ -357,9 +360,118 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
       release();
       await expect(urlInput(page, 1)).toHaveValue(TWO_HOSTS[0]);
       await expect(page.getByTestId('wizard-newznab-error')).toBeHidden();
-      await expect(card(page)).not.toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('[data-newznab-loading-region]')).not.toHaveAttribute('aria-busy', 'true');
       // The message was spoken as a problem, so its end is spoken once.
       await expect(page.getByTestId('toast-announcer-polite')).toContainText(/have loaded/i);
+    });
+  });
+
+  // A message that depends on the READ must not survive a change of the read's state: pending
+  // then FAILED shows the failure, not "still loading" beside a Retry, and the visible text, the
+  // assertive announcement and the Retry control agree.
+  test.describe('a read pending at Continue that then fails with an HTTP 500', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-pending-then-500' });
+
+    test('shows the failure and a Retry, not "still loading", and writes nothing', async ({ page, testServer }) => {
+      const requests = await recordWizardRequests(page);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      await page.route(READ_ROUTE, async (route) => {
+        await held;
+        await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      });
+      await openProvidersStep(page);
+      const baseline = configSha(testServer.configPath);
+      await continueButton(page).click();
+      await expect(page.getByTestId('wizard-newznab-error')).toContainText(STILL_LOADING);
+
+      release();
+
+      await expect(page.getByTestId('wizard-newznab-error')).toContainText(NOT_LOADED);
+      await expect(page.getByTestId('wizard-newznab-error')).not.toContainText('still loading');
+      await expect(retryButton(page)).toBeVisible();
+      await expect(page.getByTestId('toast-announcer-assertive')).toContainText('could not be loaded');
+      await expect(page.getByTestId('toast-announcer-assertive')).not.toContainText('still loading');
+      expect(await requests.pageWrites()).toEqual([]);
+      expect(configSha(testServer.configPath)).toBe(baseline);
+    });
+  });
+
+  test.describe('a read pending at Continue that then times out', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-pending-then-timeout' });
+
+    test('shows the failure and a Retry once the fake clock passes its 15 seconds', async ({ page, testServer }) => {
+      await page.clock.install();
+      const requests = await recordWizardRequests(page);
+      await page.route(READ_ROUTE, () => new Promise(() => undefined));
+      await openProvidersStep(page);
+      const baseline = configSha(testServer.configPath);
+      await continueButton(page).click();
+      await expect(page.getByTestId('wizard-newznab-error')).toContainText(STILL_LOADING);
+
+      await page.clock.fastForward(16000);
+
+      await expect(page.getByTestId('wizard-newznab-error')).toContainText(NOT_LOADED);
+      await expect(page.getByTestId('wizard-newznab-error')).not.toContainText('still loading');
+      await expect(retryButton(page)).toBeVisible();
+      await expect(page.getByTestId('toast-announcer-assertive')).not.toContainText('still loading');
+      expect(await requests.pageWrites()).toEqual([]);
+      expect(configSha(testServer.configPath)).toBe(baseline);
+    });
+  });
+
+  test.describe('Continue pressed during a retry that then fails', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-continue-during-retry' });
+
+    test('ends on the failure text with Retry idle, never "still loading" beside it', async ({ page, testServer }) => {
+      const requests = await recordWizardRequests(page);
+      let answered = 0;
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      await page.route(READ_ROUTE, async (route) => {
+        answered += 1;
+        if (answered === 2) await held;
+        await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      });
+      await openProvidersStep(page);
+      await expect(page.getByTestId('wizard-newznab-error')).toContainText(NOT_LOADED);
+      await retryButton(page).click();
+      await expect(page.getByRole('button', { name: 'Loading saved indexers…' })).toBeVisible();
+      const baseline = configSha(testServer.configPath);
+
+      await continueButton(page).click();
+      await expect(page.getByTestId('wizard-newznab-error')).toContainText(STILL_LOADING);
+      release();
+
+      await expect(page.getByTestId('wizard-newznab-error')).toContainText(NOT_LOADED);
+      await expect(page.getByTestId('wizard-newznab-error')).not.toContainText('still loading');
+      await expect(retryButton(page)).toHaveAttribute('aria-disabled', 'false');
+      expect(await requests.pageWrites()).toEqual([]);
+      expect(configSha(testServer.configPath)).toBe(baseline);
+    });
+  });
+
+  test.describe('a read pending at Continue that lands misaligned', () => {
+    test.use({ seedConfig: 'newznab_misaligned_key_short#wizard-pending-then-misaligned' });
+
+    test('announces that the rows do not line up, once, and not "have loaded"', async ({ page }) => {
+      const liveTexts = await watchLiveRegions(page);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      await page.route(READ_ROUTE, async (route) => { await held; await route.continue(); });
+      await openProvidersStep(page);
+      await continueButton(page).click();
+      await expect(page.getByTestId('wizard-newznab-error')).toContainText(STILL_LOADING);
+
+      release();
+
+      await expect(page.getByTestId('combine-misaligned-notice')).toBeVisible();
+      await expect(page.getByTestId('wizard-newznab-error')).toBeHidden();
+      await expect(page.getByTestId('toast-announcer-polite')).toContainText('do not line up');
+      await expect(page.getByTestId('toast-announcer-polite')).not.toContainText('have loaded');
+      const texts = await liveTexts();
+      expect(texts.filter((text) => text.includes('do not line up')), 'the notice was announced once').toHaveLength(1);
+      expect(texts.filter((text) => text.includes('have loaded'))).toEqual([]);
     });
   });
 
@@ -426,8 +538,9 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
   test.describe('a retry that fails again', () => {
     test.use({ seedConfig: 'newznab_two_stored#wizard-retry-fails-again' });
 
+    // No fake clock here: the held promise controls the timing, and a clock that is installed
+    // stops the page applying the very hide this test exists to catch.
     test('keeps focus on the Retry button, which reads as busy while it runs, and the error stays', async ({ page }) => {
-      await page.clock.install();
       let answered = 0;
       let release!: () => void;
       const held = new Promise<void>((resolve) => { release = resolve; });
@@ -436,21 +549,31 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
         if (answered === 2) await held;
         await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
       });
+      const liveTexts = await watchLiveRegions(page);
       await openProvidersStep(page);
       await expect(page.getByTestId('wizard-newznab-error')).toContainText(NOT_LOADED);
 
       await retryButton(page).focus();
       await page.keyboard.press('Enter');
 
+      // DURING the retry: the same button is still on screen, focused, and says it is busy.
       const busy = page.getByRole('button', { name: 'Loading saved indexers…' });
       await expect(busy).toBeVisible();
       await expect(busy).toHaveAttribute('aria-disabled', 'true');
       await expect(busy).toBeFocused();
+      // The old failure text is not shown beside a button that says it is loading, and neither the
+      // message box nor the button sits inside a busy region.
+      await expect(page.locator('#wizard-newznab-error')).toBeHidden();
+      expect(await busy.evaluate((element) => element.closest('[aria-busy="true"]') === null)).toBe(true);
+      await expect(card(page)).not.toHaveAttribute('aria-busy', 'true');
+      // A retry starts with one polite announcement, so it does not begin in silence.
+      await expect(page.getByTestId('toast-announcer-polite')).toContainText('Loading your saved Newznab indexers');
       release();
 
       await expect(retryButton(page)).toBeFocused();
       await expect(retryButton(page)).toHaveAttribute('aria-disabled', 'false');
       await expect(page.getByTestId('wizard-newznab-error')).toContainText(NOT_LOADED);
+      expect((await liveTexts()).filter((text) => text.includes('Loading your saved Newznab indexers')), 'the retry start was announced once').toHaveLength(1);
     });
   });
 
@@ -476,6 +599,7 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
       test.use({ seedConfig: 'newznab_misaligned_key_short#wizard-retry-misaligned' });
 
       test('shows the notice, announces it politely, and moves focus to Continue rather than losing it', async ({ page }) => {
+        const liveTexts = await watchLiveRegions(page);
         let answered = 0;
         await page.route(READ_ROUTE, (route) => {
           answered += 1;
@@ -488,6 +612,10 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
         await expect(page.getByTestId('combine-misaligned-notice')).toBeVisible();
         await expect(continueButton(page)).toBeFocused();
         await expect(page.getByTestId('toast-announcer-polite')).toContainText('do not line up');
+        // One announcement, decided once: the notice, not "have loaded", and exactly one of it.
+        const texts = await liveTexts();
+        expect(texts.filter((text) => text.includes('do not line up')), 'the notice was announced once').toHaveLength(1);
+        expect(texts.filter((text) => text.includes('have loaded'))).toEqual([]);
       });
     });
   });
@@ -496,7 +624,6 @@ test.describe('a read that has not completed is never "no stored indexers"', () 
     test.use({ seedConfig: 'newznab_two_stored#wizard-read-retry' });
 
     test('loads the rows, clears the error, and hands focus to the first URL', async ({ page }) => {
-      await page.clock.install();
       let answered = 0;
       await page.route(READ_ROUTE, (route) => {
         answered += 1;

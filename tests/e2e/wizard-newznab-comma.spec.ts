@@ -72,6 +72,22 @@ async function countFetchedSaves(page: Page) {
 
 const fetchedSaves = (page: Page): Promise<string[]> => page.evaluate(() => (window as any).__saveFetches);
 
+/** Every text change in the assertive live region, from before the first script runs (AC-A11Y-4's counting, for the wizard). */
+async function watchAssertive(page: Page) {
+  await page.addInitScript(() => {
+    const texts: string[] = [];
+    (window as any).__assertiveTexts = texts;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const node = record.target instanceof Element ? record.target : record.target.parentElement;
+        const region = node?.closest('[data-testid="toast-announcer-assertive"]');
+        if (region?.textContent) texts.push(region.textContent);
+      }
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+  return () => page.evaluate(() => (window as any).__assertiveTexts as string[]);
+}
+
 async function fillRows(page: Page, rows: Row[]) {
   for (const [i, row] of rows.entries()) {
     if (row.host !== undefined) await urlInput(page, i + 1).fill(row.host);
@@ -349,18 +365,21 @@ test.describe('the marks and the message clear when the cause does', () => {
 // AC-OPS-4: the route is missing (a page on the new version talking to a rolled-back
 // server) or the server fails. Never "saved", never advance, rows kept as typed.
 test.describe('any other answer from the group-save route is a visible error', () => {
-  const ANSWERS: [string, { status: number; body: string }][] = [
+  // `null` is a dropped connection: the request never gets an answer at all.
+  const ANSWERS: [string, { status: number; body: string } | null][] = [
     ['the API call does not exist', { status: 200, body: '{"success": false, "error": "API call doesn\'t exist"}' }],
     ['an HTTP 500', { status: 500, body: '{"success": false, "error": "boom"}' }],
     ['an answer that is not JSON', { status: 502, body: '<html>bad gateway</html>' }],
+    ['a dropped connection', null],
   ];
 
   for (const [name, reply] of ANSWERS) {
     test(`${name}: an error stays on screen, the rows stay as typed, nothing else is saved`, async ({ page }) => {
       const singles: string[] = [];
-      await page.route('**/settings.save_group/**', (route) => route.fulfill({
-        status: reply.status, contentType: 'application/json', body: reply.body,
-      }));
+      const liveTexts = await watchAssertive(page);
+      await page.route('**/settings.save_group/**', (route) => (reply
+        ? route.fulfill({ status: reply.status, contentType: 'application/json', body: reply.body })
+        : route.abort('connectionreset')));
       await page.route('**/settings.save/**', async (route) => {
         singles.push(new URLSearchParams(route.request().postData() || '').get('name') || '');
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
@@ -373,6 +392,8 @@ test.describe('any other answer from the group-save route is a visible error', (
       await expect(errorMessage(page)).toContainText('Check them in Settings, under Searchers, then Newznab.');
       await expect(page.getByTestId('toast-announcer-assertive')).toContainText('were not saved');
       await settle(page);
+      // Announced once: a message no input carries is spoken a single time.
+      expect((await liveTexts()).filter((text) => text.includes('were not saved')), 'the failure was announced more than once').toHaveLength(1);
       await expect(providersHeading(page)).toBeVisible();
       await expect(urlInput(page, 1)).toHaveValue('https://indexer-a.invalid');
       await expect(keyInput(page, 1)).toHaveValue('placeholder-key-a');

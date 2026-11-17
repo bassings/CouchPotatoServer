@@ -175,7 +175,7 @@
           <h3 class="text-sm font-medium text-cp-accent">Usenet Providers</h3>
           
           <!-- Newznab -->
-          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]" data-newznab-card :data-newznab-status="newznabStatus" :aria-busy="newznabStatus === 'loading' ? 'true' : null">
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]" data-newznab-card :data-newznab-status="newznabStatus">
             <div class="flex items-center justify-between mb-3">
               <div>
                 <span class="text-sm font-medium">Newznab Indexers</span>
@@ -195,7 +195,11 @@
               </template>
             </div>
             {#- Loading: plain text, not a live region. The wizard writes nothing newznab until the read is in. -#}
-            <p x-show="newznabStatus === 'loading'" class="mb-3 text-xs text-cp-muted" data-testid="wizard-newznab-loading">Loading your saved indexers…</p>
+            {#- The busy region is this line only. A message or the Retry button is never inside a busy region
+                (AC-A11Y-15): they are siblings of it, not children. -#}
+            <div data-newznab-loading-region :aria-busy="newznabStatus === 'loading' ? 'true' : null">
+              <p x-show="newznabStatus === 'loading'" class="mb-3 text-xs text-cp-muted" data-testid="wizard-newznab-loading">Loading your saved indexers…</p>
+            </div>
             {#- A misaligned stored group: the wizard shows no rows for it and writes nothing, `enabled` included.
                 The first sentence is the Settings page's notice (partials/settings/field_types.html); the rest is
                 what is true here. Same danger border and text as there, without the tint (4.81:1 on the card,
@@ -206,8 +210,8 @@
             {#- The ONE message for anything wrong with Newznab in this step: a read that failed, a refused or
                 failed save. Persistent (no timer), not a live region (it is announced once, through the shared
                 assertive region), and what each marked input is described by. -#}
-            <div x-show="newznabMessage()" class="mb-3 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="wizard-newznab-error">
-              <p id="wizard-newznab-error" class="text-xs text-cp-danger" x-text="newznabMessage()"></p>
+            <div x-show="newznabMessage() || newznabRetrying" class="mb-3 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="wizard-newznab-error">
+              <p id="wizard-newznab-error" x-show="newznabMessage()" class="text-xs text-cp-danger" x-text="newznabMessage()"></p>
               {#- Stays rendered while a retry runs (aria-disabled, not hidden), so focus is not dropped and a failed
                   retry leaves it here. Its visible text is its name. -#}
               <button type="button" x-show="newznabStatus === 'failed' || newznabRetrying" @click="retryNewznabRead()" @keydown="ignoreHeldKey($event)"
@@ -1057,6 +1061,8 @@ const NEWZNAB_READ_TIMEOUT_MS = 15000;
 const NEWZNAB_NOT_LOADED = 'Your saved Newznab indexers could not be loaded, so nothing was changed. Usenet cannot continue until they load. Try loading saved indexers again.';
 const NEWZNAB_PENDING = 'Your saved Newznab indexers are still loading. Wait a moment, then press Continue again.';
 const NEWZNAB_LOADED = 'Your saved Newznab indexers have loaded.';
+const NEWZNAB_RETRYING = 'Loading your saved Newznab indexers…';
+const NEWZNAB_MISALIGNED_SAID = 'The saved entries here do not line up. Nothing was changed. Fix the rows in Settings, under Searchers, then Newznab.';
 // Where a message with no input to carry it says the rows CAN be fixed. Never a value.
 const NEWZNAB_SETTINGS_POINTER = ' Check them in Settings, under Searchers, then Newznab.';
 
@@ -2144,7 +2150,14 @@ function setupWizard() {
       if (token === this.newznabReadToken) this.applyNewznabRead(read);
     },
 
+    // Where a read lands, every message that depends on the READ's state is settled here, once:
+    // the visible text, the one announcement and the Retry control all follow `newznabStatus`.
+    // A "still loading" or "could not be loaded" message left over from an earlier state is
+    // cleared first, so it can never survive the change (a pending read that then fails must
+    // show the failure, not "still loading" beside a Retry).
     applyNewznabRead(read) {
+      const reported = this.newznabReadMessageShown();
+      this.clearNewznabReadMessage();
       if (!read.ok) {
         this.newznabStatus = 'failed';
         // Only where the card is on screen: with Torrents chosen it is hidden, and a failure
@@ -2152,16 +2165,11 @@ function setupWizard() {
         if (this.currentStep === 2 && this.newznabSearchesUsenet()) this.speak(NEWZNAB_NOT_LOADED, 'error');
         return;
       }
-      // A "still loading" or "could not be loaded" message was shown: its end is said once.
-      const wasReported = this.newznabError === NEWZNAB_NOT_LOADED || this.newznabError === NEWZNAB_PENDING;
-      if (wasReported) {
-        this.clearNewznabError();
-        this.speak(NEWZNAB_LOADED, 'polite');
-      }
+      // Said once, when a pending or failed message had been shown or when this answers a retry:
+      // what the read turned out to be. On a first load nothing was said, so nothing is.
+      if (reported || this.newznabRetrying) this.speak(read.misaligned ? NEWZNAB_MISALIGNED_SAID : NEWZNAB_LOADED, 'polite');
       if (read.misaligned) {
         this.newznabStatus = 'misaligned';
-        // Said when it is the answer to a retry; on load the notice is simply on the page.
-        if (this.newznabRetrying) this.speak('The saved entries here do not line up. Nothing was changed. Fix the rows in Settings, under Searchers, then Newznab.', 'polite');
         return;
       }
       this.newznabBaseline = { rows: read.rows, shown: read.shown };
@@ -2170,11 +2178,25 @@ function setupWizard() {
       this.newznabStatus = 'ready';
     },
 
+    // The messages that describe the read, as opposed to a save: the ones a change of the
+    // read's state makes untrue.
+    newznabReadMessageShown() {
+      return this.newznabError === NEWZNAB_NOT_LOADED || this.newznabError === NEWZNAB_PENDING;
+    },
+
+    clearNewznabReadMessage() {
+      if (this.newznabReadMessageShown()) this.clearNewznabError();
+    },
+
     // The button stays rendered and focused while this runs (aria-disabled), so a failed
     // retry leaves focus where it was; a successful one hands it on by STATE.
     async retryNewznabRead() {
       if (this.newznabStatus !== 'failed' || this.newznabRetrying) return;
       this.newznabRetrying = true;
+      // The failure text is untrue from here and is not shown beside a button that says it is
+      // loading; the retry starts with one polite announcement.
+      this.clearNewznabReadMessage();
+      this.speak(NEWZNAB_RETRYING, 'polite');
       await this.loadNewznab();
       this.newznabRetrying = false;
       this.$nextTick(() => this.focusAfterNewznabRead());
@@ -2208,7 +2230,9 @@ function setupWizard() {
 
     // The one message for Newznab in this step: a failed save, or a read that failed.
     newznabMessage() {
-      const notLoaded = this.newznabStatus === 'failed' || this.newznabRetrying;
+      // While a retry runs the read is not failed any more: no failure text beside a button that
+      // says it is loading (the loading line and the busy Retry are the signal).
+      const notLoaded = this.newznabStatus === 'failed' && !this.newznabRetrying;
       return this.newznabError || (notLoaded ? NEWZNAB_NOT_LOADED : '');
     },
 
