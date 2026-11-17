@@ -132,4 +132,38 @@ for (const theme of ['light', 'dark'] as const) {
       }
     });
   });
+
+  test.describe(`locked rows during a button action at 375px in ${theme} theme`, () => {
+    test.use({ seedConfig: `torrentpotato_aligned#mobile-locked-${theme}` });
+
+    test('the lock note fits, the inputs are readonly, and nothing overflows', async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 800 });
+      await page.addInitScript((selectedTheme) => {
+        localStorage.setItem('cp-theme', selectedTheme);
+      }, theme);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
+        await gate;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'Jackett refused' }) });
+      });
+      await page.goto('/settings/');
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      const card = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'TorrentPotato', exact: true }) });
+      await card.locator('h3 button[aria-expanded="false"]').click();
+
+      await card.getByRole('button', { name: /Sync Indexers/ }).click();
+      const note = card.getByTestId('combine-locked-note');
+      await expect(note).toBeVisible();
+      await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', true);
+      await expectNoHorizontalDocumentOverflow(page, `locked combined field, ${theme}`);
+      const fits = await note.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= document.documentElement.clientWidth && element.scrollWidth <= element.clientWidth;
+      });
+      expect(fits).toBe(true);
+      release();
+      await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);
+    });
+  });
 }

@@ -865,262 +865,314 @@ describe('flushing, and re-reading', () => {
   });
 });
 
-describe('a button in a section with a combine group', () => {
-  function button(panel: any, action = 'torrentpotato.jackett_sync') {
+describe('a button in a section with a combine group: the rows are locked from the click until the server\'s rows are back', () => {
+  const HOSTS = ['one', 'two', 'three'].map((word) => `https://placeholder-${word}.invalid/api`);
+  const SYNCED = 'https://placeholder-synced.invalid/api';
+
+  function torrentValues(hosts: string[]) {
+    return {
+      use: hosts.map(() => '1').join(','),
+      host: hosts.join(','),
+      pass_key: hosts.map((_, index) => `placeholder-pass-${index}`).join(','),
+      seed_ratio: hosts.map(() => '1').join(','),
+      seed_time: hosts.map(() => '40').join(','),
+      extra_score: hosts.map(() => '0').join(','),
+    };
+  }
+
+  /** What `GET settings/` answers once the sync has written `hosts`. */
+  const serverRows = (hosts: string[]): Reply => ({
+    body: {
+      options: newznabOptions(),
+      values: { torrentpotato: torrentValues(hosts), newznab: ALIGNED_VALUES.newznab },
+      combine_state: { torrentpotato: { misaligned: false, rows: hosts.length }, newznab: { misaligned: false, rows: 3 } },
+    },
+  });
+
+  function torrentPanel() {
+    const panel = makePanel(
+      { torrentpotato: torrentValues(HOSTS), newznab: ALIGNED_VALUES.newznab },
+      { torrentpotato: { misaligned: false, rows: 3 }, newznab: { misaligned: false, rows: 3 } },
+    );
+    const option = combinedOption(panel.options, 'torrentpotato');
+    return { panel, option, group: panel.ensureGroup('torrentpotato', option) };
+  }
+
+  function fieldOf(panel: any, option: any) {
+    const { combinedField } = loadComponents();
+    const field = combinedField('torrentpotato', option);
+    field.getPanel = () => panel;
+    field.init();
+    return field;
+  }
+
+  function button(panel: any) {
     const { buttonField } = loadComponents();
-    const field = buttonField('torrentpotato', { button_action: action, name: 'jackett_sync' });
+    const field = buttonField('torrentpotato', { button_action: 'torrentpotato.jackett_sync', name: 'jackett_sync' });
     field.getPanel = () => panel;
     return field;
   }
 
-  function torrentPanel() {
-    const panel = makePanel(
-      { torrentpotato: { use: '1', host: 'https://placeholder-one.invalid/api', pass_key: 'placeholder-pass-one', seed_ratio: '1', seed_time: '40', extra_score: '0' } },
-      { torrentpotato: { misaligned: false, rows: 1 } },
-    );
-    panel.init = vi.fn(async () => {});
-    return panel;
+  const calls = (net: ReturnType<typeof installFetch>) => net.calls.map((call) => call.url.split('/').slice(-2)[0]);
+
+  async function startedAction(extra: Array<Reply | Promise<Reply>> = []) {
+    const net = installFetch();
+    const action = deferred<Reply>();
+    net.replies.push(action.promise, ...extra);
+    const ctx = torrentPanel();
+    const field = button(ctx.panel);
+    const running = field.execute();
+    await vi.advanceTimersByTimeAsync(0);
+    return { net, action, running, field, ...ctx };
   }
 
-  it('saves the held group first, then runs the action, then re-reads once', async () => {
-    const net = installFetch();
-    net.replies.push({ body: { success: true } }, { body: { success: true, message: 'Synced' } });
-    const panel = torrentPanel();
-    const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-    group.rows[0][1] = 'https://placeholder-edited.invalid/api';
-    panel.editGroup('torrentpotato');
+  it('locks the group synchronously on the click, before anything is awaited, and says so once', () => {
+    installFetch();
+    const { panel, group } = torrentPanel();
 
-    await button(panel).execute();
-    await vi.advanceTimersByTimeAsync(500);
+    void button(panel).execute();
 
-    expect(net.calls.map((call) => call.url.split('/').slice(-2)[0])).toEqual(['settings.save_group', 'torrentpotato.jackett_sync']);
-    expect(panel.init).toHaveBeenCalledTimes(1);
+    expect(group.locked).toBe(true);
+    expect(group.actionRunning).toBe(true);
+    expect(panel.politeAnnouncement).toBe('These rows are locked while the action runs.');
   });
 
-  it('says so, in text and to a screen reader, when it drops rows typed while the action ran', async () => {
-    const net = installFetch();
-    const action = deferred<Reply>();
-    net.replies.push(action.promise);
-    const panel = torrentPanel();
-    const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-    const running = button(panel).execute();
-    await vi.advanceTimersByTimeAsync(0);
-    group.rows[0][1] = 'https://placeholder-typed-during-sync.invalid/api';
-    panel.editGroup('torrentpotato');
+  for (const elapsed of [300, 1500, 6000]) {
+    it(`refuses every edit while the action runs (${elapsed}ms), and sends no save for that group`, async () => {
+      const { net, action, running, panel, option, group } = await startedAction();
+      const field = fieldOf(panel, option);
+      const before = JSON.stringify(group.rows);
 
-    action.resolve({ body: { success: true, message: 'Synced' } });
-    await running;
-
-    expect(group.discarded).toMatch(/not saved/);
-    expect(panel.politeAnnouncement).toBe(group.discarded);
-    expect(panel.lastSaved).toBe(false);
-  });
-
-  describe('while the action runs (the group is held)', () => {
-    async function slowAction(panel: any, net: ReturnType<typeof installFetch>, reply: Reply | Promise<Reply>) {
-      const action = deferred<Reply>();
-      net.replies.push(action.promise);
-      const running = button(panel).execute();
-      await vi.advanceTimersByTimeAsync(0);
-      return { action, running, reply };
-    }
-
-    it('sends no group save however long the action takes, and says the typed rows were dropped', async () => {
-      const net = installFetch();
-      const panel = torrentPanel();
-      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-      const { action, running } = await slowAction(panel, net, { body: {} });
-      await vi.advanceTimersByTimeAsync(200);
-      group.rows[0][1] = 'https://placeholder-typed.invalid/api';
-      panel.editGroup('torrentpotato');
-
-      await vi.advanceTimersByTimeAsync(600);
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(net.groupSaves()).toEqual([]);
-
-      action.resolve({ body: { success: true, message: 'Synced' } });
-      await running;
-      await vi.advanceTimersByTimeAsync(5000);
-
-      expect(net.groupSaves()).toEqual([]);
-      expect(group.discarded).toMatch(/not saved/);
-      expect(group.dirty).toBe(false);
-      expect(panel.lastSaved).toBe(false);
-    });
-
-    it('does not let a pending-save flush send a held group', async () => {
-      const net = installFetch();
-      const panel = torrentPanel();
-      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-      const { action, running } = await slowAction(panel, net, { body: {} });
-      group.rows[0][1] = 'https://placeholder-typed.invalid/api';
-      panel.editGroup('torrentpotato');
-
+      field.updateRow(0, 1, 'https://placeholder-typed.invalid/api');
+      field.updateRow(0, 0, '0');
+      field.addRow();
+      field.removeRow(1);
+      await vi.advanceTimersByTimeAsync(elapsed);
+      await panel.saveGroup('torrentpotato');
       await panel.flushPendingSaves();
 
+      expect(JSON.stringify(group.rows)).toBe(before);
+      expect(group.dirty).toBe(false);
       expect(net.groupSaves()).toEqual([]);
-      action.resolve({ body: { success: true } });
-      await running;
-    });
-
-    it('shows no note when nothing was typed: a fresh page, after a successful save, after a refusal that was fixed', async () => {
-      for (const prelude of ['fresh', 'saved', 'refused-then-fixed']) {
-        const net = installFetch();
-        const panel = torrentPanel();
-        const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-        if (prelude !== 'fresh') {
-          const refusal = { body: { success: false, error: 'x', invalid: [{ row: 0, column: 'host', reason: 'comma' }] } };
-          if (prelude === 'refused-then-fixed') {
-            net.replies.push(refusal);
-            group.rows[0][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
-            panel.editGroup('torrentpotato');
-            await vi.advanceTimersByTimeAsync(500);
-            expect(group.refusal).toHaveLength(1);
-          }
-          net.replies.push({ body: { success: true } });
-          group.rows[0][1] = 'https://placeholder-fixed.invalid/api';
-          panel.editGroup('torrentpotato');
-        }
-        net.replies.push({ body: { success: true, message: 'Synced' } });
-
-        await button(panel).execute();
-        await vi.advanceTimersByTimeAsync(5000);
-
-        expect(group.discarded, prelude).toBe('');
-        expect(panel.politeAnnouncement, prelude).toBe('');
-      }
-    });
-
-    it('when the action is refused, keeps the typed rows and saves them afterwards, with no note', async () => {
-      const net = installFetch();
-      const panel = torrentPanel();
-      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-      const { action, running } = await slowAction(panel, net, { body: {} });
-      group.rows[0][1] = 'https://placeholder-typed.invalid/api';
-      panel.editGroup('torrentpotato');
-      await vi.advanceTimersByTimeAsync(5000);
-      expect(net.groupSaves()).toEqual([]);
-
       action.resolve({ body: { success: false, error: 'Jackett refused' } });
       await running;
-      expect(group.discarded).toBe('');
-      expect(group.dirty).toBe(true);
-      await vi.advanceTimersByTimeAsync(500);
-
-      expect(net.groupSaves()).toHaveLength(1);
-      expect(net.body(net.calls.length - 1).rows[0].host).toBe('https://placeholder-typed.invalid/api');
     });
+  }
 
-    it('when the request itself fails the action may have written, so typed rows are dropped and it says so', async () => {
-      const net = installFetch();
-      const panel = torrentPanel();
-      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-      const failing = deferred<Reply>();
-      net.replies.push(failing.promise);
-      const running = button(panel).execute();
-      await vi.advanceTimersByTimeAsync(0);
-      group.rows[0][1] = 'https://placeholder-typed.invalid/api';
-      panel.editGroup('torrentpotato');
-      await vi.advanceTimersByTimeAsync(5000);
+  it('does not lock another section\'s group', async () => {
+    const { net, action, running, panel } = await startedAction();
+    const other = panel.ensureGroup('newznab', combinedOption(panel.options));
+    other.rows[0][1] = 'https://placeholder-other.invalid/api';
+    panel.editGroup('newznab');
 
-      failing.resolve(Promise.reject(new TypeError('Failed to fetch')));
-      await running;
-      await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(500);
 
-      expect(net.groupSaves()).toEqual([]);
-      expect(group.discarded).toMatch(/not saved/);
-    });
-
-    it('releases the hold when the flush before the action fails', async () => {
-      const net = installFetch();
-      net.replies.push({ body: { success: false, error: 'x', invalid: [{ row: 0, column: 'host', reason: 'comma' }] } });
-      const panel = torrentPanel();
-      const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-      group.rows[0][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
-      panel.editGroup('torrentpotato');
-
-      await button(panel).execute();
-      group.rows[0][1] = 'https://placeholder-fixed.invalid/api';
-      panel.editGroup('torrentpotato');
-      await vi.advanceTimersByTimeAsync(500);
-
-      expect(net.groupSaves()).toHaveLength(2);
-    });
+    expect(net.groupSaves()).toHaveLength(1);
+    expect(net.body(net.calls.length - 1).section).toBe('newznab');
+    action.resolve({ body: { success: false, error: 'x' } });
+    await running;
   });
 
-  it('says nothing when nothing was typed during the action', async () => {
-    const net = installFetch();
-    net.replies.push({ body: { success: true, message: 'Synced' } });
-    const panel = torrentPanel();
-    const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
+  it('F1: an edit the instant the action answers is refused until the server\'s rows are shown', async () => {
+    const reread = deferred<Reply>();
+    const { net, action, running, panel, option, group } = await startedAction([reread.promise]);
+    const field = fieldOf(panel, option);
 
-    await button(panel).execute();
-
-    expect(group.discarded).toBe('');
-    expect(panel.politeAnnouncement).toBe('');
-  });
-
-  it('drops rows typed while the action ran, so a stale save never overwrites what the action wrote', async () => {
-    const net = installFetch();
-    const action = deferred<Reply>();
-    net.replies.push(action.promise);
-    const panel = torrentPanel();
-    panel.init = vi.fn(async () => { panel.reloadCleanGroups(); });
-    const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-    const running = button(panel).execute();
+    action.resolve({ body: { success: true, message: 'Synced' } });
     await vi.advanceTimersByTimeAsync(0);
-    expect(net.calls).toHaveLength(1);
+    field.updateRow(0, 1, 'https://placeholder-too-early.invalid/api');
+    expect(group.locked).toBe(true);
+    expect(group.dirty).toBe(false);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(net.groupSaves()).toEqual([]);
 
-    group.rows[0][1] = 'https://placeholder-typed-during-sync.invalid/api';
-    panel.editGroup('torrentpotato');
-    panel.values = { torrentpotato: { ...panel.values.torrentpotato, host: 'https://placeholder-from-sync.invalid/api' } };
+    reread.resolve(serverRows([...HOSTS, SYNCED]));
+    await running;
+
+    expect(group.locked).toBe(false);
+    expect(group.actionRunning).toBe(false);
+    expect(group.rows).toHaveLength(4);
+    expect(group.rows[3][1]).toBe(SYNCED);
+    field.updateRow(0, 1, 'https://placeholder-after.invalid/api');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(net.body(net.calls.length - 1).rows).toHaveLength(4);
+  });
+
+  it('F2: the button being torn down by a tab change does not stop the re-read', async () => {
+    const { action, running, field, group } = await startedAction([serverRows([...HOSTS, SYNCED])]);
+    field.getPanel = () => null;
+
     action.resolve({ body: { success: true, message: 'Synced' } });
     await running;
-    await vi.advanceTimersByTimeAsync(5000);
 
-    expect(net.groupSaves()).toEqual([]);
-    expect(group.dirty).toBe(false);
-    expect(group.rows[0][1]).toBe('https://placeholder-from-sync.invalid/api');
+    expect(group.rows).toHaveLength(4);
+    expect(group.locked).toBe(false);
   });
 
-  it('does not run the action when the flush failed, and says why', async () => {
+  it('a field rebuilt during the action finds the rows still locked, then the server\'s rows', async () => {
+    const { action, running, panel, option } = await startedAction([serverRows([...HOSTS, SYNCED])]);
+
+    const rebuilt = fieldOf(panel, option);
+    expect(rebuilt.held.locked).toBe(true);
+    action.resolve({ body: { success: true } });
+    await running;
+
+    expect(rebuilt.held.rows).toHaveLength(4);
+    expect(rebuilt.held.locked).toBe(false);
+  });
+
+  for (const [name, reply] of [
+    ['a non-JSON HTTP 500', { status: 500, text: '<html>Internal Server Error</html>' }],
+    ['a thrown request error', null],
+  ] as const) {
+    it(`F3: ${name} may have written, so the page re-reads, shows the error, and saves only the file's rows plus the next edit`, async () => {
+      const net = installFetch();
+      const action = deferred<Reply>();
+      net.replies.push(action.promise, serverRows([...HOSTS, SYNCED]));
+      const { panel, option, group } = torrentPanel();
+      const field = button(panel);
+      const running = field.execute();
+      await vi.advanceTimersByTimeAsync(0);
+
+      if (reply) action.resolve(reply as Reply);
+      else action.resolve(Promise.reject(new TypeError('Failed to fetch')));
+      await running;
+
+      expect(field.success).toBe(false);
+      expect(field.result).not.toBe('');
+      expect(field.running).toBe(false);
+      expect(group.rows).toHaveLength(4);
+      expect(group.locked).toBe(false);
+      fieldOf(panel, option).updateRow(0, 1, 'https://placeholder-next.invalid/api');
+      await vi.advanceTimersByTimeAsync(500);
+      const saved = net.body(net.calls.length - 1).rows;
+      expect(saved).toHaveLength(4);
+      expect(saved[3].host).toBe(SYNCED);
+      expect(saved[0].host).toBe('https://placeholder-next.invalid/api');
+    });
+  }
+
+  it('F4: a button rebuilt mid-action is busy, and a second press sends no second action', async () => {
+    const { net, action, running, panel } = await startedAction([serverRows([...HOSTS, SYNCED])]);
+    const rebuilt = button(panel);
+
+    expect(rebuilt.busy).toBe(true);
+    await rebuilt.execute();
+    expect(calls(net).filter((name) => name === 'torrentpotato.jackett_sync')).toHaveLength(1);
+
+    action.resolve({ body: { success: true } });
+    await running;
+    expect(rebuilt.busy).toBe(false);
+  });
+
+  it('the busy state is read from the panel, not from the button that was pressed', async () => {
+    const { action, running, panel } = await startedAction();
+    const rebuilt = button(panel);
+
+    expect(rebuilt.running).toBe(false);
+    expect(rebuilt.busy).toBe(true);
+    action.resolve({ body: { success: false, error: 'x' } });
+    await running;
+  });
+
+  it('saves an edit made 100ms before the click, and one with a save in flight at the click, before the action', async () => {
     const net = installFetch();
-    net.replies.push({ body: { success: false, error: 'A cell cannot contain a comma.', invalid: [{ row: 0, column: 'host', reason: 'comma' }] } });
-    const panel = torrentPanel();
-    const group = panel.ensureGroup('torrentpotato', combinedOption(panel.options, 'torrentpotato'));
-    group.rows[0][1] = 'https://placeholder-bad.invalid,https://placeholder-evil.invalid';
+    const inFlight = deferred<Reply>();
+    net.replies.push(inFlight.promise, { body: { success: true } }, { body: { success: false, error: 'x' } });
+    const { panel, option, group } = torrentPanel();
+    const field = fieldOf(panel, option);
+    field.updateRow(0, 1, 'https://placeholder-first.invalid/api');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(net.groupSaves()).toHaveLength(1);
+    field.updateRow(1, 1, 'https://placeholder-second.invalid/api');
+    await vi.advanceTimersByTimeAsync(100);
+
+    const running = button(panel).execute();
+    field.updateRow(2, 1, 'https://placeholder-during-flush.invalid/api');
+    await vi.advanceTimersByTimeAsync(0);
+    inFlight.resolve({ body: { success: true } });
+    await running;
+
+    expect(calls(net)).toEqual(['settings.save_group', 'settings.save_group', 'torrentpotato.jackett_sync']);
+    expect(net.body(1).rows[1].host).toBe('https://placeholder-second.invalid/api');
+    expect(net.body(1).rows[2].host).toBe(HOSTS[2]);
+    expect(group.rows[2][1]).toBe(HOSTS[2]);
+  });
+
+  it('g: a refused pre-action flush runs no action, unlocks, shows the refusal, and the next edit saves', async () => {
+    const net = installFetch();
+    net.replies.push({ body: { success: false, error: 'x', invalid: [{ row: 0, column: 'host', reason: 'comma' }] } });
+    const { panel, option, group } = torrentPanel();
+    group.rows[0][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
     panel.editGroup('torrentpotato');
     const field = button(panel);
 
     await field.execute();
 
-    expect(net.calls).toHaveLength(1);
-    expect(field.success).toBe(false);
+    expect(calls(net)).toEqual(['settings.save_group']);
+    expect(group.locked).toBe(false);
+    expect(group.actionRunning).toBe(false);
+    expect(group.refusal).toHaveLength(1);
     expect(field.result).not.toBe('');
-    expect(field.running).toBe(false);
+    fieldOf(panel, option).updateRow(0, 1, 'https://placeholder-fixed.invalid/api');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(net.groupSaves()).toHaveLength(2);
   });
 
-  it('with nothing held, just runs the action', async () => {
-    const net = installFetch();
-    net.replies.push({ body: { success: true, message: 'Synced' } });
-    const panel = torrentPanel();
+  it('h: an action that answers success false is unlocked at once, with no re-read, rows as flushed', async () => {
+    const { net, action, running, panel, option, group } = await startedAction();
 
-    await button(panel).execute();
+    action.resolve({ body: { success: false, error: 'Jackett refused' } });
+    await running;
 
-    expect(net.calls).toHaveLength(1);
-    expect(net.calls[0].url).toContain('torrentpotato.jackett_sync');
+    expect(calls(net)).toEqual(['torrentpotato.jackett_sync']);
+    expect(group.locked).toBe(false);
+    expect(group.rows).toHaveLength(3);
+    fieldOf(panel, option).updateRow(0, 1, 'https://placeholder-next.invalid/api');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(net.body(net.calls.length - 1).rows).toHaveLength(3);
   });
 
-  it('a section with no combine group is untouched', async () => {
+  it('i: if the re-read fails the group stays locked, says so, and nothing can be saved', async () => {
+    const { net, action, running, panel, option, group } = await startedAction([{ status: 500, text: 'no' }]);
+
+    action.resolve({ body: { success: true } });
+    await running;
+
+    expect(group.locked).toBe(true);
+    expect(group.actionRunning).toBe(false);
+    expect(group.reloadError).toBe('Could not reload these rows. Reload the page before changing them.');
+    expect(panel.assertiveAnnouncement).toBe(group.reloadError);
+    const field = fieldOf(panel, option);
+    field.updateRow(0, 1, 'https://placeholder-typed.invalid/api');
+    await vi.advanceTimersByTimeAsync(5000);
+    await panel.saveGroup('torrentpotato');
+    expect(net.groupSaves()).toEqual([]);
+    expect(group.dirty).toBe(false);
+  });
+
+  it('announces the lock once, and nothing more on unlock', async () => {
+    const { action, running, panel } = await startedAction([serverRows([...HOSTS, SYNCED])]);
+    const spoken: string[] = [];
+    Object.defineProperty(panel, 'politeAnnouncement', { get: () => '', set: (value: string) => { if (value) spoken.push(value); } });
+
+    action.resolve({ body: { success: true } });
+    await running;
+
+    expect(spoken).toEqual([]);
+  });
+
+  it('a section with no combine group is not locked, and runs the action', async () => {
     const net = installFetch();
     net.replies.push({ body: { success: true, message: 'Done' } });
-    const panel = torrentPanel();
+    const { panel } = torrentPanel();
     const { buttonField } = loadComponents();
     const field = buttonField('core', { button_action: 'core.something', name: 'something' });
     field.getPanel = () => panel;
 
     await field.execute();
 
-    expect(net.calls).toHaveLength(1);
+    expect(calls(net)).toEqual(['core.something']);
+    expect(field.busy).toBe(false);
   });
 });

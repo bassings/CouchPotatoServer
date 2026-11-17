@@ -632,9 +632,13 @@ export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions
     const after = await loadSettingsSnapshot(settingsURL, 'after');
     const changed = changedSettings(before, after);
     // Channel-independent: a route of the test's own, or the `request` fixture, never
-    // passes through guardRoute. Checked BEFORE restoring, which would hide it.
-    if (!seedConfig) assertNoSharedGroupChange(before, changed);
-    await restoreAndVerify(testServer.apiBase, settingsURL, before, changed);
+    // passes through guardRoute. Restored first (the shared server must not be left
+    // changed), and its error still wins over a restore failure.
+    try {
+      await restoreAndVerify(testServer.apiBase, settingsURL, before, changed);
+    } finally {
+      if (!seedConfig) assertNoSharedGroupChange(before, changed);
+    }
     assertTeardownAudit(tally, changed, testInfo.annotations, seedConfig);
   }, { auto: true }],
 });

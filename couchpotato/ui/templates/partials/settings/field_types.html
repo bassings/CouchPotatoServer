@@ -139,12 +139,17 @@
 <!-- Button (action button like Jackett sync) -->
 <template x-if="opt.type === 'button'">
   <div x-data="buttonField(group.section, opt)">
-    <button @click="execute()" 
-            :disabled="running"
-            :aria-label="opt.button_text || opt.label || 'Execute'"
-            class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors disabled:opacity-50">
-      <span x-show="!running" x-text="opt.button_text || 'Execute'"></span>
-      <span x-show="running" class="flex items-center gap-2">
+    {#- aria-disabled, not disabled: the button holds focus while the action runs, and the
+        busy state is the PANEL's for the section, so a button rebuilt by a tab change
+        mid-action is still busy. execute() ignores a press while busy. -#}
+    <button @click="execute()"
+            type="button"
+            :aria-disabled="busy ? 'true' : null"
+            :class="busy ? 'cursor-not-allowed' : ''"
+            :aria-label="(busy ? 'Running… ' : '') + (opt.button_text || opt.label || 'Execute')"
+            class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:underline transition-colors">
+      <span x-show="!busy" x-text="opt.button_text || 'Execute'"></span>
+      <span x-show="busy" class="flex items-center gap-2">
         <svg aria-hidden="true" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
@@ -224,7 +229,7 @@
 
 <!-- Combined (multi-entry rows like newznab hosts/keys) -->
 <template x-if="opt.type === 'combined'">
-  <div x-data="combinedField(group.section, opt)">
+  <div x-data="combinedField(group.section, opt)" :aria-busy="locked ? 'true' : null">
     <!-- Misaligned stored rows (the server's flag): persistent until a save of
          this group succeeds. Not a live region: it is there on load, and says
          what is true of the rows now on screen.
@@ -249,10 +254,15 @@
       </div>
     </template>
 
-    <!-- Rows typed while a button action ran were dropped (announced once by the panel). -->
-    <template x-if="held && held.discarded">
-      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-discarded-note">
-        <p class="text-xs text-cp-danger" x-text="held.discarded"></p>
+    <!-- Locked from the click of a button in this section until the server's rows are
+         back. Static text; the panel announces the lock once, politely. -->
+    <template x-if="locked && !held.reloadError">
+      <p class="mb-2 text-xs text-cp-muted" data-testid="combine-locked-note">These rows are locked while the action runs.</p>
+    </template>
+    <!-- The re-read after the action failed: stays locked, because the rows may be stale. -->
+    <template x-if="held && held.reloadError">
+      <div class="mb-2 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-reload-error">
+        <p class="text-xs text-cp-danger" x-text="held.reloadError"></p>
       </div>
     </template>
 
@@ -279,6 +289,7 @@
                       role="switch"
                       :aria-checked="(row[colIdx] === '1' || row[colIdx] === 1).toString()"
                       :aria-label="'Enable row ' + (rowIdx + 1)"
+                      :aria-disabled="locked ? 'true' : null"
                       :aria-describedby="describedBy(rowIdx, colIdx)">
                 <span :class="(row[colIdx] === '1' || row[colIdx] === 1) ? 'translate-x-4' : 'translate-x-0.5'"
                       class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5" aria-hidden="true"></span>
@@ -293,6 +304,7 @@
                      :value="row[colIdx] || ''"
                      @input="updateRow(rowIdx, colIdx, $event.target.value)"
                      :aria-label="col.replace(/_/g, ' ') + ' for row ' + (rowIdx + 1)"
+                     :readonly="locked"
                      :aria-invalid="cellError(rowIdx, colIdx) ? 'true' : null"
                      :aria-describedby="describedBy(rowIdx, colIdx)"
                      :class="cellError(rowIdx, colIdx) ? 'border-cp-danger focus:border-cp-danger' : 'border-white/[0.06] focus:border-cp-accent/30'"
@@ -303,6 +315,7 @@
         <button @click="removeRow(rowIdx)"
                 class="text-cp-muted hover:text-cp-danger transition-colors shrink-0"
                 :aria-label="'Remove row ' + (rowIdx + 1)"
+                :aria-disabled="locked ? 'true' : null"
                 :aria-describedby="held && held.notice ? noticeId() : null">
           <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -322,6 +335,9 @@
     </template>
     
     <button @click="addRow()"
+            type="button"
+            :aria-disabled="locked ? 'true' : null"
+            :class="locked ? 'cursor-not-allowed' : ''"
             class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors"
             aria-label="Add row">+ Add</button>
     <p x-show="buildDescription()" class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>

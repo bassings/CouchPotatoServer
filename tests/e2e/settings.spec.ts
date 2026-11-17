@@ -1467,55 +1467,262 @@ test.describe('Settings: a button acts on saved rows, never on held ones', () =>
   });
 });
 
-test.describe('Settings: a slow button action holds its group', () => {
-  test.use({ seedConfig: 'torrentpotato_aligned#slow-sync' });
+// ── The rows are LOCKED from the click of a button until the page has the server's rows
+// back (SEC-004 AC-DATA-21; owner decision 2026-11-17, "Lock rows during sync"). The sync is
+// stood in for by a held route that writes a fourth row to the REAL server, as the real
+// writer does, and answers as each test says. Nothing sleeps: the test releases the gate.
+type SyncAnswer = 'success' | 'refused' | 'abort' | 'html500';
 
-  test('a keystroke during the action sends no group save, is announced as dropped, and the file holds what the action wrote', async ({ page, testServer }) => {
-    test.info().annotations.push(...combineGroupWriter());
-    await page.clock.install();
-    const net = await recordRequests(page);
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    // The action stands in for Jackett sync: it is held open, then writes a fourth row
-    // to the real server (as the sync's own writer does) and answers success. Nothing here
-    // sleeps: the test releases it after the page's debounce has had every chance to fire.
-    await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
-      await gate;
-      const before = configColumns(testServer.configPath, 'torrentpotato');
-      const synced: Record<string, string> = {
-        use: '1', host: 'https://placeholder-synced.invalid/api', pass_key: 'placeholder-pass-synced',
-        name: 'name-synced', seed_ratio: '1', seed_time: '40', extra_score: '0',
-      };
-      const columns = Object.keys(synced);
-      const rows = [0, 1, 2, 3].map((index) => Object.fromEntries(columns.map((column) => [
-        column, index < 3 ? cellsOf(before[column])[index] : synced[column],
-      ])));
-      await fetch(`${testServer.apiBase}/settings.save_group/`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ section: 'torrentpotato', rows }),
-      });
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }) });
+const SYNCED_HOST = 'https://placeholder-synced.invalid/api';
+
+async function stubSync(page: Page, apiBase: string, configPath: string, answer: SyncAnswer) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const hits: string[] = [];
+  await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
+    hits.push(route.request().url());
+    await gate;
+    if (answer === 'refused') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'Jackett refused' }) });
+      return;
+    }
+    const before = configColumns(configPath, 'torrentpotato');
+    const synced: Record<string, string> = {
+      use: '1', host: SYNCED_HOST, pass_key: 'placeholder-pass-synced',
+      name: 'name-synced', seed_ratio: '1', seed_time: '40', extra_score: '0',
+    };
+    const columns = Object.keys(synced);
+    const rows = [0, 1, 2, 3].map((index) => Object.fromEntries(columns.map((column) => [
+      column, index < 3 ? cellsOf(before[column])[index] : synced[column],
+    ])));
+    await fetch(`${apiBase}/settings.save_group/`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ section: 'torrentpotato', rows }),
     });
-    await openSettings(page, 'Searchers');
-    const card = providerCard(page, 'TorrentPotato');
-    await openCard(card);
+    if (answer === 'abort') await route.abort();
+    else if (answer === 'html500') await route.fulfill({ status: 500, contentType: 'text/html', body: '<html>Internal Server Error</html>' });
+    else await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }) });
+  });
+  return { release, hits };
+}
 
-    await card.getByRole('button', { name: /Sync Indexers/ }).click();
-    await expect.poll(() => net.seen.some((request) => request.url.includes('jackett_sync'))).toBe(true);
-    await card.getByLabel('name for row 1', { exact: true }).fill('name-typed-during-the-action');
-    await page.clock.fastForward(5000);
-    expect(net.groupSaves()).toHaveLength(0);
+async function openTorrentCard(page: Page) {
+  await page.clock.install();
+  await openSettings(page, 'Searchers');
+  const card = providerCard(page, 'TorrentPotato');
+  await openCard(card);
+  return card;
+}
 
-    release();
-    await expect(card.getByTestId('combine-discarded-note')).toContainText('not saved');
-    await page.clock.fastForward(5000);
-    await page.waitForLoadState('networkidle');
+const syncButton = (card: Locator) => card.getByRole('button', { name: /Sync Indexers/ });
 
-    await expect(card.getByLabel('host for row 4', { exact: true })).toHaveValue('https://placeholder-synced.invalid/api');
-    expect(net.groupSaves()).toHaveLength(0);
-    const columns = configColumns(testServer.configPath, 'torrentpotato');
-    expect(cellsOf(columns.host)).toHaveLength(4);
-    expect(cellsOf(columns.name)).toEqual(['name-one', 'name-two', 'name-three', 'name-synced']);
+test.describe('Settings: the rows are locked while a button acts, and until the server\'s rows are back', () => {
+  test.describe('what is locked, for how long, and what follows', () => {
+    test.use({ seedConfig: 'torrentpotato_aligned#lock-and-reread' });
+
+    test('nothing can be typed, toggled, added or removed; no save goes out; then the sync\'s rows show and an edit keeps all four', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const net = await recordRequests(page);
+      const sync = await stubSync(page, testServer.apiBase, testServer.configPath, 'success');
+      const card = await openTorrentCard(page);
+      const name = card.getByLabel('name for row 1', { exact: true });
+
+      await syncButton(card).click();
+      await expect(card.getByTestId('combine-locked-note')).toBeVisible();
+      await expect(name).toHaveJSProperty('readOnly', true);
+      await expect(card.locator('[aria-busy="true"]')).toHaveCount(1);
+      await expect(card.getByRole('switch', { name: 'Enable row 1' })).toHaveAttribute('aria-disabled', 'true');
+      await expect(card.getByRole('button', { name: 'Add row' })).toHaveAttribute('aria-disabled', 'true');
+      await expect(card.getByRole('button', { name: 'Remove row 2' })).toHaveAttribute('aria-disabled', 'true');
+      await expect(syncButton(card)).toHaveAttribute('aria-disabled', 'true');
+
+      await name.focus();
+      await page.keyboard.type('typed-while-locked');
+      // `force`: Playwright treats aria-disabled as not enabled and would refuse the click,
+      // and the point is that a click that DOES arrive changes nothing.
+      await card.getByRole('switch', { name: 'Enable row 1' }).click({ force: true });
+      await card.getByRole('button', { name: 'Add row' }).click({ force: true });
+      await card.getByRole('button', { name: 'Remove row 2' }).click({ force: true });
+      await page.clock.fastForward(6000);
+      await expect(name).toHaveValue('name-one');
+      await expect(card.getByRole('switch', { name: 'Enable row 1' })).toHaveAttribute('aria-checked', 'true');
+      await expect(card.getByRole('switch', { name: /^Enable row/ })).toHaveCount(3);
+      expect(net.groupSaves()).toHaveLength(0);
+
+      sync.release();
+      await expect(card.getByLabel('host for row 4', { exact: true })).toHaveValue(SYNCED_HOST);
+      await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', false);
+      await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);
+      expect(net.groupSaves()).toHaveLength(0);
+
+      expect((await editCell(page, card, 'name for row 1', 'name-edited-after')).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+      const columns = configColumns(testServer.configPath, 'torrentpotato');
+      expect(cellsOf(columns.host)).toHaveLength(4);
+      expect(cellsOf(columns.name)).toEqual(['name-edited-after', 'name-two', 'name-three', 'name-synced']);
+    });
+  });
+
+  test.describe('a tab change during the action', () => {
+    test.use({ seedConfig: 'torrentpotato_aligned#lock-tab-change' });
+
+    test('keeps the rows locked and the rebuilt button busy; a second press sends nothing; the server\'s rows show afterwards', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const net = await recordRequests(page);
+      const sync = await stubSync(page, testServer.apiBase, testServer.configPath, 'success');
+      const card = await openTorrentCard(page);
+
+      await syncButton(card).click();
+      await expect.poll(() => sync.hits.length).toBe(1);
+      await page.getByRole('tab', { name: 'General' }).click();
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      const rebuilt = providerCard(page, 'TorrentPotato');
+      await openCard(rebuilt);
+
+      await expect(rebuilt.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', true);
+      await expect(syncButton(rebuilt)).toHaveAttribute('aria-disabled', 'true');
+      await syncButton(rebuilt).click({ force: true });
+      await page.clock.fastForward(1000);
+      expect(sync.hits).toHaveLength(1);
+
+      sync.release();
+      await expect(rebuilt.getByLabel('host for row 4', { exact: true })).toHaveValue(SYNCED_HOST);
+      await expect(rebuilt.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', false);
+      expect((await editCell(page, rebuilt, 'name for row 1', 'name-edited-after')).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+      expect(cellsOf(configColumns(testServer.configPath, 'torrentpotato').host)).toHaveLength(4);
+      expect(net.groupSaves()).toHaveLength(1);
+    });
+  });
+
+  for (const answer of ['abort', 'html500'] as const) {
+    test.describe(`an action that ${answer === 'abort' ? 'throws' : 'answers an HTML 500'}`, () => {
+      test.use({ seedConfig: `torrentpotato_aligned#lock-${answer}` });
+
+      test('may have written: the page re-reads, shows the file\'s rows and the error, and the next edit saves the file\'s rows plus that edit', async ({ page, testServer }) => {
+        test.info().annotations.push(...combineGroupWriter());
+        const sync = await stubSync(page, testServer.apiBase, testServer.configPath, answer);
+        const card = await openTorrentCard(page);
+
+        await syncButton(card).click();
+        await expect.poll(() => sync.hits.length).toBe(1);
+        sync.release();
+
+        await expect(card.getByLabel('host for row 4', { exact: true })).toHaveValue(SYNCED_HOST);
+        await expect(card.getByText(/^Error:/)).toBeVisible();
+        await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', false);
+        expect((await editCell(page, card, 'name for row 1', 'name-edited-after')).success).toBe(true);
+        await page.waitForLoadState('networkidle');
+        const columns = configColumns(testServer.configPath, 'torrentpotato');
+        expect(cellsOf(columns.host)).toHaveLength(4);
+        expect(cellsOf(columns.name)).toEqual(['name-edited-after', 'name-two', 'name-three', 'name-synced']);
+      });
+    });
+  }
+
+  test.describe('an action that answers success false', () => {
+    test.use({ seedConfig: 'torrentpotato_aligned#lock-refused' });
+
+    test('unlocks at once with the rows as they were, and the next edit saves three', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const sync = await stubSync(page, testServer.apiBase, testServer.configPath, 'refused');
+      const card = await openTorrentCard(page);
+
+      await syncButton(card).click();
+      await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', true);
+      sync.release();
+
+      await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', false);
+      await expect(card.getByText('Jackett refused')).toBeVisible();
+      await expect(card.getByLabel('host for row 4', { exact: true })).toHaveCount(0);
+      expect((await editCell(page, card, 'name for row 1', 'name-edited-after')).success).toBe(true);
+      await page.waitForLoadState('networkidle');
+      expect(cellsOf(configColumns(testServer.configPath, 'torrentpotato').host)).toHaveLength(3);
+    });
+  });
+
+  test.describe('a re-read that fails', () => {
+    test.use({ seedConfig: 'torrentpotato_aligned#lock-reread-fails' });
+
+    test('stays locked, says so, and no save is possible', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const net = await recordRequests(page);
+      const sync = await stubSync(page, testServer.apiBase, testServer.configPath, 'success');
+      let reads = 0;
+      await page.route(/\/api\/[^/]+\/settings\/(\?.*)?$/, async (route) => {
+        reads += 1;
+        if (reads === 1) await route.continue();
+        else await route.fulfill({ status: 500, contentType: 'text/html', body: '<html>no</html>' });
+      });
+      const card = await openTorrentCard(page);
+
+      await syncButton(card).click();
+      await expect.poll(() => sync.hits.length).toBe(1);
+      sync.release();
+
+      await expect(card.getByTestId('combine-reload-error')).toHaveText('Could not reload these rows. Reload the page before changing them.');
+      await expect(card.getByLabel('name for row 1', { exact: true })).toHaveJSProperty('readOnly', true);
+      await card.getByLabel('name for row 1', { exact: true }).focus();
+      await page.keyboard.type('typed-while-stale');
+      await page.clock.fastForward(5000);
+      await page.waitForLoadState('networkidle');
+      expect(net.groupSaves()).toHaveLength(0);
+    });
+  });
+
+  test.describe('rows edited just before the click', () => {
+    test.use({ seedConfig: 'torrentpotato_aligned#lock-flush-first' });
+
+    test('are saved before the action request goes out', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const net = await recordRequests(page);
+      const sync = await stubSync(page, testServer.apiBase, testServer.configPath, 'refused');
+      const card = await openTorrentCard(page);
+
+      await card.getByLabel('name for row 1', { exact: true }).fill('name-edited-before-click');
+      await page.clock.fastForward(100);
+      await syncButton(card).click();
+      await expect.poll(() => sync.hits.length).toBe(1);
+      sync.release();
+      await page.waitForLoadState('networkidle');
+
+      const urls = net.seen.map((request) => request.url);
+      expect(urls.findIndex((url) => url.includes('settings.save_group'))).toBeGreaterThanOrEqual(0);
+      expect(urls.findIndex((url) => url.includes('settings.save_group')))
+        .toBeLessThan(urls.findIndex((url) => url.includes('jackett_sync')));
+      expect(cellsOf(configColumns(testServer.configPath, 'torrentpotato').name)[0]).toBe('name-edited-before-click');
+    });
+  });
+
+  test.describe('a pre-action flush the server refuses', () => {
+    test.use({ seedConfig: 'torrentpotato_aligned#lock-flush-refused' });
+
+    test('runs no action, unlocks, shows the refusal, and the next edit saves', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const sync = await stubSync(page, testServer.apiBase, testServer.configPath, 'refused');
+      let refused = false;
+      await page.route('**/settings.save_group/**', async (route) => {
+        if (refused) {
+          await route.continue();
+          return;
+        }
+        refused = true;
+        await route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ success: false, error: 'x', invalid: [{ row: 0, column: 'host', reason: 'comma' }] }),
+        });
+      });
+      const card = await openTorrentCard(page);
+      const host = card.getByLabel('host for row 1', { exact: true });
+
+      await host.fill('https://placeholder-bad.invalid/api,https://placeholder-evil.invalid');
+      await syncButton(card).click();
+
+      await expect(card.getByTestId('combine-row-error')).toBeVisible();
+      await expect(host).toHaveJSProperty('readOnly', false);
+      expect(sync.hits).toHaveLength(0);
+      expect((await editCell(page, card, 'host for row 1', 'https://placeholder-fixed.invalid/api')).success).toBe(true);
+    });
   });
 });
 

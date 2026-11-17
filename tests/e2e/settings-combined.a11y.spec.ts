@@ -190,38 +190,59 @@ for (const theme of THEMES) {
     });
   });
 
-  test.describe(`the dropped-rows note (${theme} theme)`, () => {
-    test.use({ seedConfig: `torrentpotato_aligned#a11y-discarded-${theme}` });
+  test.describe(`the locked rows during a button action (${theme} theme)`, () => {
+    test.use({ seedConfig: `torrentpotato_aligned#a11y-locked-${theme}` });
 
-    test('is at least 4.5:1 and axe reports nothing with it shown', async ({ page }) => {
+    test('axe is clean, readonly text is at least 4.5:1, focus is kept, aria-busy comes and goes, and the Sync button is readable hovered', async ({ page }) => {
       await page.addInitScript((selected) => localStorage.setItem('cp-theme', selected), theme);
       let release!: () => void;
       const gate = new Promise<void>((resolve) => { release = resolve; });
       await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
         await gate;
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }) });
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'Jackett refused' }) });
       });
       await page.goto('/settings/');
       await page.getByRole('tab', { name: 'Searchers' }).click();
       const card = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'TorrentPotato', exact: true }) });
       await card.locator('h3 button[aria-expanded="false"]').click();
-      const asked = page.waitForRequest((request) => request.url().includes('jackett_sync'));
-      await card.getByRole('button', { name: /Sync Indexers/ }).click();
-      await asked;
-      await card.getByLabel('name for row 1', { exact: true }).fill('name-typed-during-the-action');
-      release();
+      const sync = card.getByRole('button', { name: /Sync Indexers/ });
+      const name = card.getByLabel('name for row 1', { exact: true });
 
-      const note = card.getByTestId('combine-discarded-note');
-      await expect(note).toBeVisible();
-      // The pointer is still over the Sync button; its hover state is not what this measures.
+      // Item 8: the Sync button's label, resting and hovered.
+      await expectVisualTransitionsToSettle(page, `${theme} theme, before the click`);
+      const resting = await sync.evaluate(TEXT_CONTRAST);
+      await sync.hover();
+      await expectVisualTransitionsToSettle(page, `${theme} theme, Sync hovered`);
+      const hovered = await sync.evaluate(TEXT_CONTRAST);
+      expect(resting, `${theme}: Sync button label resting ${resting.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      expect(hovered, `${theme}: Sync button label hovered ${hovered.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+
+      await name.focus();
+      await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);
+      // A programmatic click: a pointer click would move focus to the button, and the point
+      // is what happens to an input that has focus at the moment the lock engages.
+      await sync.evaluate((button) => (button as HTMLElement).click());
+      await expect(card.getByTestId('combine-locked-note')).toBeVisible();
+      await expect(card.locator('[aria-busy="true"]')).toHaveCount(1);
+      // The lock engaged on a focused input: focus stays (readonly, not disabled).
+      await expect(name).toBeFocused();
       await page.mouse.move(0, 0);
-      await expectVisualTransitionsToSettle(page, `${theme} theme, note shown`);
-      const ratio = await note.locator('p').evaluate(TEXT_CONTRAST);
-      expect(ratio, `${theme}: dropped-rows note contrast ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      await expectVisualTransitionsToSettle(page, `${theme} theme, locked`);
+
+      for (const input of await card.locator('input[aria-label$="for row 1"]').all()) {
+        const ratio = await input.evaluate(TEXT_CONTRAST);
+        expect(ratio, `${theme}: readonly input text ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+      const note = await card.getByTestId('combine-locked-note').evaluate(TEXT_CONTRAST);
+      expect(note, `${theme}: locked note ${note.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
       const results = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
         .analyze();
       expect(results.violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(' ')).join(' | ')}`)).toEqual([]);
+
+      release();
+      await expect(card.locator('[aria-busy="true"]')).toHaveCount(0);
+      await expect(name).toBeFocused();
     });
   });
 

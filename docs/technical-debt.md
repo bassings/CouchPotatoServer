@@ -588,6 +588,11 @@ result. Getting it wrong the other way files a bug against working code.
   (2026-11-17).** That includes a group write's file sync and the password
   save's hashing, so the settings page's read can stall behind them. Unmeasured
   on a slow volume.
+- **A settings button's result text does not survive a tab change (2026-11-17).**
+  The rows lock and the busy state are panel-level (SEC-004 P3, owner decision
+  "Lock rows during sync"), so a button rebuilt mid-action is still busy and
+  presses nothing; but its own result line ("Synced", or the error) lives on the
+  button component and is lost when the tab is left and re-entered.
 - **No screen-reader, Firefox or WebKit run exists for the Settings combined
   field (2026-11-17).** Its refusal and notice announcements are proven by
   counting text changes in the live regions in Chromium only

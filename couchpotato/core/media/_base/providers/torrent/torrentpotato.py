@@ -402,6 +402,9 @@ class Base(TorrentProvider):
         if not result['success']:
             return {'success': False, 'error': result['error']}
 
+        # The Settings page locks the group's rows until it has re-read them, and treats
+        # `success: false` as "nothing was written". So no exception may be raised after
+        # `save_group` has succeeded: `callApiHandler` would report it as success false.
         log.info('Synced %d indexers from Jackett (%d new, %d skipped)',
                  len(storable), outcome['added'], skipped)
 

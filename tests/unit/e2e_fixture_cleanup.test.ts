@@ -468,7 +468,9 @@ describe('group saves and the shared server', () => {
     expect(error?.message).toMatch(/shared server/);
     expect(error?.message).toContain('newznab');
     expect(error?.message).not.toContain('placeholder');
-    expect(writes).toEqual([]);
+    // The shared-server error wins, and the shared server is still put back.
+    expect(writes).toHaveLength(1);
+    expect((writes[0] as { headers: Record<string, string> }).headers['content-type']).toMatch(/json/);
   });
 
   it('fails a combine-group writer that runs on the shared server', async () => {
