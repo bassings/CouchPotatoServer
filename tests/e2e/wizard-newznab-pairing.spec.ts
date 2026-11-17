@@ -1,44 +1,42 @@
 import { test, expect, type Page } from './fixtures';
-import { configColumns, configSection, configSha, openProvidersStep, recordWizardRequests } from './helpers';
-import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
+import { configColumns, configSection, configSha, configView, openProvidersStep, recordWizardRequests } from './helpers';
+import { combineGroupWriter, SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
  * The server pairs the Newznab `host`, `api_key` and `use` lists BY POSITION
  * (`getHosts` in couchpotato/core/media/_base/providers/nzb/newznab.py keeps
- * blanks and indexes all three by row number). If the wizard drops blanks from
- * one list but not another, position i stops describing one row: an indexer is
- * sent another indexer's API key, or is switched off by someone else's "0".
+ * blanks and indexes all of them by row number), so the wizard saves Newznab as
+ * ROWS: one `settings.save_group` request carrying all five columns of every row,
+ * and the pairing cannot drift because no column is ever sent on its own.
  *
  * The contract these cases pin: a row is kept if and only if its trimmed URL is
- * non-empty; a kept row contributes its URL, its trimmed key (possibly empty,
- * as a slot that preserves position) and a `1`; a row with no URL is dropped
- * whole, including any key typed into it. All three lists therefore always have
- * the same number of entries.
+ * non-empty; a kept row contributes its URL, its trimmed key (possibly empty, a
+ * row with no key) and the defaults (`use` 1, `extra_score` 0, no tag); a row with
+ * no URL is dropped whole, including any key typed into it. The six keyless
+ * default hosts of a fresh install are hidden rows: kept, in place, unchanged,
+ * ahead of the new rows.
  *
  * Saves are intercepted with `page.route`, so nothing is written to the
  * per-worker server. Keys and hosts are placeholders, never credentials.
  */
 
 type Row = { host?: string; key?: string };
-type Saved = { host: string; api_key: string; use: string };
+type Saved = { use: string; host: string; api_key: string; extra_score: string; custom_tag: string };
+const COLUMNS = ['api_key', 'custom_tag', 'extra_score', 'host', 'use'];
+const DEFAULT_ROW_COUNT = 6;
 
-async function saveNewznabRows(page: Page, rows: Row[]): Promise<Saved> {
-  const saved: Record<string, string> = {};
-  await page.route('**/settings.save/**', async (route) => {
-    const params = new URLSearchParams(route.request().postData() || '');
-    if (params.get('section') === 'newznab') saved[params.get('name') || ''] = params.get('value') || '';
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: true }),
-    });
+/** Type `rows`, Continue, and return the rows the wizard added after the six hidden defaults. */
+async function saveNewznabRows(page: Page, rows: Row[]): Promise<Saved[]> {
+  const bodies: any[] = [];
+  await page.route('**/settings.save_group/**', async (route) => {
+    bodies.push(JSON.parse(route.request().postData() || '{}'));
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
   });
+  await page.route('**/settings.save/**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+  }));
 
-  await page.goto('/wizard/');
-  await page.getByRole('button', { name: /Continue/i }).click();           // Welcome -> Security
-  await page.getByRole('button', { name: /Continue/i }).click();           // Security -> Providers
-  await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible({ timeout: 10000 });
-  await page.getByRole('radio', { name: /^Usenet/ }).click();
+  await openProvidersStep(page);
   await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
   for (let i = 1; i < rows.length; i++) {
     await page.getByRole('button', { name: '+ Add another indexer' }).click();
@@ -51,32 +49,24 @@ async function saveNewznabRows(page: Page, rows: Row[]): Promise<Saved> {
   await page.getByRole('button', { name: /Continue/i }).click();
   await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeHidden({ timeout: 10000 });
 
-  expect(Object.keys(saved).sort(), 'the three Newznab lists were not all saved').toEqual(
-    ['api_key', 'enabled', 'host', 'use'],
-  );
-  return { host: saved.host, api_key: saved.api_key, use: saved.use };
+  expect(bodies, 'the Newznab rows were not saved as exactly one group').toHaveLength(1);
+  expect(bodies[0].section).toBe('newznab');
+  const all: Saved[] = bodies[0].rows;
+  for (const row of all) expect(Object.keys(row).sort(), 'a row without all five columns').toEqual(COLUMNS);
+  expect(all.slice(0, DEFAULT_ROW_COUNT).every((row) => row.api_key === '' && row.use === '0'),
+    'the keyless defaults were not kept in place').toBe(true);
+  return all.slice(DEFAULT_ROW_COUNT);
 }
 
-/** The invariant itself: one slot per kept row in every list. */
-function expectSameLength(saved: Saved) {
-  const counts = [saved.host, saved.api_key, saved.use].map((v) => v.split(',').length);
-  expect(counts, 'host, api_key and use must have the same number of entries').toEqual([
-    counts[0], counts[0], counts[0],
-  ]);
-}
+const added = (host: string, api_key: string): Saved => ({ use: '1', host, api_key, extra_score: '0', custom_tag: '' });
 
-test.describe('Newznab host, API key and use lists stay paired by position', () => {
+test.describe('Newznab rows are saved whole, each URL beside its own key', () => {
   test('URL without a key, then a complete row: the key stays with its own URL', async ({ page }) => {
     const saved = await saveNewznabRows(page, [
       { host: 'https://indexer-a.invalid' },
       { host: 'https://indexer-b.invalid', key: 'placeholder-key-b' },
     ]);
-    expect(saved).toEqual({
-      host: 'https://indexer-a.invalid,https://indexer-b.invalid',
-      api_key: ',placeholder-key-b',
-      use: '1,1',
-    });
-    expectSameLength(saved);
+    expect(saved).toEqual([added('https://indexer-a.invalid', ''), added('https://indexer-b.invalid', 'placeholder-key-b')]);
   });
 
   test('a blank row between two complete rows is dropped and both keep their keys and stay enabled', async ({ page }) => {
@@ -85,12 +75,10 @@ test.describe('Newznab host, API key and use lists stay paired by position', () 
       {},
       { host: 'https://indexer-c.invalid', key: 'placeholder-key-c' },
     ]);
-    expect(saved).toEqual({
-      host: 'https://indexer-a.invalid,https://indexer-c.invalid',
-      api_key: 'placeholder-key-a,placeholder-key-c',
-      use: '1,1',
-    });
-    expectSameLength(saved);
+    expect(saved).toEqual([
+      added('https://indexer-a.invalid', 'placeholder-key-a'),
+      added('https://indexer-c.invalid', 'placeholder-key-c'),
+    ]);
   });
 
   test('a key with no URL is dropped and the following row keeps its own key', async ({ page }) => {
@@ -98,13 +86,8 @@ test.describe('Newznab host, API key and use lists stay paired by position', () 
       { key: 'placeholder-orphan-key' },
       { host: 'https://indexer-b.invalid', key: 'placeholder-key-b' },
     ]);
-    expect(saved).toEqual({
-      host: 'https://indexer-b.invalid',
-      api_key: 'placeholder-key-b',
-      use: '1',
-    });
-    expect(saved.api_key).not.toContain('placeholder-orphan-key');
-    expectSameLength(saved);
+    expect(saved).toEqual([added('https://indexer-b.invalid', 'placeholder-key-b')]);
+    expect(JSON.stringify(saved)).not.toContain('placeholder-orphan-key');
   });
 
   test('a whitespace-only URL counts as blank, and its key is dropped with it', async ({ page }) => {
@@ -112,12 +95,7 @@ test.describe('Newznab host, API key and use lists stay paired by position', () 
       { host: '   ', key: 'placeholder-orphan-key' },
       { host: 'https://indexer-b.invalid', key: 'placeholder-key-b' },
     ]);
-    expect(saved).toEqual({
-      host: 'https://indexer-b.invalid',
-      api_key: 'placeholder-key-b',
-      use: '1',
-    });
-    expectSameLength(saved);
+    expect(saved).toEqual([added('https://indexer-b.invalid', 'placeholder-key-b')]);
   });
 
   test('URLs and keys are saved trimmed', async ({ page }) => {
@@ -125,24 +103,12 @@ test.describe('Newznab host, API key and use lists stay paired by position', () 
       { host: '  https://indexer-a.invalid  ', key: '  placeholder-key-a  ' },
       { host: 'https://indexer-b.invalid', key: '   ' },
     ]);
-    expect(saved).toEqual({
-      host: 'https://indexer-a.invalid,https://indexer-b.invalid',
-      api_key: 'placeholder-key-a,',
-      use: '1,1',
-    });
-    expectSameLength(saved);
+    expect(saved).toEqual([added('https://indexer-a.invalid', 'placeholder-key-a'), added('https://indexer-b.invalid', '')]);
   });
 
-  test('a single complete row saves exactly as it always did', async ({ page }) => {
-    const saved = await saveNewznabRows(page, [
-      { host: 'https://indexer-a.invalid', key: 'placeholder-key-a' },
-    ]);
-    expect(saved).toEqual({
-      host: 'https://indexer-a.invalid',
-      api_key: 'placeholder-key-a',
-      use: '1',
-    });
-    expectSameLength(saved);
+  test('a single complete row is one added row', async ({ page }) => {
+    const saved = await saveNewznabRows(page, [{ host: 'https://indexer-a.invalid', key: 'placeholder-key-a' }]);
+    expect(saved).toEqual([added('https://indexer-a.invalid', 'placeholder-key-a')]);
   });
 });
 
@@ -418,3 +384,324 @@ for (const fixture of ['newznab_misaligned_key_short', 'newznab_misaligned_use_s
     });
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEC-004 P5 (stage 3): the wizard SAVES Newznab as one group, only when a row
+// changed, and every claim about what was written is made on the FILE.
+//
+// Each writer owns its seedConfig value and says so (`combineGroupWriter()`), and
+// is checked through the provider's real reader (`configView`, which runs
+// `getHosts`) as well as the raw columns, so a key beside the wrong host cannot
+// pass for being "the right cells".
+// ─────────────────────────────────────────────────────────────────────────────
+
+type Columns = Record<string, string | null>;
+type StoredRow = Record<string, string>;
+const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
+
+/** A group's raw columns as rows of cells: every column split on `,`, nothing trimmed. */
+function rowsOf(columns: Columns): StoredRow[] {
+  const cells = Object.fromEntries(NEWZNAB_COLUMNS.map((name) => [name, (columns[name] ?? '').split(',')]));
+  const count = Math.max(...Object.values(cells).map((list) => list.length));
+  return Array.from({ length: count }, (_, i) => Object.fromEntries(NEWZNAB_COLUMNS.map((name) => [name, cells[name][i] ?? ''])));
+}
+
+/** What `getHosts` must return for `rows`: (use, host, api_key, extra_score, custom_tag), in order. */
+const viewOf = (rows: StoredRow[]) => rows.map((row) => [row.use, row.host, row.api_key, Number(row.extra_score), row.custom_tag]);
+
+async function advance(page: Page) {
+  await continueButton(page).click();
+  await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+}
+
+const ALIGNED_STARTS = [
+  'fresh_defaults', 'newznab_wizard_written', 'newznab_key_in_row_four', 'newznab_untrimmed',
+  'newznab_legacy_bytes', 'newznab_two_stored', 'newznab_interleaved', 'newznab_hostless', 'newznab_hostile_cells',
+];
+
+test.describe('re-running the wizard and changing nothing sends no Newznab group save at all', () => {
+  for (const fixture of ALIGNED_STARTS) {
+    test.describe(fixture, () => {
+      test.use({ seedConfig: `${fixture}#wizard-no-change` });
+
+      test('every newznab column is byte-identical afterwards', async ({ page, testServer }) => {
+        test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+        const requests = await recordWizardRequests(page);
+        const before = configColumns(testServer.configPath, 'newznab');
+
+        await openProvidersStep(page);
+        await advance(page);
+
+        expect(requests.groupSaves(), 'a run that changed no row sent a group save').toEqual([]);
+        expect(configColumns(testServer.configPath, 'newznab')).toEqual(before);
+      });
+    });
+  }
+});
+
+test.describe('editing one displayed row changes that row only', () => {
+  test.describe('between hidden rows', () => {
+    test.use({ seedConfig: 'newznab_interleaved#wizard-edit-url' });
+
+    test('A\'s URL changes; every hidden row and B keep their own five cells in the same place', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const requests = await recordWizardRequests(page);
+      const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await openProvidersStep(page);
+
+      await urlInput(page, 1).fill('  https://placeholder-alpha-edited.invalid/api  ');
+      await advance(page);
+
+      expect(requests.groupSaves()).toHaveLength(1);
+      const expected = original.map((row, i) => (i === 1 ? { ...row, host: 'https://placeholder-alpha-edited.invalid/api' } : row));
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+      expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+    });
+  });
+
+  test.describe('two stored indexers', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-url-keeps-key' });
+
+    test('a key left untouched stays with the URL it was stored beside, whatever the URL is edited to', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await openProvidersStep(page);
+
+      await urlInput(page, 2).fill('https://placeholder-two-moved.invalid/api');
+      await advance(page);
+
+      const expected = [original[0], { ...original[1], host: 'https://placeholder-two-moved.invalid/api' }];
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+      expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+      expect(expected[1].api_key).toBe('placeholder-key-two');
+    });
+  });
+});
+
+test.describe('adding and removing rows', () => {
+  test.describe('add', () => {
+    test.use({ seedConfig: 'newznab_interleaved#wizard-add-row' });
+
+    test('a new indexer is appended after every stored row with the documented defaults', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await openProvidersStep(page);
+
+      await page.getByRole('button', { name: '+ Add another indexer' }).click();
+      await urlInput(page, 3).fill(' https://placeholder-charlie.invalid/api ');
+      await keyInput(page, 3).fill(' placeholder-key-charlie ');
+      await advance(page);
+
+      const expected = [...original, { use: '1', host: 'https://placeholder-charlie.invalid/api', api_key: 'placeholder-key-charlie', extra_score: '0', custom_tag: '' }];
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+      expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+    });
+  });
+
+  test.describe('remove between hidden rows', () => {
+    test.use({ seedConfig: 'newznab_interleaved#wizard-remove-a' });
+
+    test('removing A closes up as whole rows: D1, D2, B, D3, each with its own cells', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await openProvidersStep(page);
+
+      await page.getByRole('button', { name: 'Remove indexer 1', exact: true }).click();
+      await advance(page);
+
+      const expected = [original[0], original[2], original[3], original[4]];
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+      expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+    });
+  });
+
+  test.describe('remove every displayed row', () => {
+    test.describe('with hidden rows', () => {
+      test.use({ seedConfig: 'newznab_interleaved#wizard-remove-all-hidden-kept' });
+
+      test('A and B go; D1, D2 and D3 are stored with their own cells', async ({ page, testServer }) => {
+        test.info().annotations.push(...combineGroupWriter());
+        const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+        await openProvidersStep(page);
+
+        await page.getByRole('button', { name: 'Remove indexer 1', exact: true }).click();
+        await urlInput(page, 1).fill('');   // the last row cannot be removed; a cleared URL is a removal
+        await advance(page);
+
+        const expected = [original[0], original[2], original[4]];
+        expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+        expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+      });
+    });
+
+    test.describe('with none', () => {
+      test.use({ seedConfig: 'newznab_two_stored#wizard-remove-all-none-left' });
+
+      test('one all-empty row is stored, and the reader finds no indexer', async ({ page, testServer }) => {
+        test.info().annotations.push(...combineGroupWriter());
+        await openProvidersStep(page);
+
+        await page.getByRole('button', { name: 'Remove indexer 2', exact: true }).click();
+        await urlInput(page, 1).fill('');
+        await advance(page);
+
+        const columns = configColumns(testServer.configPath, 'newznab');
+        for (const name of NEWZNAB_COLUMNS) expect(columns[name], `${name} is not one empty cell`).toBe('');
+        expect(configView(testServer.configPath, 'newznab')).toEqual([]);
+      });
+    });
+
+    test.describe('on a fresh install', () => {
+      test.use({ seedConfig: 'fresh_defaults#wizard-nothing-typed' });
+
+      test('nothing typed sends no group save and leaves the six defaults alone', async ({ page, testServer }) => {
+        test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+        const requests = await recordWizardRequests(page);
+        const before = configColumns(testServer.configPath, 'newznab');
+        await openProvidersStep(page);
+        await newznabSwitch(page).click();
+
+        await advance(page);
+
+        expect(requests.groupSaves()).toEqual([]);
+        expect(configColumns(testServer.configPath, 'newznab')).toEqual(before);
+      });
+    });
+  });
+
+  test.describe('a key cleared on its own', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-clear-key' });
+
+    test('is written back in place with an empty key, and on the next run the row is hidden', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const original = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await openProvidersStep(page);
+
+      await keyInput(page, 1).fill('');
+      await advance(page);
+
+      const expected = [{ ...original[0], api_key: '' }, original[1]];
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(expected);
+      expect(configView(testServer.configPath, 'newznab')).toEqual(viewOf(expected));
+
+      await openProvidersStep(page);
+      await expect(urlInput(page, 1)).toHaveValue(original[1].host);
+      await expect(urlInput(page, 2)).toHaveCount(0);
+    });
+  });
+});
+
+test.describe('Newznab switched off and on again', () => {
+  test.use({ seedConfig: 'newznab_two_stored#wizard-off-and-on' });
+
+  test('off writes `enabled` only; the rows stay stored; on again in a later run restores them unchanged', async ({ page, testServer }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    const requests = await recordWizardRequests(page);
+    const original = configColumns(testServer.configPath, 'newznab');
+    await openProvidersStep(page);
+
+    await newznabSwitch(page).click();
+    await expect(newznabSwitch(page)).toHaveAttribute('aria-checked', 'false');
+    await advance(page);
+
+    expect(requests.groupSaves(), 'switching Newznab off saved the group').toEqual([]);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(original);
+    expect(configSection(testServer.configPath, 'newznab').enabled).toMatch(/^(0|false)$/i);
+
+    await openProvidersStep(page);
+    await expect(newznabSwitch(page)).toHaveAttribute('aria-checked', 'false');
+    await newznabSwitch(page).click();
+    await expect(urlInput(page, 1)).toHaveValue('https://placeholder-one.invalid/api');
+    await expect(urlInput(page, 2)).toHaveValue('https://placeholder-two.invalid/api');
+    await advance(page);
+
+    expect(requests.groupSaves(), 'switching it back on saved the group').toEqual([]);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(original);
+    expect(configSection(testServer.configPath, 'newznab').enabled).toMatch(/^(1|true)$/i);
+  });
+});
+
+test.describe('edit, Continue, Back, revert, Continue', () => {
+  test.use({ seedConfig: 'newznab_two_stored#wizard-edit-back-revert' });
+
+  test('is two group saves, one per Continue, and the file holds the original rows again', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const requests = await recordWizardRequests(page);
+    const original = configColumns(testServer.configPath, 'newznab');
+    await openProvidersStep(page);
+
+    await urlInput(page, 1).fill('https://placeholder-one-edited.invalid/api');
+    await advance(page);
+    expect(requests.groupSaves()).toHaveLength(1);
+    expect(rowsOf(configColumns(testServer.configPath, 'newznab'))[0].host).toBe('https://placeholder-one-edited.invalid/api');
+
+    await page.getByRole('button', { name: /Back$/ }).click();
+    await expect(providersHeading(page)).toBeVisible();
+    await expect(urlInput(page, 1)).toHaveValue('https://placeholder-one-edited.invalid/api');
+    await urlInput(page, 1).fill('https://placeholder-one.invalid/api');
+    await advance(page);
+
+    expect(requests.groupSaves()).toHaveLength(2);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(original);
+  });
+
+});
+
+test.describe('Back and Continue with nothing changed', () => {
+  test.use({ seedConfig: 'newznab_two_stored#wizard-back-continue-unchanged' });
+
+  test('does not write the rows that were already written again', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const requests = await recordWizardRequests(page);
+    await openProvidersStep(page);
+    await urlInput(page, 1).fill('https://placeholder-one-edited.invalid/api');
+    await advance(page);
+    expect(requests.groupSaves()).toHaveLength(1);
+
+    await page.getByRole('button', { name: /Back$/ }).click();
+    await expect(providersHeading(page)).toBeVisible();
+    await advance(page);
+
+    expect(requests.groupSaves(), 'the rows already written were written again').toHaveLength(1);
+    expect(rowsOf(configColumns(testServer.configPath, 'newznab'))[0].host).toBe('https://placeholder-one-edited.invalid/api');
+  });
+});
+
+test.describe('Continue pressed twice, or held', () => {
+  test.use({ seedConfig: 'newznab_two_stored#wizard-double-continue' });
+
+  test('sends one group save', async ({ page }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const requests = await recordWizardRequests(page);
+    await page.route('**/settings.save_group/**', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 300));   // keeps the first save in flight while the second press lands
+      await route.continue();
+    });
+    await openProvidersStep(page);
+    await urlInput(page, 1).fill('https://placeholder-one-edited.invalid/api');
+
+    await continueButton(page).dblclick();
+    await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+
+    expect(requests.groupSaves()).toHaveLength(1);
+  });
+
+});
+
+test.describe('Continue held with Enter', () => {
+  test.use({ seedConfig: 'newznab_two_stored#wizard-held-enter' });
+
+  test('sends one group save', async ({ page }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const requests = await recordWizardRequests(page);
+    await openProvidersStep(page);
+    await urlInput(page, 1).fill('https://placeholder-one-held.invalid/api');
+    await continueButton(page).focus();
+
+    for (let i = 0; i < 5; i++) await page.keyboard.down('Enter');
+    await page.keyboard.up('Enter');
+    await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+
+    expect(requests.groupSaves()).toHaveLength(1);
+  });
+});

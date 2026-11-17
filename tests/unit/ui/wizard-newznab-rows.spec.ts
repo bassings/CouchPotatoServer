@@ -642,3 +642,32 @@ describe('property: whatever is done on screen, hidden rows and untouched rows a
     }
   });
 });
+
+describe('the template itself (AC-SEC-10, AC-SIMP-8)', () => {
+  const html = fs.readFileSync(TEMPLATE, 'utf8');
+
+  it.each(['host', 'api_key', 'use', 'extra_score', 'custom_tag'])(
+    'has no per-column saveSetting of newznab.%s: Newznab is written only as a group', (column) => {
+      expect(html).not.toMatch(new RegExp(`saveSetting\\(\\s*'newznab'\\s*,\\s*'${column}'`));
+    },
+  );
+
+  it('keeps the wizard\'s own comma check, refuses only a LITERAL comma, and does not copy it elsewhere', () => {
+    const start = html.indexOf('assertNewznabHasNoCommas() {');
+    const body = html.slice(start, html.indexOf('\n    },', start));
+
+    expect(start).toBeGreaterThan(0);
+    expect(body).toContain("includes(',')");
+    expect(body).not.toMatch(/%2c/i);
+    const users: string[] = [];
+    const walk = (directory: string) => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const full = path.join(directory, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.(html|js)$/.test(entry.name) && fs.readFileSync(full, 'utf8').includes('assertNewznabHasNoCommas')) users.push(full);
+      }
+    };
+    walk(path.join(ROOT, 'couchpotato'));
+    expect(users.map((file) => path.relative(ROOT, file))).toEqual(['couchpotato/ui/templates/wizard.html']);
+  });
+});

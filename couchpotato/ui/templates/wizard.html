@@ -951,7 +951,7 @@
               natively disabled button drops keyboard focus to <body>, and a
               keyboard user then restarts from the top of the page on every
               step. The opacity-50 is the look `disabled:` used to give it. -#}
-          <button @click="nextStep()" type="button"
+          <button @click="nextStep()" @keydown="ignoreHeldKey($event)" type="button"
                   :aria-disabled="saving.toString()"
                   :class="saving ? 'opacity-50 cursor-default' : ''"
                   class="px-6 py-2 rounded-md text-sm font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors">
@@ -1156,6 +1156,20 @@ function newznabStepError(message, marks) {
   const error = new Error(message);
   error.newznab = { marks };
   return error;
+}
+
+// One refused cell, in this page's words: the row as numbered on screen, the field as labelled
+// here (URL, API key), the rule and the fix. Empty when the reason or column is not one this page
+// can say, so the caller falls back to the server's text. Never the submitted value.
+function newznabRefusalSentence(index, entry) {
+  const rules = {
+    comma: ' cannot contain a comma. Remove it to save.',
+    control_character: ' cannot contain a line break or other control character. Remove it to save.',
+    not_encodable: ' contains a character that cannot be saved. Remove it to save.',
+  };
+  const labels = { host: 'URL', api_key: 'API key' };
+  if (!Object.hasOwn(labels, entry.column) || !Object.hasOwn(rules, entry.reason)) return '';
+  return 'Indexer ' + (index + 1) + ': the ' + labels[entry.column] + rules[entry.reason];
 }
 
 function newznabShownEnabled(read) {
@@ -1584,32 +1598,10 @@ function setupWizard() {
         case 2: // Providers
           // Usenet providers
           if (this.formData.searchType === 'usenet' || this.formData.searchType === 'both') {
-            // Newznab. Validated before the first save is issued: nothing is
-            // written for a step that is refused. Until the saved rows have been
-            // read, nothing newznab is written and the step does not advance; a
-            // misaligned stored group is left exactly as stored, `enabled` too.
-            this.assertNewznabReadable();
-            if (this.newznabStatus !== 'misaligned') {
-            if (this.formData.newznab.enabled) this.assertNewznabHasNoCommas();
-            saves.push(this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0'));
-            if (this.formData.newznab.enabled) {
-              // The server pairs host, api_key and use BY POSITION, so all three
-              // lists come from one filtered list of rows. A row with no URL is
-              // dropped whole (its key too); a kept row with no key leaves an
-              // empty slot rather than letting a later key shift onto it.
-              const rows = this.formData.newznab.entries
-                .map(e => ({ host: (e.host || '').trim(), api_key: (e.api_key || '').trim() }))
-                .filter(r => r.host);
-              const hosts = rows.map(r => r.host).join(',');
-              const keys = rows.map(r => r.api_key).join(',');
-              const use = rows.map(() => '1').join(',');
-              saves.push(
-                this.saveSetting('newznab', 'host', hosts),
-                this.saveSetting('newznab', 'api_key', keys),
-                this.saveSetting('newznab', 'use', use),
-              );
-            }
-            }
+            // Newznab, in order: the group (AWAITED), then `enabled`. Nothing is
+            // written for a step that is refused, and nothing newznab until the
+            // saved rows have been read (see newznabStepSaves).
+            saves.push(...await this.newznabStepSaves());
             // BinSearch
             saves.push(this.saveSetting('binsearch', 'enabled', this.formData.binsearch.enabled ? '1' : '0'));
           }
@@ -2005,24 +1997,94 @@ function setupWizard() {
     // The server splits the saved lists on every comma, so a comma INSIDE a
     // URL or a key would turn one row into two positions (the text after a
     // comma in a key goes to the NEXT indexer). Refuse it here, naming the row
-    // as shown and the field, never the value. Only rows that will be saved
-    // are checked: a row with no URL is dropped whole, key and all. Throws,
-    // like any failed save, so nextStep() shows its error and keeps the step.
+    // as shown and the field, never the value, before any request is made. Only
+    // rows that will be saved are checked: a row with no URL is dropped whole,
+    // key and all. Throws, like any failed save, so nextStep() shows the error
+    // and keeps the step; the error carries the offending input for marking.
     //
-    // `%2C` / `%2c` counts as a comma: the server URL-decodes saved values a
-    // second time (getParams -> unquote), so an encoded one is stored as a
-    // real comma.
+    // A literal comma only. The group is saved as JSON and taken as sent, no
+    // second decode applies, so `%2C` is three ordinary characters. The server
+    // refuses a comma too (and the wizard shows that), so this is the first of
+    // two guards, not the only one.
     assertNewznabHasNoCommas() {
-      const hasComma = (text) => /,|%2c/i.test(text);
       const entries = this.formData.newznab.entries;
       for (let i = 0; i < entries.length; i++) {
         const host = (entries[i].host || '').trim();
         if (!host) continue;
-        if (hasComma(host)) throw new Error('Indexer ' + (i + 1) + ': the URL cannot contain a comma');
-        if (hasComma(entries[i].api_key || '')) {
-          throw new Error('Indexer ' + (i + 1) + ': the API key cannot contain a comma');
+        if (host.includes(',')) {
+          throw newznabStepError('Indexer ' + (i + 1) + ': the URL cannot contain a comma', [{ index: i, field: 'host' }]);
+        }
+        if ((entries[i].api_key || '').includes(',')) {
+          throw newznabStepError('Indexer ' + (i + 1) + ': the API key cannot contain a comma', [{ index: i, field: 'api_key' }]);
         }
       }
+    },
+
+    /* ── Newznab: the save (SEC-004 P5) ──────────────────────────────────────
+       One group save, only when a row changed against the baseline (the rows
+       last read or written), AWAITED, and only then the `enabled` save: a
+       refused or failed group leaves every newznab line as it was. A misaligned
+       group writes nothing at all. Returns the saves still to issue. */
+    async newznabStepSaves() {
+      this.assertNewznabReadable();
+      if (this.newznabStatus === 'misaligned') return [];
+      if (this.formData.newznab.enabled) {
+        this.assertNewznabHasNoCommas();
+        await this.saveNewznabGroup();
+      }
+      return [this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0')];
+    },
+
+    async saveNewznabGroup() {
+      const entries = this.formData.newznab.entries.map((entry) => ({ ...entry }));
+      const built = newznabBuildRows(this.newznabBaseline, entries);
+      if (!newznabRowsChanged(this.newznabBaseline, built.rows)) return;
+      await this.postNewznabGroup(built);
+      const next = newznabAfterSave(built, entries);
+      this.newznabBaseline = next.baseline;
+      this.formData.newznab.entries = next.entries;
+    },
+
+    async postNewznabGroup(built) {
+      let resp = null;
+      let data = null;
+      try {
+        resp = await fetch(CP.apiBase + '/settings.save_group/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ section: 'newznab', rows: built.rows }),
+        });
+        data = await resp.json();
+      } catch (e) {
+        // Nothing is logged or shown from the failure itself: it can carry the URL.
+        data = null;
+      }
+      if (resp && resp.ok && data && data.success === true) return;
+      throw this.newznabSaveError(resp, data, built.origins);
+    },
+
+    // The message for a group save that was not accepted, as a Newznab error. A
+    // structured refusal is composed here from the row, the column and the reason
+    // with this page's nouns, and the server's row is mapped to the row on screen
+    // first; the server's own text is only the fallback. Never a submitted value.
+    newznabSaveError(resp, data, origins) {
+      const invalid = data && Array.isArray(data.invalid) ? data.invalid : [];
+      const marks = [];
+      const sentences = [];
+      for (const entry of invalid) {
+        const at = newznabEntryForRow(origins, entry.row);
+        const sentence = at < 0 ? '' : newznabRefusalSentence(at, entry);
+        if (!sentence) { marks.length = 0; break; }
+        sentences.push(sentence);
+        marks.push({ index: at, field: entry.column });
+      }
+      if (invalid.length && sentences.length === invalid.length) return newznabStepError(sentences.join(' '), marks);
+      const reason = resp && resp.ok && data && typeof data.error === 'string' ? data.error.slice(0, 200) : '';
+      const ambiguous = !resp || !resp.ok || !data;
+      return newznabStepError(
+        'Newznab indexers were not saved.' + (reason ? ' ' + reason : '') + (ambiguous ? ' Check them in Settings.' : ''),
+        [],
+      );
     },
 
     addIndexer() {
