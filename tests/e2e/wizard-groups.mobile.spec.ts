@@ -142,6 +142,19 @@ for (const theme of ['light', 'dark'] as const) {
         });
       });
 
+      test.describe('a read still pending when Continue is pressed', () => {
+        test.use({ seedConfig: `newznab_two_stored#wizard-reflow-pending-${theme}-${width}` });
+
+        test('shows its whole message inside the viewport', async ({ page }) => {
+          await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+          await page.route(/\/settings\/(\?.*)?$/, () => new Promise(() => undefined));
+          await openProvidersStep(page);
+          await page.getByRole('button', { name: /^Continue$/ }).click();
+
+          await expectMessageFits(page, page.locator('#wizard-newznab-error'), 'pending message');
+        });
+      });
+
       test.describe('a misaligned stored group', () => {
         test.use({ seedConfig: `newznab_misaligned_key_short#wizard-reflow-notice-${theme}-${width}` });
 

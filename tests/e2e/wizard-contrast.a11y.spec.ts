@@ -151,6 +151,21 @@ for (const theme of ['light', 'dark'] as const) {
       });
     });
 
+    test.describe('a read still pending when Continue is pressed', () => {
+      test.use({ seedConfig: `newznab_two_stored#wizard-a11y-pending-${theme}` });
+
+      test('the pending message is at least 4.5:1, has no Retry beside it, and axe is clean', async ({ page }) => {
+        await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
+        await page.route(/\/settings\/(\?.*)?$/, () => new Promise(() => undefined));
+        await openProvidersStep(page);
+        await page.getByRole('button', { name: /^Continue$/ }).click();
+
+        await expect(page.locator('#wizard-newznab-error')).toContainText('still loading');
+        await expect(page.getByRole('button', { name: /Try loading saved indexers again/ })).toBeHidden();
+        await expectReadableAndClean(page, page.locator('#wizard-newznab-error'), 'pending message', theme);
+      });
+    });
+
     test.describe('a misaligned stored group', () => {
       test.use({ seedConfig: `newznab_misaligned_key_short#wizard-a11y-notice-${theme}` });
 
