@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { expectDialogNamedByUniqueHeading, expectVisualTransitionsToSettle } from './helpers';
+import { expectDialogNamedByUniqueHeading, expectVisualTransitionsToSettle, waitForNewznabRead } from './helpers';
 
 /**
  * The setup wizard for keyboard and screen-reader users (WCAG 2.2 AA: 2.1.1
@@ -61,6 +61,8 @@ async function openWizard(page: Page, theme: 'light' | 'dark' = 'light') {
   await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
   await page.goto('/wizard/');
   await expect(page.getByRole('heading', { name: STEP_HEADINGS[0] })).toBeVisible();
+  // The wizard reads the saved Newznab rows on load; a scene set before the answer lands would be overwritten by it.
+  await waitForNewznabRead(page);
   await expect.poll(
     () => page.evaluate(() => document.documentElement.classList.contains('light')),
     { message: `${theme} theme was not applied` },

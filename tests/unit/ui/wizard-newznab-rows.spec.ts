@@ -375,6 +375,16 @@ describe('adding, removing and clearing', () => {
     expect(built.origins[5]).toBe(2);
   });
 
+  it('an entry with no `source` at all (set by a script that does not know the field) is an added row, not a link to row 0', () => {
+    const { baseline } = displayedEntries('newznab_two_stored');
+
+    const built = build(baseline, [{ host: 'https://placeholder-new.invalid/api', api_key: 'placeholder-key-new' } as Entry]);
+
+    expect(built.rows).toEqual([
+      { ...DEFAULTS, host: 'https://placeholder-new.invalid/api', api_key: 'placeholder-key-new' },
+    ]);
+  });
+
   it('an added row with a URL and no key is written with an empty key', () => {
     const { baseline, entries } = displayedEntries('newznab_two_stored');
     entries.push({ host: 'https://placeholder-new.invalid/api', api_key: '', source: null });

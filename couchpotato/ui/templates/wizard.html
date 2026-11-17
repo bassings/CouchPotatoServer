@@ -175,26 +175,61 @@
           <h3 class="text-sm font-medium text-cp-accent">Usenet Providers</h3>
           
           <!-- Newznab -->
-          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]" data-newznab-card :data-newznab-status="newznabStatus">
             <div class="flex items-center justify-between mb-3">
               <div>
                 <span class="text-sm font-medium">Newznab Indexers</span>
                 <p class="text-[10px] text-cp-muted mt-0.5">Search usenet indexers like NZBGeek, DrunkenSlug, NZB.su</p>
               </div>
-              {% set toggle_click = "formData.newznab.enabled = !formData.newznab.enabled" %}
-              {% set toggle_model = "formData.newznab.enabled" %}
-              {% set toggle_label = "Enable Newznab Indexers" %}
-              {% set toggle_label_expr = "" %}
-              {% include "partials/settings/toggle.html" %}
+              {#- The switch exists only once the saved indexers have been read: before that, or if the
+                  read failed or the rows do not line up, it would say something about a group the
+                  wizard does not know, and it is never written. -#}
+              <template x-if="newznabStatus === 'ready'">
+                <div>
+                  {% set toggle_click = "toggleNewznab()" %}
+                  {% set toggle_model = "formData.newznab.enabled" %}
+                  {% set toggle_label = "Enable Newznab Indexers" %}
+                  {% set toggle_label_expr = "" %}
+                  {% include "partials/settings/toggle.html" %}
+                </div>
+              </template>
             </div>
+            {#- Loading: plain text, not a live region. The wizard writes nothing newznab until the read is in. -#}
+            <p x-show="newznabStatus === 'loading'" class="mb-3 text-xs text-cp-muted" data-testid="wizard-newznab-loading">Loading your saved indexers…</p>
+            {#- A misaligned stored group: the wizard shows no rows for it and writes nothing, `enabled` included.
+                The first sentence is the Settings page's notice (partials/settings/field_types.html); the rest is
+                what is true here. Same danger border and text as there, without the tint (4.81:1 on the card,
+                where the tint measured 4.47:1). -#}
+            <div x-show="newznabStatus === 'misaligned'" class="mb-3 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="combine-misaligned-notice">
+              <p class="text-xs text-cp-danger">The saved entries here do not line up: some columns have more entries than others. Nothing was changed, and Setup will leave your Newznab indexers exactly as they are. Fix the rows in Settings, under Searchers, then Newznab.</p>
+            </div>
+            {#- The ONE message for anything wrong with Newznab in this step: a read that failed, a refused or
+                failed save. Persistent (no timer), not a live region (it is announced once, through the shared
+                assertive region), and what each marked input is described by. -#}
+            <div x-show="newznabMessage()" class="mb-3 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="wizard-newznab-error">
+              <p id="wizard-newznab-error" class="text-xs text-cp-danger" x-text="newznabMessage()"></p>
+              <button type="button" x-show="newznabStatus === 'failed'" @click="retryNewznabRead()" @keydown="ignoreHeldKey($event)"
+                      data-newznab-retry
+                      class="mt-2 inline-flex items-center min-h-6 px-3 rounded-md border border-cp-danger text-xs text-cp-text">Try loading them again</button>
+            </div>
+            {#- Not rendered at all until the rows are read: a blank row shown before that would invite typing over
+                a group the wizard has not seen. -#}
+            <template x-if="newznabStatus === 'ready'">
             <div x-show="formData.newznab.enabled" x-transition class="space-y-3" data-indexer-list>
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
                 <div class="flex gap-2 items-center">
                   <input type="text" :aria-label="'Newznab indexer URL ' + (idx + 1)" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'"
-                         x-model="entry.host"
-                         class="flex-[2] min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                         x-model="entry.host" :readonly="saving" data-newznab-host
+                         :aria-invalid="newznabMarked(idx, 'host') ? 'true' : null"
+                         :aria-describedby="newznabMarked(idx, 'host') ? 'wizard-newznab-error' : null"
+                         :class="newznabMarked(idx, 'host') ? 'border-cp-danger' : 'border-white/[0.06]'"
+                         class="flex-[2] min-w-0 bg-white/[0.03] border rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <input type="password" :aria-label="'Newznab API key ' + (idx + 1)" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
-                         class="flex-1 min-w-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                         :readonly="saving" data-newznab-key
+                         :aria-invalid="newznabMarked(idx, 'api_key') ? 'true' : null"
+                         :aria-describedby="newznabMarked(idx, 'api_key') ? 'wizard-newznab-error' : null"
+                         :class="newznabMarked(idx, 'api_key') ? 'border-cp-danger' : 'border-white/[0.06]'"
+                         class="flex-1 min-w-0 bg-white/[0.03] border rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   {#- w-6 h-6 is a 24px target (WCAG 2.5.8). -ml-1 centres the icon in it; no right margin, so the target ends inside the row and cannot overflow it. -#}
                   <button type="button" @click="removeIndexer(idx)" @keydown="ignoreHeldKey($event)" :aria-disabled="saving.toString()" x-show="formData.newznab.entries.length > 1"
                           data-indexer-remove
@@ -213,6 +248,7 @@
                 <a href="https://nzb.su" target="_blank" class="text-cp-accent hover:underline">NZB.su</a>
               </p>
             </div>
+            </template>
           </div>
 
           <!-- BinSearch -->
@@ -1014,6 +1050,8 @@
 
 const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
 const NEWZNAB_ADDED_ROW = { use: '1', extra_score: '0', custom_tag: '' };
+const NEWZNAB_READ_TIMEOUT_MS = 15000;
+const NEWZNAB_NOT_LOADED = 'Your saved Newznab indexers could not be loaded, so nothing was changed. Try loading them again.';
 
 function newznabIsStoredIndexer(row) {
   return row.host.trim() !== '' && row.api_key.trim() !== '';
@@ -1112,6 +1150,14 @@ function newznabReadStored(payload) {
   return { ok: true, misaligned: false, enabled, rows, shown: rows.map(newznabIsStoredIndexer) };
 }
 
+// An Error the wizard shows inside the Newznab card rather than as a toast: `marks` are the
+// on-screen inputs at fault, `{index, field}` with field `host` or `api_key`.
+function newznabStepError(message, marks) {
+  const error = new Error(message);
+  error.newznab = { marks };
+  return error;
+}
+
 function newznabShownEnabled(read) {
   return !!read.enabled && read.shown.some(Boolean);
 }
@@ -1138,7 +1184,7 @@ function newznabRowForEntry(entry, own) {
 // number the server names can be mapped back to the screen.
 function newznabBuildRows(baseline, entries) {
   const entryFor = new Map();
-  entries.forEach((entry, at) => { if (entry.source !== null) entryFor.set(entry.source, at); });
+  entries.forEach((entry, at) => { if (Number.isInteger(entry.source)) entryFor.set(entry.source, at); });
   const rows = [];
   const origins = [];
   baseline.rows.forEach((row, index) => {
@@ -1152,7 +1198,7 @@ function newznabBuildRows(baseline, entries) {
     if (built) { rows.push(built); origins.push(at); }
   });
   entries.forEach((entry, at) => {
-    const built = entry.source === null ? newznabRowForEntry(entry, null) : null;
+    const built = Number.isInteger(entry.source) ? null : newznabRowForEntry(entry, null);
     if (built) { rows.push(built); origins.push(at); }
   });
   if (!rows.length) {
@@ -1206,6 +1252,18 @@ function setupWizard() {
     jackettSyncResult: '',
     jackettSyncSuccess: false,
 
+    // The stored Newznab group (SEC-004 P5). `newznabStatus` is `loading` until the read of
+    // the saved rows is in, then `ready`, `misaligned` or `failed`; nothing newznab is ever
+    // written in any state but `ready` (a misaligned group is left exactly as stored).
+    // `newznabBaseline` is the rows last read or written; `newznabError` is the one message for
+    // a refused or failed save; `newznabMarks` is `{'host:0': true}` for each offending input.
+    newznabStatus: 'loading',
+    newznabBaseline: { rows: [], shown: [] },
+    newznabError: '',
+    newznabMarks: {},
+    newznabReadStarted: false,
+    newznabReadToken: 0,
+
     // Form data
     formData: {
       username: '',
@@ -1215,7 +1273,7 @@ function setupWizard() {
       // Usenet providers
       newznab: {
         enabled: false,
-        entries: [{ host: '', api_key: '' }]
+        entries: [{ host: '', api_key: '', source: null }]
       },
       binsearch: { enabled: false },
       
@@ -1379,6 +1437,11 @@ function setupWizard() {
           this.formData.privateTrackers[tracker.id][field.name] = '';
         }
       }
+      // Alpine calls init() itself and x-init calls it again: read once.
+      if (!this.newznabReadStarted) {
+        this.newznabReadStarted = true;
+        this.loadNewznab();
+      }
     },
 
     // Every step change goes through here so focus follows the content. The
@@ -1481,12 +1544,15 @@ function setupWizard() {
       // browser no longer swallows a second Enter or Space while it is busy.
       if (this.saving) return;
       this.saving = true;
+      this.clearNewznabError();
       this.announce('Saving…');
       try {
         await this.saveCurrentStep();
         this.enterStep(this.currentStep + 1);
       } catch (e) {
-        this.toast('Failed to save: ' + e.message, 'error');
+        // A Newznab problem is shown in its own card, once; anything else is a toast.
+        if (e && e.newznab) this.showNewznabError(e);
+        else this.toast('Failed to save: ' + e.message, 'error');
       }
       this.saving = false;
       // Cleared, not filled in: success moves focus to the next heading and a
@@ -1519,7 +1585,11 @@ function setupWizard() {
           // Usenet providers
           if (this.formData.searchType === 'usenet' || this.formData.searchType === 'both') {
             // Newznab. Validated before the first save is issued: nothing is
-            // written for a step that is refused.
+            // written for a step that is refused. Until the saved rows have been
+            // read, nothing newznab is written and the step does not advance; a
+            // misaligned stored group is left exactly as stored, `enabled` too.
+            this.assertNewznabReadable();
+            if (this.newznabStatus !== 'misaligned') {
             if (this.formData.newznab.enabled) this.assertNewznabHasNoCommas();
             saves.push(this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0'));
             if (this.formData.newznab.enabled) {
@@ -1538,6 +1608,7 @@ function setupWizard() {
                 this.saveSetting('newznab', 'api_key', keys),
                 this.saveSetting('newznab', 'use', use),
               );
+            }
             }
             // BinSearch
             saves.push(this.saveSetting('binsearch', 'enabled', this.formData.binsearch.enabled ? '1' : '0'));
@@ -1887,6 +1958,7 @@ function setupWizard() {
     removeIndexer(idx) {
       const entries = this.formData.newznab.entries;
       if (this.saving || entries.length <= 1) return;
+      this.clearNewznabError();
       const list = document.querySelector('[data-indexer-list]');
       const wasInList = !!list && list.contains(document.activeElement);
       entries.splice(idx, 1);
@@ -1904,6 +1976,29 @@ function setupWizard() {
           ? document.querySelectorAll('[data-indexer-remove]')[Math.min(idx, entries.length - 1)]
           : document.querySelector('[data-indexer-add]');
         if (next) next.focus();
+      });
+    },
+
+    // The step may not go on while the saved rows are unknown: a read that is
+    // pending or failed is never an install with no indexers.
+    assertNewznabReadable() {
+      if (this.newznabStatus === 'ready' || this.newznabStatus === 'misaligned') return;
+      throw newznabStepError(NEWZNAB_NOT_LOADED, []);
+    },
+
+    // Show a Newznab problem where it belongs: one persistent message in the
+    // card, the offending inputs marked and described by it, the first of them
+    // focused, and ONE assertive announcement (no toast, so one visible message).
+    showNewznabError(error) {
+      this.newznabError = error.message;
+      this.newznabMarks = Object.fromEntries(error.newznab.marks.map((mark) => [mark.field + ':' + mark.index, true]));
+      this.speak(error.message, 'error');
+      const first = error.newznab.marks[0];
+      if (!first) return;
+      this.$nextTick(() => {
+        const attribute = first.field === 'host' ? '[data-newznab-host]' : '[data-newznab-key]';
+        const input = document.querySelectorAll('[data-indexer-list] ' + attribute)[first.index];
+        if (input) input.focus();
       });
     },
 
@@ -1932,7 +2027,87 @@ function setupWizard() {
 
     addIndexer() {
       if (this.saving) return;
-      this.formData.newznab.entries.push({ host: '', api_key: '' });
+      this.clearNewznabError();
+      this.formData.newznab.entries.push({ host: '', api_key: '', source: null });
+    },
+
+    /* ── Newznab: the read of the stored rows (SEC-004 P5) ───────────────────
+       Read through the same settings API the Settings page uses, never from
+       values rendered into this page. A read that failed, is malformed or has
+       not finished is NEVER "no stored indexers": the step then writes nothing
+       newznab and does not advance (Torrents only is not affected: it writes no
+       newznab line). The answer holds API keys, so nothing here logs it, and a
+       failure is shown as fixed text. */
+    async loadNewznab() {
+      const token = ++this.newznabReadToken;
+      this.newznabStatus = 'loading';
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), NEWZNAB_READ_TIMEOUT_MS);
+      let read = { ok: false };
+      try {
+        const resp = await fetch(CP.apiBase + '/settings/', { signal: controller.signal });
+        if (resp.ok) read = newznabReadStored(await resp.json());
+      } catch (e) {
+        read = { ok: false };
+      } finally {
+        clearTimeout(timer);
+      }
+      // A newer read has taken over: this answer says nothing about the rows now.
+      if (token === this.newznabReadToken) this.applyNewznabRead(read);
+    },
+
+    applyNewznabRead(read) {
+      if (!read.ok) {
+        this.newznabStatus = 'failed';
+        if (this.currentStep === 2) this.speak(NEWZNAB_NOT_LOADED, 'error');
+        return;
+      }
+      if (this.newznabError === NEWZNAB_NOT_LOADED) this.clearNewznabError();
+      if (read.misaligned) {
+        this.newznabStatus = 'misaligned';
+        return;
+      }
+      this.newznabBaseline = { rows: read.rows, shown: read.shown };
+      this.formData.newznab.entries = newznabInitialEntries(read);
+      this.formData.newznab.enabled = newznabShownEnabled(read);
+      this.newznabStatus = 'ready';
+    },
+
+    async retryNewznabRead() {
+      if (this.newznabStatus !== 'failed') return;
+      this.announce('Loading your saved indexers…');
+      await this.loadNewznab();
+      if (this.newznabStatus === 'ready') {
+        this.announce('');
+        this.$nextTick(() => this.focusFirstNewznabField());
+      } else if (this.newznabStatus === 'failed') {
+        this.announce('');
+      }
+    },
+
+    focusFirstNewznabField() {
+      const target = document.querySelector('[data-indexer-list] [data-newznab-host]')
+        || document.querySelector('[data-newznab-card] [role="switch"]');
+      if (target) target.focus();
+    },
+
+    toggleNewznab() {
+      if (this.saving || this.newznabStatus !== 'ready') return;
+      this.formData.newznab.enabled = !this.formData.newznab.enabled;
+    },
+
+    // The one message for Newznab in this step: a failed save, or a read that failed.
+    newznabMessage() {
+      return this.newznabError || (this.newznabStatus === 'failed' ? NEWZNAB_NOT_LOADED : '');
+    },
+
+    newznabMarked(idx, field) {
+      return !!this.newznabMarks[field + ':' + idx];
+    },
+
+    clearNewznabError() {
+      this.newznabError = '';
+      this.newznabMarks = {};
     },
 
     // A held Enter repeats its keydown, and Enter activates a button on keydown.
@@ -2118,13 +2293,19 @@ function setupWizard() {
       // this branch makes it the ONLY channel reporting a refused save, which
       // is the security-critical path: no password stored, authentication not
       // enabled. Announcing it is not polish.
+      this.speak(msg, type);
+
+      setTimeout(() => this.message = '', 3000);
+    },
+
+    // Say `msg` through the persistent regions without showing a toast: for a
+    // message that is already visible and persistent on the page.
+    speak(msg, type) {
       const region = type === 'error' ? 'assertiveAnnouncement' : 'politeAnnouncement';
       if (region in this) {
         this[region] = '';            // re-announce an identical repeat
         this.$nextTick(() => { this[region] = msg; });
       }
-
-      setTimeout(() => this.message = '', 3000);
     }
   };
 }

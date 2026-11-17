@@ -403,3 +403,64 @@ export function layoutPx(px: number): number {
 /** WCAG 2.2 target-size thresholds in CSS pixels. */
 export const TARGET_SIZE_MIN = 24;
 export const TARGET_SIZE_MIN_LARGE = 44;
+
+// ── The setup wizard (SEC-004 P5) ────────────────────────────────────────────
+
+/**
+ * Wait until the wizard's read of the saved Newznab rows has finished, one way or the
+ * other. The wizard reads on load and a script that rewrites its state before the answer
+ * lands would be overwritten by it; `data-newznab-status` is the page's own signal.
+ */
+export async function waitForNewznabRead(page: Page): Promise<void> {
+  await expect(page.locator('[data-newznab-card]')).not.toHaveAttribute('data-newznab-status', 'loading');
+}
+
+/** Welcome, then Security, then Providers, with the source chosen. Writes nothing. */
+export async function openProvidersStep(page: Page, source: RegExp = /^Usenet/): Promise<void> {
+  await page.goto('/wizard/');
+  await page.getByRole('button', { name: /Continue/i }).click();           // Welcome -> Security
+  await page.getByRole('button', { name: /Continue/i }).click();           // Security -> Providers (saves nothing)
+  await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible({ timeout: 10000 });
+  await page.getByRole('radio', { name: source }).click();
+}
+
+export type SeenRequest = { url: string; method: string; body: string };
+
+/**
+ * Every request the wizard makes, seen at the network AND from inside the page (a
+ * wrapper round `fetch`, armed before any script runs): a request one vantage point
+ * missed is not read as "no request". Call before `page.goto`.
+ */
+export async function recordWizardRequests(page: Page) {
+  const seen: SeenRequest[] = [];
+  page.on('request', (request) => seen.push({
+    url: request.url(), method: request.method(), body: request.postData() ?? '',
+  }));
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    const log: { url: string; method: string; body: string }[] = [];
+    (window as any).__wizardFetches = log;
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      log.push({
+        url: String(input instanceof Request ? input.url : input),
+        method: init?.method ?? 'GET',
+        body: typeof init?.body === 'string' ? init.body : String(init?.body ?? ''),
+      });
+      return original(input, init);
+    };
+  });
+  const isRead = (request: SeenRequest) => /\/settings\/(\?|$)/.test(request.url);
+  const isGroupSave = (request: SeenRequest) => request.url.includes('settings.save_group') && request.method === 'POST';
+  const isColumnSave = (request: SeenRequest) => /settings\.save\//.test(request.url) && request.method === 'POST';
+  const fromPage = () => page.evaluate(() => (window as any).__wizardFetches as SeenRequest[]);
+  return {
+    seen,
+    settingsReads: () => seen.filter(isRead),
+    groupSaves: () => seen.filter(isGroupSave),
+    columnSaves: () => seen.filter(isColumnSave),
+    pageGroupSaves: async () => (await fromPage()).filter(isGroupSave),
+    pageWrites: async () => (await fromPage()).filter((request) => isGroupSave(request) || isColumnSave(request)),
+    /** The rows a group save carried, as the browser sent them. */
+    groupBodies: () => seen.filter(isGroupSave).map((request) => JSON.parse(request.body)),
+  };
+}

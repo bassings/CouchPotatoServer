@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
+import { expectVisualTransitionsToSettle, mockSettingsSave, waitForNewznabRead } from './helpers';
 
 /**
  * Text contrast (WCAG 2.2 AA 1.4.3) on every step of the setup wizard, in both
@@ -87,6 +87,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.setViewportSize(viewport);
       await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
       await page.goto('/wizard/');
+      await waitForNewznabRead(page);
       await expect.poll(
         () => page.evaluate(() => document.documentElement.classList.contains('light')),
         { message: `${theme} theme was not applied` },
