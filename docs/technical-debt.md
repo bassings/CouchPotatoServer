@@ -545,10 +545,12 @@ result. Getting it wrong the other way files a bug against working code.
   same shape and the same lookups. The wizard once built `host`, `api_key` and
   `use` from one filtered list so a key no longer shifts onto another indexer
   (#587, contained in the v3.278.0 tag).
-  Closed by SEC-004 (P1 to P6): the Settings page and the wizard save a whole
-  group (Newznab, Torrentpotato, and the IMDB, iTunes and Letterboxd automation
-  lists) in one request, `settings.save_group`, that refuses a comma, a control
-  character, a ragged row or an unknown column and writes every column or none.
+  Closed by SEC-004 (P1 to P6): a multi-row group (Newznab, Torrentpotato, and
+  the IMDB, iTunes and Letterboxd automation lists) is written by one request,
+  `settings.save_group`, that refuses a comma, a control character, a ragged row
+  or an unknown column and writes every column or none. The Settings page saves
+  all five groups that way, the Jackett sync writes TorrentPotato through the
+  same writer, and the wizard saves Newznab only.
   `settings.save` refuses every column of such a group. An operator who sees a
   save refused finds one WARNING per refusal in the log, naming the section,
   the first offending row and column, the reason code and the count, never a
@@ -593,6 +595,14 @@ result. Getting it wrong the other way files a bug against working code.
      the query string.
   7. A merge sync does not update the `pass_key` of indexers already stored
      when the Jackett key is rotated.
+  Two more, found in review of P6 and not fixed:
+  8. Lookalike and unusual names (`hoſt`, fullwidth letters, zero-width
+     characters, DEL 0x7f, C1 controls) are not refused by `settings.save`. Each
+     is stored as its own stray option. Measured harmless: they reload as
+     distinct options and the group is untouched.
+  9. Section names are not validated, only failed closed: `settings.save` to a
+     section that does not exist raises `NoSectionError` (logged, nothing
+     written), and nothing refuses a section name for its characters.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.

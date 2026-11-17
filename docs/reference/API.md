@@ -126,7 +126,7 @@ When running, FastAPI provides automatic OpenAPI documentation:
 | Endpoint | Description |
 |----------|-------------|
 | `settings` | Get all settings |
-| `settings.save` | Save one setting. Refuses the columns of a multi-row group (see below) |
+| `settings.save` | Save one setting. Refuses the columns of a multi-row group, and option names the config file cannot hold (see below) |
 | `settings.save_group` | Save every column of one multi-row group in one request |
 
 #### Multi-row groups: `settings.save_group`
@@ -148,7 +148,8 @@ a list kept here.
 Each row is an object holding every column of the group as a string (a comma, a
 control character or a missing or unknown column is refused). The server writes
 every column from the rows and saves once, or saves nothing. Any other method,
-content type, query parameter or extra top-level key is refused with HTTP 400.
+any content type but `application/json`, any query parameter other than the
+cache-buster `t`, or an extra or missing top-level key is refused with HTTP 400.
 
 **Success.** `{"success": true}`. The body never carries a cell value.
 
@@ -165,9 +166,19 @@ A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 `.after` or `.committed`): it sets the columns and saves directly. No hook is
 registered for any column of these groups today.
 
-**Where an operator finds a refusal.** One WARNING per refused save in the log
-(`Refused a settings group save: section=... first_row=... first_column=...
-reason=... offences=N`), with no value.
+**Where an operator finds a refusal.** One WARNING per refused save in the log,
+with no value, in one of three forms:
+
+- a refused group save: `Refused a settings group save: section=... first_row=...
+  first_column=... reason=... offences=N`;
+- a request that was not a JSON POST of exactly `section` and `rows` (HTTP 400):
+  `Refused a settings group save: the request was not a JSON POST of exactly the
+  expected keys`, which names nothing the caller sent;
+- a per-column save through `settings.save` that was refused: `Refused a
+  per-column save of "section.option": it is saved with its group, not on its
+  own` (the registered column, never the caller's spelling), or `Refused a
+  settings save: the option name is not allowed (section=...)`, or `Refused a
+  settings save: the section or the option name was not text`.
 
 > **Breaking change for scripts.** `settings.save` now refuses every column of
 > a multi-row group, in any case or with leading or trailing whitespace in the
@@ -179,8 +190,11 @@ reason=... offences=N`), with no value.
 > Settings tab opened before the upgrade shows the same text in its error toast
 > until it is reloaded. Options outside a group (`newznab.enabled`,
 > `newznab.custom_categories`, `torrentpotato.jackett_url`, and every other
-> setting) still save one at a time. Separately, `settings.save` refuses any
-> option name containing whitespace or a control character, for every section.
+> setting) still save one at a time. Separately, `settings.save` refuses, for every section, any
+> option name containing whitespace, a control character, `=` or `:`, or starting
+> with `[`, `#` or `;` (the config file cannot hold them: `=` and `:` break every
+> later save until restart, and a leading `#` or `;` reloads as a comment), and a
+> `section` or `name` that is not text. The name is never echoed in the refusal.
 
 ### Downloaders
 
