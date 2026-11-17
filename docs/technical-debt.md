@@ -514,6 +514,22 @@ result. Getting it wrong the other way files a bug against working code.
      key fields and the Newznab toggle can still be changed. The save has
      already read its lists, so the server keeps the old values and the page
      shows the new ones.
+- **The setup wizard's Newznab group (SEC-004 P5): four things left open, 2026-11-17.**
+  1. The wizard reads the stored rows once, at page load. A Settings edit in
+     another tab, or a Jackett sync, made before the wizard's Continue is
+     overwritten by a wizard edit, with no warning (reproduced: a row added in
+     Settings after the wizard loaded was deleted by a wizard edit). This is
+     decision D5 (no stale-save protection), with a longer window than on the
+     Settings page; a run that changes no row sends no save, so only a run that
+     edits a row is exposed.
+  2. A control character in a HIDDEN row's cell (a hand-edited `config.ini`)
+     makes every wizard group save refuse, with no row the user can see to fix.
+     The message points to Settings, where the same refusal applies.
+  3. "Newznab indexers were not saved" is also shown when the network dropped
+     and the save may have landed. Pressing Continue again re-sends the same
+     rows, which is harmless.
+  4. Autofill and password-manager behaviour on the now-prefilled URL and key
+     inputs is unmeasured.
 - **Newznab positional lists: what the pairing fixes did not close.**
   Newznab stores each indexer as parallel comma-separated lists (`host`,
   `api_key`, `use`, plus `extra_score`, `custom_tag`, `custom_categories`)
