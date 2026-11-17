@@ -136,7 +136,7 @@ for (const theme of ['light', 'dark'] as const) {
           await openProvidersStep(page);
 
           await expectMessageFits(page, page.locator('#wizard-newznab-error'), 'load error');
-          const retry = await page.getByRole('button', { name: 'Try loading them again' }).boundingBox();
+          const retry = await page.getByRole('button', { name: 'Try loading saved indexers again' }).boundingBox();
           expect(retry!.x + retry!.width).toBeLessThanOrEqual(width);
           expect(retry!.height, 'the retry target is under 44px').toBeGreaterThanOrEqual(44);
         });

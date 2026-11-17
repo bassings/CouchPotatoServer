@@ -146,7 +146,7 @@ for (const theme of ['light', 'dark'] as const) {
         await page.route(/\/settings\/(\?.*)?$/, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
         await openProvidersStep(page);
 
-        await expect(page.getByRole('button', { name: 'Try loading them again' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Try loading saved indexers again' })).toBeVisible();
         await expectReadableAndClean(page, page.locator('#wizard-newznab-error'), 'load error', theme);
       });
     });

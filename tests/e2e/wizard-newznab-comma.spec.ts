@@ -116,10 +116,11 @@ async function expectRefused(page: Page, message: string, at: { n: number; field
   // ONE visible message: no toast beside it, and no "Failed to save" stacked on it. Read at once: a toast clears itself after 3s, so waiting for it to be hidden would pass while it was there.
   expect(await toastText(page).isVisible(), 'a toast is showing beside the inline message').toBe(false);
   await expect(page.locator('body')).not.toContainText('Failed to save');
-  await expect(page.getByTestId('toast-announcer-assertive')).toContainText(message);
+  // Spoken ONCE: the focused input is described by the message, so a screen reader reads it as
+  // the input's description. The assertive region stays silent when an input carries the message.
+  await expect(page.getByTestId('toast-announcer-assertive')).toHaveText('');
   for (const value of notShown) {
     await expect(errorMessage(page)).not.toContainText(value);
-    await expect(page.getByTestId('toast-announcer-assertive')).not.toContainText(value);
   }
 }
 
@@ -291,6 +292,9 @@ test.describe('a refusal from the server is shown on the row it is about', () =>
       await continueButton(page).click();
 
       await expect(errorMessage(page)).toContainText('A value contains a comma');
+      // No input to carry it: the message says where it CAN be fixed, and is announced assertively once.
+      await expect(errorMessage(page)).toContainText('Check them in Settings, under Searchers, then Newznab.');
+      await expect(page.getByTestId('toast-announcer-assertive')).toContainText('Check them in Settings');
       await expect(page.locator('[aria-invalid="true"]')).toHaveCount(0);
       await expect(providersHeading(page)).toBeVisible();
     });
@@ -321,6 +325,27 @@ test.describe('a refusal from the server is shown on the row it is about', () =>
   });
 });
 
+test.describe('the marks and the message clear when the cause does', () => {
+  test('typing in the marked input clears its mark and the message; switching Newznab off clears the rest', async ({ page }) => {
+    await recordSaves(page);
+    await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
+    await continueButton(page).click();
+    await expect(keyInput(page, 1)).toHaveAttribute('aria-invalid', 'true');
+
+    await keyInput(page, 1).fill('placeholder-key-a');
+
+    await expect(keyInput(page, 1)).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(keyInput(page, 1)).not.toHaveAttribute('aria-describedby', /./);
+    await expect(errorMessage(page)).toBeHidden();
+
+    await keyInput(page, 1).fill(`placeholder-key-a,${SECRET_PART}`);
+    await continueButton(page).click();
+    await expect(errorMessage(page)).toBeVisible();
+    await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
+    await expect(errorMessage(page)).toBeHidden();
+  });
+});
+
 // AC-OPS-4: the route is missing (a page on the new version talking to a rolled-back
 // server) or the server fails. Never "saved", never advance, rows kept as typed.
 test.describe('any other answer from the group-save route is a visible error', () => {
@@ -345,6 +370,8 @@ test.describe('any other answer from the group-save route is a visible error', (
       await continueButton(page).click();
 
       await expect(errorMessage(page)).toContainText('Newznab indexers were not saved');
+      await expect(errorMessage(page)).toContainText('Check them in Settings, under Searchers, then Newznab.');
+      await expect(page.getByTestId('toast-announcer-assertive')).toContainText('were not saved');
       await settle(page);
       await expect(providersHeading(page)).toBeVisible();
       await expect(urlInput(page, 1)).toHaveValue('https://indexer-a.invalid');

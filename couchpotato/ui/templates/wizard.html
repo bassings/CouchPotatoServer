@@ -175,7 +175,7 @@
           <h3 class="text-sm font-medium text-cp-accent">Usenet Providers</h3>
           
           <!-- Newznab -->
-          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]" data-newznab-card :data-newznab-status="newznabStatus">
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]" data-newznab-card :data-newznab-status="newznabStatus" :aria-busy="newznabStatus === 'loading' ? 'true' : null">
             <div class="flex items-center justify-between mb-3">
               <div>
                 <span class="text-sm font-medium">Newznab Indexers</span>
@@ -208,9 +208,12 @@
                 assertive region), and what each marked input is described by. -#}
             <div x-show="newznabMessage()" class="mb-3 px-3 py-2 rounded-lg border border-cp-danger/20" data-testid="wizard-newznab-error">
               <p id="wizard-newznab-error" class="text-xs text-cp-danger" x-text="newznabMessage()"></p>
-              <button type="button" x-show="newznabStatus === 'failed'" @click="retryNewznabRead()" @keydown="ignoreHeldKey($event)"
-                      data-newznab-retry
-                      class="mt-2 inline-flex items-center justify-center min-h-[44px] px-4 rounded-md border border-cp-danger text-xs text-cp-text">Try loading them again</button>
+              {#- Stays rendered while a retry runs (aria-disabled, not hidden), so focus is not dropped and a failed
+                  retry leaves it here. Its visible text is its name. -#}
+              <button type="button" x-show="newznabStatus === 'failed' || newznabRetrying" @click="retryNewznabRead()" @keydown="ignoreHeldKey($event)"
+                      data-newznab-retry :aria-disabled="newznabRetrying ? 'true' : 'false'"
+                      x-text="newznabRetrying ? 'Loading saved indexers…' : 'Try loading saved indexers again'"
+                      class="mt-2 inline-flex items-center justify-center min-h-[44px] px-4 rounded-md border border-cp-danger text-xs text-cp-text"></button>
             </div>
             {#- Not rendered at all until the rows are read: a blank row shown before that would invite typing over
                 a group the wizard has not seen. -#}
@@ -219,13 +222,13 @@
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
                 <div class="flex gap-2 items-center">
                   <input type="text" :aria-label="'Newznab indexer URL ' + (idx + 1)" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'"
-                         x-model="entry.host" :readonly="saving" data-newznab-host
+                         x-model="entry.host" @input="clearNewznabMark(idx, 'host')" :readonly="saving" data-newznab-host
                          :aria-invalid="newznabMarked(idx, 'host') ? 'true' : null"
                          :aria-describedby="newznabMarked(idx, 'host') ? 'wizard-newznab-error' : null"
                          :class="newznabMarked(idx, 'host') ? 'border-cp-danger' : 'border-white/[0.06]'"
                          class="flex-[2] min-w-0 bg-white/[0.03] border rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <input type="password" :aria-label="'Newznab API key ' + (idx + 1)" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
-                         :readonly="saving" data-newznab-key
+                         @input="clearNewznabMark(idx, 'api_key')" :readonly="saving" data-newznab-key
                          :aria-invalid="newznabMarked(idx, 'api_key') ? 'true' : null"
                          :aria-describedby="newznabMarked(idx, 'api_key') ? 'wizard-newznab-error' : null"
                          :class="newznabMarked(idx, 'api_key') ? 'border-cp-danger' : 'border-white/[0.06]'"
@@ -951,7 +954,7 @@
               natively disabled button drops keyboard focus to <body>, and a
               keyboard user then restarts from the top of the page on every
               step. The opacity-50 is the look `disabled:` used to give it. -#}
-          <button @click="nextStep()" @keydown="ignoreHeldKey($event)" type="button"
+          <button @click="nextStep()" @keydown="ignoreHeldKey($event)" data-wizard-continue type="button"
                   :aria-disabled="saving.toString()"
                   :class="saving ? 'opacity-50 cursor-default' : ''"
                   class="px-6 py-2 rounded-md text-sm font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors">
@@ -1051,7 +1054,11 @@
 const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
 const NEWZNAB_ADDED_ROW = { use: '1', extra_score: '0', custom_tag: '' };
 const NEWZNAB_READ_TIMEOUT_MS = 15000;
-const NEWZNAB_NOT_LOADED = 'Your saved Newznab indexers could not be loaded, so nothing was changed. Try loading them again.';
+const NEWZNAB_NOT_LOADED = 'Your saved Newznab indexers could not be loaded, so nothing was changed. Usenet cannot continue until they load. Try loading saved indexers again.';
+const NEWZNAB_PENDING = 'Your saved Newznab indexers are still loading. Wait a moment, then press Continue again.';
+const NEWZNAB_LOADED = 'Your saved Newznab indexers have loaded.';
+// Where a message with no input to carry it says the rows CAN be fixed. Never a value.
+const NEWZNAB_SETTINGS_POINTER = ' Check them in Settings, under Searchers, then Newznab.';
 
 function newznabIsStoredIndexer(row) {
   return row.host.trim() !== '' && row.api_key.trim() !== '';
@@ -1282,6 +1289,7 @@ function setupWizard() {
     newznabBaseline: { rows: [], shown: [] },
     newznabError: '',
     newznabMarks: {},
+    newznabRetrying: false,
     newznabReadStarted: false,
     newznabReadToken: 0,
 
@@ -1982,7 +1990,8 @@ function setupWizard() {
     // pending or failed is never an install with no indexers.
     assertNewznabReadable() {
       if (this.newznabStatus === 'ready' || this.newznabStatus === 'misaligned') return;
-      throw newznabStepError(NEWZNAB_NOT_LOADED, []);
+      // Pending is not failed: say it is still loading and offer no retry; a failed read says so.
+      throw newznabStepError(this.newznabStatus === 'loading' ? NEWZNAB_PENDING : NEWZNAB_NOT_LOADED, []);
     },
 
     // Show a Newznab problem where it belongs: one persistent message in the
@@ -1991,9 +2000,21 @@ function setupWizard() {
     showNewznabError(error) {
       this.newznabError = error.message;
       this.newznabMarks = Object.fromEntries(error.newznab.marks.map((mark) => [mark.field + ':' + mark.index, true]));
-      this.speak(error.message, 'error');
       const first = error.newznab.marks[0];
-      if (!first) return;
+      if (!first) {
+        // No input carries this message, so it is announced (once); and focus goes to the way
+        // out when there is one, as a refusal's goes to its input.
+        this.speak(error.message, 'error');
+        if (this.newznabStatus === 'failed') {
+          this.$nextTick(() => {
+            const retry = document.querySelector('[data-newznab-retry]');
+            if (retry) retry.focus();
+          });
+        }
+        return;
+      }
+      // An input is marked, focused and DESCRIBED by the message: a screen reader reads it
+      // as that input's description, so it is not also announced.
       this.$nextTick(() => {
         const attribute = first.field === 'host' ? '[data-newznab-host]' : '[data-newznab-key]';
         const input = document.querySelectorAll('[data-indexer-list] ' + attribute)[first.index];
@@ -2087,11 +2108,9 @@ function setupWizard() {
       }
       if (invalid.length && sentences.length === invalid.length) return newznabStepError(sentences.join(' '), marks);
       const reason = resp && resp.ok && data && typeof data.error === 'string' ? data.error.slice(0, 200) : '';
-      const ambiguous = !resp || !resp.ok || !data;
-      return newznabStepError(
-        'Newznab indexers were not saved.' + (reason ? ' ' + reason : '') + (ambiguous ? ' Check them in Settings.' : ''),
-        [],
-      );
+      // No input to mark (a hidden row, a route that is missing, an HTTP error, a dropped
+      // connection that may or may not have landed): say where the rows CAN be checked.
+      return newznabStepError('Newznab indexers were not saved.' + (reason ? ' ' + reason : '') + NEWZNAB_SETTINGS_POINTER, []);
     },
 
     addIndexer() {
@@ -2128,12 +2147,21 @@ function setupWizard() {
     applyNewznabRead(read) {
       if (!read.ok) {
         this.newznabStatus = 'failed';
-        if (this.currentStep === 2) this.speak(NEWZNAB_NOT_LOADED, 'error');
+        // Only where the card is on screen: with Torrents chosen it is hidden, and a failure
+        // nobody can see is not announced.
+        if (this.currentStep === 2 && this.newznabSearchesUsenet()) this.speak(NEWZNAB_NOT_LOADED, 'error');
         return;
       }
-      if (this.newznabError === NEWZNAB_NOT_LOADED) this.clearNewznabError();
+      // A "still loading" or "could not be loaded" message was shown: its end is said once.
+      const wasReported = this.newznabError === NEWZNAB_NOT_LOADED || this.newznabError === NEWZNAB_PENDING;
+      if (wasReported) {
+        this.clearNewznabError();
+        this.speak(NEWZNAB_LOADED, 'polite');
+      }
       if (read.misaligned) {
         this.newznabStatus = 'misaligned';
+        // Said when it is the answer to a retry; on load the notice is simply on the page.
+        if (this.newznabRetrying) this.speak('The saved entries here do not line up. Nothing was changed. Fix the rows in Settings, under Searchers, then Newznab.', 'polite');
         return;
       }
       this.newznabBaseline = { rows: read.rows, shown: read.shown };
@@ -2142,36 +2170,60 @@ function setupWizard() {
       this.newznabStatus = 'ready';
     },
 
+    // The button stays rendered and focused while this runs (aria-disabled), so a failed
+    // retry leaves focus where it was; a successful one hands it on by STATE.
     async retryNewznabRead() {
-      if (this.newznabStatus !== 'failed') return;
-      this.announce('Loading your saved indexers…');
+      if (this.newznabStatus !== 'failed' || this.newznabRetrying) return;
+      this.newznabRetrying = true;
       await this.loadNewznab();
+      this.newznabRetrying = false;
+      this.$nextTick(() => this.focusAfterNewznabRead());
+    },
+
+    // After a retry: a loaded group goes to the first URL when the rows are shown (Newznab on),
+    // else to the switch; a misaligned one is announced and focus goes to Continue, not to a
+    // control that has just been hidden; a failed one leaves focus on Retry.
+    focusAfterNewznabRead() {
       if (this.newznabStatus === 'ready') {
-        this.announce('');
-        this.$nextTick(() => this.focusFirstNewznabField());
-      } else if (this.newznabStatus === 'failed') {
-        this.announce('');
+        const target = this.formData.newznab.enabled
+          ? document.querySelector('[data-indexer-list] [data-newznab-host]')
+          : document.querySelector('[data-newznab-card] [role=switch]');
+        if (target) target.focus();
+      } else if (this.newznabStatus === 'misaligned') {
+        const next = document.querySelector('[data-wizard-continue]');
+        if (next) next.focus();
       }
     },
 
-    focusFirstNewznabField() {
-      const target = document.querySelector('[data-indexer-list] [data-newznab-host]')
-        || document.querySelector('[data-newznab-card] [role=switch]');
-      if (target) target.focus();
+    newznabSearchesUsenet() {
+      return this.formData.searchType === 'usenet' || this.formData.searchType === 'both';
     },
 
     toggleNewznab() {
       if (this.saving || this.newznabStatus !== 'ready') return;
       this.formData.newznab.enabled = !this.formData.newznab.enabled;
+      // Off: its rows are not saved, so a refusal about them no longer applies.
+      if (!this.formData.newznab.enabled) this.clearNewznabError();
     },
 
     // The one message for Newznab in this step: a failed save, or a read that failed.
     newznabMessage() {
-      return this.newznabError || (this.newznabStatus === 'failed' ? NEWZNAB_NOT_LOADED : '');
+      const notLoaded = this.newznabStatus === 'failed' || this.newznabRetrying;
+      return this.newznabError || (notLoaded ? NEWZNAB_NOT_LOADED : '');
     },
 
     newznabMarked(idx, field) {
       return !!this.newznabMarks[field + ':' + idx];
+    },
+
+    // The user changed an input: its mark is out of date. When no input is marked any more,
+    // the message about them goes too.
+    clearNewznabMark(idx, field) {
+      const key = field + ':' + idx;
+      if (!this.newznabMarks[key]) return;
+      const { [key]: _gone, ...rest } = this.newznabMarks;
+      this.newznabMarks = rest;
+      if (Object.keys(rest).length === 0) this.newznabError = '';
     },
 
     clearNewznabError() {
