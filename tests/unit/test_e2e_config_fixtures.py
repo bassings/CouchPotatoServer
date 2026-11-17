@@ -37,6 +37,10 @@ CLASSIFICATION = {
     ('newznab_misaligned_use_short', 'newznab'): (True, 3),
     ('newznab_untrimmed', 'newznab'): (False, 2),
     ('newznab_legacy_bytes', 'newznab'): (False, 2),
+    ('newznab_two_stored', 'newznab'): (False, 2),
+    ('newznab_interleaved', 'newznab'): (False, 5),
+    ('newznab_hostless', 'newznab'): (False, 4),
+    ('newznab_hostile_cells', 'newznab'): (False, 3),
     ('itunes_shipped', 'itunes'): (False, 2),
     ('torrentpotato_aligned', 'torrentpotato'): (False, 3),
     ('torrentpotato_misaligned', 'torrentpotato'): (True, 3),
@@ -75,6 +79,55 @@ def test_the_untrimmed_fixture_has_a_space_after_a_separator():
     stored = seed_e2e_data.config_fixture('newznab_untrimmed')['newznab']
 
     assert ', ' in stored['host']
+
+
+def _newznab_rows(name):
+    """A newznab fixture as rows of cells, straight from its stored columns."""
+    stored = seed_e2e_data.config_fixture(name)['newznab']
+    columns = {column: value.split(',') for column, value in stored.items()}
+    return [{column: cells[index] for column, cells in columns.items()} for index in range(len(columns['host']))]
+
+
+def test_the_interleaved_fixture_has_hidden_rows_between_the_stored_indexers():
+    rows = _newznab_rows('newznab_interleaved')
+
+    shown = [bool(row['host'] and row['api_key']) for row in rows]
+    assert shown == [False, True, False, True, False]
+
+
+def test_the_interleaved_fixture_gives_every_row_its_own_cells_in_every_column():
+    """A shifted column would otherwise land on an identical neighbour and go unseen."""
+    rows = _newznab_rows('newznab_interleaved')
+
+    for column in ('use', 'host', 'extra_score', 'custom_tag'):
+        assert len({row[column] for row in rows}) > 1, column
+    assert len({row['custom_tag'] for row in rows}) == len(rows)
+    assert len({row['extra_score'] for row in rows}) == len(rows)
+
+
+def test_the_two_stored_indexers_differ_in_every_column():
+    first, second = _newznab_rows('newznab_two_stored')
+
+    assert [first[column] != second[column] for column in first] == [True] * len(first)
+
+
+def test_the_hostless_fixture_holds_a_key_with_no_host_between_stored_indexers():
+    rows = _newznab_rows('newznab_hostless')
+
+    hostless = [row for row in rows if not row['host'] and row['api_key']]
+    stored = [row for row in rows if row['host'] and row['api_key']]
+    assert len(hostless) == 1
+    assert len(stored) == 2
+    assert rows.index(stored[0]) < rows.index(hostless[0]) < rows.index(stored[1])
+
+
+def test_the_hostile_fixture_carries_each_character_the_wizard_must_not_alter():
+    stored = ' '.join(seed_e2e_data.config_fixture('newznab_hostile_cells')['newznab'].values())
+
+    for fragment in ('%', '+', '&', '=', '%2C'):
+        assert fragment in stored, fragment
+    cells = seed_e2e_data.config_fixture('newznab_hostile_cells')['newznab']['api_key'].split(',')
+    assert any(cell != cell.strip() for cell in cells[1:-1])
 
 
 def test_an_unknown_name_is_refused():

@@ -998,6 +998,193 @@
 </div>
 
 <script>
+/* ── Newznab rows: the pure logic (SEC-004 P5) ───────────────────────────────
+   The wizard LOADS the stored Newznab group and saves it back as one group, so
+   re-running it must lose nothing. Everything that decides WHAT is written is
+   here, with no DOM and no network, so tests/unit/ui/wizard-newznab-rows.spec.ts
+   can pin it against the server's own read of every stored shape.
+
+   Terms (spec Definitions). A STORED INDEXER is a row with a host AND a key. Any
+   other stored row is HIDDEN: not displayed, and written back unchanged at its
+   stored position with every cell (a keyless shipped default, a host with no key,
+   a key with no host). `baseline` is `{rows, shown}`: the rows last read or last
+   written, and which of them have an entry on screen. An ENTRY is one row on
+   screen, `{host, api_key, source}`, `source` being the baseline row it shows
+   (null for a row added in the wizard). Nothing here trims a stored cell. */
+
+const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
+const NEWZNAB_ADDED_ROW = { use: '1', extra_score: '0', custom_tag: '' };
+
+function newznabIsStoredIndexer(row) {
+  return row.host.trim() !== '' && row.api_key.trim() !== '';
+}
+
+function newznabCombinedOption(options) {
+  const section = options && options.newznab;
+  const groups = (section && section.groups) || [];
+  for (const group of groups) {
+    for (const option of (group.options || [])) {
+      if (option.type === 'combined' && Array.isArray(option.combine)) return option;
+    }
+  }
+  return null;
+}
+
+// A stored cell is text; a number is what a typed read could make of a lone `1`.
+// Anything else is not something the server stores, so the read is not trusted.
+function newznabCellText(value) {
+  if (typeof value === 'string') return value;
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : null;
+}
+
+function newznabDeclaredDefault(options, column) {
+  for (const group of ((options.newznab && options.newznab.groups) || [])) {
+    for (const option of (group.options || [])) {
+      if (option.name === column && option.default != null) return String(option.default).split(',')[0];
+    }
+  }
+  return '';
+}
+
+// What a column with no cell for a row supplies: off for `use` (an empty one makes
+// the provider raise), empty for a pairing column, the declared default otherwise.
+function newznabMissingCell(payload, pairing, column) {
+  if (column === 'use') return '0';
+  return pairing.includes(column) ? '' : newznabDeclaredDefault(payload.options, column);
+}
+
+function newznabEnabledValue(value) {
+  return value === true || value === 'True' || value === '1' || value === 1 || value === 'true';
+}
+
+function newznabSplitColumns(values) {
+  const cells = {};
+  for (const column of NEWZNAB_COLUMNS) {
+    const text = newznabCellText(values[column]);
+    if (text === null) return null;
+    cells[column] = text.split(',');
+  }
+  return cells;
+}
+
+// A pairing column that holds anything must have exactly the row count. The server
+// flags a group where they differ as misaligned; if it did not and they differ, the
+// read is inconsistent and is not trusted.
+function newznabCountsAgree(cells, pairing, count) {
+  return pairing.every((column) => !cells[column].some((cell) => cell.trim() !== '') || cells[column].length === count);
+}
+
+function newznabStoredRows(payload, cells, pairing, count) {
+  const rows = [];
+  for (let index = 0; index < count; index += 1) {
+    const row = {};
+    for (const column of NEWZNAB_COLUMNS) {
+      row[column] = index < cells[column].length ? cells[column][index] : newznabMissingCell(payload, pairing, column);
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+function newznabDeclaredColumnsAreKnown(declared) {
+  return [...declared.combine].sort().join() === [...NEWZNAB_COLUMNS].sort().join();
+}
+
+// The settings read, as the wizard may rely on it: `{ok: false}` for anything that is
+// not a complete answer (never an install with no indexers), `{ok: true, misaligned: true}`
+// for a group whose rows do not line up (no rows are offered), else the stored rows and
+// which of them are shown.
+function newznabReadStored(payload) {
+  const bad = { ok: false };
+  if (!payload || typeof payload !== 'object') return bad;
+  const values = payload.values && payload.values.newznab;
+  const state = payload.combine_state && payload.combine_state.newznab;
+  const declared = newznabCombinedOption(payload.options);
+  if (!values || typeof values !== 'object' || !state || typeof state.misaligned !== 'boolean') return bad;
+  if (!declared || !newznabDeclaredColumnsAreKnown(declared) || values.enabled === undefined) return bad;
+  const enabled = newznabEnabledValue(values.enabled);
+  if (state.misaligned) return { ok: true, misaligned: true, enabled, rows: [], shown: [] };
+  const count = state.rows;
+  const cells = newznabSplitColumns(values);
+  const pairing = Array.isArray(declared.pairing) ? declared.pairing : declared.combine;
+  if (!Number.isInteger(count) || count < 1 || !cells || !newznabCountsAgree(cells, pairing, count)) return bad;
+  const rows = newznabStoredRows(payload, cells, pairing, count);
+  return { ok: true, misaligned: false, enabled, rows, shown: rows.map(newznabIsStoredIndexer) };
+}
+
+function newznabShownEnabled(read) {
+  return !!read.enabled && read.shown.some(Boolean);
+}
+
+// One entry per stored indexer in stored order; one blank entry when there is none.
+function newznabInitialEntries(read) {
+  const entries = [];
+  read.rows.forEach((row, index) => {
+    if (read.shown[index]) entries.push({ host: row.host, api_key: row.api_key, source: index });
+  });
+  return entries.length ? entries : [{ host: '', api_key: '', source: null }];
+}
+
+// The row an entry shows, or null when the entry yields none (a cleared URL).
+function newznabRowForEntry(entry, own) {
+  if (own && entry.host === own.host && entry.api_key === own.api_key) return { ...own };
+  const host = entry.host.trim();
+  if (!host) return null;
+  return { ...(own || NEWZNAB_ADDED_ROW), host, api_key: entry.api_key.trim() };
+}
+
+// The WHOLE group to save, from the baseline and the entries on screen. `origins` is
+// parallel to `rows`: the entry a row came from, or null for a hidden row, so a row
+// number the server names can be mapped back to the screen.
+function newznabBuildRows(baseline, entries) {
+  const entryFor = new Map();
+  entries.forEach((entry, at) => { if (entry.source !== null) entryFor.set(entry.source, at); });
+  const rows = [];
+  const origins = [];
+  baseline.rows.forEach((row, index) => {
+    const at = entryFor.get(index);
+    if (at === undefined) {
+      // Not on screen: a hidden row stays; a shown row the user removed goes.
+      if (!baseline.shown[index]) { rows.push({ ...row }); origins.push(null); }
+      return;
+    }
+    const built = newznabRowForEntry(entries[at], row);
+    if (built) { rows.push(built); origins.push(at); }
+  });
+  entries.forEach((entry, at) => {
+    const built = entry.source === null ? newznabRowForEntry(entry, null) : null;
+    if (built) { rows.push(built); origins.push(at); }
+  });
+  if (!rows.length) {
+    rows.push(Object.fromEntries(NEWZNAB_COLUMNS.map((column) => [column, ''])));
+    origins.push(null);
+  }
+  return { rows, origins };
+}
+
+function newznabRowsChanged(baseline, rows) {
+  return rows.length !== baseline.rows.length
+    || rows.some((row, index) => NEWZNAB_COLUMNS.some((column) => row[column] !== baseline.rows[index][column]));
+}
+
+function newznabEntryForRow(origins, row) {
+  const at = Number.isInteger(row) && row >= 0 && row < origins.length ? origins[row] : null;
+  return at === null ? -1 : at;
+}
+
+// After the server accepted `built`: those rows are the baseline, and each entry
+// follows the row it produced (an entry that produced none is a plain added one).
+function newznabAfterSave(built, entries) {
+  const baseline = { rows: built.rows.map((row) => ({ ...row })), shown: built.origins.map((at) => at !== null) };
+  const next = entries.map((entry, at) => {
+    const row = built.origins.indexOf(at);
+    return row === -1
+      ? { host: entry.host, api_key: entry.api_key, source: null }
+      : { host: built.rows[row].host, api_key: built.rows[row].api_key, source: row };
+  });
+  return { baseline, entries: next };
+}
+
 function setupWizard() {
   return {
     currentStep: 0,
