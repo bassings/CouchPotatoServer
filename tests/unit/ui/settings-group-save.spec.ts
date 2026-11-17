@@ -1449,21 +1449,21 @@ describe('removing a row from a combined field (SEC-004 AC-DESIGN-8, AC-A11Y-7)'
     });
   }
 
-  it('removes exactly the row it names, and saves the group once', async () => {
-    const net = installFetch();
-    const { field } = fieldWith(3);
+  for (const index of [0, 1, 2]) {
+    it(`removing row ${index + 1} of three removes exactly that row, and saves the rest as one group save`, async () => {
+      const net = installFetch();
+      const { field } = fieldWith(3);
+      const hosts = ['one', 'two', 'three'].map((word) => `https://placeholder-${word}.invalid/api`);
+      const kept = hosts.filter((_, position) => position !== index);
 
-    field.removeRow(1);
-    await vi.advanceTimersByTimeAsync(500);
+      field.removeRow(index);
+      await vi.advanceTimersByTimeAsync(500);
 
-    expect(field.rows.map((row: string[]) => row[1])).toEqual([
-      'https://placeholder-one.invalid/api', 'https://placeholder-three.invalid/api',
-    ]);
-    expect(net.groupSaves()).toHaveLength(1);
-    expect(net.body(0).rows.map((row: any) => row.host)).toEqual([
-      'https://placeholder-one.invalid/api', 'https://placeholder-three.invalid/api',
-    ]);
-  });
+      expect(field.rows.map((row: string[]) => row[1])).toEqual(kept);
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(net.body(0).rows.map((row: any) => row.host)).toEqual(kept);
+    });
+  }
 
   it('offers a Remove control only while more than one row remains', () => {
     const { field } = fieldWith(3);
