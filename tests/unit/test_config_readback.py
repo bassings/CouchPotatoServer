@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -62,7 +63,7 @@ def test_the_view_is_what_the_real_getHosts_returns(config_path):
     view = run_helper('view', config_path, 'newznab')
 
     assert [row[0] for row in view] == ['1', '0', '1']
-    assert view[1][1].startswith('https://placeholder-two.invalid')
+    assert urlsplit(view[1][1]).hostname == 'placeholder-two.invalid'
     assert view[1][2] == 'placeholder-key-two'
 
 

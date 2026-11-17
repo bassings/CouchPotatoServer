@@ -32,9 +32,36 @@ for entry in (REPO_ROOT, REPO_ROOT / 'libs'):
     if str(entry) not in sys.path:
         sys.path.insert(0, str(entry))
 
-import pytest  # noqa: E402
-
 from tests.helpers.combine_groups import SECTIONS, group_settings, reader_view  # noqa: E402
+
+_MISSING = object()
+
+
+class _AttributePatch:
+    """Set attributes for the length of a `with` block, then put them back.
+
+    The one thing this module needs of pytest's `MonkeyPatch`, written out so the
+    helper runs where pytest is not installed: the E2E and UI unit jobs install
+    `requirements.txt` only.
+    """
+
+    def __init__(self):
+        self._undo = []
+
+    def setattr(self, target, name, value):
+        self._undo.append((target, name, target.__dict__.get(name, _MISSING)))
+        setattr(target, name, value)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        while self._undo:
+            target, name, previous = self._undo.pop()
+            if previous is _MISSING:
+                delattr(target, name)
+            else:
+                setattr(target, name, previous)
 
 
 def file_sha(path):
@@ -58,7 +85,7 @@ def group_columns(path, section):
     """Each column of the group as the raw string stored in the file."""
     _require_group(section)
     stored = _stored(path)
-    with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
+    with tempfile.TemporaryDirectory() as directory, _AttributePatch() as patch:
         with group_settings(Path(directory), patch) as settings:
             columns = settings.combine_groups()[section]
     # A column the file does not hold is null, not an empty string: the two read
@@ -70,7 +97,7 @@ def group_view(path, section):
     """What the provider's real reader returns for the group stored in the file."""
     _require_group(section)
     stored = _stored(path)
-    with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
+    with tempfile.TemporaryDirectory() as directory, _AttributePatch() as patch:
         with group_settings(Path(directory), patch, stored=stored) as settings:
             return reader_view(settings, patch, section)
 
@@ -97,7 +124,7 @@ def group_enabled(path, section):
     if section not in ('newznab', 'torrentpotato'):
         raise SystemExit('no isEnabled reader for: %r' % section)
     stored = _stored(path)
-    with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
+    with tempfile.TemporaryDirectory() as directory, _AttributePatch() as patch:
         with group_settings(Path(directory), patch, stored=stored) as settings:
             from couchpotato.environment import Env
             patch.setattr(Env, '_settings', settings)
