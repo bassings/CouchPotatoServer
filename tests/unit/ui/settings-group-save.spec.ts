@@ -15,7 +15,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getVal } from '../../../couchpotato/static/scripts/ui/settings-values.js';
+import {
+  getVal,
+  takeRow,
+  restoreRow,
+  shiftMarksBack,
+  rowRemovedLine,
+  rowRemovedAnnouncement,
+  rowRestoredAnnouncement,
+} from '../../../couchpotato/static/scripts/ui/settings-values.js';
 
 const TEMPLATE = path.resolve(__dirname, '../../../couchpotato/ui/templates/partials/settings/scripts.html');
 
@@ -24,6 +32,14 @@ function loadComponents(): Record<string, (...args: any[]) => any> {
   const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
   return new Function(`${code}\nreturn { settingsPanel, combinedField, buttonField };`)();
 }
+
+/** The undo window of a removal, read from the page's own named constant (8 seconds, owner decision 2026-11-18). */
+function undoWindowMs(): number {
+  const html = fs.readFileSync(TEMPLATE, 'utf8');
+  const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
+  return new Function(`${code}\nreturn REMOVAL_UNDO_WINDOW_MS;`)();
+}
+const UNDO_WINDOW = 8000;
 
 const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
 const NEWZNAB_PAIRING = ['host', 'api_key', 'use'];
@@ -148,7 +164,17 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal('CP', {
     apiBase: '/api/placeholder-api-key',
-    ui: { getVal, isEnabledValue: (value: unknown) => value === true || value === '1', buildDescription: () => '' },
+    ui: {
+      getVal,
+      isEnabledValue: (value: unknown) => value === true || value === '1',
+      buildDescription: () => '',
+      takeRow,
+      restoreRow,
+      shiftMarksBack,
+      rowRemovedLine,
+      rowRemovedAnnouncement,
+      rowRestoredAnnouncement,
+    },
   });
 });
 
@@ -605,7 +631,7 @@ describe('a verdict for rows that have since changed', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(field.held.refusal).toEqual([]);
 
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
     expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([1]);
     expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
   });
@@ -686,7 +712,7 @@ describe('a verdict for rows that have since changed', () => {
     expect(spoken.filter(([, assertive]) => assertive)).toHaveLength(1);
 
     field.removeRow(0);
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
 
     expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([1]);
     expect(field.held.refusal[0].message).toMatch(/^Row 2:/);
@@ -1460,7 +1486,7 @@ describe('removing a row from a combined field (SEC-004 AC-DESIGN-8, AC-A11Y-7)'
     expect(field.focusTarget).toBeNull();
   });
 
-  for (const [index, text] of [[0, 'Row 1 removed'], [1, 'Row 2 removed'], [2, 'Row 3 removed']] as const) {
+  for (const [index, text] of [[0, 'Row 1 removed. Undo is available.'], [1, 'Row 2 removed. Undo is available.'], [2, 'Row 3 removed. Undo is available.']] as const) {
     it(`announces "${text}" once, politely`, () => {
       const { field, panel, render } = fieldWith(3);
       const spoken: Array<[string, boolean | undefined]> = [];
@@ -1470,7 +1496,7 @@ describe('removing a row from a combined field (SEC-004 AC-DESIGN-8, AC-A11Y-7)'
       field.removeRow(index);
       render();
 
-      expect(spoken.filter(([message]) => message.endsWith('removed'))).toEqual([[text, false]]);
+      expect(spoken.filter(([message]) => message.startsWith('Row '))).toEqual([[text, false]]);
       expect(polite(panel)).toBe(text);
       expect(panel.assertiveAnnouncement).toBe('');
     });
@@ -1484,7 +1510,7 @@ describe('removing a row from a combined field (SEC-004 AC-DESIGN-8, AC-A11Y-7)'
       const kept = hosts.filter((_, position) => position !== index);
 
       field.removeRow(index);
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
 
       expect(field.rows.map((row: string[]) => row[1])).toEqual(kept);
       expect(net.groupSaves()).toHaveLength(1);
@@ -1566,4 +1592,421 @@ describe('a held key on the Remove and Add buttons (SEC-004 AC-A11Y-7)', () => {
       expect(event.preventDefault).not.toHaveBeenCalled();
     });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Owner decision 2026-11-18: a removal waits an undo window before it is saved, and the
+// way back (Undo) stays until the group is next touched. The state is on the PANEL, as the
+// rows are, because the field is rebuilt on every tab change.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('removing a row, with a way back (owner decision 2026-11-18)', () => {
+  const HOSTS = ['one', 'two', 'three'].map((word) => `https://placeholder-${word}.invalid/api`);
+
+  function fieldOver(panel = aligned()) {
+    const { combinedField } = loadComponents();
+    const field = combinedField('newznab', combinedOption(panel.options));
+    const queued: Array<() => void> = [];
+    field.getPanel = () => panel;
+    field.$nextTick = (callback: () => void) => { queued.push(callback); };
+    const spies = new Map<string, { focus: ReturnType<typeof vi.fn> }>();
+    field.$el = {
+      querySelector: (selector: string) => {
+        if (!spies.has(selector)) spies.set(selector, { focus: vi.fn() });
+        return spies.get(selector);
+      },
+    };
+    field.init();
+    return {
+      field,
+      panel,
+      render: () => { while (queued.length) queued.shift()!(); },
+      focused: () => [...spies.entries()].filter(([, spy]) => spy.focus.mock.calls.length > 0).map(([selector]) => selector),
+    };
+  }
+
+  const hostsSent = (net: ReturnType<typeof installFetch>, call: number) => net.body(call).rows.map((row: any) => row.host);
+
+  it('waits the named undo window, 8 seconds, and sends nothing before it ends', async () => {
+    const net = installFetch();
+    const { field } = fieldOver();
+
+    field.removeRow(1);
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW - 1);
+    expect(net.calls).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(net.groupSaves()).toHaveLength(1);
+    expect(hostsSent(net, 0)).toEqual([HOSTS[0], HOSTS[2]]);
+    expect(undoWindowMs()).toBe(UNDO_WINDOW);
+  });
+
+  it('holds the removal on the panel: the row index and every cell, and the line says only the row number', () => {
+    const { field, panel } = fieldOver();
+
+    field.removeRow(1);
+
+    const group = panel.groupState.newznab;
+    expect(group.removal.index).toBe(1);
+    expect(group.removal.cells).toEqual(['0', HOSTS[1], 'placeholder-key-two', '10', 'tag-two']);
+    expect(field.removedLine).toBe('Row 2 removed.');
+    expect(field.held).toBe(group);
+  });
+
+  it('keeps the removal across a rebuilt field: a second field over the same panel still offers Undo', () => {
+    const { field, panel } = fieldOver();
+    field.removeRow(0);
+
+    const rebuilt = fieldOver(panel).field;
+
+    expect(rebuilt.held.removal).not.toBeNull();
+    expect(rebuilt.removedLine).toBe('Row 1 removed.');
+  });
+
+  it('says nothing about a cell value in the announcement, the line or the console', async () => {
+    installFetch();
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) => vi.spyOn(console, method).mockImplementation(() => {}));
+    const { field, panel, render } = fieldOver();
+    const spoken: string[] = [];
+    const announce = panel.announce.bind(panel);
+    panel.announce = (message: string, assertive?: boolean) => { spoken.push(message); announce(message, assertive); };
+
+    field.removeRow(1);
+    render();
+    field.undoRemoval();
+    render();
+    field.removeRow(2);
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+
+    const everything = JSON.stringify([spoken, field.removedLine, spies.map((spy) => spy.mock.calls)]);
+    for (const secret of [...HOSTS, 'placeholder-key-one', 'placeholder-key-two', 'placeholder-key-three', 'tag-one', 'tag-two', 'tag-three']) {
+      expect(everything).not.toContain(secret);
+    }
+    spies.forEach((spy) => spy.mockRestore());
+  });
+
+  describe('Undo during the window', () => {
+    it('puts the row back at its index with every cell as it was, and sends nothing, ever, when nothing else changed', async () => {
+      const net = installFetch();
+      const { field, panel } = fieldOver();
+      const before = JSON.stringify(field.held.rows);
+
+      field.removeRow(1);
+      await vi.advanceTimersByTimeAsync(3000);
+      field.undoRemoval();
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW * 3);
+
+      expect(JSON.stringify(field.held.rows)).toBe(before);
+      expect(net.calls).toEqual([]);
+      expect(panel.groupState.newznab.dirty).toBe(false);
+      expect(panel.groupState.newznab.timer).toBeNull();
+      expect(field.held.removal).toBeNull();
+    });
+
+    for (const index of [0, 1, 2]) {
+      it(`restores row ${index + 1} of three at index ${index}, and hands focus to its Remove button after the render`, () => {
+        const { field, render, focused } = fieldOver();
+        const before = JSON.stringify(field.held.rows);
+
+        field.removeRow(index);
+        render();
+        field.undoRemoval();
+        expect(field.focusTarget).toEqual({ kind: 'remove', index });
+        render();
+
+        expect(JSON.stringify(field.held.rows)).toBe(before);
+        expect(focused()).toContain(`[data-row-remove="${index}"]`);
+      });
+    }
+
+    it('announces "Row N restored." once, politely', () => {
+      const { field, panel, render } = fieldOver();
+      field.removeRow(1);
+      render();
+      const spoken: Array<[string, boolean | undefined]> = [];
+      const announce = panel.announce.bind(panel);
+      panel.announce = (message: string, assertive?: boolean) => { spoken.push([message, assertive]); announce(message, assertive); };
+
+      field.undoRemoval();
+      render();
+
+      expect(spoken).toEqual([['Row 2 restored.', false]]);
+    });
+
+    it('sends one request when something else is also unsaved, with the restored rows and that edit', async () => {
+      const net = installFetch();
+      const { field, panel } = fieldOver();
+      field.held.rows[2][2] = 'placeholder-key-edited';
+      panel.editGroup('newznab');
+
+      field.removeRow(0);
+      field.undoRemoval();
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW * 2);
+
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(hostsSent(net, 0)).toEqual(HOSTS);
+      expect(net.body(0).rows[2].api_key).toBe('placeholder-key-edited');
+    });
+
+    it('is refused while the group is locked, and does nothing when there is nothing to undo', () => {
+      const { field, render } = fieldOver();
+      field.removeRow(1);
+      render();
+      field.held.locked = true;
+
+      field.undoRemoval();
+      expect(field.rows).toHaveLength(2);
+
+      field.held.locked = false;
+      field.held.removal = null;
+      field.undoRemoval();
+      expect(field.rows).toHaveLength(2);
+      expect(field.focusTarget).toBeNull();
+    });
+  });
+
+  describe('the line and Undo outlive the window (WCAG 2.2.1)', () => {
+    it('are still offered after the delayed save has landed', async () => {
+      installFetch();
+      const { field } = fieldOver();
+
+      field.removeRow(1);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      await vi.advanceTimersByTimeAsync(60000);
+
+      expect(field.held.dirty).toBe(false);
+      expect(field.held.removal).not.toBeNull();
+      expect(field.removedLine).toBe('Row 2 removed.');
+    });
+
+    it('Undo after the save landed puts the row back and saves the group through the normal save: one request', async () => {
+      const net = installFetch();
+      const { field } = fieldOver();
+      field.removeRow(1);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      expect(net.groupSaves()).toHaveLength(1);
+
+      field.undoRemoval();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(net.groupSaves()).toHaveLength(2);
+      expect(hostsSent(net, 1)).toEqual(HOSTS);
+      expect(net.body(1).rows[1].api_key).toBe('placeholder-key-two');
+      expect(net.body(1).rows[1].custom_tag).toBe('tag-two');
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW * 2);
+      expect(net.groupSaves()).toHaveLength(2);
+      expect(field.held.removal).toBeNull();
+    });
+
+    it('Undo while the delayed save is in flight puts the row back and saves the full rows right after it', async () => {
+      const net = installFetch();
+      const first = deferred<Reply>();
+      net.replies.push(first.promise);
+      const { field } = fieldOver();
+      field.removeRow(1);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      expect(net.groupSaves()).toHaveLength(1);
+
+      field.undoRemoval();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(net.groupSaves()).toHaveLength(1);
+      first.resolve({ body: { success: true } });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(net.groupSaves()).toHaveLength(2);
+      expect(hostsSent(net, 1)).toEqual(HOSTS);
+    });
+  });
+
+  describe('when the line goes', () => {
+    it('on an edit to a cell, which follows the normal 500 ms debounce and carries the removal with it in one request', async () => {
+      const net = installFetch();
+      const { field } = fieldOver();
+      field.removeRow(0);
+
+      field.updateRow(1, 2, 'placeholder-key-edited');
+      expect(field.held.removal).toBeNull();
+      await vi.advanceTimersByTimeAsync(499);
+      expect(net.calls).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(hostsSent(net, 0)).toEqual([HOSTS[1], HOSTS[2]]);
+      expect(net.body(0).rows[1].api_key).toBe('placeholder-key-edited');
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW * 2);
+      expect(net.groupSaves()).toHaveLength(1);
+    });
+
+    it('on adding a row, which saves nothing by itself, and the removal is saved when the window ends', async () => {
+      const net = installFetch();
+      const { field } = fieldOver();
+      field.removeRow(0);
+
+      field.addRow();
+
+      expect(field.held.removal).toBeNull();
+      expect(field.rows).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      expect(net.groupSaves()).toHaveLength(1);
+    });
+
+    it('on a second removal, which replaces it: only the latest is undoable and the first is committed with the next save', async () => {
+      const net = installFetch();
+      const { field } = fieldOver();
+      field.removeRow(0);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      field.removeRow(1);
+      expect(field.held.removal.index).toBe(1);
+      expect(field.held.removal.cells[1]).toBe(HOSTS[2]);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW - 1);
+      expect(net.calls).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(hostsSent(net, 0)).toEqual([HOSTS[1]]);
+
+      field.undoRemoval();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(field.rows.map((row: string[]) => row[1])).toEqual([HOSTS[1], HOSTS[2]]);
+      expect(hostsSent(net, 1)).toEqual([HOSTS[1], HOSTS[2]]);
+    });
+
+    it('when the group is locked for a button, and its pending removal is sent at once before the action', async () => {
+      const net = installFetch();
+      const { field, panel } = fieldOver();
+      field.removeRow(1);
+
+      expect(panel.lockGroup('newznab')).toBe(true);
+      expect(field.held.removal).toBeNull();
+      expect(await panel.flushGroupFor('newznab')).toBe(true);
+
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(hostsSent(net, 0)).toEqual([HOSTS[0], HOSTS[2]]);
+    });
+
+    it('when the rows are replaced by a re-read', () => {
+      const { field, panel } = fieldOver();
+      field.removeRow(1);
+      field.held.timer = null;
+      field.held.dirty = false;
+
+      panel.reloadCleanGroups();
+
+      expect(field.held.removal).toBeNull();
+    });
+  });
+
+  describe('a pending removal is never waited on or dropped', () => {
+    it('flushPendingSaves sends it now, with the rows as on screen', async () => {
+      const net = installFetch();
+      const { field, panel } = fieldOver();
+      field.removeRow(2);
+
+      await panel.flushPendingSaves();
+
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(hostsSent(net, 0)).toEqual([HOSTS[0], HOSTS[1]]);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW * 2);
+      expect(net.groupSaves()).toHaveLength(1);
+    });
+
+    it('a Test connection press sends it first, so the test runs against the rows on screen', async () => {
+      const net = installFetch();
+      net.replies.push({ body: { success: true } }, { body: { success: true } });
+      const { field, panel } = fieldOver();
+      field.removeRow(2);
+
+      await panel.testProvider({ section: 'newznab', list: 'nzb_providers' });
+
+      expect(net.calls.map((call) => call.url)).toEqual([
+        '/api/placeholder-api-key/settings.save_group/',
+        '/api/placeholder-api-key/provider.newznab.test/',
+      ]);
+      expect(hostsSent(net, 0)).toEqual([HOSTS[0], HOSTS[1]]);
+    });
+
+    it('leaving the page sends it, with keepalive so the browser finishes the request', async () => {
+      const net = installFetch();
+      const { field, panel } = fieldOver();
+      field.removeRow(2);
+
+      panel.flushGroupsOnLeave();
+
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(net.calls[0].init.keepalive).toBe(true);
+      expect(hostsSent(net, 0)).toEqual([HOSTS[0], HOSTS[1]]);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW * 2);
+      expect(net.groupSaves()).toHaveLength(1);
+    });
+
+    it('leaving the page with nothing pending sends nothing, and a locked group sends nothing', () => {
+      const net = installFetch();
+      const { field, panel } = fieldOver();
+      panel.flushGroupsOnLeave();
+      field.removeRow(1);
+      field.held.locked = true;
+
+      panel.flushGroupsOnLeave();
+
+      expect(net.calls).toEqual([]);
+    });
+  });
+
+  describe('a refused or failed save, and Undo', () => {
+    const comma = (row: number) => ({ body: { success: false, error: 'x', invalid: [{ row, column: 'host', reason: 'comma' }] } });
+
+    it('moves the marks back to the rows they describe', () => {
+      const { field } = fieldOver();
+      field.held.refusal = [{ row: 2, column: 'host', reason: 'comma', message: 'Row 3: x' }];
+      field.held.refusalKey = '2:host:comma';
+
+      field.removeRow(0);
+      expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([1]);
+      field.undoRemoval();
+
+      expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([2]);
+      expect(field.held.refusal[0].message).toMatch(/^Row 3:/);
+      expect(field.held.refusalKey).toBe('2:host:comma');
+    });
+
+    it('a removal whose save failed: Undo restores the rows the user saw and saves exactly them, once', async () => {
+      const net = installFetch();
+      net.replies.push({ status: 500, text: 'oops' });
+      const { field } = fieldOver();
+      field.removeRow(1);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(field.held.error).not.toBe('');
+
+      field.undoRemoval();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(net.groupSaves()).toHaveLength(2);
+      expect(hostsSent(net, 1)).toEqual(HOSTS);
+      expect(field.held.error).toBe('');
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW * 2);
+      expect(net.groupSaves()).toHaveLength(2);
+    });
+
+    it('a removal whose save was refused for another row: Undo restores the row and the next save is judged afresh', async () => {
+      const net = installFetch();
+      // The comma is in row 3 (index 2). With row 1 removed the server numbers it 2 (index 1); back, 3 again.
+      net.replies.push(comma(2), comma(1), comma(2));
+      const { field, panel } = fieldOver();
+      field.held.rows[2][1] = 'https://placeholder-bad,https://placeholder-evil.invalid';
+      panel.editGroup('newznab');
+      await vi.advanceTimersByTimeAsync(500);
+
+      field.removeRow(0);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([1]);
+
+      field.undoRemoval();
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(net.groupSaves()).toHaveLength(3);
+      expect(net.body(2).rows).toHaveLength(3);
+      expect(net.body(2).rows[0].host).toBe(HOSTS[0]);
+      expect(field.held.refusal.map((entry: any) => entry.row)).toEqual([2]);
+    });
+  });
 });

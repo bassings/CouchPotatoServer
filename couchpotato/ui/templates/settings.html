@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Settings — CouchPotato{% endblock %}
 {% block content %}
-<div class="p-4 lg:p-8 fade-in" x-data="settingsPanel()" x-init="init()">
+<div class="p-4 lg:p-8 fade-in" x-data="settingsPanel()" x-init="init()" @pagehide.window="flushGroupsOnLeave()">
   
   {# ==================== HEADER ==================== #}
   {% include "partials/settings/header.html" %}
