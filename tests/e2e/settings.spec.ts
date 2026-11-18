@@ -1004,9 +1004,10 @@ test.describe('Settings: deleting a row saves the rows that are left, each with 
       await card.getByRole('button', { name: 'Remove row 1' }).click();
       expect(net.groupSaves()).toHaveLength(0);
       // The edit's own 500ms debounce is replaced by the removal's undo window: one save, at its end.
-      await page.clock.fastForward(UNDO_WINDOW_MS - 1);
+      // Well inside the window, not one millisecond short: the clock also runs in real time.
+      await page.clock.fastForward(UNDO_WINDOW_MS - 3000);
       expect(net.groupSaves()).toHaveLength(0);
-      await page.clock.fastForward(1);
+      await page.clock.fastForward(3000);
       expect((await (await answered).json()).success).toBe(true);
       await page.waitForLoadState('networkidle');
 
