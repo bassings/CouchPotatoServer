@@ -37,6 +37,9 @@ type Logic = {
   newznabEntryForRow: (origins: (number | null)[], row: unknown) => number;
   newznabAfterSave: (built: Built, entries: Entry[]) => { baseline: Baseline; entries: Entry[] };
   newznabShownEnabled: (read: Read) => boolean;
+  newznabStoredChanged: (baseline: Baseline, fresh: Read) => boolean;
+  newznabChangedMessage: (fresh: Read) => string;
+  newznabFocusTarget: (status: string, enabled: boolean) => string;
 };
 
 function loadLogic(): Logic {
@@ -44,7 +47,7 @@ function loadLogic(): Logic {
   const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
   return new Function(`${code}
 return { newznabReadStored, newznabInitialEntries, newznabBuildRows, newznabRowsChanged,
-         newznabEntryForRow, newznabAfterSave, newznabShownEnabled };`)();
+         newznabEntryForRow, newznabAfterSave, newznabShownEnabled, newznabStoredChanged, newznabChangedMessage, newznabFocusTarget };`)();
 }
 
 const logic = loadLogic();
@@ -755,6 +758,167 @@ describe('property: whatever is done on screen, hidden rows and untouched rows a
       });
       expect(stored, `${fixture} round ${round}: stored order`).toEqual([...stored].sort((a, b) => a! - b!));
     }
+  });
+});
+
+// AC-DATA-23: before a group save the wizard reads the store again and compares it with
+// the baseline the user's edits were built on. The comparison is pure; the fresh read is
+// the REAL `Settings.view()` of a fixture, changed in the way another tab or a Jackett
+// sync would change it.
+describe('the stored rows against the baseline the edits were built on (AC-DATA-23)', () => {
+  const changedBy = (fixture: string, change: (payload: any) => void) => {
+    const { baseline } = start(fixture);
+    const payload = view(fixture);
+    change(payload);
+    const fresh = logic.newznabReadStored(payload);
+    expect(fresh.ok, 'the changed answer must still read').toBe(true);
+    return logic.newznabStoredChanged(baseline, fresh);
+  };
+
+  it.each(ALIGNED)('%s: the same store is unchanged', (fixture) => {
+    const { baseline } = start(fixture);
+
+    expect(logic.newznabStoredChanged(baseline, logic.newznabReadStored(view(fixture)))).toBe(false);
+  });
+
+  it('a key rotated to another value of the SAME length is a change (the read returns key text, not a mask)', () => {
+    expect(view('newznab_two_stored').values.newznab.api_key).toBe('placeholder-key-one,placeholder-key-two');
+    expect(changedBy('newznab_two_stored', (p) => {
+      p.values.newznab.api_key = 'placeholder-key-ONE,placeholder-key-two';
+    })).toBe(true);
+  });
+
+  it.each(COLUMNS)('a different %s cell in a displayed row is a change', (column) => {
+    expect(changedBy('newznab_two_stored', (p) => {
+      const cells = p.values.newznab[column].split(',');
+      cells[1] = cells[1] + 'x';
+      p.values.newznab[column] = cells.join(',');
+    })).toBe(true);
+  });
+
+  it.each(COLUMNS)('a different %s cell in a HIDDEN row is a change', (column) => {
+    expect(changedBy('newznab_interleaved', (p) => {
+      const cells = p.values.newznab[column].split(',');
+      cells[0] = cells[0] + 'x';
+      p.values.newznab[column] = cells.join(',');
+    })).toBe(true);
+  });
+
+  it('one more row, or one fewer, is a change', () => {
+    const more = changedBy('newznab_two_stored', (p) => {
+      for (const column of COLUMNS) p.values.newznab[column] += ',z';
+      p.combine_state.newznab.rows = 3;
+    });
+    const fewer = changedBy('newznab_two_stored', (p) => {
+      for (const column of COLUMNS) p.values.newznab[column] = p.values.newznab[column].split(',')[0];
+      p.combine_state.newznab.rows = 1;
+    });
+
+    expect([more, fewer]).toEqual([true, true]);
+  });
+
+  it('a store that has become misaligned is a change', () => {
+    const { baseline } = start('newznab_two_stored');
+    const fresh = logic.newznabReadStored(view('newznab_misaligned_key_short'));
+
+    expect(fresh.misaligned).toBe(true);
+    expect(logic.newznabStoredChanged(baseline, fresh)).toBe(true);
+  });
+
+  it('the store of another fixture is a change, and neither side is altered by asking', () => {
+    const { baseline } = start('newznab_two_stored');
+    const before = structuredClone(baseline);
+    const fresh = logic.newznabReadStored(view('newznab_interleaved'));
+    const freshBefore = structuredClone(fresh);
+
+    expect(logic.newznabStoredChanged(baseline, fresh)).toBe(true);
+    expect(baseline).toEqual(before);
+    expect(fresh).toEqual(freshBefore);
+  });
+
+  it('`enabled` alone is not a row change: only the rows are saved from this baseline', () => {
+    expect(changedBy('newznab_two_stored', (p) => { p.values.newznab.enabled = '0'; })).toBe(false);
+  });
+
+  it('the message says the rows changed, that the rows shown were reloaded and that edits were discarded, and holds no cell', () => {
+    for (const fixture of ['newznab_two_stored', 'newznab_interleaved']) {
+      const fresh = logic.newznabReadStored(view(fixture));
+      const text = logic.newznabChangedMessage(fresh);
+      expect(text).toMatch(/changed since this page opened/);
+      expect(text).toMatch(/unsaved edits.*discarded/);
+      for (const row of fresh.rows!) for (const column of ['host', 'api_key', 'custom_tag']) {
+        if (row[column]) expect(text).not.toContain(row[column]);
+      }
+    }
+    const misaligned = logic.newznabChangedMessage(logic.newznabReadStored(view('newznab_misaligned_key_short')));
+    expect(misaligned).toMatch(/do not line up/);
+    expect(misaligned).toMatch(/Settings, under Searchers, then Newznab/);
+  });
+
+  describe('the three wordings (rows shown, Newznab left off, misaligned)', () => {
+    const switchedOff = (fixture: string, change: (payload: any) => void = () => undefined) => {
+      const payload = view(fixture);
+      change(payload);
+      return logic.newznabChangedMessage(logic.newznabReadStored(payload));
+    };
+
+    it('rows shown: says the rows were reloaded and to check them', () => {
+      const text = switchedOff('newznab_two_stored');
+
+      expect(text).toContain('The rows shown have been reloaded. Check them, then press Continue again.');
+      expect(text).not.toMatch(/switched off/);
+    });
+
+    it.each([
+      ['Newznab saved as off', 'newznab_two_stored', (p: any) => { p.values.newznab.enabled = '0'; }],
+      ['no saved indexer at all (a fresh install)', 'fresh_defaults', () => undefined],
+    ])('%s: says Newznab is now shown switched off and what to do, and not that rows were reloaded', (_name, fixture, change) => {
+      const text = switchedOff(fixture, change as (payload: any) => void);
+
+      expect(text).toMatch(/changed since this page opened.*unsaved edits.*discarded/);
+      expect(text).toContain('Newznab is now shown switched off. Switch it on to use Newznab, or press Continue to leave it off.');
+      expect(text).not.toMatch(/rows shown have been reloaded/);
+    });
+
+    it('misaligned wins over off: it points to Settings and does not offer a switch', () => {
+      const payload = view('newznab_misaligned_key_short');
+      payload.values.newznab.enabled = '0';
+      const text = logic.newznabChangedMessage(logic.newznabReadStored(payload));
+
+      expect(text).toContain('The saved entries now do not line up. Fix the rows in Settings, under Searchers, then Newznab.');
+      expect(text).not.toMatch(/Switch it on/);
+    });
+  });
+});
+
+// AC-DATA-23: where focus goes after a reload, and so which control the message describes.
+describe('where focus goes after the rows are replaced', () => {
+  it.each([
+    ['ready', true, 'host'],
+    ['ready', false, 'switch'],
+    ['misaligned', true, 'continue'],
+    ['misaligned', false, 'continue'],
+    ['failed', true, 'none'],
+    ['loading', true, 'none'],
+  ])('status %s, Newznab on: %s -> %s', (status, enabled, target) => {
+    expect(logic.newznabFocusTarget(status as string, enabled as boolean)).toBe(target);
+  });
+});
+
+// The wizard compares a fresh read with a baseline that is never empty: a baseline is only ever
+// set from a read that has at least one row, or from a save (which stores one all-empty row when
+// nothing else is left). A misaligned read carries no rows, so the row-count comparison alone
+// reports it as changed; that holds only while this invariant does.
+describe('a baseline always has a row (the premise of the misaligned comparison)', () => {
+  it.each(ALIGNED)('%s', (fixture) => {
+    expect(start(fixture).baseline.rows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it.each(MISALIGNED)('%s reads with no rows, so it differs from any baseline', (fixture) => {
+    const read = logic.newznabReadStored(view(fixture));
+
+    expect(read.rows).toEqual([]);
+    expect(logic.newznabStoredChanged(start('newznab_two_stored').baseline, read)).toBe(true);
   });
 });
 

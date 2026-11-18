@@ -190,7 +190,10 @@
                   {% set toggle_model = "formData.newznab.enabled" %}
                   {% set toggle_label = "Enable Newznab Indexers" %}
                   {% set toggle_label_expr = "" %}
+                  {% set toggle_described = "newznabReloadDescribes('switch') ? 'wizard-newznab-error' : null" %}
                   {% include "partials/settings/toggle.html" %}
+                  {#- Reset: a later include of the toggle must not inherit this description. -#}
+                  {% set toggle_described = "" %}
                 </div>
               </template>
             </div>
@@ -226,15 +229,15 @@
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
                 <div class="flex gap-2 items-center">
                   <input type="text" :aria-label="'Newznab indexer URL ' + (idx + 1)" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'"
-                         x-model="entry.host" @input="clearNewznabMark(idx, 'host')" :readonly="saving" data-newznab-host
+                         x-model="entry.host" :readonly="saving" data-newznab-host
                          :aria-invalid="newznabMarked(idx, 'host') ? 'true' : null"
-                         :aria-describedby="newznabMarked(idx, 'host') ? 'wizard-newznab-error' : null"
+                         :aria-describedby="newznabDescribedBy(idx, 'host')"
                          :class="newznabMarked(idx, 'host') ? 'border-cp-danger' : 'border-white/[0.06]'"
                          class="flex-[2] min-w-0 bg-white/[0.03] border rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <input type="password" :aria-label="'Newznab API key ' + (idx + 1)" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
-                         @input="clearNewznabMark(idx, 'api_key')" :readonly="saving" data-newznab-key
+                         :readonly="saving" data-newznab-key
                          :aria-invalid="newznabMarked(idx, 'api_key') ? 'true' : null"
-                         :aria-describedby="newznabMarked(idx, 'api_key') ? 'wizard-newznab-error' : null"
+                         :aria-describedby="newznabDescribedBy(idx, 'api_key')"
                          :class="newznabMarked(idx, 'api_key') ? 'border-cp-danger' : 'border-white/[0.06]'"
                          class="flex-1 min-w-0 bg-white/[0.03] border rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   {#- w-6 h-6 is a 24px target (WCAG 2.5.8). -ml-1 centres the icon in it; no right margin, so the target ends inside the row and cannot overflow it. -#}
@@ -959,6 +962,7 @@
               keyboard user then restarts from the top of the page on every
               step. The opacity-50 is the look `disabled:` used to give it. -#}
           <button @click="nextStep()" @keydown="ignoreHeldKey($event)" data-wizard-continue type="button"
+                  :aria-describedby="newznabReloadDescribes('continue') ? 'wizard-newznab-error' : null"
                   :aria-disabled="saving.toString()"
                   :class="saving ? 'opacity-50 cursor-default' : ''"
                   class="px-6 py-2 rounded-md text-sm font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors">
@@ -1171,10 +1175,11 @@ function newznabReadStored(payload) {
 }
 
 // An Error the wizard shows inside the Newznab card rather than as a toast: `marks` are the
-// on-screen inputs at fault, `{index, field}` with field `host` or `api_key`.
-function newznabStepError(message, marks) {
+// on-screen inputs at fault, `{index, field}` with field `host` or `api_key`. `reloaded` is set
+// when the rows on screen were just replaced, so focus goes to them (there is no input at fault).
+function newznabStepError(message, marks, reloaded = false) {
   const error = new Error(message);
-  error.newznab = { marks };
+  error.newznab = { marks, reloaded };
   return error;
 }
 
@@ -1247,6 +1252,36 @@ function newznabRowsChanged(baseline, rows) {
     || rows.some((row, index) => NEWZNAB_COLUMNS.some((column) => row[column] !== baseline.rows[index][column]));
 }
 
+// Has the store moved since the page opened (AC-DATA-23)? `fresh` is a read that landed
+// (`ok`); `baseline` is what this page's edits were built on. Every cell of every row is
+// compared, hidden rows included, and so are the row count and a group that has become
+// misaligned. A misaligned read carries no rows and a baseline always has at least one (it comes
+// from a read of one or more rows, or from a save, which stores one all-empty row when nothing
+// else is left), so the row count alone reports a group that has become misaligned.
+// API keys are compared as text: the read returns a combine column's key
+// unmasked, so a key rotated to another value of the same length is a change too.
+function newznabStoredChanged(baseline, fresh) {
+  return newznabRowsChanged(baseline, fresh.rows);
+}
+
+// What the page says after it found the store changed and reloaded it. Never a cell. Three
+// wordings: the rows are shown (Newznab on), Newznab is left off (saved off, or no saved
+// indexer to show), or the group no longer lines up.
+function newznabChangedMessage(fresh) {
+  const said = 'Your saved Newznab indexers changed since this page opened, so nothing was saved and your unsaved edits to them were discarded.';
+  if (fresh.misaligned) return said + ' The saved entries now do not line up. Fix the rows in Settings, under Searchers, then Newznab.';
+  if (!newznabShownEnabled(fresh)) return said + ' Newznab is now shown switched off. Switch it on to use Newznab, or press Continue to leave it off.';
+  return said + ' The rows shown have been reloaded. Check them, then press Continue again.';
+}
+
+// The control that takes focus when the rows are replaced, from state alone: the first URL when
+// the rows are shown, the switch when Newznab is off, Continue when the group is misaligned.
+// That control is also described by the message, so it is read with the control.
+function newznabFocusTarget(status, enabled) {
+  if (status === 'ready') return enabled ? 'host' : 'switch';
+  return status === 'misaligned' ? 'continue' : 'none';
+}
+
 function newznabEntryForRow(origins, row) {
   const at = Number.isInteger(row) && row >= 0 && row < origins.length ? origins[row] : null;
   return at === null ? -1 : at;
@@ -1298,6 +1333,11 @@ function setupWizard() {
     newznabRetrying: false,
     newznabReadStarted: false,
     newznabReadToken: 0,
+    // True from a failed RE-read (the user's edits are still in `formData`, only the rows are
+    // hidden) until the next read lands. `newznabReloaded` is set when the changed-store message
+    // is shown; with a message still showing, the control that took focus is described by it.
+    newznabHeld: false,
+    newznabReloaded: false,
 
     // Form data
     formData: {
@@ -2005,17 +2045,25 @@ function setupWizard() {
     // focused, and ONE assertive announcement (no toast, so one visible message).
     showNewznabError(error) {
       this.newznabError = error.message;
+      this.newznabReloaded = error.newznab.reloaded;
       this.newznabMarks = Object.fromEntries(error.newznab.marks.map((mark) => [mark.field + ':' + mark.index, true]));
       const first = error.newznab.marks[0];
       if (!first) {
         // No input carries this message, so it is announced (once); and focus goes to the way
         // out when there is one, as a refusal's goes to its input.
         this.speak(error.message, 'error');
+        // Alpine SHOWS an x-show element a frame after the state change, and a hidden element
+        // cannot take focus, so focus waits one frame after the update (as removeIndexer's
+        // "lost" check does for hiding).
         if (this.newznabStatus === 'failed') {
-          this.$nextTick(() => {
+          this.$nextTick(() => requestAnimationFrame(() => {
             const retry = document.querySelector('[data-newznab-retry]');
             if (retry) retry.focus();
-          });
+          }));
+        } else if (error.newznab.reloaded) {
+          // The rows were replaced under the user: focus goes to the first of them (or the
+          // switch, or Continue), chosen from state, never left on a node that is gone.
+          this.$nextTick(() => requestAnimationFrame(() => this.focusAfterNewznabRead()));
         }
         return;
       }
@@ -2073,10 +2121,32 @@ function setupWizard() {
       const entries = this.formData.newznab.entries.map((entry) => ({ ...entry }));
       const built = newznabBuildRows(this.newznabBaseline, entries);
       if (!newznabRowsChanged(this.newznabBaseline, built.rows)) return;
+      await this.assertNewznabStoreUnchanged();
       await this.postNewznabGroup(built);
       const next = newznabAfterSave(built, entries);
       this.newznabBaseline = next.baseline;
       this.formData.newznab.entries = next.entries;
+    },
+
+    // Only when a group save is about to be sent (AC-DATA-23): read the store again and compare
+    // it with the baseline the edits were built on. Throws, like any refused save, so nothing
+    // newznab is written (`enabled` included) and the step does not advance:
+    //  - the read failed, was malformed or timed out: the existing read-failure state, with Retry;
+    //  - the store changed (another tab, a Jackett sync): the fresh rows and baseline replace
+    //    what is on screen, so the user's unsaved edits are discarded, and the message says so.
+    // This narrows the window between a read and a save; it does not close it.
+    async assertNewznabStoreUnchanged() {
+      const fresh = await this.fetchNewznabRead();
+      if (!fresh.ok) {
+        // The edits stay in page memory (`newznabHeld`): Retry gives them back when the store
+        // has not moved, and drops them only when it has.
+        this.newznabStatus = 'failed';
+        this.newznabHeld = true;
+        throw newznabStepError(NEWZNAB_NOT_LOADED, []);
+      }
+      if (!newznabStoredChanged(this.newznabBaseline, fresh)) return;
+      this.replaceNewznabRows(fresh);
+      throw newznabStepError(newznabChangedMessage(fresh), [], true);
     },
 
     async postNewznabGroup(built) {
@@ -2135,6 +2205,14 @@ function setupWizard() {
     async loadNewznab() {
       const token = ++this.newznabReadToken;
       this.newznabStatus = 'loading';
+      const read = await this.fetchNewznabRead();
+      // A newer read has taken over: this answer says nothing about the rows now.
+      if (token === this.newznabReadToken) this.applyNewznabRead(read);
+    },
+
+    // One read of the stored rows, whoever asks: `{ ok: false }` for anything that is not a
+    // complete answer, a timeout (15 s) and an abort included. Changes no state.
+    async fetchNewznabRead() {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), NEWZNAB_READ_TIMEOUT_MS);
       let read = { ok: false };
@@ -2147,8 +2225,7 @@ function setupWizard() {
       } finally {
         clearTimeout(timer);
       }
-      // A newer read has taken over: this answer says nothing about the rows now.
-      if (token === this.newznabReadToken) this.applyNewznabRead(read);
+      return read;
     },
 
     // Where a read lands, every message that depends on the READ's state is settled here, once:
@@ -2166,9 +2243,20 @@ function setupWizard() {
         if (this.currentStep === 2 && this.newznabSearchesUsenet()) this.speak(NEWZNAB_NOT_LOADED, 'error');
         return;
       }
+      // A retry after a failed RE-read (the user's edits are held): see applyHeldRead.
+      if (this.newznabHeld) {
+        this.applyHeldRead(read);
+        return;
+      }
       // Said once, when a pending or failed message had been shown or when this answers a retry:
       // what the read turned out to be. On a first load nothing was said, so nothing is.
       if (reported || this.newznabRetrying) this.speak(read.misaligned ? NEWZNAB_MISALIGNED_SAID : NEWZNAB_LOADED, 'polite');
+      this.replaceNewznabRows(read);
+    },
+
+    // The rows, the baseline and the switch become what was read (or the misaligned state, which
+    // offers no rows). Whatever was on screen is dropped.
+    replaceNewznabRows(read) {
       if (read.misaligned) {
         this.newznabStatus = 'misaligned';
         return;
@@ -2177,6 +2265,21 @@ function setupWizard() {
       this.formData.newznab.entries = newznabInitialEntries(read);
       this.formData.newznab.enabled = newznabShownEnabled(read);
       this.newznabStatus = 'ready';
+    },
+
+    // A read that landed after a failed re-read, with the user's edits held. The store has not
+    // moved: the edits stay, and the state, baseline and switch are exactly as they were before the
+    // failure; the load is announced once. The store has moved: as the changed path, the fresh rows
+    // replace the edits and the changed message is the one announcement.
+    applyHeldRead(read) {
+      this.newznabHeld = false;
+      if (!newznabStoredChanged(this.newznabBaseline, read)) {
+        this.newznabStatus = 'ready';
+        this.speak(NEWZNAB_LOADED, 'polite');
+        return;
+      }
+      this.replaceNewznabRows(read);
+      this.showNewznabError(newznabStepError(newznabChangedMessage(read), [], true));
     },
 
     // The messages that describe the read, as opposed to a save: the ones a change of the
@@ -2207,15 +2310,14 @@ function setupWizard() {
     // else to the switch; a misaligned one is announced and focus goes to Continue, not to a
     // control that has just been hidden; a failed one leaves focus on Retry.
     focusAfterNewznabRead() {
-      if (this.newznabStatus === 'ready') {
-        const target = this.formData.newznab.enabled
-          ? document.querySelector('[data-indexer-list] [data-newznab-host]')
-          : document.querySelector('[data-newznab-card] [role=switch]');
-        if (target) target.focus();
-      } else if (this.newznabStatus === 'misaligned') {
-        const next = document.querySelector('[data-wizard-continue]');
-        if (next) next.focus();
-      }
+      const selectors = {
+        host: '[data-indexer-list] [data-newznab-host]',
+        switch: '[data-newznab-card] [role=switch]',
+        continue: '[data-wizard-continue]',
+      };
+      const kind = newznabFocusTarget(this.newznabStatus, this.formData.newznab.enabled);
+      const target = Object.hasOwn(selectors, kind) ? document.querySelector(selectors[kind]) : null;
+      if (target) target.focus();
     },
 
     newznabSearchesUsenet() {
@@ -2225,8 +2327,11 @@ function setupWizard() {
     toggleNewznab() {
       if (this.saving || this.newznabStatus !== 'ready') return;
       this.formData.newznab.enabled = !this.formData.newznab.enabled;
-      // Off: its rows are not saved, so a refusal about them no longer applies.
-      if (!this.formData.newznab.enabled) this.clearNewznabError();
+      // Off: its rows are not saved, so a refusal about them no longer applies. On, while the
+      // reload message is showing: it said Newznab is switched off, which is no longer true, and its
+      // description would move to the first URL. `newznabReloaded` is assigned by every
+      // showNewznabError, so it is never true beside a message that is not the reload one.
+      if (!this.formData.newznab.enabled || this.newznabReloaded) this.clearNewznabError();
     },
 
     // The one message for Newznab in this step: a failed save, or a read that failed.
@@ -2241,17 +2346,32 @@ function setupWizard() {
       return !!this.newznabMarks[field + ':' + idx];
     },
 
-    // The user changed an input: its mark is out of date. When no input is marked any more,
-    // the message about them goes too.
-    clearNewznabMark(idx, field) {
-      const key = field + ':' + idx;
-      if (!this.newznabMarks[key]) return;
-      const rest = { ...this.newznabMarks };
-      delete rest[key];
-      this.newznabMarks = rest;
-      if (Object.keys(rest).length === 0) this.newznabError = '';
+    // What the changed-store message describes: the one control that took focus when the rows
+    // were replaced (newznabFocusTarget), so it is read with that control. `kind` is `host`,
+    // `switch` or `continue`. Only while the message is showing, so the description comes off
+    // with it; never on an input a refusal marks (that has its own binding). Only while the Newznab
+    // card is what the user is on (Providers, Usenet or Both): Continue is on every step, and the
+    // message is hidden elsewhere. The message is left standing when the user leaves the card
+    // (Back, Torrents only) because it is still true of the store and is there on return; Continue
+    // clears it.
+    newznabReloadDescribes(kind) {
+      return this.newznabReloaded && !!this.newznabError
+        && this.currentStep === 2 && this.newznabSearchesUsenet()
+        && newznabFocusTarget(this.newznabStatus, this.formData.newznab.enabled) === kind;
     },
 
+    // aria-describedby for a Newznab input: the message when a refusal marks it, or when it is the
+    // first URL and the reload message describes it. One id either way, never two.
+    newznabDescribedBy(idx, field) {
+      const described = this.newznabMarked(idx, field) || (idx === 0 && field === 'host' && this.newznabReloadDescribes('host'));
+      return described ? 'wizard-newznab-error' : null;
+    },
+
+    // A refusal stays, message and marks, while the user edits (AC-A11Y-17): typing never clears
+    // it, so the instruction is still there when the problem is fixed. It is cleared here only
+    // when Continue next runs its check (and shown again if the problem remains), when Newznab is
+    // switched off, and on ANY row add or remove: marks and "Indexer N" are by position, which an
+    // add or remove shifts, so a kept message could name the wrong row.
     clearNewznabError() {
       this.newznabError = '';
       this.newznabMarks = {};

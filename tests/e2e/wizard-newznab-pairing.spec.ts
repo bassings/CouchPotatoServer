@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { configColumns, configSection, configSha, configView, openProvidersStep, recordWizardRequests } from './helpers';
+import { configColumns, configSection, configSha, configView, openProvidersStep, recordWizardRequests, watchLiveRegions } from './helpers';
 import { combineGroupWriter, SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
@@ -1187,23 +1187,6 @@ test.describe('a whole wizard with two Newznab rows', () => {
     ]);
   });
 });
-
-/** Every text change in a live region, from before the first script runs. */
-async function watchLiveRegions(page: Page) {
-  await page.addInitScript(() => {
-    const texts: string[] = [];
-    (window as any).__liveTexts = texts;
-    const selector = '[aria-live], [role="status"], [role="alert"], output';
-    new MutationObserver((records) => {
-      for (const record of records) {
-        const node = record.target instanceof Element ? record.target : record.target.parentElement;
-        const region = node?.closest(selector);
-        if (region?.textContent) texts.push(region.textContent);
-      }
-    }).observe(document, { subtree: true, childList: true, characterData: true });
-  });
-  return () => page.evaluate(() => (window as any).__liveTexts as string[]);
-}
 
 test.describe('what must never leave the page (a distinctive word in every cell)', () => {
   test.use({ seedConfig: 'newznab_sentinels#wizard-sentinels' });

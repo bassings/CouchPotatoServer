@@ -514,14 +514,25 @@ result. Getting it wrong the other way files a bug against working code.
      key fields and the Newznab toggle can still be changed. The save has
      already read its lists, so the server keeps the old values and the page
      shows the new ones.
-- **The setup wizard's Newznab group (SEC-004 P5): four things left open, 2026-11-17.**
-  1. The wizard reads the stored rows once, at page load. A Settings edit in
-     another tab, or a Jackett sync, made before the wizard's Continue is
-     overwritten by a wizard edit, with no warning (reproduced: a row added in
-     Settings after the wizard loaded was deleted by a wizard edit). This is
-     decision D5 (no stale-save protection), with a longer window than on the
-     Settings page; a run that changes no row sends no save, so only a run that
-     edits a row is exposed.
+- **The setup wizard's Newznab group (SEC-004 P5): five things left open, 2026-11-17 (updated 2026-11-18).**
+  1. (Narrowed 2026-11-18, AC-DATA-23; owner decision reversing D5 for the
+     wizard only.) The wizard no longer saves over a store that moved while
+     the page was open: when it is about to send a group save it reads the
+     settings again and compares every cell of every row (hidden rows
+     included), the row count and the aligned state with the rows its edits
+     were built on. A change writes nothing newznab, reloads the rows and
+     says the unsaved edits were discarded; a failed re-read writes nothing
+     and shows the read failure with Retry, holding the user's edits in page
+     memory, and Retry gives them back when the store has not changed. **Still open:** there is a window
+     between the re-read and the group save (two requests), so a change landing
+     inside it is still overwritten wholesale; it is narrowed, not closed. The
+     durable fix remains a freshness token on `save_group`. Also open: a
+     `newznab.enabled` change alone is not compared (the wizard writes
+     `enabled` as the user set it, as before), and the Settings page keeps D5
+     as it was. The wizard can compare keys because the settings read returns
+     a combine column's key as text (only `password`-typed options are
+     masked), so a key rotated to another value of the same length is
+     detected; this holds only while that stays true.
   2. A control character in a HIDDEN row's cell (a hand-edited `config.ini`)
      makes every wizard group save refuse, with no row the user can see to fix.
      The message points to Settings, where the same refusal applies.
@@ -534,10 +545,6 @@ result. Getting it wrong the other way files a bug against working code.
      column's cell count (never observed from the real server), the wizard
      trusts it and an edit appends blank padded rows. No mispairing was found
      in a million such answers.
-  6. (2026-11-18) The Newznab error message clears on the first keystroke in the
-     last marked input, before the cause is gone; Continue re-validates. In the
-     masked API-key field the user can then no longer read what the message
-     said.
 - **Newznab positional lists: what the pairing fixes did not close.**
   Newznab stores each indexer as parallel comma-separated lists (`host`,
   `api_key`, `use`, plus `extra_score`, `custom_tag`, `custom_categories`)
@@ -581,11 +588,12 @@ result. Getting it wrong the other way files a bug against working code.
      shifts the rows after it (owner decision D6).
   3. A failed per-column save of a non-combine option stays in memory until the
      next save writes it out.
-  4. A save built from a stale read (a second tab, the wizard, or a Jackett sync
-     landing between a page's read and its group save) overwrites the newer rows
+  4. A save built from a stale read (a second tab or a Jackett sync landing
+     between a page's read and its group save) overwrites the newer rows
      wholesale. It cannot mispair, because each group save comes from one
      snapshot (owner decision D5; the durable fix is a freshness token on
-     `save_group`).
+     `save_group`). The setup wizard re-reads before saving (AC-DATA-23), so
+     for it only the window between that re-read and its save remains.
   Three Jackett items:
   5. The saved Jackett key is not bound to the saved URL: `settings.save` can
      change `jackett_url` alone, after which a parameterless `jackett_test` or

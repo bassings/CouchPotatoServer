@@ -474,6 +474,28 @@ export async function recordWizardRequests(page: Page) {
   };
 }
 
+/**
+ * Every text change in ANY live region (`aria-live`, `role=status`, `role=alert`, `<output>`),
+ * counted by a MutationObserver armed before the first script runs. Call before `page.goto`;
+ * the returned function reads the texts so far. Watching only one region would miss a
+ * message that reaches another.
+ */
+export async function watchLiveRegions(page: Page) {
+  await page.addInitScript(() => {
+    const texts: string[] = [];
+    (window as any).__liveTexts = texts;
+    const selector = '[aria-live], [role="status"], [role="alert"], output';
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const node = record.target instanceof Element ? record.target : record.target.parentElement;
+        const region = node?.closest(selector);
+        if (region?.textContent) texts.push(region.textContent);
+      }
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+  return () => page.evaluate(() => (window as any).__liveTexts as string[]);
+}
+
 /** In-page: contrast of an element's text against the opaque surface behind it, translucent layers composited. */
 export const TEXT_CONTRAST = (element: HTMLElement) => {
   type Rgba = { r: number; g: number; b: number; a: number };
