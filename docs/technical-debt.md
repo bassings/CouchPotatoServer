@@ -514,7 +514,7 @@ result. Getting it wrong the other way files a bug against working code.
      key fields and the Newznab toggle can still be changed. The save has
      already read its lists, so the server keeps the old values and the page
      shows the new ones.
-- **The setup wizard's Newznab group (SEC-004 P5): four things left open, 2026-11-17.**
+- **The setup wizard's Newznab group (SEC-004 P5): five things left open, 2026-11-17 (updated 2026-11-18).**
   1. (Narrowed 2026-11-18, AC-DATA-23; owner decision reversing D5 for the
      wizard only.) The wizard no longer saves over a store that moved while
      the page was open: when it is about to send a group save it reads the
@@ -522,7 +522,8 @@ result. Getting it wrong the other way files a bug against working code.
      included), the row count and the aligned state with the rows its edits
      were built on. A change writes nothing newznab, reloads the rows and
      says the unsaved edits were discarded; a failed re-read writes nothing
-     and shows the read failure with Retry. **Still open:** there is a window
+     and shows the read failure with Retry, holding the user's edits in page
+     memory, and Retry gives them back when the store has not changed. **Still open:** there is a window
      between the re-read and the group save (two requests), so a change landing
      inside it is still overwritten wholesale; it is narrowed, not closed. The
      durable fix remains a freshness token on `save_group`. Also open: a

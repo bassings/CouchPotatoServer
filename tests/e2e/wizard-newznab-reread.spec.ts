@@ -1,5 +1,5 @@
-import { test, expect, type APIRequestContext, type Page } from './fixtures';
-import { configColumns, configSection, configSha, openProvidersStep, recordWizardRequests, waitForNewznabRead } from './helpers';
+import { test, expect, type APIRequestContext, type Locator, type Page } from './fixtures';
+import { configColumns, configSection, configSha, openProvidersStep, recordWizardRequests, waitForNewznabRead, watchLiveRegions } from './helpers';
 import { combineGroupWriter } from './settings_persistence';
 
 /**
@@ -55,23 +55,6 @@ async function openWithRows(page: Page, firstUrl: string) {
   await openProvidersStep(page);
   await waitForNewznabRead(page);
   await expect(urlInput(page, 1)).toHaveValue(firstUrl);
-}
-
-/** Every text a live region received, from before the first script runs. */
-async function watchLiveRegions(page: Page) {
-  await page.addInitScript(() => {
-    const texts: string[] = [];
-    (window as any).__liveTexts = texts;
-    const selector = '[aria-live], [role="status"], [role="alert"], output';
-    new MutationObserver((records) => {
-      for (const record of records) {
-        const node = record.target instanceof Element ? record.target : record.target.parentElement;
-        const region = node?.closest(selector);
-        if (region?.textContent) texts.push(region.textContent);
-      }
-    }).observe(document, { subtree: true, childList: true, characterData: true });
-  });
-  return () => page.evaluate(() => (window as any).__liveTexts as string[]);
 }
 
 const isOn = (value: string | undefined) => /^(1|true)$/i.test(value ?? '');
@@ -315,11 +298,18 @@ test.describe('the re-read itself fails', () => {
     test.describe(name, () => {
       test.use({ seedConfig: `newznab_two_stored#wizard-reread-fails-${label}` });
 
-      test('writes nothing, does not advance, and shows the read failure with Retry, which brings the stored rows back', async ({ page, testServer }) => {
+      // Owner decision (fix round 1): a failed RE-read costs the user nothing when the store
+      // did not change. The edits are held in page memory; Retry brings the rows back with them.
+      test('writes nothing and does not advance; Retry, the store unchanged, brings the rows back WITH the edits, and Continue then saves them', async ({ page, testServer }) => {
         test.info().annotations.push(...combineGroupWriter());
+        const readLive = await watchLiveRegions(page);
         const requests = await recordWizardRequests(page);
         await openWithRows(page, 'https://placeholder-one.invalid/api');
         await urlInput(page, 1).fill(EDITED_URL);
+        await page.getByRole('button', { name: '+ Add another indexer' }).click();
+        await urlInput(page, 3).fill('https://placeholder-three.invalid/api');
+        await keyInput(page, 3).fill('placeholder-key-three');
+        await keyInput(page, 2).fill('placeholder-key-typed');
         const baseline = configSha(testServer.configPath);
         await fail(page);
 
@@ -332,12 +322,29 @@ test.describe('the re-read itself fails', () => {
         expect(await requests.pageWrites(), 'a failed re-read was followed by a write').toEqual([]);
         expect(configSha(testServer.configPath), 'config.ini changed').toBe(baseline);
 
-        // The existing Retry path: the stored rows come back, the discarded edit does not.
         await page.unroute(READ_ROUTE);
         await retryButton(page).click();
-        await expect(urlInput(page, 1)).toHaveValue('https://placeholder-one.invalid/api');
+
+        // The store did not change, so the edits are still there, and the state is as it was before the failure.
         await expect(errorMessage(page)).toBeHidden();
+        await expect(urlInput(page, 1)).toHaveValue(EDITED_URL);
+        await expect(urlInput(page, 3)).toHaveValue('https://placeholder-three.invalid/api');
+        await expect(keyInput(page, 3)).toHaveValue('placeholder-key-three');
+        await expect(keyInput(page, 2)).toHaveValue('placeholder-key-typed');
+        await expect(urlInput(page, 1)).toBeFocused();
+        const loaded = (await readLive()).filter((text) => /saved Newznab indexers have loaded/.test(text));
+        expect(loaded, 'the load was announced other than once').toHaveLength(1);
         expect(configSha(testServer.configPath)).toBe(baseline);
+
+        await continueButton(page).click();
+        await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+        expect(requests.groupSaves()).toHaveLength(1);
+        const now = rowsOf(configColumns(testServer.configPath, 'newznab'));
+        expect(now.map((row) => [row.host, row.api_key])).toEqual([
+          [EDITED_URL, 'placeholder-key-one'],
+          ['https://placeholder-two.invalid/api', 'placeholder-key-typed'],
+          ['https://placeholder-three.invalid/api', 'placeholder-key-three'],
+        ]);
       });
     });
   }
@@ -360,8 +367,191 @@ test.describe('the re-read itself fails', () => {
 
       await expect(errorMessage(page)).toContainText(NOT_LOADED);
       await expect(retryButton(page)).toBeVisible();
+      // Focus goes to the way out, as it does for a failed first read. The retry button is shown a
+      // frame after the state changes, so this fails if focus is moved before it is visible.
+      await expect(retryButton(page)).toBeFocused();
       expect(await requests.pageWrites()).toEqual([]);
       expect(configSha(testServer.configPath)).toBe(baseline);
+    });
+  });
+
+  test.describe('the store changed while the re-read was failing', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-reread-fail-then-changed' });
+
+    test('Retry then behaves as the changed path: the rows and baseline are reloaded, the edits discarded, the changed message shown', async ({ page, request, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const readLive = await watchLiveRegions(page);
+      const requests = await recordWizardRequests(page);
+      await openWithRows(page, 'https://placeholder-one.invalid/api');
+      await urlInput(page, 1).fill(EDITED_URL);
+      await page.route(READ_ROUTE, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"success": false}' }));
+      await continueButton(page).click();
+      await expect(errorMessage(page)).toContainText(NOT_LOADED);
+      const stored = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await otherTabSaves(request, testServer.apiBase, stored.map((row, i) => (i === 1 ? { ...row, custom_tag: 'other-tab-tag' } : row)));
+      const theirs = rowsOf(configColumns(testServer.configPath, 'newznab'));
+
+      await page.unroute(READ_ROUTE);
+      await retryButton(page).click();
+
+      await expect(errorMessage(page)).toContainText(CHANGED);
+      await expect(errorMessage(page)).not.toContainText('could not be loaded');
+      await expect(urlInput(page, 1)).toHaveValue('https://placeholder-one.invalid/api');
+      const shown = await page.locator('[data-newznab-host]').evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+      expect(shown, 'the discarded edit is still on screen').not.toContain(EDITED_URL);
+      await expect(urlInput(page, 1)).toBeFocused();
+      const spoken = (await readLive()).filter((text) => /changed since this page opened/.test(text));
+      expect(spoken, 'the changed message was announced other than once').toHaveLength(1);
+      expect(await requests.pageWrites()).toEqual([]);
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(theirs);
+
+      // The baseline is now the fresh read: the next Continue, no further edit, advances with no group save.
+      await continueButton(page).click();
+      await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+      expect(requests.groupSaves()).toEqual([]);
+    });
+  });
+
+  test.describe('two failed retries, then one that works', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-reread-double-failure' });
+
+    test('stays failed with the edits held, and the edits are back once a retry succeeds', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const requests = await recordWizardRequests(page);
+      await openWithRows(page, 'https://placeholder-one.invalid/api');
+      await urlInput(page, 1).fill(EDITED_URL);
+      const baseline = configSha(testServer.configPath);
+      await page.route(READ_ROUTE, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"success": false}' }));
+      await continueButton(page).click();
+      await expect(errorMessage(page)).toContainText(NOT_LOADED);
+
+      for (const attempt of [1, 2]) {
+        const reads = requests.settingsReads().length;
+        await retryButton(page).click();
+        await expect.poll(() => requests.settingsReads().length, `retry ${attempt} did not read`).toBeGreaterThan(reads);
+        await expect(errorMessage(page)).toContainText(NOT_LOADED);
+        await expect(retryButton(page)).toBeFocused();
+        await expect(urlInput(page, 1)).toHaveCount(0);
+      }
+
+      await page.unroute(READ_ROUTE);
+      await retryButton(page).click();
+
+      await expect(errorMessage(page)).toBeHidden();
+      await expect(urlInput(page, 1)).toHaveValue(EDITED_URL);
+      expect(await requests.pageWrites()).toEqual([]);
+      expect(configSha(testServer.configPath)).toBe(baseline);
+    });
+  });
+});
+
+// AC-DATA-23(b): where focus goes after the rows are replaced, and what describes the control that
+// takes it. The message must be read with that control (a focus move can cut off an announcement),
+// and the description must come off when the message does.
+test.describe('the message describes the control that takes focus after a reload', () => {
+  const DESCRIBED = 'wizard-newznab-error';
+
+  /** Back to Providers after advancing: the message is gone and no control still points at it. */
+  async function expectNothingDescribedAfterContinue(page: Page, controls: Locator[]) {
+    await continueButton(page).click();
+    await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+    await page.getByRole('button', { name: /Back$/ }).click();
+    await expect(providersHeading(page)).toBeVisible();
+    await expect(errorMessage(page)).toBeHidden();
+    for (const control of controls) await expect(control).not.toHaveAttribute('aria-describedby', /./);
+  }
+
+  test.describe('the first URL (the rows are shown)', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-reread-describes-host' });
+
+    test('is described by the message, and not once the message is gone', async ({ page, request, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await openWithRows(page, 'https://placeholder-one.invalid/api');
+      const stored = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await otherTabSaves(request, testServer.apiBase, stored.map((row, i) => (i === 1 ? { ...row, custom_tag: 'other-tab-tag' } : row)));
+
+      await urlInput(page, 1).fill(EDITED_URL);
+      await continueButton(page).click();
+
+      await expect(errorMessage(page)).toContainText(CHANGED);
+      await expect(urlInput(page, 1)).toBeFocused();
+      await expect(urlInput(page, 1)).toHaveAttribute('aria-describedby', DESCRIBED);
+      // Only the control that took focus: not the second URL, the keys, the switch or Continue.
+      await expect(page.locator(`[aria-describedby~="${DESCRIBED}"]`)).toHaveCount(1);
+      await expect(page.locator(`#${DESCRIBED}`)).toContainText('changed since this page opened');
+      await expectNothingDescribedAfterContinue(page, [urlInput(page, 1)]);
+    });
+  });
+
+  test.describe('the switch (the fresh read has Newznab off)', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-reread-describes-switch' });
+
+    test('takes focus, is described by the message, says Newznab is off, and nothing is written', async ({ page, request, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const requests = await recordWizardRequests(page);
+      await openWithRows(page, 'https://placeholder-one.invalid/api');
+      const stored = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await otherTabSaves(request, testServer.apiBase, stored.map((row, i) => (i === 1 ? { ...row, custom_tag: 'other-tab-tag' } : row)));
+      // The other tab also switches Newznab off, through the real per-column route (`enabled` is not a combine column).
+      const off = await request.post(`${testServer.apiBase}/settings.save/`, { form: { section: 'newznab', name: 'enabled', value: '0' } });
+      expect((await off.json()).success).toBe(true);
+      const enabledBefore = configSection(testServer.configPath, 'newznab').enabled;
+      expect(isOn(enabledBefore)).toBe(false);
+      const theirs = rowsOf(configColumns(testServer.configPath, 'newznab'));
+
+      await urlInput(page, 1).fill(EDITED_URL);
+      await continueButton(page).click();
+
+      const message = errorMessage(page);
+      await expect(message).toContainText(/changed since this page opened.*unsaved edits.*discarded/is);
+      await expect(message).toContainText('Newznab is now shown switched off. Switch it on to see the rows, or press Continue to leave it off.');
+      await expect(message).not.toContainText('rows shown have been reloaded');
+      const toggle = page.getByRole('switch', { name: 'Enable Newznab Indexers' });
+      await expect(toggle).toHaveAttribute('aria-checked', 'false');
+      await expect(toggle).toBeFocused();
+      await expect(toggle).toHaveAttribute('aria-describedby', DESCRIBED);
+      await expect(page.locator(`[aria-describedby~="${DESCRIBED}"]`)).toHaveCount(1);
+      await expect(urlInput(page, 1)).toBeHidden();
+      expect(await requests.pageWrites()).toEqual([]);
+      expect(rowsOf(configColumns(testServer.configPath, 'newznab'))).toEqual(theirs);
+      expect(configSection(testServer.configPath, 'newznab').enabled).toBe(enabledBefore);
+
+      await expectNothingDescribedAfterContinue(page, [toggle]);
+    });
+  });
+
+  test.describe('Continue (the group no longer lines up)', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-reread-describes-continue' });
+
+    // The real group route cannot write a misaligned group (it writes every column to one row
+    // count), so the second read is the real answer with `combine_state.newznab.misaligned` set.
+    test('takes focus, is described by the message, shows no rows, and nothing is written', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const requests = await recordWizardRequests(page);
+      await openWithRows(page, 'https://placeholder-one.invalid/api');
+      const baseline = configSha(testServer.configPath);
+      await page.route(READ_ROUTE, async (route) => {
+        const real = await route.fetch();
+        const body = await real.json();
+        body.combine_state.newznab.misaligned = true;
+        await route.fulfill({ response: real, json: body });
+      });
+
+      await urlInput(page, 1).fill(EDITED_URL);
+      await continueButton(page).click();
+
+      await expect(errorMessage(page)).toContainText('The saved entries now do not line up. Fix the rows in Settings, under Searchers, then Newznab.');
+      await expect(page.getByTestId('combine-misaligned-notice')).toBeVisible();
+      await expect(urlInput(page, 1)).toHaveCount(0);
+      const next = page.locator('[data-wizard-continue]');
+      await expect(next).toBeFocused();
+      await expect(next).toHaveAttribute('aria-describedby', DESCRIBED);
+      await expect(page.locator(`[aria-describedby~="${DESCRIBED}"]`)).toHaveCount(1);
+      expect(await requests.pageWrites()).toEqual([]);
+      expect(configSha(testServer.configPath)).toBe(baseline);
+
+      await page.unroute(READ_ROUTE);
+      await expectNothingDescribedAfterContinue(page, [next]);
     });
   });
 });

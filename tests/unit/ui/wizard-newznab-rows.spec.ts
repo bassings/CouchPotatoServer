@@ -39,6 +39,7 @@ type Logic = {
   newznabShownEnabled: (read: Read) => boolean;
   newznabStoredChanged: (baseline: Baseline, fresh: Read) => boolean;
   newznabChangedMessage: (fresh: Read) => string;
+  newznabFocusTarget: (status: string, enabled: boolean) => string;
 };
 
 function loadLogic(): Logic {
@@ -46,7 +47,7 @@ function loadLogic(): Logic {
   const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
   return new Function(`${code}
 return { newznabReadStored, newznabInitialEntries, newznabBuildRows, newznabRowsChanged,
-         newznabEntryForRow, newznabAfterSave, newznabShownEnabled, newznabStoredChanged, newznabChangedMessage };`)();
+         newznabEntryForRow, newznabAfterSave, newznabShownEnabled, newznabStoredChanged, newznabChangedMessage, newznabFocusTarget };`)();
 }
 
 const logic = loadLogic();
@@ -852,6 +853,72 @@ describe('the stored rows against the baseline the edits were built on (AC-DATA-
     const misaligned = logic.newznabChangedMessage(logic.newznabReadStored(view('newznab_misaligned_key_short')));
     expect(misaligned).toMatch(/do not line up/);
     expect(misaligned).toMatch(/Settings, under Searchers, then Newznab/);
+  });
+
+  describe('the three wordings (rows shown, Newznab left off, misaligned)', () => {
+    const switchedOff = (fixture: string, change: (payload: any) => void = () => undefined) => {
+      const payload = view(fixture);
+      change(payload);
+      return logic.newznabChangedMessage(logic.newznabReadStored(payload));
+    };
+
+    it('rows shown: says the rows were reloaded and to check them', () => {
+      const text = switchedOff('newznab_two_stored');
+
+      expect(text).toContain('The rows shown have been reloaded. Check them, then press Continue again.');
+      expect(text).not.toMatch(/switched off/);
+    });
+
+    it.each([
+      ['Newznab saved as off', 'newznab_two_stored', (p: any) => { p.values.newznab.enabled = '0'; }],
+      ['no saved indexer at all (a fresh install)', 'fresh_defaults', () => undefined],
+    ])('%s: says Newznab is now shown switched off and what to do, and not that rows were reloaded', (_name, fixture, change) => {
+      const text = switchedOff(fixture, change as (payload: any) => void);
+
+      expect(text).toMatch(/changed since this page opened.*unsaved edits.*discarded/);
+      expect(text).toContain('Newznab is now shown switched off. Switch it on to see the rows, or press Continue to leave it off.');
+      expect(text).not.toMatch(/rows shown have been reloaded/);
+    });
+
+    it('misaligned wins over off: it points to Settings and does not offer a switch', () => {
+      const payload = view('newznab_misaligned_key_short');
+      payload.values.newznab.enabled = '0';
+      const text = logic.newznabChangedMessage(logic.newznabReadStored(payload));
+
+      expect(text).toContain('The saved entries now do not line up. Fix the rows in Settings, under Searchers, then Newznab.');
+      expect(text).not.toMatch(/Switch it on/);
+    });
+  });
+});
+
+// AC-DATA-23: where focus goes after a reload, and so which control the message describes.
+describe('where focus goes after the rows are replaced', () => {
+  it.each([
+    ['ready', true, 'host'],
+    ['ready', false, 'switch'],
+    ['misaligned', true, 'continue'],
+    ['misaligned', false, 'continue'],
+    ['failed', true, 'none'],
+    ['loading', true, 'none'],
+  ])('status %s, Newznab on: %s -> %s', (status, enabled, target) => {
+    expect(logic.newznabFocusTarget(status as string, enabled as boolean)).toBe(target);
+  });
+});
+
+// The wizard compares a fresh read with a baseline that is never empty: a baseline is only ever
+// set from a read that has at least one row, or from a save (which stores one all-empty row when
+// nothing else is left). A misaligned read carries no rows, so the row-count comparison alone
+// reports it as changed; that holds only while this invariant does.
+describe('a baseline always has a row (the premise of the misaligned comparison)', () => {
+  it.each(ALIGNED)('%s', (fixture) => {
+    expect(start(fixture).baseline.rows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it.each(MISALIGNED)('%s reads with no rows, so it differs from any baseline', (fixture) => {
+    const read = logic.newznabReadStored(view(fixture));
+
+    expect(read.rows).toEqual([]);
+    expect(logic.newznabStoredChanged(start('newznab_two_stored').baseline, read)).toBe(true);
   });
 });
 

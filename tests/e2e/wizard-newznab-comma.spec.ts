@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { configSection, openProvidersStep, recordWizardRequests } from './helpers';
+import { configSection, openProvidersStep, recordWizardRequests, watchLiveRegions } from './helpers';
 import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
@@ -349,10 +349,10 @@ test.describe('the message and the marks stay until the next Continue', () => {
 
   test('typing in the marked input changes neither the mark nor the message, and announces nothing', async ({ page }) => {
     await recordSaves(page);
-    const assertive = await watchAssertive(page);
+    const liveTexts = await watchLiveRegions(page);
     await openWithRows(page, [{ host: 'https://indexer-a.invalid', key: `placeholder-key-a,${SECRET_PART}` }]);
     await expectRefused(page, REFUSED_KEY, { n: 1, field: 'API key' });
-    const before = await assertive();
+    const before = await liveTexts();
 
     await keyInput(page, 1).fill('placeholder-key-a');
     await keyInput(page, 1).pressSequentially('-more');
@@ -361,7 +361,7 @@ test.describe('the message and the marks stay until the next Continue', () => {
     await expect(keyInput(page, 1)).toHaveAttribute('aria-invalid', 'true');
     await expect(keyInput(page, 1)).toHaveAttribute('aria-describedby', 'wizard-newznab-error');
     await expect(errorMessage(page)).toContainText(REFUSED_KEY);
-    expect(await assertive(), 'typing made a live region speak').toEqual(before);
+    expect(await liveTexts(), 'typing made a live region speak').toEqual(before);
   });
 
   test('typing in another input leaves the marked one marked and the message in place', async ({ page }) => {
