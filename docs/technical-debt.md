@@ -614,6 +614,30 @@ result. Getting it wrong the other way files a bug against working code.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
+- **A removed Settings row waits 8 seconds before it is saved (2026-11-18).**
+  Owner decision: removing a row from a combined field shows "Row N removed."
+  with an Undo button, and the group save that carries the removal is delayed
+  by `REMOVAL_UNDO_WINDOW_MS` (8 s). Every send the page controls sends it at
+  once (flushes, a button action, Test connection, `pagehide` with
+  `keepalive`), so the limits are the ones it cannot control (SEC-004
+  AC-DATA-24):
+  a. A browser killed, a power cut or a crashed tab inside the window loses the
+     pending removal: the row is still there on the next load. The safe
+     direction (a row is never deleted the server was not asked to delete), but
+     the user who saw "Row 2 removed" and lost power will find it back.
+  b. `pagehide` cannot await a request. If a save for that group is already in
+     flight when the page goes, the keepalive request is sent anyway and the
+     two may land in either order; the window is milliseconds long.
+  c. A page restored from the back/forward cache after leaving was not
+     measured and is not tested; by reading the code Undo stays offered and
+     would save the restored rows through the normal save.
+  d. The test connection button now saves the section's group first
+     (`testProvider`); a save the server refuses leaves the test running
+     against the rows that are stored.
+  e. An E2E that ends with a removal still waiting writes at teardown, because
+     the request the page sends as it goes is made by the browser, which no
+     Playwright route or request listener sees: such a test must own its
+     `seedConfig` (it is a combine-group writer) or end by pressing Undo.
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are
