@@ -349,6 +349,48 @@ test.describe('the re-read itself fails', () => {
     });
   }
 
+  // The held edits must survive leaving the step and coming back, not only a Retry on the spot:
+  // a user who is told the indexers could not be loaded may well press Back first.
+  test.describe('a failed re-read, then Back, then the Providers step again', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-reread-back-then-retry' });
+
+    test('Retry on an unchanged store gives back the held edits, and the next Continue saves them', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      const requests = await recordWizardRequests(page);
+      await openWithRows(page, 'https://placeholder-one.invalid/api');
+      await urlInput(page, 1).fill(EDITED_URL);
+      await keyInput(page, 2).fill('placeholder-key-typed');
+      const baseline = configSha(testServer.configPath);
+      await page.route(READ_ROUTE, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"success": false}' }));
+      await continueButton(page).click();
+      await expect(errorMessage(page)).toContainText(NOT_LOADED);
+      await expect(retryButton(page)).toBeVisible();
+
+      await page.getByRole('button', { name: /Back$/ }).click();
+      await expect(providersHeading(page)).toBeHidden();
+      await page.getByRole('button', { name: /Continue/i }).click();
+      await expect(providersHeading(page)).toBeVisible();
+      await page.unroute(READ_ROUTE);
+      await expect(retryButton(page)).toBeVisible();
+      await retryButton(page).click();
+
+      await expect(errorMessage(page)).toBeHidden();
+      await expect(urlInput(page, 1)).toHaveValue(EDITED_URL);
+      await expect(keyInput(page, 2)).toHaveValue('placeholder-key-typed');
+      expect(await requests.pageWrites(), 'something was written before the second Continue').toEqual([]);
+      expect(configSha(testServer.configPath)).toBe(baseline);
+
+      await continueButton(page).click();
+      await expect(providersHeading(page)).toBeHidden({ timeout: 10000 });
+      expect(requests.groupSaves()).toHaveLength(1);
+      const now = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      expect(now.map((row) => [row.host, row.api_key])).toEqual([
+        [EDITED_URL, 'placeholder-key-one'],
+        ['https://placeholder-two.invalid/api', 'placeholder-key-typed'],
+      ]);
+    });
+  });
+
   test.describe('an answer that never comes', () => {
     test.use({ seedConfig: 'newznab_two_stored#wizard-reread-fails-timeout' });
 
