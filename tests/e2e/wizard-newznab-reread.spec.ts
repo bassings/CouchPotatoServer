@@ -504,7 +504,7 @@ test.describe('the message describes the control that takes focus after a reload
 
       const message = errorMessage(page);
       await expect(message).toContainText(/changed since this page opened.*unsaved edits.*discarded/is);
-      await expect(message).toContainText('Newznab is now shown switched off. Switch it on to see the rows, or press Continue to leave it off.');
+      await expect(message).toContainText('Newznab is now shown switched off. Switch it on to use Newznab, or press Continue to leave it off.');
       await expect(message).not.toContainText('rows shown have been reloaded');
       const toggle = page.getByRole('switch', { name: 'Enable Newznab Indexers' });
       await expect(toggle).toHaveAttribute('aria-checked', 'false');
@@ -517,6 +517,32 @@ test.describe('the message describes the control that takes focus after a reload
       expect(configSection(testServer.configPath, 'newznab').enabled).toBe(enabledBefore);
 
       await expectNothingDescribedAfterContinue(page, [toggle]);
+    });
+  });
+
+  // Switching Newznab ON answers "now shown switched off": the message is untrue from then on, so it
+  // goes (AC-A11Y-17), and with it the description, which would otherwise move to the first URL.
+  test.describe('the switch turned back on', () => {
+    test.use({ seedConfig: 'newznab_two_stored#wizard-reread-switch-on' });
+
+    test('clears the message and every description', async ({ page, request, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await openWithRows(page, 'https://placeholder-one.invalid/api');
+      const stored = rowsOf(configColumns(testServer.configPath, 'newznab'));
+      await otherTabSaves(request, testServer.apiBase, stored.map((row, i) => (i === 1 ? { ...row, custom_tag: 'other-tab-tag' } : row)));
+      const off = await request.post(`${testServer.apiBase}/settings.save/`, { form: { section: 'newznab', name: 'enabled', value: '0' } });
+      expect((await off.json()).success).toBe(true);
+      await urlInput(page, 1).fill(EDITED_URL);
+      await continueButton(page).click();
+      const toggle = page.getByRole('switch', { name: 'Enable Newznab Indexers' });
+      await expect(toggle).toHaveAttribute('aria-describedby', DESCRIBED);
+
+      await toggle.click();
+
+      await expect(toggle).toHaveAttribute('aria-checked', 'true');
+      await expect(errorMessage(page)).toBeHidden();
+      await expect(page.locator(`[aria-describedby~="${DESCRIBED}"]`)).toHaveCount(0);
+      await expect(urlInput(page, 1)).toBeVisible();
     });
   });
 
@@ -550,8 +576,28 @@ test.describe('the message describes the control that takes focus after a reload
       expect(await requests.pageWrites()).toEqual([]);
       expect(configSha(testServer.configPath)).toBe(baseline);
 
+      // Continue is on every step, so the description holds only while the Newznab card is what the
+      // user is on. The message itself stays (it is still true of the store, and a user who comes
+      // back to the card should find it), but Continue is not described by a message that is hidden.
+      await page.getByRole('radio', { name: /^Torrents/ }).click();
+      await expect(next).not.toHaveAttribute('aria-describedby', /./);
+      await expect(next).toHaveAccessibleDescription('');
+      await page.getByRole('radio', { name: /^Usenet/ }).click();
+      await expect(errorMessage(page)).toBeVisible();
+      await expect(next).toHaveAttribute('aria-describedby', DESCRIBED);
+      await expect(next).toHaveAccessibleDescription(/do not line up/);
+
+      await page.getByRole('button', { name: /Back$/ }).click();
+      await expect(providersHeading(page)).toBeHidden();
+      await expect(next).not.toHaveAttribute('aria-describedby', /./);
+      await expect(next).toHaveAccessibleDescription('');
+
+      // Continue clears the message (as ever): back on the card there is nothing to describe.
+      await next.click();
+      await expect(providersHeading(page)).toBeVisible();
+      await expect(errorMessage(page)).toBeHidden();
+      await expect(next).not.toHaveAttribute('aria-describedby', /./);
       await page.unroute(READ_ROUTE);
-      await expectNothingDescribedAfterContinue(page, [next]);
     });
   });
 });

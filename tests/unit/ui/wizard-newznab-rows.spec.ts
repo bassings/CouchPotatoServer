@@ -876,7 +876,7 @@ describe('the stored rows against the baseline the edits were built on (AC-DATA-
       const text = switchedOff(fixture, change as (payload: any) => void);
 
       expect(text).toMatch(/changed since this page opened.*unsaved edits.*discarded/);
-      expect(text).toContain('Newznab is now shown switched off. Switch it on to see the rows, or press Continue to leave it off.');
+      expect(text).toContain('Newznab is now shown switched off. Switch it on to use Newznab, or press Continue to leave it off.');
       expect(text).not.toMatch(/rows shown have been reloaded/);
     });
 
