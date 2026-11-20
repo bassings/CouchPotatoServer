@@ -48,7 +48,7 @@ function pageWentAway(error: unknown): boolean {
  * has run; that page has no pending save yet, and is not a renamed selector.
  */
 export const PANEL_READ_ATTEMPTS = 50;
-const PANEL_READ_INTERVAL_MS = 100;
+export const PANEL_READ_INTERVAL_MS = 100;
 
 const pause = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, PANEL_READ_INTERVAL_MS); });
 

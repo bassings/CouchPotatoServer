@@ -6,6 +6,7 @@ import {
   SETTINGS_PERSISTENCE_ANNOTATION,
   allowsSettingsPersistence,
   PANEL_READ_ATTEMPTS,
+  PANEL_READ_INTERVAL_MS,
   changedSettings,
   readPanelPendingSaves,
   readPendingGroupSaves,
@@ -63,7 +64,9 @@ describe('reading the Settings panel for a group save that is still pending', ()
   });
 
   it('a page that is closed, or closes or navigates during the read, has nothing pending', async () => {
-    expect(await readPendingGroupSaves(page({ isClosed: () => true }))).toEqual([]);
+    const neverRead = vi.fn(async () => { throw new TypeError('a closed page must not be read'); });
+    expect(await readPendingGroupSaves(page({ isClosed: () => true, evaluate: neverRead }))).toEqual([]);
+    expect(neverRead).not.toHaveBeenCalled();
     for (const message of ['page.evaluate: Target page, context or browser has been closed', 'Execution context was destroyed, most likely because of a navigation']) {
       expect(await readPendingGroupSaves(page({ evaluate: vi.fn(async () => { throw new Error(message); }) }))).toEqual([]);
     }
@@ -99,6 +102,42 @@ describe('reading the Settings panel for a group save that is still pending', ()
     expect(evaluate).toHaveBeenCalledTimes(3);
     expect(evaluate).toHaveBeenLastCalledWith(readPanelPendingSaves, true);
     expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives a starting page at least five seconds, and does not read again until each wait is over', async () => {
+    expect(PANEL_READ_ATTEMPTS * PANEL_READ_INTERVAL_MS).toBeGreaterThanOrEqual(5000);
+
+    vi.useFakeTimers();
+    try {
+      const missing = vi.fn(async () => ({ found: false, sections: [] }));
+      let settled = false;
+      const read = readPendingGroupSaves(page({ evaluate: missing })).then(
+        () => { settled = true; },
+        (error) => { settled = true; return error; },
+      );
+
+      await vi.advanceTimersByTimeAsync(PANEL_READ_INTERVAL_MS - 1);
+      expect(missing).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(missing).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(4700);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(300);
+      expect(String(await read)).toMatch(/panel/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a read that fails for another reason while the panel is awaited is a failure, not "nothing pending"', async () => {
+    const answers: Array<() => unknown> = [
+      () => ({ found: false, sections: [] }),
+      () => ({ found: false, sections: [] }),
+      () => { throw new TypeError('alpine.$data is not a function'); },
+    ];
+    const evaluate = vi.fn(async () => answers.shift()!());
+
+    await expect(readPendingGroupSaves(page({ evaluate }), false, async () => {})).rejects.toThrow(/alpine/);
   });
 
   it('a page that navigates away while the panel is awaited has nothing pending', async () => {
