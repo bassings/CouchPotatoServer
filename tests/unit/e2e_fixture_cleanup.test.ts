@@ -26,6 +26,15 @@ import '../e2e/fixtures';
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.unstubAllGlobals());
 
+/** The parts of a page the pending-group-save guard reads: a page that is open, off the Settings page, with nothing pending. */
+function quietPage(sections: string[] = []) {
+  return {
+    isClosed: () => false,
+    url: () => 'http://localhost:5170/settings/',
+    evaluate: vi.fn(async () => ({ found: true, sections })),
+  };
+}
+
 describe('worker fixture cleanup', () => {
   it.each(['fetch', 'markup', 'url', 'use'])('cleans up after %s fails and preserves its diagnostic', async (failure) => {
     const proc = Object.assign(new EventEmitter(), {
@@ -75,7 +84,7 @@ describe('settings fixture restoration', () => {
       'fails closed on %s responses without unsafe restoration writes', async (failure) => {
         const before = { values: { core: { enabled: false } } };
         const after = { values: { core: { enabled: true } } };
-        const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
+        const page = { route: vi.fn(), close: vi.fn(), ...quietPage() };
         const use = vi.fn();
         const writes: string[] = [];
         let reads = 0;
@@ -120,25 +129,60 @@ describe('settings fixture restoration', () => {
 
   it('fails a test that ends with a group save pending, naming the section, unless it is a declared writer', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ values: {} }) })));
-    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => ['newznab']) };
+    const page = { route: vi.fn(), close: vi.fn(), ...quietPage(['newznab']) };
 
     const unannotated = await mocks.fixtures.settingsPersistenceGuard[0](
       { page, testServer: workerServer }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },
     ).catch((err: Error) => err);
+    const writerPage = { route: vi.fn(), close: vi.fn(), ...quietPage(['newznab']) };
     const writer = await mocks.fixtures.settingsPersistenceGuard[0](
-      { page, testServer: { ...workerServer, configPath: 'x' }, seedConfig: 'newznab_aligned#writer' },
+      { page: writerPage, testServer: { ...workerServer, configPath: 'x' }, seedConfig: 'newznab_aligned#writer' },
       async () => {}, { annotations: [{ type: 'persistsSettings' }, { type: 'writesCombineGroup' }] },
     ).catch((err: Error) => err);
 
     expect((unannotated as Error).message).toContain('still pending (newznab)');
     expect(String((writer as Error)?.message ?? '')).not.toContain('still pending');
+    // A writer's pending save is its own business: the page is not even read.
+    expect(writerPage.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('cancels the pending save IN THE PAGE before it closes, then closes, audits and restores as usual, and reports the pending save last', async () => {
+    const before = { values: { newznab: { host: 'old' } } };
+    const after = { values: { newznab: { host: 'new' } } };
+    const restored = { values: { newznab: { host: 'old' } } };
+    const order: string[] = [];
+    let reads = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
+      if (!options) { order.push('read'); return { ok: true, json: async () => [before, after, restored][reads++] }; }
+      order.push('restore');
+      return { ok: true, json: async () => ({ success: true }) };
+    }));
+    const page = {
+      route: vi.fn(),
+      close: vi.fn(async () => { order.push('close'); }),
+      isClosed: () => false,
+      url: () => 'http://localhost:5170/settings/',
+      evaluate: vi.fn(async () => { order.push('cancel'); return { found: true, sections: ['newznab'] }; }),
+    };
+
+    const error = await mocks.fixtures.settingsPersistenceGuard[0](
+      { page, testServer: workerServer }, async () => {}, { annotations: [] },
+    ).catch((err: Error) => err);
+
+    // Cancelled before the page closes (so nothing is sent as it goes); the restore and the audit still ran.
+    expect(order.indexOf('cancel')).toBeLessThan(order.indexOf('close'));
+    expect(page.evaluate).toHaveBeenCalledWith(expect.any(Function), true);
+    expect(order).toContain('restore');
+    // Both problems are reported: the pending save, and what the audit found (an unannotated change).
+    expect((error as Error).message).toContain('still pending (newznab)');
+    expect((error as Error).message).toMatch(/shared server|unmocked|persist/);
   });
 
   it.each(['http', 'network', 'payload'])('restores later values after masked and %s failures, then verifies and reports all names', async (failure) => {
     const before = { values: { core: { password: '****', failed: 'old', enabled: false, leftover: 'old' } } };
     const after = { values: { core: { password: '******', failed: 'new', enabled: true, leftover: 'new' } } };
     const restored = { values: { core: { password: '******', failed: 'new', enabled: false, leftover: 'new' } } };
-    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
+    const page = { route: vi.fn(), close: vi.fn(), ...quietPage() };
     const writes: string[] = [];
     let reads = 0;
     vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
@@ -167,7 +211,7 @@ describe('settings fixture restoration', () => {
     const page = {
       route: vi.fn(async (_pattern, handler) => { onRoute = handler; }),
       close: vi.fn(),
-      evaluate: vi.fn(async () => []),
+      ...quietPage(),
     };
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ values: {} }) })));
     const result = mocks.fixtures.settingsPersistenceGuard[0](
@@ -189,7 +233,7 @@ describe('settings fixture restoration', () => {
   it.each([false, true])('verifies successful restore attempts (verification unavailable: %s)', async (verificationUnavailable) => {
     const before = { values: { core: { enabled: false } } };
     const after = { values: { core: { enabled: true } } };
-    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
+    const page = { route: vi.fn(), close: vi.fn(), ...quietPage() };
     let reads = 0;
     const fetchMock = vi.fn(async (_url, options) => {
       if (options) {
@@ -246,7 +290,7 @@ describe('settings fixture group-save coverage', () => {
     return { writes, reads: () => read };
   }
   const run = (annotations: { type: string }[], use: () => Promise<void> = async () => {}) => {
-    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
+    const page = { route: vi.fn(), close: vi.fn(), ...quietPage() };
     // A seeded server: a group changes only on a test's own server (see the shared-server tests).
     const result = mocks.fixtures.settingsPersistenceGuard[0](
       { page, testServer: workerServer, seedConfig: 'newznab_aligned#restore' }, use, { annotations });
@@ -271,7 +315,7 @@ describe('settings fixture group-save coverage', () => {
     stubServer([snapshot(aligned), snapshot(aligned)]);
     let onRoute: (route: unknown) => Promise<void> = async () => {};
     const fulfill = vi.fn();
-    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn(), evaluate: vi.fn(async () => []) };
+    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn(), ...quietPage() };
     const result = mocks.fixtures.settingsPersistenceGuard[0](
       { page, testServer: workerServer, seedConfig: 'newznab_aligned#unannotated' },
       async () => { await onRoute({ request: () => ({ url: () => GROUP_URL }), fulfill }); },
@@ -434,7 +478,7 @@ describe('group saves and the shared server', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => snapshot })));
     let onRoute: (route: unknown) => Promise<void> = async () => {};
     const route = { request: () => ({ url: () => url }), fulfill: vi.fn(), continue: vi.fn() };
-    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn(), evaluate: vi.fn(async () => []) };
+    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn(), ...quietPage() };
     const result = (mocks.fixtures.settingsPersistenceGuard[0] as any)(
       { page, testServer: workerServer, seedConfig }, async () => { await onRoute(route); }, { annotations },
     );
@@ -476,7 +520,7 @@ describe('group saves and the shared server', () => {
       if (init) writes.push(init);
       return { ok: true, json: async () => (reads++ === 0 ? before : after) };
     }));
-    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
+    const page = { route: vi.fn(), close: vi.fn(), ...quietPage() };
 
     const error = await (mocks.fixtures.settingsPersistenceGuard[0] as any)(
       { page, testServer: workerServer, seedConfig: '' }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },

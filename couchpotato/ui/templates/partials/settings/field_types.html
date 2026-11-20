@@ -344,7 +344,9 @@
       </template>
       <!-- The way back from a removal, in the list at the place the removed row was: directly below
            the row that now sits there (the last row, when the last one was removed), so Undo is the
-           very next Tab stop after that row's Remove button, which is where focus lands. It is a
+           next Tab stop after that row's Remove button, which is where focus lands. (With one row
+           left no Remove button is drawn and focus goes to Add, which follows the list: Undo is
+           then the stop BEFORE Add.) It is a
            sibling of the row's own controls inside the row's wrapper, so the keyed rows and the
            inputs in them are not touched when it comes or goes. It stays after the delayed save has
            landed (WCAG 2.2.1): it goes only when the group is edited, added to, removed from again,

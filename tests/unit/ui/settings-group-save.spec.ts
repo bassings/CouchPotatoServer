@@ -1983,7 +1983,29 @@ describe('removing a row, with a way back (owner decision 2026-11-18)', () => {
       expect(net.groupSaves()).toHaveLength(2);
       expect(net.calls[1].init.keepalive).toBe(true);
       expect(hostsSent(net, 1)).toEqual([HOSTS[2]]);
-      expect(panel.groupState.newznab.queued).toBe(false);
+    });
+
+    it('when the page survives pagehide the in-flight loop still sends the rows on screen last: the server ends with what is shown, and nothing is left dirty', async () => {
+      const net = installFetch();
+      const first = deferred<Reply>();
+      net.replies.push(first.promise);
+      const { field, panel } = fieldOver();
+      field.removeRow(0);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      field.removeRow(0);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      expect(panel.groupState.newznab).toMatchObject({ saving: true, queued: true });
+
+      panel.flushGroupsOnLeave();
+      // The page is not closed after all (a back/forward-cache restore): the first, older save answers last.
+      first.resolve({ body: { success: true } });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const group = panel.groupState.newznab;
+      // Three requests: the first (in flight), the keepalive one sent on leaving, and the loop's own.
+      expect(net.groupSaves()).toHaveLength(3);
+      expect(hostsSent(net, 2)).toEqual(field.rows.map((row: string[]) => row[1]));
+      expect(group).toMatchObject({ saving: false, queued: false, dirty: false });
     });
 
     it('leaving the page with nothing pending sends nothing, and a locked group sends nothing', () => {

@@ -2,7 +2,7 @@ import type { Locator, Page, Response } from '@playwright/test';
 
 import { test, expect } from './fixtures';
 import { configColumns, configEnabled, configSha, configView } from './helpers';
-import { combineGroupWriter, SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
+import { combineGroupWriter, readPendingGroupSaves, SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
  * Settings page tests for CouchPotato new UI.
@@ -538,6 +538,45 @@ test.describe('Settings: the persistence guard covers the group-save route', () 
         }] }),
       });
     }, testServer.apiBase);
+  });
+});
+
+// A group save still waiting when the page closes is sent by the page itself (`pagehide`, keepalive),
+// where no route or request listener sees it. The fixture therefore reads the panel, cancels what is
+// pending and fails the test (tests/e2e/fixtures.ts). `test.fail()` makes the canary pass only if the
+// test FAILS. It is not a combineGroupWriter() and the page clock is faked so the debounce cannot
+// fire inside the test: the only thing that can fail it is the fixture's pending-save guard.
+// The second test pins the other half: what the guard cancels never reaches the server.
+test.describe('Settings: a test that ends with a group save pending', () => {
+  test.describe('the canary', () => {
+    test.use({ seedConfig: 'newznab_aligned#pending-guard-canary' });
+
+    test('fails at teardown, and is not a writer', async ({ page }) => {
+      test.fail(true, 'the fixture must fail a test that ends with a combine-group save still pending');
+      await page.clock.install();
+      await openSettings(page, 'Searchers');
+      await providerCard(page, 'Newznab').getByLabel('api key for row 1', { exact: true }).fill('placeholder-key-canary');
+    });
+  });
+
+  test.describe('what the guard cancels', () => {
+    test.use({ seedConfig: 'newznab_aligned#pending-guard-cancels' });
+
+    test('is never sent: the page is read, cancelled, and leaving it writes nothing', async ({ page, testServer }) => {
+      await page.clock.install();
+      const before = configSha(testServer.configPath);
+      await openSettings(page, 'Searchers');
+      await providerCard(page, 'Newznab').getByLabel('api key for row 1', { exact: true }).fill('placeholder-key-canary');
+
+      expect(await readPendingGroupSaves(page), 'the reader did not see the pending save').toEqual(['newznab']);
+      expect(await readPendingGroupSaves(page, true)).toEqual(['newznab']);
+      expect(await readPendingGroupSaves(page)).toEqual([]);
+      // The real unload, which is what sends a waiting save: nothing is left to send.
+      await page.goto('/');
+      await page.waitForLoadState('networkidle');
+
+      expect(configSha(testServer.configPath)).toBe(before);
+    });
   });
 });
 
@@ -2324,27 +2363,44 @@ test.describe('Settings: with one row left the line is under it, before Add', ()
 test.describe('Settings: the line coming and going does not disturb the rows around it', () => {
   test.use({ seedConfig: 'newznab_aligned#undo-neighbours' });
 
-  test('a value typed in another row survives, and the rows above the line do not move', async ({ page, testServer }) => {
+  // The layout contract (AC-A11Y-18): rows at and above the line do not move; the row below it
+  // starts one ordinary row pitch plus the line's own height and top margin below the row above
+  // it; and when the line goes every row is back exactly where it was.
+  test('a value typed in another row survives, and the rows move only as the contract says', async ({ page, testServer }) => {
     test.info().annotations.push(...combineGroupWriter());
     await page.clock.install();
     await openSettings(page, 'Searchers');
     const card = providerCard(page, 'Newznab');
     await card.getByLabel('api key for row 3', { exact: true }).fill('placeholder-key-typed');
     // Relative to the card, so a scroll of the page is not read as the rows moving.
-    const topOfRow1 = () => card.evaluate((root) => root.querySelector('input[aria-label="host for row 1"]')!.getBoundingClientRect().top - root.getBoundingClientRect().top);
-    const top = await topOfRow1();
+    const tops = () => card.evaluate((root) => [1, 2, 3].map((n) => {
+      const input = root.querySelector(`input[aria-label="host for row ${n}"]`);
+      return input ? input.getBoundingClientRect().top - root.getBoundingClientRect().top : null;
+    }));
+    const lineBlock = () => removedLine(card).evaluate((line) => line.getBoundingClientRect().height + Number.parseFloat(getComputedStyle(line).marginTop));
+    const [t1, t2, t3] = (await tops()) as number[];
+    const pitch = t2 - t1;
+    expect(t3 - t2, 'the rows are not evenly spaced to begin with').toBeCloseTo(pitch, 0);
 
+    // The last row: the line is under the new last row; nothing above it moves.
     await removeButton(card, 3).click();
     await expect(removedLine(card)).toBeVisible();
-    expect(await topOfRow1(), 'a row above the line moved').toBe(top);
+    expect(await tops(), 'a row at or above the line moved').toEqual([t1, t2, null]);
     await undoButton(card).click();
     await expect(card.getByLabel('api key for row 3', { exact: true })).toHaveValue('placeholder-key-typed');
+    expect(await tops(), 'a row did not return to where it was').toEqual([t1, t2, t3]);
 
-    // The typed value in row 3 must survive the line appearing under row 1 and going again.
+    // The first row: the line is under the new first row. That row has not moved, and the row
+    // below the line is pushed down by the line (a row pitch plus the line's block).
     await removeButton(card, 1).click();
+    await expect(removedLine(card)).toBeVisible();
     await expect(card.getByLabel('api key for row 2', { exact: true })).toHaveValue('placeholder-key-typed');
     await expect(card.getByLabel('host for row 1', { exact: true })).toHaveValue(NEWZNAB_HOSTS[1]);
+    const [afterT1, afterT2] = (await tops()) as number[];
+    expect(afterT1, 'the row above the line moved').toBe(t1);
+    expect(afterT2 - afterT1, 'the row below the line is not one pitch plus the line below the one above').toBeCloseTo(pitch + (await lineBlock()), 0);
     await undoButton(card).click();
+    expect(await tops(), 'a row did not return to where it was').toEqual([t1, t2, t3]);
     await expect(card.getByLabel('api key for row 3', { exact: true })).toHaveValue('placeholder-key-typed');
     await expect(card.getByLabel('api key for row 1', { exact: true })).toHaveValue(NEWZNAB_KEYS[0]);
     await endUndoWindow(page);

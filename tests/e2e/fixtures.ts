@@ -33,6 +33,7 @@ import {
   changedSettings,
   COMBINE_WRITER_ANNOTATION,
   combineColumns,
+  readPendingGroupSaves,
   serializeSettingValue,
   SETTINGS_PERSISTENCE_ANNOTATION,
   SETTINGS_WRITE_ROUTES,
@@ -306,30 +307,26 @@ function assertWriterOwnsItsSeed(annotations: readonly { type: string }[], seedC
 }
 
 /**
- * Fail a test that ends with a combine-group save pending on the Settings page, unless it is a
- * declared writer (it owns its server, and the changes are restored). Read from the panel's own
- * state, because the request itself is invisible (see the call site). Names the section only.
- * A page that is gone or is not the Settings page has nothing pending.
+ * The sections with a combine-group save still pending on the Settings page, read AND cancelled
+ * in the page, for a test that is not a declared writer (a writer owns its server and its changes
+ * are restored, so its pending save is its own business and the page is not read). Cancelled so
+ * that nothing is sent as the page closes: the Settings page sends a waiting group save on
+ * `pagehide` by a request no route or listener can see, which would write the real server. See
+ * `readPendingGroupSaves`, which throws when it cannot see the panel.
  */
-async function assertNoPendingGroupSave(page: Page, annotations: Annotations) {
-  if (annotations.some(({ type }) => type === COMBINE_WRITER_ANNOTATION)) return;
-  const pending = await page.evaluate(() => {
-    const root = document.querySelector('[x-data="settingsPanel()"]');
-    const alpine = (window as any).Alpine;
-    if (!root || !alpine) return [];
-    const groups = alpine.$data(root).groupState || {};
-    return Object.entries(groups)
-      .filter(([, group]: [string, any]) => group.timer || group.queued)
-      .map(([section]) => section);
-  }).catch(() => [] as string[]); // closed or navigating: no page, nothing pending
-  if (pending.length > 0) {
-    throw new Error(
-      `This test ended with a combine-group save still pending (${pending.join(', ')}). The Settings page `
-      + 'sends it as the page closes, by a request no route can intercept, so it would write the real server. '
-      + 'Let the save go out inside the test (advance the page clock past the debounce, then wait for the '
-      + 'mocked or real response), or take the change back, or make the test a combineGroupWriter() on its own seedConfig.',
-    );
-  }
+async function cancelPendingGroupSaves(page: Page, annotations: Annotations): Promise<string[]> {
+  if (annotations.some(({ type }) => type === COMBINE_WRITER_ANNOTATION)) return [];
+  return readPendingGroupSaves(page, true);
+}
+
+/** The failure for a pending save, thrown AFTER the audit and the restore so that it masks neither. */
+function pendingGroupSaveError(sections: string[], auditError: unknown): Error {
+  const pending = `This test ended with a combine-group save still pending (${sections.join(', ')}); it was cancelled `
+    + 'so it could not reach the server. The Settings page would have sent it as the page closed, by a request no '
+    + 'route can intercept. Let the save go out inside the test (advance the page clock past the debounce, then '
+    + 'wait for the mocked or real response), or take the change back, or make the test a combineGroupWriter() on '
+    + 'its own seedConfig.';
+  return new Error(auditError ? `${pending}\n\nThe teardown audit also failed: ${(auditError as Error).message}` : pending);
 }
 
 type Tally = { blocked: number; sharedGroupSaves: number };
@@ -656,22 +653,42 @@ export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions
     // removal) is SENT when the page closes: the Settings page flushes it on `pagehide`, as a
     // `keepalive` request, which the browser makes itself, so no Playwright route (mocks and
     // this guard included) and no request listener ever sees it. It lands on the real server.
-    // So a test that is not a declared combine-group writer must not end with one pending.
-    await assertNoPendingGroupSave(page, testInfo.annotations);
+    // So a test that is not a declared combine-group writer must not end with one pending: it is
+    // read and CANCELLED here, in the page, so nothing is sent as the page closes. The failure is
+    // thrown last, after the close, the restore and the audit have all run, so reporting it can
+    // neither leak a save nor skip the restore. A read that cannot see the panel is also held
+    // until then (a blind guard is a failure).
+    let pending: string[] = [];
+    let readError: unknown;
+    try {
+      pending = await cancelPendingGroupSaves(page, testInfo.annotations);
+    } catch (error) {
+      readError = error;
+    }
     // Audit only after no later browser callback can slip a save into the teardown window.
     await page.close();
 
-    const after = await loadSettingsSnapshot(settingsURL, 'after');
-    const changed = changedSettings(before, after);
-    // Channel-independent: a route of the test's own, or the `request` fixture, never
-    // passes through guardRoute. Restored first (the shared server must not be left
-    // changed), and its error still wins over a restore failure.
+    let auditError: unknown;
     try {
-      await restoreAndVerify(testServer.apiBase, settingsURL, before, changed);
-    } finally {
-      if (!seedConfig) assertNoSharedGroupChange(before, changed);
+      const after = await loadSettingsSnapshot(settingsURL, 'after');
+      const changed = changedSettings(before, after);
+      // Channel-independent: a route of the test's own, or the `request` fixture, never
+      // passes through guardRoute. Restored first (the shared server must not be left
+      // changed), and its error still wins over a restore failure.
+      try {
+        await restoreAndVerify(testServer.apiBase, settingsURL, before, changed);
+      } finally {
+        if (!seedConfig) assertNoSharedGroupChange(before, changed);
+      }
+      assertTeardownAudit(tally, changed, testInfo.annotations, seedConfig);
+    } catch (error) {
+      auditError = error;
     }
-    assertTeardownAudit(tally, changed, testInfo.annotations, seedConfig);
+    if (readError) {
+      throw new Error(`${(readError as Error).message}${auditError ? `\n\nThe teardown audit also failed: ${(auditError as Error).message}` : ''}`);
+    }
+    if (pending.length > 0) throw pendingGroupSaveError(pending, auditError);
+    if (auditError) throw auditError;
   }, { auto: true }],
 });
 

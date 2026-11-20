@@ -699,10 +699,11 @@ function settingsPanel() {
       for (const [section, group] of Object.entries(this.groupState)) {
         // Waiting on its timer, or queued behind a save already in flight (the in-flight request
         // may be cut off with the page, so the queued rows go too: see the ordering limit above).
+        // `queued` is NOT cleared: if the page survives (a back/forward-cache restore), the in-flight
+        // loop then sends the rows on screen LAST, after an older save that answers after this one.
         if (!(group.timer || group.queued) || group.locked) continue;
         clearTimeout(group.timer);
         group.timer = null;
-        group.queued = false;
         fetch(CP.apiBase + '/settings.save_group/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1636,9 +1637,10 @@ function combinedField(section, opt) {
     },
 
     /** The index of the row the line is drawn under, or -1 when there is no removal: the row that
-     *  now sits where the removed one was, or the last row when the last one was removed. Named
-     *  here, and used for focus too, so the line is the next Tab stop after the control focus
-     *  lands on. */
+     *  now sits where the removed one was, or the last row when the last one was removed. Used
+     *  by removeRow for the Remove button focus lands on, so the line is the next Tab stop after
+     *  that button (with one row left no Remove button is drawn and focus goes to Add, which
+     *  FOLLOWS the line: Undo is then the stop before it). */
     get removedAfter() {
       return this.held && this.held.removal ? Math.min(this.held.removal.index, this.rows.length - 1) : -1;
     },
@@ -1651,7 +1653,7 @@ function combinedField(section, opt) {
       // this index, else the previous row's, else (one row left, so none are drawn) Add.
       // Stated as data and applied after the render, not found by a query that races it.
       this.focusTarget = this.canRemove
-        ? { kind: 'remove', index: Math.min(idx, this.rows.length - 1) }
+        ? { kind: 'remove', index: this.removedAfter }
         : { kind: 'add' };
       this.$nextTick(() => this.applyFocus());
     },

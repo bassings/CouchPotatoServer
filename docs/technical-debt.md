@@ -630,8 +630,11 @@ result. Getting it wrong the other way files a bug against working code.
      the next load.
   b. `pagehide` cannot await a request. If a save for that group is already in
      flight when the page goes, the keepalive request (the queued rows too) is
-     sent anyway and the two may land in either order; the window is
-     milliseconds long, and only the queued case is tested (unit).
+     sent anyway and the two may land in either order (an older in-flight
+     request answering last can leave the server with older rows). `queued` is
+     deliberately left set, so if the page survives the in-flight loop sends
+     the rows on screen last (unit test, the exact sequence). The window is
+     milliseconds long.
   b2. Leaving the page now sends ANY pending group edit, not only a removal. A
      save the server refuses is lost without a message, as the rows are still
      as stored.
@@ -642,7 +645,9 @@ result. Getting it wrong the other way files a bug against working code.
      freshness token of SEC-004 AC-DATA-4 is the durable fix).
   c. A page restored from the back/forward cache after leaving was not
      measured and is not tested; by reading the code Undo stays offered and
-     would save the restored rows through the normal save.
+     would save the restored rows through the normal save. If the keepalive
+     save was refused or failed, the restored page shows rows the server does
+     not hold, with no mark and no error, until the next edit saves all rows.
   d. The test connection button now saves the section's group first
      (`testProvider`); a save the server refuses leaves the test running
      against the rows that are stored.
@@ -650,6 +655,12 @@ result. Getting it wrong the other way files a bug against working code.
      the request the page sends as it goes is made by the browser, which no
      Playwright route or request listener sees: such a test must own its
      `seedConfig` (it is a combine-group writer) or end by pressing Undo.
+     The E2E fixture now reads the panel before the page closes, cancels a
+     pending group save in the page, runs the restore and the audit, and then
+     fails the test (`readPendingGroupSaves`, `tests/e2e/settings_persistence.ts`).
+     The reader depends on the panel's `x-data="settingsPanel()"` root and on
+     `groupState`; on the Settings page it throws when it cannot find them, so a
+     rename is a loud failure, not a silent pass.
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are
