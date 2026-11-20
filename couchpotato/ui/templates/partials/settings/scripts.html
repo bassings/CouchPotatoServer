@@ -112,6 +112,14 @@ function logsPanel() {
 /** How long the re-read at the end of a button action may take before it counts as failed. */
 const REREAD_TIMEOUT_MS = 15000;
 
+/** How long a row removed from a combined field waits before the group is saved, so a
+ *  mis-click can be taken back with Undo and nothing has gone to the server (owner
+ *  decision, 2026-11-18). The Undo control does NOT end with this window (WCAG 2.2.1):
+ *  after the save it re-inserts the row and saves again. Any save that is sent for
+ *  another reason (a flush, leaving the page, an edit's own debounce) carries the removal
+ *  at once. */
+const REMOVAL_UNDO_WINDOW_MS = 8000;
+
 /* ── Settings panel (main) ── */
 function settingsPanel() {
   return {
@@ -599,6 +607,9 @@ function settingsPanel() {
           actionRunning: false,
           reloadError: '',
           stale: false,
+          // The one removal Undo can take back: { index, cells, cleanBefore }, or null.
+          // Panel state like the rows, so a tab change (which rebuilds the field) keeps it.
+          removal: null,
         };
       }
       return this.groupState[section];
@@ -620,15 +631,86 @@ function settingsPanel() {
     replaceGroupRows(section, group) {
       group.rows = this.deriveGroupRows(section, group.opt);
       group.notice = this.groupMisaligned(section);
+      // The index and cells of a removal describe the rows that were just replaced.
+      group.removal = null;
     },
 
-    editGroup(section) {
+    /** The group has an unsaved change: save it after `delay` (the usual debounce, or the
+     *  undo window for a removal). Any further edit ends the removal Undo could take back:
+     *  the rows have moved on from the ones it describes. */
+    editGroup(section, delay = 500) {
       const group = this.groupState[section];
       if (group.locked) return;
+      group.removal = null;
       group.dirty = true;
       group.version += 1;
       clearTimeout(group.timer);
-      group.timer = setTimeout(() => this.saveGroup(section), 500);
+      group.timer = setTimeout(() => this.saveGroup(section), delay);
+    },
+
+    /** Remove row `idx` from the group NOW, and save the rest only after the undo window.
+     *  The removal (the index and every cell) is held on the group, so Undo can put it back.
+     *  `cleanBefore`: nothing else was unsaved, so an Undo inside the window leaves the
+     *  rows exactly as saved and nothing needs sending. */
+    removeGroupRow(section, idx) {
+      const group = this.groupState[section];
+      const cleanBefore = this.groupIsClean(group);
+      const taken = CP.ui.takeRow(group.rows, idx);
+      group.rows = taken.rows;
+      // The marks name rows by position, and the positions have just moved.
+      this.shiftRefusal(group, idx);
+      this.editGroup(section, REMOVAL_UNDO_WINDOW_MS);
+      group.removal = { ...taken.removal, cleanBefore };
+      this.announce(CP.ui.rowRemovedAnnouncement(idx), false);
+    },
+
+    /** Put the removed row back at its index. Returns that index, or -1 when there is
+     *  nothing to undo or the rows are locked. If the removal has not been sent and
+     *  nothing else is unsaved, the rows are the saved ones again and the save is
+     *  cancelled. Otherwise (it was sent, it failed or was refused, or something else is
+     *  unsaved) the rows as they now are, which are rows the user has seen, go through
+     *  the normal save. */
+    undoGroupRemoval(section) {
+      const group = this.groupState[section];
+      const removal = group && group.removal;
+      if (!removal || group.locked) return -1;
+      group.rows = CP.ui.restoreRow(group.rows, removal);
+      group.refusal = CP.ui.shiftMarksBack(group.refusal, removal.index)
+        .map(entry => ({ ...entry, message: this.refusalText(group, entry) }));
+      group.refusalKey = this.refusalKeyOf(group.refusal);
+      if (removal.cleanBefore && group.timer && !group.saving) {
+        clearTimeout(group.timer);
+        group.timer = null;
+        group.dirty = false;
+      } else {
+        this.editGroup(section);
+      }
+      group.removal = null;
+      this.announce(CP.ui.rowRestoredAnnouncement(removal.index), false);
+      return removal.index;
+    },
+
+    /** The page is going away: a save still waiting out its delay would be lost with it
+     *  (the removal, or an edit that rode along), so send it now. `keepalive` lets the
+     *  browser finish the request after the page is gone. Nothing waits on the answer. If a
+     *  save for the group is already in flight, this one is sent without waiting for it, so
+     *  the two may land in either order (a recorded limit: SEC-004 AC-DATA-24(b)). */
+    flushGroupsOnLeave() {
+      for (const [section, group] of Object.entries(this.groupState)) {
+        // Waiting on its timer, or queued behind a save already in flight (the in-flight request
+        // may be cut off with the page, so the queued rows go too: see the ordering limit above).
+        // `queued` is NOT cleared: if the page survives (a back/forward-cache restore), the in-flight
+        // loop then sends the rows on screen LAST, after an older save that answers after this one.
+        if (!(group.timer || group.queued) || group.locked) continue;
+        clearTimeout(group.timer);
+        group.timer = null;
+        fetch(CP.apiBase + '/settings.save_group/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ section, rows: this.groupPayloadRows(group) }),
+          keepalive: true,
+        }).catch(() => { /* the page is closing: there is nobody left to tell */ });
+      }
     },
 
     /** Save now, or queue behind the save already in flight. Resolves to
@@ -801,6 +883,9 @@ function settingsPanel() {
       group.locked = true;
       group.actionRunning = true;
       group.reloadError = '';
+      // Undo is not offered while the rows are locked. The removal itself is not lost:
+      // the action's own flush sends it before anything else (flushGroupFor).
+      group.removal = null;
       this.announce('These rows are locked while the action runs.', false);
       return true;
     },
@@ -986,6 +1071,9 @@ function settingsPanel() {
       this.testResult[group.section] = '';
       this.testResultDetails[group.section] = null;
       try {
+        // The test reads the SAVED rows: send a pending removal (or edit) first, so it
+        // tests the rows on screen. A refusal changes nothing here: the test runs on what is saved.
+        await this.flushGroupFor(group.section);
         let endpoint;
         if (group.list === 'download_providers') endpoint = 'download.' + group.section + '.test';
         else if (group.list === 'notification_providers') endpoint = 'notify.' + group.section + '.test';
@@ -1531,9 +1619,11 @@ function combinedField(section, opt) {
       this.getPanel().editGroup(this.section);
     },
 
-    // Adding a row saves nothing by itself: only an edit does.
+    // Adding a row saves nothing by itself: only an edit does. It does end the removal Undo
+    // could take back: the rows have moved on from the ones that removal describes.
     addRow() {
       if (this.locked) return;
+      this.held.removal = null;
       this.held.rows.push(this.getPanel().blankGroupRow(this.section, this.opt));
     },
 
@@ -1541,19 +1631,40 @@ function combinedField(section, opt) {
      *  row cannot be removed, so a control for it would do nothing. */
     get canRemove() { return this.rows.length > 1; },
 
+    /** The line beside Undo: the row's number and nothing it held. Empty when there is no removal. */
+    get removedLine() {
+      return this.held && this.held.removal ? CP.ui.rowRemovedLine(this.held.removal.index) : '';
+    },
+
+    /** The index of the row the line is drawn under, or -1 when there is no removal: the row that
+     *  now sits where the removed one was, or the last row when the last one was removed. Used
+     *  by removeRow for the Remove button focus lands on, so the line is the next Tab stop after
+     *  that button (with one row left no Remove button is drawn and focus goes to Add, which
+     *  FOLLOWS the line: Undo is then the stop before it). */
+    get removedAfter() {
+      return this.held && this.held.removal ? Math.min(this.held.removal.index, this.rows.length - 1) : -1;
+    },
+
     removeRow(idx) {
       if (this.locked || !this.canRemove) return;
-      this.held.rows.splice(idx, 1);
-      // The marks name rows by position, and the positions have just moved.
-      this.getPanel().shiftRefusal(this.held, idx);
-      this.getPanel().editGroup(this.section);
+      // The panel takes the row off screen, holds it for Undo and delays the save.
+      this.getPanel().removeGroupRow(this.section, idx);
       // Focus goes where the wizard's removeIndexer puts it: the Remove button now at
       // this index, else the previous row's, else (one row left, so none are drawn) Add.
       // Stated as data and applied after the render, not found by a query that races it.
       this.focusTarget = this.canRemove
-        ? { kind: 'remove', index: Math.min(idx, this.rows.length - 1) }
+        ? { kind: 'remove', index: this.removedAfter }
         : { kind: 'add' };
-      this.getPanel().announce('Row ' + (idx + 1) + ' removed', false);
+      this.$nextTick(() => this.applyFocus());
+    },
+
+    /** Take the last removal back: the row returns at its index and focus goes to ITS Remove
+     *  button (there are two rows at least again, so it is drawn). */
+    undoRemoval() {
+      if (this.locked) return;
+      const index = this.getPanel().undoGroupRemoval(this.section);
+      if (index < 0) return;
+      this.focusTarget = { kind: 'remove', index };
       this.$nextTick(() => this.applyFocus());
     },
 

@@ -86,6 +86,42 @@ for (const theme of ['light', 'dark'] as const) {
   }
 }
 
+// Owner decision 2026-11-18: the removal line and its Undo at phone width. A removal and its
+// Undo write nothing (Undo cancels the save that was waiting out its window).
+for (const theme of ['light', 'dark'] as const) {
+  test.describe(`the removal line at 375px in ${theme} theme`, () => {
+    test.use({ seedConfig: `newznab_aligned#mobile-removal-line-${theme}` });
+
+    test('shows in full inside the viewport, Undo is a target of at least 44px, and nothing scrolls sideways', async ({ page }) => {
+      await page.setViewportSize({ width: 375, height: 800 });
+      await page.addInitScript((selectedTheme) => {
+        localStorage.setItem('cp-theme', selectedTheme);
+      }, theme);
+      await page.goto('/settings/');
+      await page.getByRole('tab', { name: 'Searchers' }).click();
+      const card = page.locator('.bg-cp-card', { has: page.getByRole('heading', { name: 'Newznab', exact: true }) });
+      await card.getByRole('button', { name: 'Remove row 2', exact: true }).click();
+      const line = card.getByTestId('combine-removed-line');
+      await expect(line).toContainText('Row 2 removed.');
+      const undo = card.getByRole('button', { name: 'Undo', exact: true });
+
+      await expectNoHorizontalDocumentOverflow(page, `removal line, ${theme}`);
+      const fits = await line.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { inside: rect.left >= 0 && rect.right <= document.documentElement.clientWidth };
+      });
+      expect(fits).toEqual({ inside: true });
+      const box = await undo.boundingBox();
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+      // End with nothing waiting to be saved: a pending removal is sent when the page goes.
+      await undo.click();
+      await expect(line).toHaveCount(0);
+    });
+  });
+}
+
 // SEC-004 P3: the refused combined field and the misaligned-group notice at phone
 // width. The refusal is stubbed in the server's own shape; nothing is written.
 for (const theme of ['light', 'dark'] as const) {

@@ -614,6 +614,59 @@ result. Getting it wrong the other way files a bug against working code.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
+- **A removed Settings row waits 8 seconds before it is saved (2026-11-18).**
+  Owner decision: removing a row from a combined field shows "Row N removed."
+  with an Undo button, and the group save that carries the removal is delayed
+  by `REMOVAL_UNDO_WINDOW_MS` (8 s). Every send the page controls sends it at
+  once (flushes, a button action, Test connection, `pagehide` with
+  `keepalive`), so the limits are the ones it cannot control (SEC-004
+  AC-DATA-24):
+  a. A browser killed, a power cut or a crashed tab inside the window loses the
+     pending removal: the row is still there on the next load. The safe
+     direction (a row is never deleted the server was not asked to delete), but
+     the user who saw "Row 2 removed" and lost power will find it back.
+  a2. A phone browser backgrounded and then discarded by the operating system
+     may never fire `pagehide`: same outcome as (a), the row is still there on
+     the next load.
+  b. `pagehide` cannot await a request. If a save for that group is already in
+     flight when the page goes, the keepalive request (the queued rows too) is
+     sent anyway and the two may land in either order (an older in-flight
+     request answering last can leave the server with older rows). `queued` is
+     deliberately left set, so if the page survives the in-flight loop sends
+     the rows on screen last (unit test, the exact sequence). The window is
+     milliseconds long.
+  b2. Leaving the page now sends ANY pending group edit, not only a removal. A
+     save the server refuses is lost without a message, as the rows are still
+     as stored.
+  b3. Another tab: the removal reaches the server 8 s after the click instead
+     of 0.5 s, so the passive overwrite window is 16 times as long, and Undo,
+     pressed at any later time, re-saves the page's whole snapshot over
+     whatever another tab or a sync stored meanwhile. Nothing detects it (the
+     freshness token of SEC-004 AC-DATA-4 is the durable fix).
+  c. A page restored from the back/forward cache after leaving was not
+     measured and is not tested; by reading the code Undo stays offered and
+     would save the restored rows through the normal save. A page that
+     survives `pagehide` stays marked unsaved (dirty, no timer) after a
+     keepalive save that SUCCEEDED too, when no save was in flight: harmless, a
+     later save re-sends the same rows, but the automatic refresh of that group
+     does not run until then. If the keepalive save was refused or failed, the
+     restored page shows rows the server does not hold, with no mark and no
+     error, until the next edit saves all rows.
+  d. The test connection button now saves the section's group first
+     (`testProvider`); a save the server refuses leaves the test running
+     against the rows that are stored.
+  e. An E2E that ends with a removal still waiting writes at teardown, because
+     the request the page sends as it goes is made by the browser, which a
+     Playwright route or request listener may not see (measured: seen on
+     `page.close()` and on a synthetic `pagehide`, not on a real navigation):
+     such a test must own its
+     `seedConfig` (it is a combine-group writer) or end by pressing Undo.
+     The E2E fixture now reads the panel before the page closes, cancels a
+     pending group save in the page, runs the restore and the audit, and then
+     fails the test (`readPendingGroupSaves`, `tests/e2e/settings_persistence.ts`).
+     The reader depends on the panel's `x-data="settingsPanel()"` root and on
+     `groupState`; on the Settings page it throws when it cannot find them, so a
+     rename is a loud failure, not a silent pass.
 - **Status regions that appear together with their text (2026-11-12).** The
   wizard folder-browser loading indicator, the settings one it copies
   (`partials/settings/modals.html`), and the log viewers' "Loading logs…" are

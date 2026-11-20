@@ -2,7 +2,7 @@ import type { Locator, Page, Response } from '@playwright/test';
 
 import { test, expect } from './fixtures';
 import { configColumns, configEnabled, configSha, configView } from './helpers';
-import { combineGroupWriter, SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
+import { combineGroupWriter, readPendingGroupSaves, SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
  * Settings page tests for CouchPotato new UI.
@@ -541,6 +541,49 @@ test.describe('Settings: the persistence guard covers the group-save route', () 
   });
 });
 
+// A group save still waiting when the page closes is sent by the page itself (`pagehide`, keepalive),
+// where a route or request listener may not see it. The fixture therefore reads the panel, cancels what is
+// pending and fails the test (tests/e2e/fixtures.ts). `test.fail()` makes the canary pass only if the
+// test FAILS. It is not a combineGroupWriter() and the page clock is faked so the debounce cannot
+// fire inside the test: the only thing that can fail it is the fixture's pending-save guard.
+// The second test pins the other half: what the guard cancels never reaches the server.
+test.describe('Settings: a test that ends with a group save pending', () => {
+  test.describe('the canary', () => {
+    test.use({ seedConfig: 'newznab_aligned#pending-guard-canary' });
+
+    test('fails at teardown, and is not a writer', async ({ page }) => {
+      test.fail(true, 'the fixture must fail a test that ends with a combine-group save still pending');
+      await page.clock.install();
+      await openSettings(page, 'Searchers');
+      // Nothing pending before the edit and the Newznab save pending after it, so the only failure
+      // left for teardown is the guard's (a failure of this body would also satisfy test.fail).
+      expect(await readPendingGroupSaves(page), 'something was pending before the edit').toEqual([]);
+      await providerCard(page, 'Newznab').getByLabel('api key for row 1', { exact: true }).fill('placeholder-key-canary');
+      expect(await readPendingGroupSaves(page), 'the edit left no save pending, so the canary tests nothing').toEqual(['newznab']);
+    });
+  });
+
+  test.describe('what the guard cancels', () => {
+    test.use({ seedConfig: 'newznab_aligned#pending-guard-cancels' });
+
+    test('is never sent: the page is read, cancelled, and leaving it writes nothing', async ({ page, testServer }) => {
+      await page.clock.install();
+      const before = configSha(testServer.configPath);
+      await openSettings(page, 'Searchers');
+      await providerCard(page, 'Newznab').getByLabel('api key for row 1', { exact: true }).fill('placeholder-key-canary');
+
+      expect(await readPendingGroupSaves(page), 'the reader did not see the pending save').toEqual(['newznab']);
+      expect(await readPendingGroupSaves(page, true)).toEqual(['newznab']);
+      expect(await readPendingGroupSaves(page)).toEqual([]);
+      // The real unload, which is what sends a waiting save: nothing is left to send.
+      await page.goto('/');
+      await page.waitForLoadState('networkidle');
+
+      expect(configSha(testServer.configPath)).toBe(before);
+    });
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SEC-004 P3: a combined field saves ONE group per request, as rows.
 //
@@ -618,6 +661,18 @@ function groupSaveResponse(page: Page): Promise<Response> {
 async function settleDebounce(page: Page) {
   await page.clock.fastForward(5000);
   await page.waitForLoadState('networkidle');
+}
+
+/**
+ * How long a removed row waits before its group is saved (owner decision 2026-11-18): the
+ * page's `REMOVAL_UNDO_WINDOW_MS`, stated here as a number because a test must not read the
+ * value it checks from the code under test.
+ */
+const UNDO_WINDOW_MS = 8000;
+
+/** Run the fake clock to the end of the undo window, so the delayed save of a removal is sent. */
+async function endUndoWindow(page: Page) {
+  await page.clock.fastForward(UNDO_WINDOW_MS);
 }
 
 const NEWZNAB_HOSTS = ['one', 'two', 'three'].map((word) => `https://placeholder-${word}.invalid/api`);
@@ -960,7 +1015,7 @@ test.describe('Settings: deleting a row saves the rows that are left, each with 
 
       const answered = groupSaveResponse(page);
       await card.getByRole('button', { name: 'Remove row 2' }).click();
-      await page.clock.fastForward(600);
+      await endUndoWindow(page);
       expect((await (await answered).json()).success).toBe(true);
       await page.waitForLoadState('networkidle');
 
@@ -991,7 +1046,11 @@ test.describe('Settings: deleting a row saves the rows that are left, each with 
       const answered = groupSaveResponse(page);
       await card.getByRole('button', { name: 'Remove row 1' }).click();
       expect(net.groupSaves()).toHaveLength(0);
-      await page.clock.fastForward(600);
+      // The edit's own 500ms debounce is replaced by the removal's undo window: one save, at its end.
+      // Well inside the window, not one millisecond short: the clock also runs in real time.
+      await page.clock.fastForward(UNDO_WINDOW_MS - 3000);
+      expect(net.groupSaves()).toHaveLength(0);
+      await page.clock.fastForward(3000);
       expect((await (await answered).json()).success).toBe(true);
       await page.waitForLoadState('networkidle');
 
@@ -1018,7 +1077,7 @@ test.describe('Settings: deleting a row saves the rows that are left, each with 
 
       const answered = groupSaveResponse(page);
       await card.getByRole('button', { name: 'Remove row 2' }).click();
-      await page.clock.fastForward(600);
+      await endUndoWindow(page);
       expect((await (await answered).json()).success).toBe(true);
       await page.waitForLoadState('networkidle');
 
@@ -1793,7 +1852,7 @@ test.describe('Settings: no combine column is ever saved on its own, and no cell
       expect((await (await answered).json()).success).toBe(true);
       const removed = groupSaveResponse(page);
       await card.getByRole('button', { name: `Remove row ${row}` }).click();
-      await page.clock.fastForward(600);
+      await endUndoWindow(page);
       expect((await (await removed).json()).success).toBe(true);
     }
     await settleDebounce(page);
@@ -1854,7 +1913,7 @@ async function removeRowByKeyboard(page: Page, card: Locator, row: number, key =
   expect(await focusedControl(page)).toBe(`button:Remove row ${row}`);
   const answered = groupSaveResponse(page);
   await page.keyboard.press(key);
-  await page.clock.fastForward(600);
+  await endUndoWindow(page);
   expect((await (await answered).json()).success).toBe(true);
   await page.waitForLoadState('networkidle');
 }
@@ -1898,8 +1957,8 @@ for (const { name, row, key, focus } of REMOVE_CASES) {
       // then is "heard once" a statement about the page and not about how early it was read.
       await page.clock.fastForward(5000);
       await nextFrames(page);
-      expect(await page.evaluate(() => (window as any).__heard)).toEqual([`Row ${row} removed`]);
-      await expect(page.getByTestId('settings-announcer-polite')).toHaveText(`Row ${row} removed`);
+      expect(await page.evaluate(() => (window as any).__heard)).toEqual([`Row ${row} removed. Undo is available.`]);
+      await expect(page.getByTestId('settings-announcer-polite')).toHaveText(`Row ${row} removed. Undo is available.`);
       expect(net.groupSaves()).toHaveLength(1);
       expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(row - 1));
       const columns = configColumns(testServer.configPath, 'newznab');
@@ -2011,8 +2070,8 @@ for (const held of HELD) {
       } else {
         await holdKey(page, 'Enter');
       }
-      // The debounce that sends the save is on the fake clock: advance it, then wait for the response.
-      await page.clock.fastForward(600);
+      // The undo window that delays the save is on the fake clock: advance it, then wait for the response.
+      await endUndoWindow(page);
       expect((await (await saved).json()).success).toBe(true);
       await nextFrames(page);
 
@@ -2050,7 +2109,7 @@ test.describe('Settings: holding Enter on Remove row 1 of 2, so that Add receive
     await page.keyboard.up('Enter');
     await nextFrames(page);
     const answered = groupSaveResponse(page);
-    await page.clock.fastForward(600);
+    await endUndoWindow(page);
     expect((await (await answered).json()).success).toBe(true);
     await page.waitForLoadState('networkidle');
 
@@ -2078,7 +2137,7 @@ test.describe('Settings: a held Space on Remove', () => {
     const saved = groupSaveResponse(page);
 
     await holdKey(page, 'Space');
-    await page.clock.fastForward(600);
+    await endUndoWindow(page);
     expect((await (await saved).json()).success).toBe(true);
     await nextFrames(page);
 
@@ -2102,6 +2161,632 @@ test.describe('Settings: a single Enter on Add still adds a row', () => {
     await page.keyboard.press('Enter');
     await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(4);
     // An add that saved would do so on the debounce: run the clock past it before the negative read.
+    await settleDebounce(page);
+    expect(net.groupSaves()).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Owner decision 2026-11-18: a removed row can be taken back. The save that carries the
+// removal waits an undo window (8 s, on the fake clock here), and Undo does not end with
+// the window (WCAG 2.2.1): it stays until the group is next touched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const removedLine = (card: Locator) => card.getByTestId('combine-removed-line');
+const undoButton = (card: Locator) => card.getByRole('button', { name: 'Undo', exact: true });
+const removeButton = (card: Locator, row: number) => card.getByRole('button', { name: `Remove row ${row}`, exact: true });
+
+/** Every cell of every row as shown: the text inputs' values and each use switch's state. */
+const shownRows = (card: Locator) => card.locator('[data-testid="combine-row-cells"]').evaluateAll((rows) => rows.map((row) => [
+  ...row.querySelectorAll('input, button[role="switch"]'),
+].map((control) => (control instanceof HTMLInputElement ? control.value : control.getAttribute('aria-checked')))));
+
+/** Record every text the polite region comes to hold, armed before the action that makes it speak. */
+async function listenForPolite(page: Page) {
+  await page.evaluate(() => {
+    const heard: string[] = [];
+    (window as any).__heard = heard;
+    const region = document.querySelector('[data-testid="settings-announcer-polite"]') as HTMLElement;
+    new MutationObserver(() => { if (region.textContent) heard.push(region.textContent); })
+      .observe(region, { subtree: true, childList: true, characterData: true });
+  });
+}
+const heardPolite = (page: Page) => page.evaluate(() => (window as any).__heard as string[]);
+
+/** Reach Remove for `row` (1-based) with the keyboard alone and press it. Waits for nothing: the save is delayed. */
+async function pressRemoveByKeyboard(page: Page, card: Locator, row: number) {
+  await card.getByLabel(`custom tag for row ${row}`, { exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await expect(removeButton(card, row)).toBeFocused();
+  await page.keyboard.press('Enter');
+}
+
+const bodyOf = (request: SeenRequest) => JSON.parse(request.body) as { section: string; rows: Record<string, string>[] };
+
+test.describe('Settings: a removed row waits the undo window, and the line stays after it', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-window' });
+
+  test('nothing is sent until the window ends; then one save lands, and the line and Undo are still there', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    await listenForPolite(page);
+
+    await removeButton(card, 2).click();
+
+    await expect(removedLine(card)).toHaveText('Row 2 removed. Undo');
+    const undo = undoButton(card);
+    await expect(undo).toBeVisible();
+    // A native button, not an ARIA role on something else.
+    expect(await undo.evaluate((element) => [element.tagName, element.getAttribute('type'), element.getAttribute('role')])).toEqual(['BUTTON', 'button', null]);
+    await expect(page.getByTestId('settings-announcer-polite')).toHaveText('Row 2 removed. Undo is available.');
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+
+    // Not "one millisecond short": the clock keeps running in real time (and the network-idle wait
+    // below takes half a second of it), so a boundary read would race. The exact boundary is the
+    // unit test's, on fake timers. Here: well inside the window, then to its end.
+    await page.clock.fastForward(UNDO_WINDOW_MS - 3000);
+    await page.waitForLoadState('networkidle');
+    expect(net.groupSaves()).toHaveLength(0);
+    expect(await net.pageWrites()).toEqual([]);
+    expect(configSha(testServer.configPath)).toBe(before);
+
+    const saved = groupSaveResponse(page);
+    await page.clock.fastForward(3000);
+    expect((await (await saved).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+    expect(net.groupSaves()).toHaveLength(1);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(1));
+
+    // WCAG 2.2.1: the way back does not disappear when the window does.
+    await expect(removedLine(card)).toBeVisible();
+    await expect(undo).toBeVisible();
+    await page.clock.fastForward(60_000);
+    await expect(undo).toBeVisible();
+    expect(net.groupSaves()).toHaveLength(1);
+    expect(await heardPolite(page)).toEqual(['Row 2 removed. Undo is available.']);
+  });
+});
+
+test.describe('Settings: Undo inside the window', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-inside' });
+
+  test('the row returns at its index with every cell, focus goes to its Remove button, and nothing is ever sent', async ({ page, testServer }) => {
+    await page.clock.install();
+    const net = await recordRequests(page);
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    const shown = await shownRows(card);
+    expect(shown).toHaveLength(3);
+    await listenForPolite(page);
+
+    await removeButton(card, 2).click();
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+    await page.clock.fastForward(3000);
+    await undoButton(card).click();
+
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(3);
+    expect(await shownRows(card)).toEqual(shown);
+    await expect(removeButton(card, 2)).toBeFocused();
+    await expect(removedLine(card)).toHaveCount(0);
+    await expect(page.getByTestId('settings-announcer-polite')).toHaveText('Row 2 restored.');
+
+    await page.clock.fastForward(UNDO_WINDOW_MS * 3);
+    await page.waitForLoadState('networkidle');
+    expect(net.groupSaves()).toHaveLength(0);
+    expect(await net.pageWrites()).toEqual([]);
+    expect(configSha(testServer.configPath)).toBe(before);
+    expect(await heardPolite(page)).toEqual(['Row 2 removed. Undo is available.', 'Row 2 restored.']);
+  });
+});
+
+// Where the line sits and so what Tab does (the line is drawn under the row that took the removed
+// row's place, the last row when the last one went; see field_types.html). `focus` is where the
+// removal's focus rule puts focus (AC-A11Y-7, unchanged), `after` what Tab reaches past Undo.
+const UNDO_KEYS = [
+  { name: 'Enter, removing the first row', seed: 'undo-key-first', row: 1, focus: 'button:Remove row 1', after: 'button:Enable row 2', press: async (page: Page) => page.keyboard.press('Enter') },
+  { name: 'Space, removing the middle row', seed: 'undo-key-middle', row: 2, focus: 'button:Remove row 2', after: 'button:Add row', press: async (page: Page) => page.keyboard.press('Space') },
+  { name: 'Enter, removing the last row', seed: 'undo-key-last', row: 3, focus: 'button:Remove row 2', after: 'button:Add row', press: async (page: Page) => page.keyboard.press('Enter') },
+  { name: 'a held Enter on the first row, which acts once', seed: 'undo-key-held-first', row: 1, focus: 'button:Remove row 1', after: 'button:Enable row 2', press: (page: Page) => holdKey(page, 'Enter') },
+  { name: 'a held Enter on the last row, which acts once', seed: 'undo-key-held', row: 3, focus: 'button:Remove row 2', after: 'button:Add row', press: (page: Page) => holdKey(page, 'Enter') },
+] as const;
+
+for (const { name, seed, row, focus, after, press } of UNDO_KEYS) {
+  test.describe(`Settings: Undo by keyboard with ${name}`, () => {
+    test.use({ seedConfig: `newznab_aligned#${seed}` });
+
+    test('Undo is the next Tab stop after the control focus lands on, the row returns once and no further row is removed or saved', async ({ page, testServer }) => {
+      await page.clock.install();
+      const net = await recordRequests(page);
+      const before = configSha(testServer.configPath);
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+      const shown = await shownRows(card);
+
+      await pressRemoveByKeyboard(page, card, row);
+      await expect.poll(() => focusedControl(page)).toBe(focus);
+      await page.keyboard.press('Tab');
+      await expect(undoButton(card)).toBeFocused();
+      // And on from Undo: the next row's first control, or Add.
+      await page.keyboard.press('Tab');
+      expect(await focusedControl(page)).toBe(after);
+      await page.keyboard.press('Shift+Tab');
+      await expect(undoButton(card)).toBeFocused();
+      await recordRowCounts(card);
+
+      await press(page);
+
+      await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(3);
+      await expect.poll(() => focusedControl(page)).toBe(`button:Remove row ${row}`);
+      await nextFrames(page);
+      const counts = await rowCountHistory(page);
+      expect(Math.min(...counts), `history ${counts.join(',')}`).toBe(2);
+      expect(Math.max(...counts), `a row was removed or added too many (history ${counts.join(',')})`).toBe(3);
+      expect(await shownRows(card)).toEqual(shown);
+      await settleDebounce(page);
+      expect(net.groupSaves()).toHaveLength(0);
+      expect(configSha(testServer.configPath)).toBe(before);
+    });
+  });
+}
+
+test.describe('Settings: with one row left the line is under it, before Add', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-one-left' });
+
+  test('focus goes to Add (the removal rule), Undo is the stop before it, and Undo still works', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    await pressRemoveByKeyboard(page, card, 3);
+    await card.getByLabel('custom tag for row 1', { exact: true }).focus();
+    await page.keyboard.press('Tab');
+    await expect(removeButton(card, 1)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => focusedControl(page)).toBe('button:Add row');
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(0);
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(undoButton(card)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+    // Undo took back the latest removal only; the first (row 3) is committed by the save that follows.
+    await expect(removedLine(card)).toHaveCount(0);
+    // Armed before the window ends: `networkidle` is already reached by now, so by itself it
+    // would let the file be read before the save has been answered.
+    const answered = groupSaveResponse(page);
+    await endUndoWindow(page);
+    expect((await (await answered).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+    expect(configSha(testServer.configPath)).not.toBe(before);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(2));
+  });
+});
+
+test.describe('Settings: the line coming and going does not disturb the rows around it', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-neighbours' });
+
+  // The layout contract (AC-A11Y-18): rows at and above the line do not move; the row below it
+  // starts one ordinary row pitch plus the line's own height and top margin below the row above
+  // it; and when the line goes every row is back exactly where it was.
+  test('a value typed in another row survives, and the rows move only as the contract says', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    await card.getByLabel('api key for row 3', { exact: true }).fill('placeholder-key-typed');
+    // Relative to the card, so a scroll of the page is not read as the rows moving.
+    const tops = () => card.evaluate((root) => [1, 2, 3].map((n) => {
+      const input = root.querySelector(`input[aria-label="host for row ${n}"]`);
+      return input ? input.getBoundingClientRect().top - root.getBoundingClientRect().top : null;
+    }));
+    // The contract's numbers are FIXED here (a 4 px top margin), not read back from the page's own
+    // style, which would agree with whatever the page does. And the line must not overlap the row it sits under.
+    const LINE_MARGIN_TOP = 4;
+    const lineGeometry = () => card.evaluate((root) => {
+      const line = root.querySelector('[data-testid="combine-removed-line"]')!;
+      const above = root.querySelector('input[aria-label="host for row 1"]')!.closest('[data-testid="combine-row-cells"]')!;
+      return {
+        marginTop: getComputedStyle(line).marginTop,
+        height: line.getBoundingClientRect().height,
+        gapBelowRow: line.getBoundingClientRect().top - above.getBoundingClientRect().bottom,
+      };
+    });
+    const [t1, t2, t3] = (await tops()) as number[];
+    const pitch = t2 - t1;
+    expect(t3 - t2, 'the rows are not evenly spaced to begin with').toBeCloseTo(pitch, 0);
+
+    // The last row: the line is under the new last row; nothing above it moves.
+    await removeButton(card, 3).click();
+    await expect(removedLine(card)).toBeVisible();
+    expect(await tops(), 'a row at or above the line moved').toEqual([t1, t2, null]);
+    await undoButton(card).click();
+    await expect(card.getByLabel('api key for row 3', { exact: true })).toHaveValue('placeholder-key-typed');
+    expect(await tops(), 'a row did not return to where it was').toEqual([t1, t2, t3]);
+
+    // The first row: the line is under the new first row. That row has not moved, and the row
+    // below the line is pushed down by the line (a row pitch plus the line's block).
+    await removeButton(card, 1).click();
+    await expect(removedLine(card)).toBeVisible();
+    await expect(card.getByLabel('api key for row 2', { exact: true })).toHaveValue('placeholder-key-typed');
+    await expect(card.getByLabel('host for row 1', { exact: true })).toHaveValue(NEWZNAB_HOSTS[1]);
+    const [afterT1, afterT2] = (await tops()) as number[];
+    expect(afterT1, 'the row above the line moved').toBe(t1);
+    const line = await lineGeometry();
+    expect(line.marginTop, 'the line\'s top margin is not 4px').toBe(`${LINE_MARGIN_TOP}px`);
+    expect(line.gapBelowRow, 'the line overlaps the row it sits under').toBeGreaterThanOrEqual(0);
+    expect(Math.abs(afterT2 - afterT1 - (pitch + line.height + LINE_MARGIN_TOP)), 'the row below the line is not one pitch plus the line and its 4px margin below the one above').toBeLessThanOrEqual(1);
+    await undoButton(card).click();
+    expect(await tops(), 'a row did not return to where it was').toEqual([t1, t2, t3]);
+    await expect(card.getByLabel('api key for row 3', { exact: true })).toHaveValue('placeholder-key-typed');
+    await expect(card.getByLabel('api key for row 1', { exact: true })).toHaveValue(NEWZNAB_KEYS[0]);
+    const answered = groupSaveResponse(page);
+    await endUndoWindow(page);
+    expect((await (await answered).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+    expect(configColumns(testServer.configPath, 'newznab').api_key).toBe([NEWZNAB_KEYS[0], NEWZNAB_KEYS[1], 'placeholder-key-typed'].join(','));
+  });
+});
+
+test.describe('Settings: Undo after the delayed save has landed', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-after' });
+
+  test('puts the row back and saves the group through the normal save: one request, every column as it was', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    const shown = await shownRows(card);
+
+    const first = groupSaveResponse(page);
+    await removeButton(card, 2).click();
+    await endUndoWindow(page);
+    expect((await (await first).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(1));
+
+    const second = groupSaveResponse(page);
+    await undoButton(card).click();
+    await page.clock.fastForward(600);
+    expect((await (await second).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+
+    expect(net.groupSaves()).toHaveLength(2);
+    expect(bodyOf(net.groupSaves()[1]).rows.map((row) => row.host)).toEqual(NEWZNAB_HOSTS);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout());
+    expect(await shownRows(card)).toEqual(shown);
+    await expect(removeButton(card, 2)).toBeFocused();
+    await expect(removedLine(card)).toHaveCount(0);
+    await settleDebounce(page);
+    expect(net.groupSaves()).toHaveLength(2);
+  });
+});
+
+test.describe('Settings: a second removal replaces the first', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-second' });
+
+  test('only the latest is undoable, and the earlier one is committed with the next save', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+
+    await removeButton(card, 3).click();
+    await expect(removedLine(card)).toContainText('Row 3 removed.');
+    await page.clock.fastForward(3000);
+    await removeButton(card, 1).click();
+
+    await expect(removedLine(card)).toHaveCount(1);
+    await expect(removedLine(card)).toContainText('Row 1 removed.');
+    await expect(removedLine(card)).not.toContainText('Row 3');
+    expect(configSha(testServer.configPath)).toBe(before);
+    expect(net.groupSaves()).toHaveLength(0);
+
+    // The window restarted with the second removal: 5 s later, well inside it, still nothing sent.
+    await page.clock.fastForward(UNDO_WINDOW_MS - 3000);
+    expect(net.groupSaves()).toHaveLength(0);
+
+    await undoButton(card).click();
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+    await expect(card.getByLabel('host for row 1', { exact: true })).toHaveValue(NEWZNAB_HOSTS[0]);
+    await expect(card.getByLabel('host for row 2', { exact: true })).toHaveValue(NEWZNAB_HOSTS[1]);
+    const answered = groupSaveResponse(page);
+    await page.clock.fastForward(600);
+    expect((await (await answered).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+
+    // The first removal was committed by the save that followed; only the second was taken back.
+    expect(net.groupSaves()).toHaveLength(1);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(2));
+  });
+});
+
+test.describe('Settings: an edit inside the window', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-edit' });
+
+  test('follows the normal 500 ms debounce and carries the removal with it, in one request, and ends the line', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+
+    await removeButton(card, 1).click();
+    await card.getByLabel('api key for row 2', { exact: true }).fill('placeholder-key-edited');
+    await expect(removedLine(card)).toHaveCount(0);
+
+    // Sent after the edit's own debounce, not the 8 s window: 600 ms is enough. (The exact 500 ms
+    // is the unit test's: a negative read here would race the real-time clock.)
+    const answered = groupSaveResponse(page);
+    await page.clock.fastForward(600);
+    expect((await (await answered).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+
+    expect(net.groupSaves()).toHaveLength(1);
+    expect(bodyOf(net.groupSaves()[0]).rows.map((row) => row.api_key)).toEqual([NEWZNAB_KEYS[1], 'placeholder-key-edited']);
+    expect(configColumns(testServer.configPath, 'newznab').api_key).toBe([NEWZNAB_KEYS[1], 'placeholder-key-edited'].join(','));
+    await endUndoWindow(page);
+    expect(net.groupSaves()).toHaveLength(1);
+  });
+});
+
+test.describe('Settings: adding a row inside the window', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-add' });
+
+  test('ends the line; the removal is still saved when its window ends, with the blank row on screen', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+
+    await removeButton(card, 1).click();
+    await expect(removedLine(card)).toHaveCount(1);
+    await card.getByRole('button', { name: 'Add row', exact: true }).click();
+
+    await expect(removedLine(card)).toHaveCount(0);
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(3);
+    // Adding saves nothing by itself: the only request is the removal's, at the end of its window.
+    await page.clock.fastForward(UNDO_WINDOW_MS - 3000);
+    await page.waitForLoadState('networkidle');
+    expect(net.groupSaves()).toHaveLength(0);
+    const answered = groupSaveResponse(page);
+    await page.clock.fastForward(3000);
+    expect((await (await answered).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+    expect(net.groupSaves()).toHaveLength(1);
+    expect(configColumns(testServer.configPath, 'newznab').host).toBe([NEWZNAB_HOSTS[1], NEWZNAB_HOSTS[2], ''].join(','));
+  });
+});
+
+test.describe('Settings: a tab change inside Settings keeps the line', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-tab' });
+
+  test('the field is rebuilt, the removal is held by the panel: Undo is still there and still works', async ({ page, testServer }) => {
+    await page.clock.install();
+    const net = await recordRequests(page);
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const shown = await shownRows(providerCard(page, 'Newznab'));
+    await removeButton(providerCard(page, 'Newznab'), 3).click();
+
+    await page.getByRole('tab', { name: 'Suggestions' }).click();
+    await expect(providerCard(page, 'Newznab')).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Searchers' }).click();
+
+    const card = providerCard(page, 'Newznab');
+    await expect(removedLine(card)).toContainText('Row 3 removed.');
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+    await undoButton(card).click();
+
+    expect(await shownRows(card)).toEqual(shown);
+    await settleDebounce(page);
+    expect(net.groupSaves()).toHaveLength(0);
+    expect(configSha(testServer.configPath)).toBe(before);
+  });
+});
+
+test.describe('Settings: leaving the page sends a pending removal', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-leave' });
+
+  // No fake clock: the page really unloads inside the real 8 s window, and only the page's own
+  // pagehide handler can send what is waiting. Without it the removal is lost with the page.
+  test('the removal reaches config.ini although the window had not ended', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+
+    await removeButton(card, 2).click();
+    await expect(removedLine(card)).toHaveCount(1);
+    expect(configSha(testServer.configPath)).toBe(before);
+    await page.goto('/');
+
+    await expect.poll(() => configColumns(testServer.configPath, 'newznab'), { timeout: 6000 }).toEqual(rowsWithout(1));
+  });
+});
+
+test.describe('Settings: a button that acts on the saved rows sends a pending removal first', () => {
+  test.describe('Test connection', () => {
+    test.use({ seedConfig: 'newznab_aligned#undo-test-connection' });
+
+    test('the removal is saved, at once, before the test request; the test is not held until the window ends', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      const net = await recordRequests(page);
+      await page.route('**/provider.newznab.test/**', (route) => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'ok' }),
+      }));
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'Newznab');
+
+      await removeButton(card, 3).click();
+      await card.getByRole('button', { name: /^Test .* connection$/ }).click();
+
+      const indexOf = (part: string) => net.seen.map((request) => request.url).findIndex((url) => url.includes(part));
+      await expect.poll(() => indexOf('provider.newznab.test')).toBeGreaterThanOrEqual(0);
+      await page.waitForLoadState('networkidle');
+      expect(indexOf('settings.save_group')).toBeGreaterThanOrEqual(0);
+      expect(indexOf('settings.save_group')).toBeLessThan(indexOf('provider.newznab.test'));
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(2));
+    });
+  });
+
+  test.describe('a Jackett sync', () => {
+    test.use({ seedConfig: 'torrentpotato_aligned#undo-sync' });
+
+    test('the removal is saved before the sync, the line goes with the lock, and the sync sees the rows on screen', async ({ page, testServer }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await page.clock.install();
+      const net = await recordRequests(page);
+      // The sync is held until the test lets it go, so what is on screen DURING the action can be read.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
+        await gate;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }) });
+      });
+      await openSettings(page, 'Searchers');
+      const card = providerCard(page, 'TorrentPotato');
+      await openCard(card);
+
+      await removeButton(card, 2).click();
+      await expect(removedLine(card)).toHaveCount(1);
+      await card.getByRole('button', { name: /Sync Indexers/ }).click();
+
+      const indexOf = (part: string) => net.seen.map((request) => request.url).findIndex((url) => url.includes(part));
+      await expect.poll(() => indexOf('torrentpotato.jackett_sync')).toBeGreaterThanOrEqual(0);
+      // The group is locked and the action has not answered: no re-read has happened, so only the
+      // lock itself can have taken the line away. Undo is not offered while the rows are locked.
+      await expect(removedLine(card)).toHaveCount(0);
+      await expect(card.getByTestId('combine-locked-note')).toBeVisible();
+      release();
+      await page.waitForLoadState('networkidle');
+      expect(indexOf('settings.save_group')).toBeGreaterThanOrEqual(0);
+      expect(indexOf('settings.save_group')).toBeLessThan(indexOf('torrentpotato.jackett_sync'));
+      expect(net.groupSaves()).toHaveLength(1);
+      expect(cellsOf(configColumns(testServer.configPath, 'torrentpotato').name)).toEqual(['name-one', 'name-three']);
+      await expect(removedLine(card)).toHaveCount(0);
+      await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+    });
+  });
+});
+
+test.describe('Settings: Undo and a refused group', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-marks' });
+
+  test('the refusal mark moves with its row on removal and moves back on Undo', async ({ page, testServer }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    await page.clock.install();
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    const host3 = card.getByLabel('host for row 3', { exact: true });
+    const refused = groupSaveResponse(page);
+    await host3.fill(`${NEWZNAB_HOSTS[2]},https://placeholder-evil.invalid`);
+    await page.clock.fastForward(600);
+    expect((await (await refused).json()).success).toBe(false);
+    await expect(host3).toHaveAttribute('aria-invalid', 'true');
+
+    await removeButton(card, 1).click();
+    await expect(card.getByLabel('host for row 2', { exact: true })).toHaveAttribute('aria-invalid', 'true');
+    await expect(card.getByTestId('combine-row-error')).toContainText('Row 2: the host');
+    await expect(card.locator('[aria-invalid="true"]')).toHaveCount(1);
+
+    await undoButton(card).click();
+    await expect(host3).toHaveAttribute('aria-invalid', 'true');
+    await expect(card.getByTestId('combine-row-error')).toContainText('Row 3: the host');
+    await expect(card.locator('[aria-invalid="true"]')).toHaveCount(1);
+    // The restored rows go through the normal save, which the server refuses again: the marks stay
+    // on row 3, and the page has nothing left pending when the test ends.
+    const again = groupSaveResponse(page);
+    await page.clock.fastForward(600);
+    expect((await (await again).json()).success).toBe(false);
+    await expect(host3).toHaveAttribute('aria-invalid', 'true');
+    expect(configSha(testServer.configPath)).toBe(before);
+  });
+});
+
+test.describe('Settings: Undo of a removal whose save failed', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-failed' });
+
+  test('says the save failed, then Undo saves the rows the user saw before the removal, never a set they did not', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const net = await recordRequests(page);
+    let failed = false;
+    await page.route('**/settings.save_group/**', async (route) => {
+      if (!failed) {
+        failed = true;
+        await route.abort();
+        return;
+      }
+      await route.continue();
+    });
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+
+    await removeButton(card, 2).click();
+    await endUndoWindow(page);
+    await expect(card.getByTestId('combine-save-error')).toContainText('these rows were not saved');
+    expect(configSha(testServer.configPath)).toBe(before);
+    // The failed save did not take the line away: Undo is still there.
+    await expect(undoButton(card)).toBeVisible();
+
+    const answered = groupSaveResponse(page);
+    await undoButton(card).click();
+    await page.clock.fastForward(600);
+    expect((await (await answered).json()).success).toBe(true);
+    await page.waitForLoadState('networkidle');
+
+    await expect(card.getByTestId('combine-save-error')).toHaveCount(0);
+    expect(net.groupSaves()).toHaveLength(2);
+    // Each request carried a set of rows the user had on screen: first without row 2, then all three.
+    expect(bodyOf(net.groupSaves()[0]).rows.map((row) => row.host)).toEqual([NEWZNAB_HOSTS[0], NEWZNAB_HOSTS[2]]);
+    expect(bodyOf(net.groupSaves()[1]).rows.map((row) => row.host)).toEqual(NEWZNAB_HOSTS);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout());
+  });
+});
+
+test.describe('Settings: every combine group offers Undo', () => {
+  test.use({ seedConfig: 'all_groups_aligned#undo-every-group' });
+
+  // Driven by the registered groups of the page, not by a name: each card the page draws a
+  // combined field in gets a removal and an Undo, and the rows come back as they were.
+  test('remove and Undo in each of the five groups; nothing is saved', async ({ page }) => {
+    await page.clock.install();
+    const net = await recordRequests(page);
+    await openSettings(page);
+    const GROUPS: [string, string][] = [
+      ['Searchers', 'Newznab'], ['Searchers', 'TorrentPotato'],
+      ['Suggestions', 'IMDB Watchlist'], ['Suggestions', 'iTunes'], ['Suggestions', 'Letterboxd'],
+    ];
+
+    for (const [tab, heading] of GROUPS) {
+      await page.getByRole('tab', { name: tab }).click();
+      const card = providerCard(page, heading);
+      await openCard(card);
+      await card.getByRole('button', { name: 'Add row', exact: true }).click();
+      const shown = await shownRows(card);
+      expect(shown.length, `${heading} rows`).toBeGreaterThan(1);
+
+      await removeButton(card, 1).click();
+      await expect(removedLine(card), heading).toContainText('Row 1 removed.');
+      await undoButton(card).click();
+
+      expect(await shownRows(card), heading).toEqual(shown);
+      await expect(removedLine(card), heading).toHaveCount(0);
+    }
     await settleDebounce(page);
     expect(net.groupSaves()).toHaveLength(0);
   });

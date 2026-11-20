@@ -3,6 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 
 import { test, expect } from './fixtures';
 import { expectVisualTransitionsToSettle } from './helpers';
+import { combineGroupWriter } from './settings_persistence';
 
 /**
  * SEC-004 P3: the combined field's refusal and misaligned-group notice, to WCAG 2.2 AA.
@@ -297,13 +298,24 @@ for (const theme of THEMES) {
       }));
     }
 
+    /**
+     * A removal still waiting out its window is sent when the page goes (the pagehide flush), and
+     * that request is made by the browser itself, so a route stub or request listener may not
+     * see it (it did not on a real navigation): it can reach the server. A test that does not mean to write therefore ends by taking
+     * its removal back, which cancels the save.
+     */
+    async function endWithNothingPending(card: Locator) {
+      await card.getByRole('button', { name: 'Undo', exact: true }).click();
+      await expect(card.getByTestId('combine-removed-line')).toHaveCount(0);
+    }
+
+    /** The save is delayed by the undo window (8 s), so nothing is awaited: the line is what shows. */
     async function removeByKeyboard(page: Page, card: Locator, row: number) {
       await card.getByLabel(`custom tag for row ${row}`, { exact: true }).focus();
       await page.keyboard.press('Tab');
       await expect(card.getByRole('button', { name: `Remove row ${row}`, exact: true })).toBeFocused();
-      const saved = page.waitForResponse((response) => response.url().includes('settings.save_group'));
       await page.keyboard.press('Enter');
-      await saved;
+      await expect(card.getByTestId('combine-removed-line')).toContainText(`Row ${row} removed.`);
     }
 
     const axeViolations = async (page: Page) => (await new AxeBuilder({ page })
@@ -318,15 +330,52 @@ for (const theme of THEMES) {
 
       // Preconditions: the removal happened, so the state axe reads is the one under test.
       await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
-      await expect(page.getByTestId('settings-announcer-polite')).toHaveText('Row 3 removed');
+      await expect(page.getByTestId('settings-announcer-polite')).toHaveText('Row 3 removed. Undo is available.');
       await expect(page.getByTestId('settings-announcer-assertive')).toHaveText('');
       await expect(card.getByRole('button', { name: 'Remove row 2', exact: true })).toBeFocused();
       await expectVisualTransitionsToSettle(page, `${theme} theme, row removed`);
       expect(await axeViolations(page)).toEqual([]);
+      await endWithNothingPending(card);
     });
 
-    test('down to one row at 375px: no Remove control, focus on Add, columns still under their headers, no sideways scroll, axe clean', async ({ page }) => {
+    test('the removal line and Undo: text at least 4.5:1, a target of at least 44px, a visible focus ring, and a name', async ({ page }) => {
       await stubSave(page);
+      const card = await openSearchers(page, theme);
+
+      await removeByKeyboard(page, card, 3);
+      const line = card.getByTestId('combine-removed-line');
+      const undo = card.getByRole('button', { name: 'Undo', exact: true });
+      await expectVisualTransitionsToSettle(page, `${theme} theme, removal line shown`);
+
+      // Preconditions: the line and the control under measurement are on screen.
+      await expect(line).toBeVisible();
+      await expect(undo).toBeVisible();
+      const textRatio = await line.locator('span').evaluate(TEXT_CONTRAST);
+      expect(textRatio, `${theme}: removal line contrast ${textRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      const undoRatio = await undo.evaluate(TEXT_CONTRAST);
+      expect(undoRatio, `${theme}: Undo contrast ${undoRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      const box = await undo.boundingBox();
+      expect(box!.width, 'Undo width').toBeGreaterThanOrEqual(44);
+      expect(box!.height, 'Undo height').toBeGreaterThanOrEqual(44);
+      // Reached by the keyboard (Remove row 2, then Undo), so :focus-visible paints the ring.
+      await page.keyboard.press('Tab');
+      await expect(undo).toBeFocused();
+      const ring = await undo.evaluate(EDGE_CONTRAST, 'outline');
+      expect(ring.style, `${theme}: no focus outline on Undo`).not.toBe('none');
+      expect(ring.ratio, `${theme}: Undo focus ring ${ring.ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+      // The accessible name is "Undo", and the control is described by the line that says which row.
+      expect(await undo.evaluate((element) => element.getAttribute('aria-describedby'))).toBe(await line.locator('span').getAttribute('id'));
+      expect(await axeViolations(page)).toEqual([]);
+      await endWithNothingPending(card);
+    });
+
+    // Its own server and the writer annotation: two removals leave a save pending when the test ends,
+    // and the page sends it as it goes (see endWithNothingPending), so this test really writes.
+    test.describe('down to one row', () => {
+    test.use({ seedConfig: `newznab_aligned#a11y-removal-375-${theme}` });
+
+    test('down to one row at 375px: no Remove control, focus on Add, columns still under their headers, no sideways scroll, axe clean', async ({ page }) => {
+      test.info().annotations.push(...combineGroupWriter());
       await page.setViewportSize({ width: 375, height: 800 });
       const card = await openSearchers(page, theme);
 
@@ -349,7 +398,14 @@ for (const theme of THEMES) {
         expect(Math.abs(cell.right - layout.headers[index].right), `column ${index} right edge`).toBeLessThanOrEqual(1);
       });
       expect(layout.scroll).toBeLessThanOrEqual(layout.viewport);
+      // The line that replaced the first removal's is on screen, and inside the viewport.
+      const line = card.getByTestId('combine-removed-line');
+      await expect(line).toContainText('Row 1 removed.');
+      const lineBox = await line.boundingBox();
+      expect(lineBox!.x).toBeGreaterThanOrEqual(0);
+      expect(lineBox!.x + lineBox!.width).toBeLessThanOrEqual(layout.viewport);
       expect(await axeViolations(page)).toEqual([]);
+    });
     });
   });
 

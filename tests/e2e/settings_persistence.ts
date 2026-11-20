@@ -1,5 +1,87 @@
 export const SETTINGS_PERSISTENCE_ANNOTATION = 'persistsSettings';
 
+// ── A combine-group save that is still waiting (SEC-004 AC-DATA-24) ───────────────────────────
+// The Settings page sends a group save that is waiting out its delay (the 500 ms debounce, or the
+// 8 s undo window of a removal) AS THE PAGE CLOSES, with `keepalive`. The browser makes that
+// request itself, so a Playwright route or request listener MAY NOT see it (measured: seen on
+// `page.close()` and on a synthetic `pagehide`, not on a real navigation). The panel's own state is
+// the one place that does not depend on that, so the fixture and the specs read it through this
+// one helper, and the guard cancels the save in the page rather than relying on a route.
+
+type PageForPanel = {
+  isClosed(): boolean;
+  url(): string;
+  evaluate<R, A>(fn: (arg: A) => R, arg: A): Promise<R>;
+};
+
+/**
+ * Runs IN THE PAGE (it is serialised by `page.evaluate`, so it uses no outer name). Returns the
+ * sections whose group has a timer or a queued save, and with `cancel` stops them so nothing is
+ * sent at close. `found: false` says the panel or Alpine is not there, which is not "nothing pending".
+ */
+export function readPanelPendingSaves(cancel: boolean): { found: boolean; sections: string[] } {
+  const root = document.querySelector('[x-data="settingsPanel()"]');
+  const alpine = (window as any).Alpine;
+  if (!root || !alpine) return { found: false, sections: [] };
+  const groups = alpine.$data(root).groupState || {};
+  const sections: string[] = [];
+  for (const [section, group] of Object.entries<any>(groups)) {
+    if (!(group.timer || group.queued)) continue;
+    sections.push(section);
+    if (cancel) {
+      clearTimeout(group.timer);
+      group.timer = null;
+      group.queued = false;
+    }
+  }
+  return { found: true, sections };
+}
+
+/** True for the errors a page that closed or navigated mid-read raises, and for nothing else. */
+function pageWentAway(error: unknown): boolean {
+  return /has been closed|Target page|Execution context was destroyed|navigation/i.test(String((error as Error)?.message));
+}
+
+/**
+ * How long a Settings page is given to start its panel before the read calls itself blind:
+ * 50 reads, 100 ms apart. A test may end the moment the heading is on screen, before Alpine
+ * has run; that page has no pending save yet, and is not a renamed selector.
+ */
+export const PANEL_READ_ATTEMPTS = 50;
+export const PANEL_READ_INTERVAL_MS = 100;
+
+const pause = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, PANEL_READ_INTERVAL_MS); });
+
+function onSettingsPage(page: PageForPanel): boolean {
+  return /\/settings\/?$/.test(new URL(page.url()).pathname);
+}
+
+/**
+ * The sections with a group save still pending on the Settings page, read from the panel; with
+ * `cancel`, also cancelled. A page that is closed or navigating has none. On the Settings page a
+ * panel that is not there is waited for (the page may still be starting), and one that never
+ * appears (a renamed selector, Alpine gone) THROWS, as does any other failure of the read: a
+ * guard that cannot see is a failure, never a pass.
+ */
+export async function readPendingGroupSaves(page: PageForPanel, cancel = false, sleep: () => Promise<void> = pause): Promise<string[]> {
+  for (let attempt = 1; ; attempt += 1) {
+    if (page.isClosed()) return [];
+    let read: { found: boolean; sections: string[] };
+    try {
+      read = await page.evaluate(readPanelPendingSaves, cancel);
+    } catch (error) {
+      if (pageWentAway(error)) return [];
+      throw error;
+    }
+    if (read.found) return read.sections;
+    if (!onSettingsPage(page)) return [];
+    if (attempt >= PANEL_READ_ATTEMPTS) {
+      throw new Error('The Settings panel (x-data="settingsPanel()") or Alpine was not found on the Settings page, so a pending group save cannot be seen. Update readPanelPendingSaves.');
+    }
+    await sleep();
+  }
+}
+
 /**
  * Every settings write route a test must not reach unannounced: the per-column save and
  * the group save of a combine group's rows (SEC-004). One pattern for both, so a route

@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
+import { readPendingGroupSaves } from './settings_persistence';
 
 /**
  * WCAG 2.2 AA 1.4.11 (non-text contrast) for the settings toggle switch.
@@ -76,6 +77,10 @@ import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
  */
 async function mockSettingsSaveEchoingValue(page: Page): Promise<void> {
   await mockSettingsSave(page);
+  // A Newznab row toggle is a combine-group edit, saved by the group route, not per column.
+  await page.route('**/settings.save_group/**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+  }));
   await page.route('**/settings.save/**', async (route) => {
     const params = new URLSearchParams(route.request().postData() ?? '');
     await route.fulfill({
@@ -415,6 +420,19 @@ for (const theme of ['dark', 'light'] as const) {
     ];
     expect(newznabNames.slice().sort(), `expected exactly ${JSON.stringify(expectedNewznabNames)}`)
       .toEqual(expectedNewznabNames.slice().sort());
+
+    // The row toggles edited the Newznab group, and a group save waits out a 500 ms debounce. It
+    // must go out HERE, to the mock above: a save still waiting when the page closes is sent by
+    // the browser as the page goes, where a route may not see it, and can land on the shared server.
+    //
+    // The reader is proven to SEE here before it is trusted to report nothing: one more row toggle
+    // is pressed and read at once (well inside the 500 ms), which must name Newznab. Without that,
+    // a reader that never finds the panel would pass the poll below vacuously.
+    const newRowSwitch = newznabCard.getByRole('switch', { name: expectedNewRowName, exact: true });
+    await newRowSwitch.click();
+    expect(await readPendingGroupSaves(page), 'the reader did not see the save the click made').toEqual(['newznab']);
+    await newRowSwitch.click();
+    await expect.poll(() => readPendingGroupSaves(page), 'a group save was still pending').toEqual([]);
   });
 }
 
