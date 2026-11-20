@@ -603,7 +603,7 @@ result. Getting it wrong the other way files a bug against working code.
      the query string.
   7. A merge sync does not update the `pass_key` of indexers already stored
      when the Jackett key is rotated.
-  Two more, found in review of P6 and not fixed:
+  Two more found in review of P6, and one from SEC-005 review, not fixed:
   8. Lookalike and unusual names (`hoſt`, fullwidth letters, zero-width
      characters, DEL 0x7f, C1 controls) are not refused by `settings.save`. Each
      is stored as its own stray option. Measured harmless: they reload as
