@@ -6,7 +6,13 @@
 > "Spec gaps found at review" so the planning lens improves.
 
 **Status:** draft
-**Lenses run:** none yet (draft for `/plan-cycle`) · **Skipped:** none yet
+**Lenses run:** security, qa, simplicity, product, design, accessibility, data,
+architecture, operability (the nine that ran at `/plan-cycle` on 2026-11-21) ·
+**Skipped:** none
+
+The sections above "Acceptance criteria" were hand-edited on 2026-11-21 to
+match the criteria and owner decisions D3 and D4. No lens wrote that wording, so
+the review cycle should treat it as untested.
 
 ## Problem
 
@@ -16,18 +22,73 @@ together. `settings.save` can change `jackett_url` on its own, and the next
 parameterless `torrentpotato.jackett_test` or `torrentpotato.jackett_sync`
 (`couchpotato/core/media/_base/providers/torrent/torrentpotato.py`,
 `_jackettCredentials`) then sends the saved key, in the query string, to the
-new address. The settings read masks the key, so this is the one path by which
-someone who holds the CouchPotato API key (or a page that can drive a logged-in
-browser) can turn "may change settings" into "has the Jackett key", and with it
-every tracker credential Jackett holds.
+new address. Someone who can cause that settings write can therefore redirect
+the saved key to an address they control, and with the key every tracker
+credential Jackett holds.
 
-SEC-004 closed the request-level form of this (a request that supplies its own
-URL must supply its own key, AC-SEC-9 there) and recorded this stored form as
-open: item 5 of the "Newznab positional lists" entry in
+That redirect is one of two ways the key leaves, and the draft of this spec was
+wrong to call it the only one. What is true today:
+
+1. **The redirect path (this spec).** The settings read masks
+   `torrentpotato.jackett_api_key` itself, so the stored key cannot be read
+   back from that field. The redirect above is how a settings write becomes a
+   key disclosure.
+2. **The readable copy.** The Jackett sync writes the Jackett key into the
+   `pass_key` of every indexer row it adds (`_jackettRowsBuilder`, "Use
+   Jackett API key as passkey"), and `torrentpotato.pass_key` is a combined
+   option the settings read returns unmasked. The unit test
+   `test_torrentpotato_pass_key_still_leaks_and_that_is_recorded` in
+   `tests/unit/test_settings_credential_masking.py` pins this. So for an
+   install that has pressed Sync, a holder of the CouchPotato API key can read
+   the Jackett key in one request to `GET /api/<key>/settings`. **This spec
+   does not stop that** (owner decision D3).
+
+SEC-004 closed the request-level form of the redirect (a request that supplies
+its own URL must supply its own key, AC-SEC-9 there) and recorded the stored
+form as open: item 5 of the "Newznab positional lists" entry in
 `docs/technical-debt.md`. It is the same on every released version.
 
-Who is affected: every install with a Jackett key saved. How often it bites
-today: never by accident; it is an escalation path, not a malfunction.
+**Who this spec protects:**
+
+- An install that has a Jackett key saved but no synced rows: the key is in the
+  masked field only, so the redirect is the only way out, and the binding
+  closes it.
+- An actor who can cause a settings write but cannot read the response (for
+  example a page or script that can send a request but not see the answer),
+  on any install: the key can no longer be redirected by that write.
+
+**Who it does not protect:** an install that has synced (the common case),
+against a holder of the CouchPotato API key who can read the settings. That
+actor reads the Jackett key from `pass_key` and needs no redirect. Hiding
+credentials in combined rows on the settings read is the next spec (D3, and the
+open debt item "Credentials in combined rows are returned unmasked by the
+settings read" in `docs/technical-debt.md`).
+
+**Not verified by the planning cycle:** whether the existing Origin check
+already stops a page from driving a logged-in browser into `settings.save`.
+What the code shows is narrower: `torrentpotato.jackett_sync` and
+`torrentpotato.jackett_test` are in `ORIGIN_CHECKED_API_ROUTES`
+(`couchpotato/__init__.py`, lines 913 to 922), and `settings.save` is not in
+that set. Whether some other defence covers `settings.save` (the API key in the
+URL, a session cookie, anything else) was not traced, so this spec claims
+nothing either way. The protection above for "can cause a write but cannot read
+the response" holds whichever way that turns out.
+
+Who is affected by the redirect: every install with a Jackett key saved. How
+often it bites today: never by accident; it is an escalation path, not a
+malfunction.
+
+## If we do nothing
+
+The redirect path stays open on every released version, as it has been since
+Jackett support was added. It needs the CouchPotato API key (or a way to cause
+a settings write), so nothing has been observed going wrong and nothing
+changes for an install that is never attacked. The cost is that an actor with
+that one capability gets the Jackett key, and through it every tracker
+credential Jackett holds, without needing to read any settings. The cost of
+doing the work is a narrower claim than the draft made (see D3) and a small,
+visible side effect for users (D4). Item 5 of the technical-debt entry stays
+open as written.
 
 ## Owner decisions already made
 
@@ -35,50 +96,79 @@ today: never by accident; it is an escalation path, not a malfunction.
 |---|---|---|
 | D1 | Remember which address the key belongs to (a stored binding), not "ask for the key on every sync". | 2026-11-14 |
 | D2 | Upgrade: an existing install's saved key is bound to the address saved at first start after the upgrade. No user action. Accepted risk: an address tampered with before the upgrade is the one trusted. | 2026-11-18 |
+| D3 | Build the address binding first, with the claim narrowed. The settings read returns the Jackett key unmasked in every synced row's `torrentpotato.pass_key`, so for an install that has synced, a holder of the CouchPotato API key can read the Jackett key in one request, and this spec does NOT stop that. This spec stops a settings change from redirecting the saved key to another address. Hiding credentials in combined rows on the settings read (Jackett rows and Newznab keys) is the NEXT spec, queued after this one and recorded as its own open debt item. AC-SEC-12 takes its form A. | 2026-11-21 |
+| D4 | The standing mismatch notice at the Jackett fields stays dropped (the simplicity veto is accepted). The refusal is shown on the Sync and Test results only. Known cost: the key field still reads as saved ("Saved — type to replace") while the key cannot be used with the current address. | 2026-11-21 |
 
-## Proposed shape (for the lenses to challenge)
+## Proposed shape (as amended to match the criteria)
 
-- A stored binding for the saved key: a fingerprint of the normalised saved
-  Jackett address (scheme, lower-cased host, port with the scheme default made
-  explicit, path without a trailing slash), held in a new `torrentpotato`
-  option that is not rendered in Settings.
-- The binding is written only by the server, in two places: when a non-empty
-  `jackett_api_key` is saved (bound to the address saved at that moment), and
-  once at start-up for an install that has a key and no binding (D2).
-- The binding cannot be written or usefully read over HTTP: `settings.save`
-  and `settings.save_group` refuse it, and the settings read does not return
-  it. Without this the control is decorative: whoever can change the address
-  could re-point the binding in the same breath.
-- Every use of the *saved* key checks the binding against the address it is
-  about to be sent to and refuses on a mismatch or a missing binding, before
-  any request leaves the process. The refusal tells the user what to do
-  ("The Jackett address changed since the API key was saved. Enter the API key
-  again in Settings.") and carries neither address nor key.
-- The Settings page shows that state where the user will look: at the Jackett
-  fields and on the Sync button's result, in both themes, announced once.
+- A stored binding for the saved key: the plain normalised saved Jackett
+  address, not a fingerprint (AC-SIMP-1, AC-ARCH-5). One function produces the
+  normalised form, in the form `getJackettIndexers` actually sends, and both
+  the writer and the checker call it. It is held in a new `torrentpotato`
+  option that is not rendered in Settings (AC-ARCH-2, AC-DESIGN-1), beside a
+  one-time migration marker (AC-SIMP-2, AC-SEC-8). Both live only in
+  `config.ini` (AC-DATA-10).
+- The binding is written only by the server, in two places: with the key, in
+  the same `config.ini` write, when a non-empty `jackett_api_key` is saved
+  (AC-SEC-6, AC-DATA-1, AC-ARCH-7), and once at start-up for an install that
+  has a key and no binding and has not yet migrated (D2, AC-SEC-8, AC-DATA-5).
+  The start-up step runs synchronously, before the server accepts requests
+  and before `APP_LOAD` fires (AC-OPS-3), and a failed write there does not
+  stop start-up (AC-DATA-6).
+- The binding cannot be written or read over HTTP: `settings.save` and
+  `settings.save_group` refuse it, and the settings read omits every option
+  that is not readable, for any section (AC-SEC-4, AC-SEC-5, AC-ARCH-3).
+  Without this the control is decorative: whoever can change the address could
+  re-point the binding in the same breath.
+- Every use of the *saved* key goes through one function that checks the
+  binding against the exact address it is about to be sent to, and refuses on a
+  mismatch or a missing binding before any request leaves the process
+  (AC-SEC-1, -2, -3, -11, AC-SIMP-4). A request that supplies its own URL and
+  key is not checked (AC-SEC-9).
+- The refusal is the text fixed in AC-DESIGN-5: "The saved Jackett API key
+  cannot be used with this Jackett address. Enter the API key again." It is
+  the API `error` string for both causes, and carries neither address nor key.
+  It is shown on the Sync and Test results only: the Settings button result
+  region and the wizard's Jackett result line, in both themes, announced once
+  (AC-A11Y-3, -4). There is no field-level or standing state at the Jackett
+  fields (D4). The cost is that the key field still reads as saved while the
+  key cannot be used with the current address; the user finds out when they
+  press Sync or Test.
+- Recovery is one step: enter the key again with the address untouched, and
+  the key is bound to the address saved at that moment (AC-PROD-3, AC-DESIGN-4).
+  Setting the address back to the bound one also works, without re-entering the
+  key (AC-DATA-8).
 
-## Questions the planning cycle must answer
+## Questions answered at planning
 
-1. **Save order.** The Settings page saves `jackett_url` and `jackett_api_key`
-   as separate debounced requests. A user who moves Jackett and types the new
-   address and then the key is bound correctly; one who types the key first and
-   the address second ends with a mismatch and must enter the key again. Is
-   that acceptable with clear copy, or do the two fields need one save?
-2. **Every use of the saved key.** `jackett_test`, `jackett_sync`, and anything
-   else: `_isJackettIndexerHost` reads the saved address; stored TorrentPotato
-   rows carry the Jackett key as `pass_key` beside their own host. Enumerate
-   them; say which are in scope.
-3. **The stored rows.** A synced indexer row stores the Jackett key as its
-   `pass_key` next to a host under the Jackett address. Can `settings.save_group`
-   change such a row's host while keeping its stored key (for example by
-   sending back the masked value)? If yes, that is the same escalation by
-   another door and belongs in scope.
-4. **Fingerprint or plain address.** Does hashing buy anything, given the
-   address is already stored in clear beside it?
-5. **Clearing.** What happens to the binding when the key is cleared, and when
-   the address is cleared.
-6. **Start-up binding (D2).** Exactly when it runs, that it runs once, what it
-   logs (no address, no key), and what a restore of an older `config.ini` does.
+1. **Save order** (key before address on the Settings page). Accepted cost, not
+   a combined save: that user gets the refusal and recovers by entering the key
+   again. Both orders are pinned by a test. The wizard saves in order instead.
+   AC-PROD-4, AC-QA-11, AC-SIMP-7, AC-ARCH-9.
+2. **Every use of the saved key.** The saved key is read in exactly one
+   function, which does the check, and `jackett_test` and `jackett_sync` both
+   reach it. A static test fails if a second direct read appears. Stored
+   TorrentPotato rows use their own `pass_key`, are not gated, and
+   `_isJackettIndexerHost` keeps its own comparison. AC-SEC-11, AC-SIMP-4,
+   AC-PROD-7, AC-ARCH-12.
+3. **The stored rows** (can `save_group` change a synced row's host while
+   keeping its stored key). **No surviving criterion answers this.** Under D3
+   the stored rows and their `pass_key` handling are out of scope and unchanged
+   (AC-SIMP-8, AC-SEC-12 form A), and the combined-credential read is the next
+   spec. The planning cycle did not measure whether the door exists; that
+   belongs to the next spec's investigation.
+4. **Fingerprint or plain address.** Plain address. Hashing hides nothing, as
+   the address is stored in clear beside it. AC-SIMP-1.
+5. **Clearing.** Clearing the key removes the binding in the same write and a
+   sync then reports the existing "required" error. Clearing the address leaves
+   the binding alone, so a new address with the old key is still refused.
+   AC-SEC-7.
+6. **Start-up binding (D2).** Runs once per install, gated by a migration
+   marker written in the same save, synchronously before the server accepts
+   requests; logs one INFO line with no address or key on success and one ERROR
+   naming the remedy on failure. Restoring a pre-change `config.ini` binds to
+   whatever address that file holds. AC-SEC-8, AC-OPS-3, AC-DATA-5, AC-DATA-6,
+   AC-QA-13, AC-DATA-10, AC-OPS-8.
 
 ## Not in scope
 
@@ -89,28 +179,52 @@ today: never by accident; it is an escalation path, not a malfunction.
 - Moving the key out of the query string. That is Jackett's API.
 - Binding Newznab or other providers' keys to their hosts: SEC-004 made each
   row atomic, which is the equivalent control there.
+- **Hiding credentials in combined rows on the settings read** (D3): the Jackett
+  key held in every synced row's `torrentpotato.pass_key`, and
+  `newznab.api_key`. This is the next spec, queued after this one, and is
+  recorded as an open item in `docs/technical-debt.md`. It also owns whether a
+  `settings.save_group` that edits a synced row's host can carry its stored key
+  to the new host (question 3 above).
+- **The download clients** (SABnzbd, NZBGet, qBittorrent, Transmission): each
+  sends saved credentials to a saved host that a settings change can re-point,
+  the same shape as this spec. Raised by the architecture lens. Not every path
+  was traced, so this list is a pointer, not an inventory. Needs its own spec.
+- A standing mismatch notice at the Jackett fields (D4).
 
 ## What this replaces
 
 | What goes | Owning lens | Removal criterion |
 |---|---|---|
-| The sentence in `_jackettCredentials`' docstring saying the saved key is not bound to the saved URL | security | to be written |
-| Debt item 5 in `docs/technical-debt.md` ("Newznab positional lists") | product | to be written |
+| The sentence in `_jackettCredentials`' docstring saying the saved key is not bound to the saved URL | security | AC-SEC-14 (the sentence is gone, the docstring says the key is only sent to the address it was bound to), with AC-QA-22 for the matching sentence in the module docstring of `tests/unit/test_jackett_saved_key_scope.py` |
+| Debt item 5 in `docs/technical-debt.md` ("Newznab positional lists") | product | AC-PROD-9, **narrowed under D3, not closed** (see below) |
+
+**Debt item 5 is narrowed, not closed.** When the build lands, item 5 is
+reworded to say that a settings change can no longer redirect the saved key to
+another address, and that what remains open is the readable copy: every synced
+row's `torrentpotato.pass_key` holds the Jackett key and the settings read
+returns it unmasked, so an API-key holder can read it on an install that has
+synced. That remainder is the open item "Credentials in combined rows are
+returned unmasked by the settings read", which names this spec's D3 as the
+reason it is queued next. Items 6 and 7 stay as they are (AC-SIMP-8). Until
+the build lands item 5 is not touched. AC-PROD-9 as written ("item 5 is gone")
+contradicts this and needs the owner's or the review cycle's attention (see the
+hand-edit note under "Delivery slices").
 
 ---
 
 ## Acceptance criteria
 
-Written by `/plan-cycle` on 2026-11-21 from eight lens reports (security, qa,
+Written by `/plan-cycle` on 2026-11-21 from nine lens reports (security, qa,
 simplicity, product, design, accessibility, data, architecture, operability
 all ran; none skipped). 74 criteria survive. A trailing bracketed note records
 a merge or an amendment and is not part of the criterion.
 
-**Open owner decision, blocking the build:** AC-SEC-12 has two forms and the
-owner picks one. Five lenses measured that the settings read returns the
-Jackett key unmasked in every synced row's `torrentpotato.pass_key`, so the
-Problem section's "the one path" is false as drafted. AC-DATA-11, AC-SIMP-3,
-AC-SIMP-8 and AC-SIMP-11 carry the conditions that follow from that choice.
+**Owner decision D3 (2026-11-21):** AC-SEC-12 takes its form A. Five lenses
+measured that the settings read returns the Jackett key unmasked in every
+synced row's `torrentpotato.pass_key`; the spec's claim is narrowed to match,
+and masking those rows is the next spec. AC-DATA-11, AC-SIMP-3, AC-SIMP-8 and
+AC-SIMP-11 were conditional on that choice and are resolved to the form-A
+reading below. Owner decision D4 keeps the field-level notice dropped.
 
 ### Security
 
@@ -125,7 +239,7 @@ AC-SIMP-8 and AC-SIMP-11 carry the conditions that follow from that choice.
 - **AC-SEC-9:** A request that supplies its own `jackett_url` together with its own `jackett_api_key` is not checked against the binding: with a mismatched binding stored, it sends exactly one request to the supplied URL carrying the supplied key. A request supplying only its own `jackett_api_key` sends that key to the saved URL. In neither case does the saved key appear in any request, and neither writes or alters the binding. The SEC-004 AC-SEC-9 refusal for a supplied URL without a key still holds, and the existing rule-(a) test functions in `tests/unit/test_jackett_saved_key_scope.py` stay green with their bodies unmodified. (merges AC-QA-16)
 - **AC-SEC-10:** No value escapes on refusal. For every refusal in AC-SEC-1, AC-SEC-3 and AC-SEC-8, the HTTP response body and every log record captured at DEBUG and above contain none of: address A, address B, either hostname, key K, or the binding's stored value. Each refused request writes exactly one WARNING-level log line, which names the route and a fixed reason code (`mismatch` when the address differs from the bound one, `unbound` when no binding is stored). Proven by driving each case and reading the captured log output, not the log statement. (merges AC-QA-3, AC-OPS-1 and AC-PROD-8)
 - **AC-SEC-11:** Every use of the saved Jackett key passes through the check. Inside `couchpotato/`, the saved `jackett_api_key` setting is read in exactly one function, which also performs the binding check, and both `jackettTest` and `jackettSync` reach it before `getJackettIndexers` is called. A static test fails if `self.conf('jackett_api_key')` or `_savedJackettSetting('jackett_api_key')` appears anywhere else; it is proven by adding a second direct read, watching the test fail, then restoring. Mutation proof: deleting the check from that function turns the AC-SEC-1 test red. (merges AC-QA-18 and AC-ARCH-6)
-- **AC-SEC-12:** The scope of the claim is settled by the owner's decision on the unmasked `pass_key` finding, and review fails if neither form holds. Form A, narrowed: the spec's Problem section, `docs/reference/API.md` and the debt entry in `docs/technical-debt.md` no longer say that the settings read masks the key or that this is the one path; they say that GET `/api/<key>/settings` returns `torrentpotato.pass_key` unmasked, that every synced row carries the Jackett key there, that SEC-005 therefore does not protect the key from an API-key holder once a sync has run, and that the exposure is recorded as an open item with its condition for revisiting. Form B, extended: on an install after a successful `jackett_sync`, the serialised GET `/api/<key>/settings` body contains no substring equal to K, a `settings.save_group` that changes a synced row's host cannot cause K to be sent to the new host (the request recorder shows no request carrying K to it), and AC-DATA-11 applies. (merges AC-PROD-10)
+- **AC-SEC-12:** The scope of the claim is narrowed (owner decision D3). The spec's Problem section, `docs/reference/API.md` and the debt entry in `docs/technical-debt.md` no longer say that the settings read masks the key or that this is the one path; they say that GET `/api/<key>/settings` returns `torrentpotato.pass_key` unmasked, that every synced row carries the Jackett key there, that SEC-005 therefore does not protect the key from an API-key holder once a sync has run, and that the exposure is recorded as an open item with its condition for revisiting. (merges AC-PROD-10) [form A of two; form B, masking the rows in this change, was not chosen and is deleted]
 - **AC-SEC-13:** Any API route this change adds is reachable only with the CouchPotato API key, is listed in `ORIGIN_CHECKED_API_ROUTES`, and refuses a request carrying no Origin or Referer. Tested with no key (401), with a cross-origin Origin (refused), and with no Origin or Referer (refused). If no route is added, as AC-SIMP-10 requires, this criterion is satisfied by the absence of one in the diff.
 - **AC-SEC-14:** Removal: the sentence in the `_jackettCredentials` docstring stating that the saved key is not bound to the saved URL is gone. A grep for "does not bind the saved key" across `couchpotato/` returns no match, and the docstring instead states that the saved key is only sent to the address it was bound to. The security area replaces nothing else.
 
@@ -146,15 +260,15 @@ AC-SIMP-8 and AC-SIMP-11 carry the conditions that follow from that choice.
 
 - **AC-SIMP-1:** The binding is stored as the normalised Jackett address string itself, not a fingerprint: the diff adds no `hashlib`, `hmac` or `secrets` import and no digest call to torrentpotato.py or settings.py.
 - **AC-SIMP-2:** At most two new option names are registered in the `torrentpotato` section: the binding, and the one-time migration marker AC-SEC-8 requires, both protected by the existing `ui-meta` mechanism. No other new option is added: no version marker, no toggle that disables the check, no new section. [amended: AC-SEC-8 overrides the original "no migration marker" clause]
-- **AC-SIMP-3:** The diff leaves the bodies of `_refuse_per_column`, `save_group`, `_save_group` and `_registered_ui_value` in `couchpotato/core/settings.py` unchanged, unless the owner picks form B of AC-SEC-12. Changes to settings.py are limited to the provider-neutral pieces other criteria require: omitting non-readable options from the settings read (AC-SEC-5, AC-ARCH-3), one internal write method in the style of `clearSessionRotationPending` (AC-ARCH-4), the same-write rule of AC-SEC-6 and AC-DATA-1 in the save path, and any refusal AC-SEC-4 shows the existing `isOptionWritable` path does not already give. [amended: the original froze `saveView` and `getValues`, which security and data criteria need to change]
+- **AC-SIMP-3:** The diff leaves the bodies of `_refuse_per_column`, `save_group`, `_save_group` and `_registered_ui_value` in `couchpotato/core/settings.py` unchanged (owner decision D3: the combined rows are not masked here). Changes to settings.py are limited to the provider-neutral pieces other criteria require: omitting non-readable options from the settings read (AC-SEC-5, AC-ARCH-3), one internal write method in the style of `clearSessionRotationPending` (AC-ARCH-4), the same-write rule of AC-SEC-6 and AC-DATA-1 in the save path, and any refusal AC-SEC-4 shows the existing `isOptionWritable` path does not already give. [amended: the original froze `saveView` and `getValues`, which security and data criteria need to change]
 - **AC-SIMP-4:** The check on the saved key runs in exactly one place, `_jackettCredentials`. The bodies of `jackettTest` and `jackettSync` gain no binding logic of their own. Address normalisation is a single function in torrentpotato.py, and no new module file is created under `couchpotato/`.
 - **AC-SIMP-5:** The diff introduces no new event name in any `fireEvent` or `addEvent` call: the binding is written from the existing save path of `torrentpotato.jackett_api_key` and from one start-up step. [amended: the original `.after` or `.committed` handler would put the binding in a second file write, which AC-SEC-6 and AC-DATA-1 forbid]
 - **AC-SIMP-6:** No file under `couchpotato/ui/templates/partials/settings/` changes. The refusal reaches the user as the `error` text in the existing button result region (field_types.html:160) and on the wizard's existing result line (wizard.html:1857-1862). The settings read response gains no new field that reports binding state.
 - **AC-SIMP-7:** The Settings page keeps saving `jackett_url` and `jackett_api_key` as two separate requests. The settings save machinery in `partials/settings/scripts.html` is unchanged, and the save-order case (key typed before address) is handled by the refusal copy alone.
-- **AC-SIMP-8:** Nothing outside the saved-key path of `_jackettCredentials` gains a binding: `getHosts`, `_isJackettIndexerHost`, `_searchOnHost` and the stored rows' `host` and `pass_key` handling are unchanged, unless the owner picks form B of AC-SEC-12. Debt items 6 (redirect) and 7 (rotation) remain open in `docs/technical-debt.md`.
+- **AC-SIMP-8:** Nothing outside the saved-key path of `_jackettCredentials` gains a binding: `getHosts`, `_isJackettIndexerHost`, `_searchOnHost` and the stored rows' `host` and `pass_key` handling are unchanged (owner decision D3). Debt items 6 (redirect) and 7 (rotation) remain open in `docs/technical-debt.md`.
 - **AC-SIMP-9:** No new dependency: `requirements*.txt`, pyproject, package.json and package-lock.json are unchanged by the diff. (merges AC-ARCH-10)
 - **AC-SIMP-10:** No new API endpoint: the number of `addApiView(` calls in torrentpotato.py and settings.py is unchanged.
-- **AC-SIMP-11:** The change touches at most 7 files outside `tests/`, unless the owner picks form B of AC-SEC-12: torrentpotato.py, settings.py, runner.py (only the one synchronous start-up call AC-OPS-3 requires), wizard.html (only to run the two Jackett saves in order, AC-ARCH-9), `docs/reference/API.md`, `docs/technical-debt.md`, and the spec. [amended: runner.py added because AC-OPS-3 overrides the app-load placement]
+- **AC-SIMP-11:** The change touches at most 7 files outside `tests/`: torrentpotato.py, settings.py, runner.py (only the one synchronous start-up call AC-OPS-3 requires), wizard.html (only to run the two Jackett saves in order, AC-ARCH-9), `docs/reference/API.md`, `docs/technical-debt.md`, and the spec. [amended: runner.py added because AC-OPS-3 overrides the app-load placement]
 
 ### Product
 
@@ -188,7 +302,7 @@ AC-SIMP-8 and AC-SIMP-11 carry the conditions that follow from that choice.
 - **AC-DATA-6:** The start-up binding is one atomic save. When that save raises (config.ini not writable), config.ini is byte-identical to before start-up, the server still starts and serves requests, the saved key is not cleared, one ERROR line names the remedy (make config.ini writable and restart, or enter the Jackett API key again in Settings) without address or key, a parameterless sync is refused as `unbound` for as long as no binding is persisted, and the next start-up that can write persists the binding. (merges AC-OPS-5)
 - **AC-DATA-8:** A mismatch or missing-binding refusal is non-destructive: it writes nothing (config.ini hash unchanged), does not clear `jackett_api_key`, does not clear or rewrite the binding, and does not alter any stored torrentpotato row. Setting `jackett_url` back to the bound address makes a parameterless sync succeed, sending K to that address, without the key being entered again. (merges AC-QA-6)
 - **AC-DATA-10:** The binding is stored only in config.ini, in the `torrentpotato` section beside the key, so `scripts/backup.sh` captures key and binding in one file and a restore cannot separate them. No database row, separate file or cache holds a copy. Restore cases are executed on copies: first, a pre-SEC-005 config.ini (key, no binding, no marker) binds to its own saved address at first start (D2); second, a SEC-005 config.ini whose `jackett_url` was later edited by an older release that ignores the binding is refused after re-upgrade, not silently re-bound.
-- **AC-DATA-11:** If this change masks `torrentpotato.pass_key` on read (form B of AC-SEC-12), `settings.save_group` must not write a displayed mask over a stored passkey, and the handling ships in the same PR as the masking. With two stored rows that differ only in `pass_key`, a group save that edits row 2's host and posts the masked `pass_key` cells back either refuses with both stored `pass_key` cells byte-identical, or preserves each stored cell for its own row; it never stores asterisks and never moves a key onto the other row. If `pass_key` is not masked by this change, the spec records that and this criterion is not applicable.
+- **AC-DATA-11:** This change does not mask `torrentpotato.pass_key` on read (owner decision D3), so it adds no handling of a displayed mask in `settings.save_group`: the diff leaves how `save_group` treats `pass_key` cells unchanged (AC-SIMP-3), and a test already in the tree (`test_torrentpotato_pass_key_still_leaks_and_that_is_recorded`) stays green and unmodified, which records that the cells are still returned unmasked. The masking, and the `save_group` handling a mask needs (a group save must not write a displayed mask over a stored passkey), belong to the next spec and ship together there. [form A of two; the form-B text, which made this criterion conditional on masking in this change, is deleted]
 - **AC-DATA-12:** Removal: nothing in the data area is retired by this change. No table, column, option or file goes, and the change replaces no stored value.
 
 ### Architecture
@@ -220,9 +334,9 @@ criterion that needs the vetoed thing, and none touches security, data loss or
 the accessibility floor.
 
 - **The binding as a fingerprint (hash).** Dropped from Proposed shape; the binding is the plain normalised address (AC-SIMP-1). The address already sits in clear in `jackett_url`, so a hash hides nothing and makes a wrong normalisation invisible in config.ini. Security and architecture agreed.
-- **A standing mismatch state at the Jackett fields.** Dropped: AC-DESIGN-2, AC-DESIGN-3, AC-DESIGN-9, AC-DESIGN-10, AC-A11Y-1, AC-A11Y-2, and the field-notice halves of AC-DESIGN-4, AC-DESIGN-7, AC-DESIGN-8, AC-QA-19, AC-A11Y-5, AC-A11Y-6 and AC-A11Y-8. The refusal already reaches the user on the Sync result in Settings and in the wizard, with `role=status`. A field state would need the settings read to report binding state, which AC-ARCH-8 and AC-SIMP-6 rule out, plus template, E2E, design and accessibility work for the same message shown earlier. Known cost, recorded by design: the key field's placeholder still reads "Saved — type to replace" while the key cannot be used with the current address. With AC-DESIGN-10 gone, the design area replaces nothing.
+- **A standing mismatch state at the Jackett fields.** Dropped: AC-DESIGN-2, AC-DESIGN-3, AC-DESIGN-9, AC-DESIGN-10, AC-A11Y-1, AC-A11Y-2, and the field-notice halves of AC-DESIGN-4, AC-DESIGN-7, AC-DESIGN-8, AC-QA-19, AC-A11Y-5, AC-A11Y-6 and AC-A11Y-8. The refusal already reaches the user on the Sync result in Settings and in the wizard, with `role=status`. A field state would need the settings read to report binding state, which AC-ARCH-8 and AC-SIMP-6 rule out, plus template, E2E, design and accessibility work for the same message shown earlier. Accepted by the owner (D4, 2026-11-21). Known cost, recorded by design: the key field's placeholder still reads "Saved — type to replace" while the key cannot be used with the current address. With AC-DESIGN-10 gone, the design area replaces nothing.
 - **One combined save or a new endpoint for the address and key.** Not adopted (AC-SIMP-7, AC-SIMP-10). The wizard runs its two saves in order (AC-ARCH-9) and the Settings page's key-before-address order is an accepted cost (AC-PROD-4).
-- **A binding on stored rows or in `_isJackettIndexerHost`.** Not adopted (AC-SIMP-8), unless the owner picks form B of AC-SEC-12.
+- **A binding on stored rows or in `_isJackettIndexerHost`.** Not adopted (AC-SIMP-8, owner decision D3); the combined-credential read is the next spec.
 
 Simplicity vetoes that did NOT stand, because security or data-loss criteria
 outrank the veto:
@@ -242,8 +356,73 @@ AC-OPS-6, AC-OPS-9.
 
 ## Affected files (expected)
 
-- `couchpotato/core/media/_base/providers/torrent/torrentpotato.py`
-- `couchpotato/core/settings.py` (refusal and read-masking of the binding option)
-- `couchpotato/ui/templates/partials/settings/` (the mismatch state)
+At most seven files outside `tests/` (AC-SIMP-11):
+
+- `couchpotato/core/media/_base/providers/torrent/torrentpotato.py` (the
+  binding, its normalisation, the check in `_jackettCredentials`, the options)
+- `couchpotato/core/settings.py` (omit non-readable options from the read, one
+  internal write method, the same-write rule on a key save, any refusal
+  AC-SEC-4 needs; the bodies in AC-SIMP-3 stay unchanged)
+- `couchpotato/runner.py` (only the one synchronous start-up call, before
+  `fireEventAsync(APP_LOAD)` and `_start_uvicorn_or_exit`, AC-OPS-3)
+- `couchpotato/ui/templates/wizard.html` (only to run the `jackett_url` and
+  `jackett_api_key` saves in order in the finish path, AC-ARCH-9; and, if the
+  existing result line and `announce()` do not already meet AC-A11Y-4, only
+  what that needs, which is a tension with AC-SIMP-11 recorded in the hand-edit
+  note under "Delivery slices")
 - `docs/reference/API.md`, `docs/technical-debt.md`
+- this spec
 - tests under `tests/unit/`, `tests/integration/`, `tests/e2e/`
+
+Not changed: `couchpotato/ui/templates/partials/settings/` (AC-SIMP-6). The
+Settings Sync and Test result is the existing button result region at
+`partials/settings/field_types.html` line 160 (`role="status"`), which renders
+the API `error` text as it is; the wizard shows it on its existing result line
+(`wizard.html`, `jackettSyncResult`) and announces it through `announce()`.
+
+## Delivery slices
+
+*(added by hand on 2026-11-21 from the surviving criteria; no lens wrote it)*
+
+**Rule.** Every merge to `master` publishes a beta that can be promoted, so no
+slice may leave `master` worse than it was before the slice. The check that
+refuses a key fails closed, so it must never merge before the start-up step
+that binds existing installs: otherwise an upgrade would refuse every saved
+key. Docs never run ahead of `master`.
+
+Each criterion is listed once, in the slice where its last clause can be
+proved. A criterion whose early clauses are provable in an earlier slice is
+named in the notes below the table.
+
+| Slice | Goal | Depends on | ACs closed | Hazard if promoted alone, and how the slice avoids it |
+|---|---|---|---|---|
+| P1 | Store and write the binding. The hidden binding and migration marker options; the single normalisation function; the one generic `Settings` write method; the settings read omits non-readable options; a non-empty key save writes key and binding in one write; the synchronous start-up binder and its `runner.py` call; the wizard awaits the URL save before the key save. Nothing reads the binding to refuse anything yet. | none | AC-SEC-5; AC-ARCH-2, -3, -4, -5, -7, -9; AC-OPS-3 | The start-up step writes `config.ini` on every upgrading install. Avoided by one atomic save, a failure that logs and lets start-up continue (AC-DATA-6, proved in P2), and the marker so it runs once. With nothing refusing, a wrong binding costs nothing yet. |
+| P2 | The guard. `_jackettCredentials` becomes the one reader of the saved key and refuses on a mismatch or a missing binding, with the AC-DESIGN-5 text as the API `error`; clearing, the HTTP-write refusals, the one WARNING per refusal, the docstring and test-docstring removals. | P1 merged, so the binder has already run on every install that reaches this slice | AC-SEC-1, -2, -3, -4, -6, -7, -8, -9, -10, -11, -14; AC-QA-1, -5, -11, -12, -13, -15, -20, -21, -22; AC-PROD-3, -5, -7; AC-DATA-1, -4, -5, -6, -8, -10; AC-OPS-7, -10, -11 | The highest in the change: a check that fails closed locks a working install out of Sync and Test. Avoided by the P1 dependency, by AC-PROD-5 and AC-OPS-7 (every saved-address shape reaches the request stage after upgrade) and by the mutation proofs of AC-QA-21. The largest slice; the first thing to split if review asks. |
+| P3 | The refusal where the user reads it: the Settings Sync result and the wizard's Jackett result line show the AC-DESIGN-5 text in both themes, announced once; recovery by re-entering the key; E2E and axe. | P2 | AC-QA-19; AC-DESIGN-1, -4, -5; AC-A11Y-3, -4, -5, -6, -8 | A refusal the user cannot see or hear. Avoided by the E2E against the real server with no `page.route` on the sync route (AC-QA-19). Without P3 the refusal is correct but shows as the raw `error` text through the existing regions, which is acceptable for a promoted beta. |
+| P4 | Last: docs, removals and the whole-change constraints, checked against the cumulative diff. `docs/reference/API.md` and the debt entry are brought in line (AC-SEC-12, AC-OPS-8); debt item 5 is narrowed (D3). | P1, P2, P3 merged | AC-SEC-12, -13; AC-SIMP-1 to -11; AC-PROD-4, -9; AC-A11Y-9, -10; AC-DATA-11, -12; AC-ARCH-1, -8, -11, -12; AC-OPS-8, -12 | Docs claiming a control that is not on `master`. Avoided by doing them last. AC-SIMP-4, -10 and -11 are cumulative budgets; each earlier slice's review still checks it has not broken one. |
+
+**Placement check** (run on 2026-11-21 against the file: 74 ids, 8 + 32 + 9 + 25
+= 74, none unplaced, none in two slices).
+
+- P1 proves the writer and the start-up step, but AC-SEC-6, AC-SEC-8, AC-DATA-1,
+  AC-DATA-5, AC-DATA-6, AC-QA-13 and AC-DATA-10 each end with a clause that a
+  parameterless sync is refused, or sends the key, so they close in P2 with the
+  guard. Their writer-side clauses are tested in P1.
+- AC-A11Y-9 and AC-DESIGN-1 both say "no control is added"; AC-DESIGN-1 is
+  closed with the Settings and wizard render checks in P3, AC-A11Y-9 in the
+  final review.
+- AC-SEC-13 ("no route is added") is satisfied by the absence of one in the
+  cumulative diff, so it closes in P4. `torrentpotato.jackett_sync` and
+  `torrentpotato.jackett_test` are already in `ORIGIN_CHECKED_API_ROUTES`.
+
+**Hand-edit note: criteria the planning cycle left in tension.** Recorded here,
+not changed (see the report that came with this edit):
+
+- AC-PROD-9 says debt item 5 is "gone"; under D3 it is narrowed, not removed,
+  because the readable `pass_key` remains. AC-OPS-8 also refers to "the
+  technical-debt entry that replaces item 5". Both need the owner's or the
+  review cycle's reading before P4.
+- AC-SIMP-11 lets `wizard.html` change "only to run the two Jackett saves in
+  order", while AC-A11Y-4 wants the wizard's refusal announced "cleared first"
+  and its visible text to name an action. If the existing `announce()` does not
+  clear first, the wizard needs a second change the file budget does not name.

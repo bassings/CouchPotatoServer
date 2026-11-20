@@ -614,6 +614,22 @@ result. Getting it wrong the other way files a bug against working code.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
+- **Credentials in combined rows are returned unmasked by the settings read
+  (open, 2026-11-21).** `GET /api/<key>/settings` returns the combined options
+  `torrentpotato.pass_key` and `newznab.api_key` in the clear, because a
+  combined control cannot be typed `password` (see
+  `tests/unit/test_settings_credential_masking.py`, which pins both). After a
+  Jackett sync `torrentpotato.pass_key` holds the Jackett API key, copied into
+  every synced row, so the one key that `torrentpotato.jackett_api_key` masks
+  is readable beside it; `newznab.api_key` holds every Newznab indexer key. A
+  holder of the CouchPotato API key can read all of them in one request. It
+  is not fixed by SEC-005: owner decision D3 (2026-11-21) narrowed that spec to
+  stopping a settings change from redirecting the saved Jackett key, and
+  queued this as the NEXT spec, which is why it is recorded here. The fix
+  needs masking on read together with a `settings.save_group` that never writes
+  a displayed mask over a stored credential, and it must say whether a group
+  save that edits a synced row's host can carry that row's stored key to the
+  new host (not measured). Revisit when SEC-005 has landed.
 - **A removed Settings row waits 8 seconds before it is saved (2026-11-18).**
   Owner decision: removing a row from a combined field shows "Row N removed."
   with an Undo button, and the group save that carries the removal is delayed
