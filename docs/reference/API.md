@@ -167,7 +167,7 @@ A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 registered for any column of these groups today.
 
 **Where an operator finds a refusal.** One WARNING per refused save in the log,
-with no value, in one of three forms:
+with no value, in one of four forms:
 
 - a refused group save: `Refused a settings group save: section=... first_row=...
   first_column=... reason=... offences=N`;
