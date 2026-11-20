@@ -61,6 +61,8 @@ _COMBINE_COLUMN_REFUSAL = (
 _BAD_OPTION_NAME_REFUSAL = (
     'An option name cannot be empty, contain a space, a control character, "=" or ":", '
     'or start with "[", "#" or ";". Nothing was saved.')
+_FLAG_NAME_REFUSAL = ('An option flag cannot be changed through settings.save. '
+                      'Nothing was saved.')
 _NOT_TEXT_REFUSAL = 'The section and the option name must each be text. Nothing was saved.'
 
 
@@ -1067,6 +1069,12 @@ class Settings:
             self.log.warning('Refused a settings save: the section or the option name '
                              'was not text')
             return {'success': False, 'error': _NOT_TEXT_REFUSAL}
+        if self.isOptionMeta(section, name):
+            # Before the name rule, so ` x_internal_meta` gets this text. Neither
+            # the caller's spelling nor the value is logged or returned.
+            self.log.warning('Refused a settings save: the option name is an access '
+                             'flag (section=%.40r)', section)
+            return {'success': False, 'error': _FLAG_NAME_REFUSAL}
         column = self.combine_column(section, name)
         if column is not None:
             self.log.warning('Refused a per-column save of "%s.%s": it is saved '
@@ -1446,7 +1454,20 @@ class Settings:
         return '_internal_meta'
 
     def isOptionMeta(self, section, option):
-        return option.endswith(self.optionMetaSuffix())
+        """Is `option` the name of an option's access flag, in any spelling?
+
+        The name is normalised the way the config parser stores it: `strip()`,
+        then `optionxform` (lower-case). `API_KEY_INTERNAL_META` is stored as
+        `api_key_internal_meta`, the real flag, so a case-sensitive suffix test
+        let a caller overwrite a read-only option's flag. A name that is not
+        text is not a flag name.
+        """
+        if not isinstance(option, str):
+            return False
+        # `str.lower` is the parser's own `optionxform` (nothing here replaces it;
+        # a test pins that). It is named directly so a parser stand-in whose
+        # `optionxform` is not a real function cannot make every name a flag.
+        return option.strip().lower().endswith(self.optionMetaSuffix())
 
     def isSectionReadable(self, section):
         meta = 'section_hidden' + self.optionMetaSuffix()

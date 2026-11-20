@@ -178,6 +178,7 @@ with no value, in one of three forms:
   per-column save of "section.option": it is saved with its group, not on its
   own` (the registered column, never the caller's spelling), or `Refused a
   settings save: the option name is not allowed (section=...)`, or `Refused a
+  settings save: the option name is an access flag (section=...)`, or `Refused a
   settings save: the section or the option name was not text`.
 
 > **Breaking change for scripts.** `settings.save` now refuses every column of
@@ -195,6 +196,12 @@ with no value, in one of three forms:
 > with `[`, `#` or `;` (the config file cannot hold them: `=` and `:` break every
 > later save until restart, and a leading `#` or `;` reloads as a comment), and a
 > `section` or `name` that is not text. The name is never echoed in the refusal.
+> It also refuses, for every section, the name of an option's access flag
+> (`<option>_internal_meta`, which holds `ro`, `hidden` or `rw`) in any case and
+> with leading or trailing whitespace, whether or not the option is registered:
+> `{"success": false, "error": "An option flag cannot be changed through
+> settings.save. Nothing was saved."}`. The flags are written only by the
+> server's own option registration.
 
 ### Downloaders
 
