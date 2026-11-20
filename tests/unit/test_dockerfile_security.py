@@ -14,6 +14,8 @@ import pytest
     ('runtime', 'musl-utils', '1.2.6-r3'),
     ('runtime', 'libcurl', '8.23.0-r0'),
     ('runtime', 'zlib', '1.4-r0'),
+    ('runtime', 'libcrypto3', '3.5.9-r1'),
+    ('runtime', 'libssl3', '3.5.9-r1'),
 ])
 def test_stages_require_patched_os_packages(stage, package, fixed_version):
     dockerfile = (Path(__file__).resolve().parents[2] / 'Dockerfile').read_text()
