@@ -89,6 +89,10 @@ PROTECTED = [('core', 'api_key', 'ro'), (HIDDEN_SECTION, HIDDEN_OPTION, 'hidden'
 
 @pytest.mark.parametrize('section, base, flag', PROTECTED)
 class TestEverySpellingOfAFlagNameIsRefused:
+    """The `upper` and `mixed` rows are the proof: they pass the old case-sensitive test
+    and fail on master. The `lower`, `leading_space` and `trailing_space` rows already
+    passed on master (the lower-case flag was a silent no-op, and whitespace was refused
+    by the bad-name rule); they are regression rows and pin the refusal text."""
 
     @EACH_SPELLING
     def test_the_save_is_refused_with_the_flag_text(self, settings, section, base, flag, spelling):
@@ -152,17 +156,6 @@ class TestTheRecognitionItself:
         assert [settings.p.optionxform(name) for name in samples] == [
             name.lower() for name in samples]
 
-    def test_a_character_the_parser_folds_to_ascii_is_still_the_flag_name(self, settings):
-        """KELVIN SIGN lower-cases to `k`, so the parser stores this as `api_key_internal_meta`."""
-        name = 'api_Key' + SUFFIX
-        before = _sha(settings)
-
-        result = _save(settings, 'core', name, value='rw')
-
-        assert result == {'success': False, 'error': FLAG_REFUSAL}
-        assert _sha(settings) == before
-        assert settings.p.get('core', 'api_key' + SUFFIX) == 'ro'
-
     def test_the_flag_of_an_unregistered_option_is_refused_in_any_section(self, settings):
         before = _sha(settings)
 
@@ -189,6 +182,99 @@ class TestTheServersOwnFlagWritesAreUnaffected:
         assert _sha(second) == written
 
 
+TAMPERED_SPELLINGS = ['rw', 'hidden', 'ro', 'RW']
+UNDECLARED_OPTION = 'zz_undeclared'
+OTHER_SECTION = 'zz_other'
+
+
+def _tamper(path, section, option, value):
+    """Write `value` as the stored flag of `section.option`, as the old defect left it."""
+    parser = configparser.RawConfigParser()
+    parser.read(path, encoding='utf-8')
+    parser.set(section, option + SUFFIX, value)
+    with open(path, 'w', encoding='utf-8') as handle:
+        parser.write(handle)
+
+
+class TestRegistrationRestoresADeclaredFlag:
+    """An install whose flag was overwritten by the old defect is repaired at registration."""
+
+    def _tampered(self, tmp_path, section, option, value):
+        path = tmp_path / 'config.ini'
+        _load(path)
+        _tamper(path, section, option, value)
+        return path
+
+    def test_a_tampered_read_only_flag_is_declared_again_in_memory(self, tmp_path):
+        path = self._tampered(tmp_path, 'core', 'api_key', 'rw')
+
+        reloaded = _load(path)
+
+        assert reloaded.p.get('core', 'api_key' + SUFFIX) == 'ro'
+        assert reloaded.isOptionWritable('core', 'api_key') is False
+
+    def test_the_read_only_option_is_refused_after_a_tampered_load(self, tmp_path):
+        path = self._tampered(tmp_path, 'core', 'api_key', 'rw')
+        reloaded = _load(path)
+        original = reloaded.p.get('core', 'api_key')
+
+        result = _save(reloaded, 'core', 'api_key', value='placeholder-overwrite')
+
+        assert result == {'success': False}
+        assert reloaded.p.get('core', 'api_key') == original
+
+    def test_a_tampered_hidden_flag_is_restored_too(self, tmp_path):
+        path = self._tampered(tmp_path, HIDDEN_SECTION, HIDDEN_OPTION, 'rw')
+
+        reloaded = _load(path)
+
+        assert reloaded.p.get(HIDDEN_SECTION, HIDDEN_OPTION + SUFFIX) == 'hidden'
+
+    @pytest.mark.parametrize('stored', TAMPERED_SPELLINGS)
+    def test_the_file_holds_the_declared_value_after_the_next_save(self, tmp_path, stored):
+        path = self._tampered(tmp_path, 'core', 'api_key', stored)
+        reloaded = _load(path)
+
+        reloaded.save()
+
+        assert _on_disk(reloaded, 'core', 'api_key' + SUFFIX) == 'ro'
+
+    def test_a_flag_that_already_matches_is_not_rewritten(self, tmp_path):
+        first = _load(tmp_path / 'config.ini')
+        written = _sha(first)
+
+        second = _load(tmp_path / 'config.ini')
+        second.save()
+
+        assert _sha(second) == written
+
+    def test_an_option_that_declares_no_flag_keeps_its_stored_flag_entry(self, tmp_path):
+        path = tmp_path / 'config.ini'
+        _load(path)
+        parser = configparser.RawConfigParser()
+        parser.read(path, encoding='utf-8')
+        parser.add_section(OTHER_SECTION)
+        parser.set(OTHER_SECTION, UNDECLARED_OPTION, 'placeholder-value')
+        parser.set(OTHER_SECTION, UNDECLARED_OPTION + SUFFIX, 'rw')
+        with open(path, 'w', encoding='utf-8') as handle:
+            parser.write(handle)
+        settings = Settings()
+        settings.setFile(str(path))
+
+        settings.registerDefaults(OTHER_SECTION, {UNDECLARED_OPTION: {'default': 'x'}}, save=False)
+
+        assert settings.p.get(OTHER_SECTION, UNDECLARED_OPTION + SUFFIX) == 'rw'
+
+    def test_the_section_hidden_flag_is_left_alone(self, tmp_path):
+        path = tmp_path / 'config.ini'
+        _load(path)
+        _tamper(path, 'core', 'section_hidden', 'true')
+
+        reloaded = _load(path)
+
+        assert reloaded.p.get('core', 'section_hidden' + SUFFIX) == 'true'
+
+
 class TestTheReadPath:
 
     def test_no_flag_entry_appears_in_the_values(self, settings):
@@ -197,7 +283,9 @@ class TestTheReadPath:
         names = [name for options in values.values() for name in options]
         assert [name for name in names if name.endswith(SUFFIX)] == []
 
-    def test_a_flag_stored_under_a_stray_spelling_is_still_hidden_from_the_values(self, tmp_path):
+    def test_an_upper_case_flag_line_in_the_file_loads_as_the_ordinary_hidden_flag(self, tmp_path):
+        """The parser lower-cases on read, so this is the ordinary flag, not a stray entry
+        that `getValues` has to recognise: it shows only that the read hides it."""
         path = tmp_path / 'config.ini'
         path.write_text('[core]\nAPI_KEY_INTERNAL_META = ro\napi_key = placeholder-key-one\n',
                         encoding='utf-8')

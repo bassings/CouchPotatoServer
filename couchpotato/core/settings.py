@@ -239,7 +239,9 @@ class Settings:
             'desc': 'Save setting to config file (settings.conf). Refuses every column '
                     'of a multi-row group (use settings.save_group), any option name with '
                     'whitespace, a control character, "=" or ":", an empty name or one starting '
-                    'with "[", "#" or ";", and a section or name that is not text.',
+                    'with "[", "#" or ";", the name of an option\'s access flag '
+                    '("<option>_internal_meta", in any case), and a section or name '
+                    'that is not text.',
             'params': {
                 'section': {'desc': 'The section name'},
                 'name': {'desc': 'The option name'},
@@ -364,7 +366,7 @@ class Settings:
                 value = option.get('ui-meta').lower()
                 if value in ['hidden', 'rw', 'ro']:
                     meta_option_name = option_name + self.optionMetaSuffix()
-                    self.setDefault(section_name, meta_option_name, value)
+                    self._declareFlag(section_name, meta_option_name, value)
                 else:
                     self.log.warning('Wrong ui-meta value for %s.%s: "%s"', section_name, option_name, value)
 
@@ -692,6 +694,19 @@ class Settings:
     def setDefault(self, section, option, value):
         with _PASSWORD_SAVE_LOCK:
             if self.p and not self.p.has_option(section, option):
+                self.p.set(section, option, value)
+
+    def _declareFlag(self, section, option, value):
+        """Make a DECLARED access flag equal its declared value, at every registration.
+
+        `setDefault` only writes a missing option, so a flag overwritten before
+        `settings.save` refused flag names (`rw` over `core.api_key`'s `ro`)
+        stayed that way. A flag that already matches is not touched, so a
+        load, register and save cycle leaves config.ini byte-identical.
+        """
+        with _PASSWORD_SAVE_LOCK:
+            if self.p and (not self.p.has_option(section, option)
+                           or self.p.get(section, option) != value):
                 self.p.set(section, option, value)
 
     def setType(self, section, option, type):
@@ -1456,11 +1471,13 @@ class Settings:
     def isOptionMeta(self, section, option):
         """Is `option` the name of an option's access flag, in any spelling?
 
-        The name is normalised the way the config parser stores it: `strip()`,
-        then `optionxform` (lower-case). `API_KEY_INTERNAL_META` is stored as
+        The name is lower-cased the way the config parser stores it
+        (`optionxform`): `API_KEY_INTERNAL_META` is stored as
         `api_key_internal_meta`, the real flag, so a case-sensitive suffix test
-        let a caller overwrite a read-only option's flag. A name that is not
-        text is not a flag name.
+        let a caller overwrite a read-only option's flag. `strip()` is not what
+        the parser does on write (a name with whitespace is refused by the
+        unsafe-name rule either way); here it only decides which refusal text a
+        whitespace spelling gets. A name that is not text is not a flag name.
         """
         if not isinstance(option, str):
             return False

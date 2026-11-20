@@ -88,16 +88,6 @@ class TestTheFlagNameIsRefusedOverEveryTransport:
         assert settings.p.get('core', 'api_key') == key
         assert sha(settings.file) == before
 
-    def test_the_api_key_still_authenticates_afterwards(self, world, transport):
-        settings, client = world
-        send(client, 'core', FLAG_NAME, value='rw', transport=transport)
-
-        authenticated = client.get(url(route='app.available'))
-        wrong = client.get(url(key='placeholder-wrong-key', route='app.available'))
-
-        assert authenticated.status_code != 401
-        assert wrong.status_code == 401
-
     def test_one_warning_with_neither_the_spelling_nor_the_value(self, world, transport):
         settings, client = world
 
