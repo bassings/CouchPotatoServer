@@ -611,6 +611,11 @@ result. Getting it wrong the other way files a bug against working code.
   9. Section names are not validated, only failed closed: `settings.save` to a
      section that does not exist raises `NoSectionError` (logged, nothing
      written), and nothing refuses a section name for its characters.
+  10. A wizard Jackett sync with an empty key field deletes the saved Jackett
+     key. `syncJackett` saves the URL and then the key from the form before
+     every sync, the form is never pre-filled, and an empty key clears the
+     saved one. Found at SEC-005 review round 1; on `master` today and not
+     fixed.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
@@ -627,9 +632,14 @@ result. Getting it wrong the other way files a bug against working code.
   stopping a settings change from redirecting the saved Jackett key, and
   queued this as the NEXT spec, which is why it is recorded here. The fix
   needs masking on read together with a `settings.save_group` that never writes
-  a displayed mask over a stored credential, and it must say whether a group
-  save that edits a synced row's host can carry that row's stored key to the
-  new host (not measured). Revisit when SEC-005 has landed.
+  a displayed mask over a stored credential, and the two must ship together.
+  Measured at SEC-005 review round 1: today's `save_group` cannot carry a
+  synced row's stored key to a new host (sending the displayed mask overwrites
+  the stored key with the mask, an empty cell removes it, a missing column is
+  refused, and a per-column save of `host` is refused), so there is no second
+  redirect path through the rows. The same measurement is the warning: a masked
+  read plus today's `save_group` would destroy stored keys, because the mask
+  would be written back over them. Revisit when SEC-005 has landed.
 - **A removed Settings row waits 8 seconds before it is saved (2026-11-18).**
   Owner decision: removing a row from a combined field shows "Row N removed."
   with an Undo button, and the group save that carries the removal is delayed
