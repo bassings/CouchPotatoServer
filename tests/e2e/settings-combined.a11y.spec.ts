@@ -338,7 +338,7 @@ for (const theme of THEMES) {
       await endWithNothingPending(card);
     });
 
-    test('the removal line and Undo: text at least 4.5:1, a target of at least 24px, a visible focus ring, and a name', async ({ page }) => {
+    test('the removal line and Undo: text at least 4.5:1, a target of at least 44px, a visible focus ring, and a name', async ({ page }) => {
       await stubSave(page);
       const card = await openSearchers(page, theme);
 
@@ -355,10 +355,9 @@ for (const theme of THEMES) {
       const undoRatio = await undo.evaluate(TEXT_CONTRAST);
       expect(undoRatio, `${theme}: Undo contrast ${undoRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
       const box = await undo.boundingBox();
-      expect(box!.width, 'Undo width').toBeGreaterThanOrEqual(24);
-      expect(box!.height, 'Undo height').toBeGreaterThanOrEqual(24);
-      // Reached by the keyboard (Remove row 2, Add, Undo), so :focus-visible paints the ring.
-      await page.keyboard.press('Tab');
+      expect(box!.width, 'Undo width').toBeGreaterThanOrEqual(44);
+      expect(box!.height, 'Undo height').toBeGreaterThanOrEqual(44);
+      // Reached by the keyboard (Remove row 2, then Undo), so :focus-visible paints the ring.
       await page.keyboard.press('Tab');
       await expect(undo).toBeFocused();
       const ring = await undo.evaluate(EDGE_CONTRAST, 'outline');

@@ -2241,17 +2241,22 @@ test.describe('Settings: Undo inside the window', () => {
   });
 });
 
+// Where the line sits and so what Tab does (the line is drawn under the row that took the removed
+// row's place, the last row when the last one went; see field_types.html). `focus` is where the
+// removal's focus rule puts focus (AC-A11Y-7, unchanged), `after` what Tab reaches past Undo.
 const UNDO_KEYS = [
-  { name: 'Enter', seed: 'undo-key-enter', press: async (page: Page) => page.keyboard.press('Enter') },
-  { name: 'Space', seed: 'undo-key-space', press: async (page: Page) => page.keyboard.press('Space') },
-  { name: 'a held Enter, which acts once', seed: 'undo-key-held', press: (page: Page) => holdKey(page, 'Enter') },
+  { name: 'Enter, removing the first row', seed: 'undo-key-first', row: 1, focus: 'button:Remove row 1', after: 'button:Enable row 2', press: async (page: Page) => page.keyboard.press('Enter') },
+  { name: 'Space, removing the middle row', seed: 'undo-key-middle', row: 2, focus: 'button:Remove row 2', after: 'button:Add row', press: async (page: Page) => page.keyboard.press('Space') },
+  { name: 'Enter, removing the last row', seed: 'undo-key-last', row: 3, focus: 'button:Remove row 2', after: 'button:Add row', press: async (page: Page) => page.keyboard.press('Enter') },
+  { name: 'a held Enter on the first row, which acts once', seed: 'undo-key-held-first', row: 1, focus: 'button:Remove row 1', after: 'button:Enable row 2', press: (page: Page) => holdKey(page, 'Enter') },
+  { name: 'a held Enter on the last row, which acts once', seed: 'undo-key-held', row: 3, focus: 'button:Remove row 2', after: 'button:Add row', press: (page: Page) => holdKey(page, 'Enter') },
 ] as const;
 
-for (const { name, seed, press } of UNDO_KEYS) {
+for (const { name, seed, row, focus, after, press } of UNDO_KEYS) {
   test.describe(`Settings: Undo by keyboard with ${name}`, () => {
     test.use({ seedConfig: `newznab_aligned#${seed}` });
 
-    test('Undo is two Tabs from where focus lands, the row returns once and no further row is removed or saved', async ({ page, testServer }) => {
+    test('Undo is the next Tab stop after the control focus lands on, the row returns once and no further row is removed or saved', async ({ page, testServer }) => {
       await page.clock.install();
       const net = await recordRequests(page);
       const before = configSha(testServer.configPath);
@@ -2259,19 +2264,21 @@ for (const { name, seed, press } of UNDO_KEYS) {
       const card = providerCard(page, 'Newznab');
       const shown = await shownRows(card);
 
-      await pressRemoveByKeyboard(page, card, 3);
-      // Focus lands on the Remove button now last; Add is next, then Undo.
-      await expect(removeButton(card, 2)).toBeFocused();
+      await pressRemoveByKeyboard(page, card, row);
+      await expect.poll(() => focusedControl(page)).toBe(focus);
       await page.keyboard.press('Tab');
-      await expect(card.getByRole('button', { name: 'Add row', exact: true })).toBeFocused();
+      await expect(undoButton(card)).toBeFocused();
+      // And on from Undo: the next row's first control, or Add.
       await page.keyboard.press('Tab');
+      expect(await focusedControl(page)).toBe(after);
+      await page.keyboard.press('Shift+Tab');
       await expect(undoButton(card)).toBeFocused();
       await recordRowCounts(card);
 
       await press(page);
 
       await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(3);
-      await expect.poll(() => focusedControl(page)).toBe('button:Remove row 3');
+      await expect.poll(() => focusedControl(page)).toBe(`button:Remove row ${row}`);
       await nextFrames(page);
       const counts = await rowCountHistory(page);
       expect(Math.min(...counts), `history ${counts.join(',')}`).toBe(2);
@@ -2283,6 +2290,68 @@ for (const { name, seed, press } of UNDO_KEYS) {
     });
   });
 }
+
+test.describe('Settings: with one row left the line is under it, before Add', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-one-left' });
+
+  test('focus goes to Add (the removal rule), Undo is the stop before it, and Undo still works', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    const before = configSha(testServer.configPath);
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    await pressRemoveByKeyboard(page, card, 3);
+    await card.getByLabel('custom tag for row 1', { exact: true }).focus();
+    await page.keyboard.press('Tab');
+    await expect(removeButton(card, 1)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => focusedControl(page)).toBe('button:Add row');
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(0);
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(undoButton(card)).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
+    // Undo took back the latest removal only; the first (row 3) is committed by the save that follows.
+    await expect(removedLine(card)).toHaveCount(0);
+    await endUndoWindow(page);
+    await page.waitForLoadState('networkidle');
+    expect(configSha(testServer.configPath)).not.toBe(before);
+    expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(2));
+  });
+});
+
+test.describe('Settings: the line coming and going does not disturb the rows around it', () => {
+  test.use({ seedConfig: 'newznab_aligned#undo-neighbours' });
+
+  test('a value typed in another row survives, and the rows above the line do not move', async ({ page, testServer }) => {
+    test.info().annotations.push(...combineGroupWriter());
+    await page.clock.install();
+    await openSettings(page, 'Searchers');
+    const card = providerCard(page, 'Newznab');
+    await card.getByLabel('api key for row 3', { exact: true }).fill('placeholder-key-typed');
+    // Relative to the card, so a scroll of the page is not read as the rows moving.
+    const topOfRow1 = () => card.evaluate((root) => root.querySelector('input[aria-label="host for row 1"]')!.getBoundingClientRect().top - root.getBoundingClientRect().top);
+    const top = await topOfRow1();
+
+    await removeButton(card, 3).click();
+    await expect(removedLine(card)).toBeVisible();
+    expect(await topOfRow1(), 'a row above the line moved').toBe(top);
+    await undoButton(card).click();
+    await expect(card.getByLabel('api key for row 3', { exact: true })).toHaveValue('placeholder-key-typed');
+
+    // The typed value in row 3 must survive the line appearing under row 1 and going again.
+    await removeButton(card, 1).click();
+    await expect(card.getByLabel('api key for row 2', { exact: true })).toHaveValue('placeholder-key-typed');
+    await expect(card.getByLabel('host for row 1', { exact: true })).toHaveValue(NEWZNAB_HOSTS[1]);
+    await undoButton(card).click();
+    await expect(card.getByLabel('api key for row 3', { exact: true })).toHaveValue('placeholder-key-typed');
+    await expect(card.getByLabel('api key for row 1', { exact: true })).toHaveValue(NEWZNAB_KEYS[0]);
+    await endUndoWindow(page);
+    await page.waitForLoadState('networkidle');
+    expect(configColumns(testServer.configPath, 'newznab').api_key).toBe([NEWZNAB_KEYS[0], NEWZNAB_KEYS[1], 'placeholder-key-typed'].join(','));
+  });
+});
 
 test.describe('Settings: Undo after the delayed save has landed', () => {
   test.use({ seedConfig: 'newznab_aligned#undo-after' });
@@ -2499,9 +2568,13 @@ test.describe('Settings: a button that acts on the saved rows sends a pending re
       test.info().annotations.push(...combineGroupWriter());
       await page.clock.install();
       const net = await recordRequests(page);
-      await page.route('**/torrentpotato.jackett_sync/**', (route) => route.fulfill({
-        status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }),
-      }));
+      // The sync is held until the test lets it go, so what is on screen DURING the action can be read.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      await page.route('**/torrentpotato.jackett_sync/**', async (route) => {
+        await gate;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Synced' }) });
+      });
       await openSettings(page, 'Searchers');
       const card = providerCard(page, 'TorrentPotato');
       await openCard(card);
@@ -2512,6 +2585,11 @@ test.describe('Settings: a button that acts on the saved rows sends a pending re
 
       const indexOf = (part: string) => net.seen.map((request) => request.url).findIndex((url) => url.includes(part));
       await expect.poll(() => indexOf('torrentpotato.jackett_sync')).toBeGreaterThanOrEqual(0);
+      // The group is locked and the action has not answered: no re-read has happened, so only the
+      // lock itself can have taken the line away. Undo is not offered while the rows are locked.
+      await expect(removedLine(card)).toHaveCount(0);
+      await expect(card.getByTestId('combine-locked-note')).toBeVisible();
+      release();
       await page.waitForLoadState('networkidle');
       expect(indexOf('settings.save_group')).toBeGreaterThanOrEqual(0);
       expect(indexOf('settings.save_group')).toBeLessThan(indexOf('torrentpotato.jackett_sync'));
@@ -2548,6 +2626,12 @@ test.describe('Settings: Undo and a refused group', () => {
     await expect(host3).toHaveAttribute('aria-invalid', 'true');
     await expect(card.getByTestId('combine-row-error')).toContainText('Row 3: the host');
     await expect(card.locator('[aria-invalid="true"]')).toHaveCount(1);
+    // The restored rows go through the normal save, which the server refuses again: the marks stay
+    // on row 3, and the page has nothing left pending when the test ends.
+    const again = groupSaveResponse(page);
+    await page.clock.fastForward(600);
+    expect((await (await again).json()).success).toBe(false);
+    await expect(host3).toHaveAttribute('aria-invalid', 'true');
     expect(configSha(testServer.configPath)).toBe(before);
   });
 });

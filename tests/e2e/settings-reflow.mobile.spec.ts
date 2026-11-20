@@ -92,7 +92,7 @@ for (const theme of ['light', 'dark'] as const) {
   test.describe(`the removal line at 375px in ${theme} theme`, () => {
     test.use({ seedConfig: `newznab_aligned#mobile-removal-line-${theme}` });
 
-    test('shows in full inside the viewport, Undo is a target of at least 24px, and nothing scrolls sideways', async ({ page }) => {
+    test('shows in full inside the viewport, Undo is a target of at least 44px, and nothing scrolls sideways', async ({ page }) => {
       await page.setViewportSize({ width: 375, height: 800 });
       await page.addInitScript((selectedTheme) => {
         localStorage.setItem('cp-theme', selectedTheme);
@@ -112,8 +112,8 @@ for (const theme of ['light', 'dark'] as const) {
       });
       expect(fits).toEqual({ inside: true });
       const box = await undo.boundingBox();
-      expect(box!.width).toBeGreaterThanOrEqual(24);
-      expect(box!.height).toBeGreaterThanOrEqual(24);
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+      expect(box!.height).toBeGreaterThanOrEqual(44);
       expect(box!.x + box!.width).toBeLessThanOrEqual(375);
       // End with nothing waiting to be saved: a pending removal is sent when the page goes.
       await undo.click();

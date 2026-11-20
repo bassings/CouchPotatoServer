@@ -76,6 +76,10 @@ import { expectVisualTransitionsToSettle, mockSettingsSave } from './helpers';
  */
 async function mockSettingsSaveEchoingValue(page: Page): Promise<void> {
   await mockSettingsSave(page);
+  // A Newznab row toggle is a combine-group edit, saved by the group route, not per column.
+  await page.route('**/settings.save_group/**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }),
+  }));
   await page.route('**/settings.save/**', async (route) => {
     const params = new URLSearchParams(route.request().postData() ?? '');
     await route.fulfill({
@@ -83,6 +87,17 @@ async function mockSettingsSaveEchoingValue(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({ success: true, value: params.get('value') }),
     });
+  });
+}
+
+/** The sections whose combine-group save is waiting to be sent or is in flight, read from the panel. */
+function pendingGroupSaves(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const root = document.querySelector('[x-data="settingsPanel()"]');
+    const groups = (window as any).Alpine.$data(root).groupState || {};
+    return Object.entries(groups)
+      .filter(([, group]: [string, any]) => group.timer || group.queued || group.saving)
+      .map(([section]) => section);
   });
 }
 
@@ -415,6 +430,11 @@ for (const theme of ['dark', 'light'] as const) {
     ];
     expect(newznabNames.slice().sort(), `expected exactly ${JSON.stringify(expectedNewznabNames)}`)
       .toEqual(expectedNewznabNames.slice().sort());
+
+    // The row toggles edited the Newznab group, and a group save waits out a 500 ms debounce. It
+    // must go out HERE, to the mock above: a save still waiting when the page closes is sent by
+    // the browser as the page goes, where no route sees it, and lands on the shared server.
+    await expect.poll(() => pendingGroupSaves(page), 'a group save was still pending').toEqual([]);
   });
 }
 

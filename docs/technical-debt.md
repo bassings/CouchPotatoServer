@@ -625,9 +625,21 @@ result. Getting it wrong the other way files a bug against working code.
      pending removal: the row is still there on the next load. The safe
      direction (a row is never deleted the server was not asked to delete), but
      the user who saw "Row 2 removed" and lost power will find it back.
+  a2. A phone browser backgrounded and then discarded by the operating system
+     may never fire `pagehide`: same outcome as (a), the row is still there on
+     the next load.
   b. `pagehide` cannot await a request. If a save for that group is already in
-     flight when the page goes, the keepalive request is sent anyway and the
-     two may land in either order; the window is milliseconds long.
+     flight when the page goes, the keepalive request (the queued rows too) is
+     sent anyway and the two may land in either order; the window is
+     milliseconds long, and only the queued case is tested (unit).
+  b2. Leaving the page now sends ANY pending group edit, not only a removal. A
+     save the server refuses is lost without a message, as the rows are still
+     as stored.
+  b3. Another tab: the removal reaches the server 8 s after the click instead
+     of 0.5 s, so the passive overwrite window is 16 times as long, and Undo,
+     pressed at any later time, re-saves the page's whole snapshot over
+     whatever another tab or a sync stored meanwhile. Nothing detects it (the
+     freshness token of SEC-004 AC-DATA-4 is the durable fix).
   c. A page restored from the back/forward cache after leaving was not
      measured and is not tested; by reading the code Undo stays offered and
      would save the restored rows through the normal save.

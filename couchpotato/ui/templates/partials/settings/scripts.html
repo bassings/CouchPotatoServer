@@ -692,12 +692,17 @@ function settingsPanel() {
 
     /** The page is going away: a save still waiting out its delay would be lost with it
      *  (the removal, or an edit that rode along), so send it now. `keepalive` lets the
-     *  browser finish the request after the page is gone. Nothing waits on the answer. */
+     *  browser finish the request after the page is gone. Nothing waits on the answer. If a
+     *  save for the group is already in flight, this one is sent without waiting for it, so
+     *  the two may land in either order (a recorded limit: SEC-004 AC-DATA-24(b)). */
     flushGroupsOnLeave() {
       for (const [section, group] of Object.entries(this.groupState)) {
-        if (!group.timer || group.locked) continue;
+        // Waiting on its timer, or queued behind a save already in flight (the in-flight request
+        // may be cut off with the page, so the queued rows go too: see the ordering limit above).
+        if (!(group.timer || group.queued) || group.locked) continue;
         clearTimeout(group.timer);
         group.timer = null;
+        group.queued = false;
         fetch(CP.apiBase + '/settings.save_group/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1628,6 +1633,14 @@ function combinedField(section, opt) {
     /** The line beside Undo: the row's number and nothing it held. Empty when there is no removal. */
     get removedLine() {
       return this.held && this.held.removal ? CP.ui.rowRemovedLine(this.held.removal.index) : '';
+    },
+
+    /** The index of the row the line is drawn under, or -1 when there is no removal: the row that
+     *  now sits where the removed one was, or the last row when the last one was removed. Named
+     *  here, and used for focus too, so the line is the next Tab stop after the control focus
+     *  lands on. */
+    get removedAfter() {
+      return this.held && this.held.removal ? Math.min(this.held.removal.index, this.rows.length - 1) : -1;
     },
 
     removeRow(idx) {

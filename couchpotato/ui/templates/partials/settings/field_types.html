@@ -342,9 +342,29 @@
           </template>
         </div>
       </template>
+      <!-- The way back from a removal, in the list at the place the removed row was: directly below
+           the row that now sits there (the last row, when the last one was removed), so Undo is the
+           very next Tab stop after that row's Remove button, which is where focus lands. It is a
+           sibling of the row's own controls inside the row's wrapper, so the keyed rows and the
+           inputs in them are not touched when it comes or goes. It stays after the delayed save has
+           landed (WCAG 2.2.1): it goes only when the group is edited, added to, removed from again,
+           locked, reloaded or the page is. Not a live region: the panel announces the removal once,
+           politely. Names the row by number only, never by a value. The lock removes it, so Undo
+           is never shown locked. -->
+      <template x-if="removedAfter === rowIdx">
+        <p class="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-cp-muted" data-testid="combine-removed-line">
+          <span :id="'cf-removed-' + section" x-text="removedLine"></span>
+          <button @click="undoRemoval()"
+                  @keydown="ignoreHeldKey($event)"
+                  type="button"
+                  data-row-undo
+                  :aria-describedby="'cf-removed-' + section"
+                  class="inline-flex items-center justify-center min-h-[44px] min-w-[44px] px-2 rounded-md text-cp-accent underline hover:text-cp-accentHover transition-colors">Undo</button>
+        </p>
+      </template>
       </div>
     </template>
-    
+
     <button @click="addRow()"
             @keydown="ignoreHeldKey($event)"
             type="button"
@@ -353,24 +373,6 @@
             :class="locked ? 'cursor-not-allowed' : ''"
             class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors"
             aria-label="Add row">+ Add</button>
-    <!-- The way back from a removal. After the Add button, so Tab reaches it from wherever focus
-         landed (a Remove button or Add). It stays after the delayed save has landed (WCAG 2.2.1):
-         it goes only when the group is edited, added to, removed from again, locked, reloaded or
-         the page is. Not a live region: the panel announces the removal once, politely. Names the
-         row by number only, never by a value. -->
-    <template x-if="removedLine">
-      <p class="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-cp-muted" data-testid="combine-removed-line">
-        <span :id="'cf-removed-' + section" x-text="removedLine"></span>
-        <button @click="undoRemoval()"
-                @keydown="ignoreHeldKey($event)"
-                type="button"
-                data-row-undo
-                :aria-disabled="locked ? 'true' : null"
-                :aria-describedby="'cf-removed-' + section"
-                :class="locked ? 'cursor-not-allowed' : ''"
-                class="inline-flex items-center justify-center min-h-[28px] min-w-[44px] px-2 rounded-md text-cp-accent underline hover:text-cp-accentHover transition-colors">Undo</button>
-      </p>
-    </template>
     <p x-show="buildDescription()" class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
     <template x-if="hasLearnMore()">
       <details class="mt-2 text-[10px]">

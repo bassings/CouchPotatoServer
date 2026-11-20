@@ -1652,6 +1652,33 @@ describe('removing a row, with a way back (owner decision 2026-11-18)', () => {
     expect(field.held).toBe(group);
   });
 
+  for (const [name, index, rowsLeft, under] of [
+    ['the first row', 0, 2, 0],
+    ['a middle row', 1, 2, 1],
+    ['the last row', 2, 2, 1],
+  ] as const) {
+    it(`draws the line under the row that took the place of ${name}: the row focus lands on, so Undo is the next Tab stop`, () => {
+      const { field } = fieldOver();
+
+      expect(field.removedAfter).toBe(-1);
+      field.removeRow(index);
+
+      expect(field.rows).toHaveLength(rowsLeft);
+      expect(field.removedAfter).toBe(under);
+      expect(field.focusTarget).toEqual({ kind: 'remove', index: under });
+    });
+  }
+
+  it('with one row left the line is under that row, and focus goes to Add', () => {
+    const { field } = fieldOver();
+    field.removeRow(0);
+    field.removeRow(0);
+
+    expect(field.rows).toHaveLength(1);
+    expect(field.removedAfter).toBe(0);
+    expect(field.focusTarget).toEqual({ kind: 'add' });
+  });
+
   it('keeps the removal across a rebuilt field: a second field over the same panel still offers Undo', () => {
     const { field, panel } = fieldOver();
     field.removeRow(0);
@@ -1936,6 +1963,27 @@ describe('removing a row, with a way back (owner decision 2026-11-18)', () => {
       expect(hostsSent(net, 0)).toEqual([HOSTS[0], HOSTS[1]]);
       await vi.advanceTimersByTimeAsync(UNDO_WINDOW * 2);
       expect(net.groupSaves()).toHaveLength(1);
+    });
+
+    it('leaving the page sends a removal that is queued behind a save in flight, once', async () => {
+      const net = installFetch();
+      const first = deferred<Reply>();
+      net.replies.push(first.promise);
+      const { field, panel } = fieldOver();
+      field.removeRow(0);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      expect(net.groupSaves()).toHaveLength(1);
+      // The first save is still in flight; the next removal's save comes due and queues behind it.
+      field.removeRow(0);
+      await vi.advanceTimersByTimeAsync(UNDO_WINDOW);
+      expect(panel.groupState.newznab).toMatchObject({ saving: true, queued: true, timer: null });
+
+      panel.flushGroupsOnLeave();
+
+      expect(net.groupSaves()).toHaveLength(2);
+      expect(net.calls[1].init.keepalive).toBe(true);
+      expect(hostsSent(net, 1)).toEqual([HOSTS[2]]);
+      expect(panel.groupState.newznab.queued).toBe(false);
     });
 
     it('leaving the page with nothing pending sends nothing, and a locked group sends nothing', () => {

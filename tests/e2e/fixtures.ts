@@ -24,7 +24,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { type Route, test as base, expect } from '@playwright/test';
+import { type Page, type Route, test as base, expect } from '@playwright/test';
 
 import { assertE2EPortAvailable, resolveE2EPort } from './port';
 import {
@@ -303,6 +303,33 @@ function assertWriterOwnsItsSeed(annotations: readonly { type: string }[], seedC
     throw new Error(`seedConfig ${JSON.stringify(seedConfig)} is already owned by another combine-group writer; give this test its own value.`);
   }
   writerSeeds.add(seedConfig);
+}
+
+/**
+ * Fail a test that ends with a combine-group save pending on the Settings page, unless it is a
+ * declared writer (it owns its server, and the changes are restored). Read from the panel's own
+ * state, because the request itself is invisible (see the call site). Names the section only.
+ * A page that is gone or is not the Settings page has nothing pending.
+ */
+async function assertNoPendingGroupSave(page: Page, annotations: Annotations) {
+  if (annotations.some(({ type }) => type === COMBINE_WRITER_ANNOTATION)) return;
+  const pending = await page.evaluate(() => {
+    const root = document.querySelector('[x-data="settingsPanel()"]');
+    const alpine = (window as any).Alpine;
+    if (!root || !alpine) return [];
+    const groups = alpine.$data(root).groupState || {};
+    return Object.entries(groups)
+      .filter(([, group]: [string, any]) => group.timer || group.queued)
+      .map(([section]) => section);
+  }).catch(() => [] as string[]); // closed or navigating: no page, nothing pending
+  if (pending.length > 0) {
+    throw new Error(
+      `This test ended with a combine-group save still pending (${pending.join(', ')}). The Settings page `
+      + 'sends it as the page closes, by a request no route can intercept, so it would write the real server. '
+      + 'Let the save go out inside the test (advance the page clock past the debounce, then wait for the '
+      + 'mocked or real response), or take the change back, or make the test a combineGroupWriter() on its own seedConfig.',
+    );
+  }
 }
 
 type Tally = { blocked: number; sharedGroupSaves: number };
@@ -625,8 +652,13 @@ export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions
     await page.route(SETTINGS_WRITE_ROUTES, guardRoute(tally, !seedConfig, testInfo.annotations));
 
     await use();
-    // Closing the page cancels its debounce timers. Audit only after no later
-    // browser callback can slip a save into the teardown window.
+    // A group save still waiting out its delay (the 500 ms debounce, or the 8 s undo window of a
+    // removal) is SENT when the page closes: the Settings page flushes it on `pagehide`, as a
+    // `keepalive` request, which the browser makes itself, so no Playwright route (mocks and
+    // this guard included) and no request listener ever sees it. It lands on the real server.
+    // So a test that is not a declared combine-group writer must not end with one pending.
+    await assertNoPendingGroupSave(page, testInfo.annotations);
+    // Audit only after no later browser callback can slip a save into the teardown window.
     await page.close();
 
     const after = await loadSettingsSnapshot(settingsURL, 'after');
