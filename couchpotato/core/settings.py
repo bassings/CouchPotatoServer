@@ -366,7 +366,7 @@ class Settings:
                 value = option.get('ui-meta').lower()
                 if value in ['hidden', 'rw', 'ro']:
                     meta_option_name = option_name + self.optionMetaSuffix()
-                    self._declareFlag(section_name, meta_option_name, value)
+                    self._declare_flag(section_name, meta_option_name, value)
                 else:
                     self.log.warning('Wrong ui-meta value for %s.%s: "%s"', section_name, option_name, value)
 
@@ -696,7 +696,7 @@ class Settings:
             if self.p and not self.p.has_option(section, option):
                 self.p.set(section, option, value)
 
-    def _declareFlag(self, section, option, value):
+    def _declare_flag(self, section, option, value):
         """Make a DECLARED access flag equal its declared value, at every registration.
 
         `setDefault` only writes a missing option, so a flag overwritten before
