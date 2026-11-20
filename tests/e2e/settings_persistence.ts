@@ -43,24 +43,43 @@ function pageWentAway(error: unknown): boolean {
 }
 
 /**
+ * How long a Settings page is given to start its panel before the read calls itself blind:
+ * 50 reads, 100 ms apart. A test may end the moment the heading is on screen, before Alpine
+ * has run; that page has no pending save yet, and is not a renamed selector.
+ */
+export const PANEL_READ_ATTEMPTS = 50;
+const PANEL_READ_INTERVAL_MS = 100;
+
+const pause = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, PANEL_READ_INTERVAL_MS); });
+
+function onSettingsPage(page: PageForPanel): boolean {
+  return /\/settings\/?$/.test(new URL(page.url()).pathname);
+}
+
+/**
  * The sections with a group save still pending on the Settings page, read from the panel; with
  * `cancel`, also cancelled. A page that is closed or navigating has none. On the Settings page a
- * missing panel (a renamed selector, Alpine gone) and any other failure of the read THROW: a guard
- * that cannot see is a failure, never a pass.
+ * panel that is not there is waited for (the page may still be starting), and one that never
+ * appears (a renamed selector, Alpine gone) THROWS, as does any other failure of the read: a
+ * guard that cannot see is a failure, never a pass.
  */
-export async function readPendingGroupSaves(page: PageForPanel, cancel = false): Promise<string[]> {
-  if (page.isClosed()) return [];
-  let read: { found: boolean; sections: string[] };
-  try {
-    read = await page.evaluate(readPanelPendingSaves, cancel);
-  } catch (error) {
-    if (pageWentAway(error)) return [];
-    throw error;
+export async function readPendingGroupSaves(page: PageForPanel, cancel = false, sleep: () => Promise<void> = pause): Promise<string[]> {
+  for (let attempt = 1; ; attempt += 1) {
+    if (page.isClosed()) return [];
+    let read: { found: boolean; sections: string[] };
+    try {
+      read = await page.evaluate(readPanelPendingSaves, cancel);
+    } catch (error) {
+      if (pageWentAway(error)) return [];
+      throw error;
+    }
+    if (read.found) return read.sections;
+    if (!onSettingsPage(page)) return [];
+    if (attempt >= PANEL_READ_ATTEMPTS) {
+      throw new Error('The Settings panel (x-data="settingsPanel()") or Alpine was not found on the Settings page, so a pending group save cannot be seen. Update readPanelPendingSaves.');
+    }
+    await sleep();
   }
-  if (!read.found && /\/settings\/?$/.test(new URL(page.url()).pathname)) {
-    throw new Error('The Settings panel (x-data="settingsPanel()") or Alpine was not found on the Settings page, so a pending group save cannot be seen. Update readPanelPendingSaves.');
-  }
-  return read.sections;
 }
 
 /**

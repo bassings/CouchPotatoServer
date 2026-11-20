@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   SETTINGS_PERSISTENCE_ANNOTATION,
   allowsSettingsPersistence,
+  PANEL_READ_ATTEMPTS,
   changedSettings,
   readPanelPendingSaves,
   readPendingGroupSaves,
@@ -74,12 +75,41 @@ describe('reading the Settings panel for a group save that is still pending', ()
     await expect(readPendingGroupSaves(broken)).rejects.toThrow(/alpine/);
   });
 
-  it('on the Settings page a missing panel is an error (a blind guard fails), elsewhere it is not', async () => {
+  it('on the Settings page a panel that never appears is an error (a blind guard fails), elsewhere it is not', async () => {
     const missing = vi.fn(async () => ({ found: false, sections: [] }));
+    const sleep = vi.fn(async () => {});
 
-    await expect(readPendingGroupSaves(page({ evaluate: missing }))).rejects.toThrow(/panel/i);
-    expect(await readPendingGroupSaves(page({ evaluate: missing, url: () => 'http://localhost:5170/wanted/' }))).toEqual([]);
-    expect(await readPendingGroupSaves(page({ evaluate: missing, url: () => 'about:blank' }))).toEqual([]);
+    await expect(readPendingGroupSaves(page({ evaluate: missing }), false, sleep)).rejects.toThrow(/panel/i);
+    expect(missing).toHaveBeenCalledTimes(PANEL_READ_ATTEMPTS);
+    expect(sleep).toHaveBeenCalledTimes(PANEL_READ_ATTEMPTS - 1);
+
+    sleep.mockClear();
+    expect(await readPendingGroupSaves(page({ evaluate: missing, url: () => 'http://localhost:5170/wanted/' }), false, sleep)).toEqual([]);
+    expect(await readPendingGroupSaves(page({ evaluate: missing, url: () => 'about:blank' }), false, sleep)).toEqual([]);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('a Settings page that is still starting is read once its panel is there, not reported as blind', async () => {
+    const answers = [{ found: false, sections: [] }, { found: false, sections: [] }, { found: true, sections: ['newznab'] }];
+    const evaluate = vi.fn(async () => answers.shift());
+    const sleep = vi.fn(async () => {});
+
+    expect(await readPendingGroupSaves(page({ evaluate }), true, sleep)).toEqual(['newznab']);
+
+    expect(evaluate).toHaveBeenCalledTimes(3);
+    expect(evaluate).toHaveBeenLastCalledWith(readPanelPendingSaves, true);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it('a page that navigates away while the panel is awaited has nothing pending', async () => {
+    let calls = 0;
+    const evaluate = vi.fn(async () => {
+      calls += 1;
+      if (calls > 1) throw new Error('Execution context was destroyed, most likely because of a navigation');
+      return { found: false, sections: [] };
+    });
+
+    expect(await readPendingGroupSaves(page({ evaluate }), false, async () => {})).toEqual([]);
   });
 });
 
