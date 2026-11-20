@@ -351,6 +351,16 @@ class TestMalformedPayloads:
 
         refuse(settings, 'newznab', rows, (2, None, 'unknown_column'))
 
+    @pytest.mark.parametrize('flag_name', [
+        'api_key_internal_meta', 'API_KEY_INTERNAL_META', ' host_internal_meta',
+    ])
+    def test_a_flag_name_is_a_column_the_group_does_not_declare(self, settings, flag_name):
+        """The group save cannot be used to write an option's access flag."""
+        rows = three_rows(settings, 'newznab')
+        rows[1][flag_name] = 'rw'
+
+        refuse(settings, 'newznab', rows, (1, None, 'unknown_column'))
+
     @pytest.mark.parametrize('section', [
         'core', 'no_such_section', 'NEWZNAB', 'newznab ', '', None, 7, ['newznab'], {'a': 1},
     ])
