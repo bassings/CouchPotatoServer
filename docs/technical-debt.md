@@ -645,15 +645,21 @@ result. Getting it wrong the other way files a bug against working code.
      freshness token of SEC-004 AC-DATA-4 is the durable fix).
   c. A page restored from the back/forward cache after leaving was not
      measured and is not tested; by reading the code Undo stays offered and
-     would save the restored rows through the normal save. If the keepalive
-     save was refused or failed, the restored page shows rows the server does
-     not hold, with no mark and no error, until the next edit saves all rows.
+     would save the restored rows through the normal save. A page that
+     survives `pagehide` stays marked unsaved (dirty, no timer) after a
+     keepalive save that SUCCEEDED too, when no save was in flight: harmless, a
+     later save re-sends the same rows, but the automatic refresh of that group
+     does not run until then. If the keepalive save was refused or failed, the
+     restored page shows rows the server does not hold, with no mark and no
+     error, until the next edit saves all rows.
   d. The test connection button now saves the section's group first
      (`testProvider`); a save the server refuses leaves the test running
      against the rows that are stored.
   e. An E2E that ends with a removal still waiting writes at teardown, because
-     the request the page sends as it goes is made by the browser, which no
-     Playwright route or request listener sees: such a test must own its
+     the request the page sends as it goes is made by the browser, which a
+     Playwright route or request listener may not see (measured: seen on
+     `page.close()` and on a synthetic `pagehide`, not on a real navigation):
+     such a test must own its
      `seedConfig` (it is a combine-group writer) or end by pressing Undo.
      The E2E fixture now reads the panel before the page closes, cancels a
      pending group save in the page, runs the restore and the audit, and then

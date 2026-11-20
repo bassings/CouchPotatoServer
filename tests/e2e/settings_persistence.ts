@@ -3,8 +3,10 @@ export const SETTINGS_PERSISTENCE_ANNOTATION = 'persistsSettings';
 // ── A combine-group save that is still waiting (SEC-004 AC-DATA-24) ───────────────────────────
 // The Settings page sends a group save that is waiting out its delay (the 500 ms debounce, or the
 // 8 s undo window of a removal) AS THE PAGE CLOSES, with `keepalive`. The browser makes that
-// request itself, so no Playwright route and no request listener sees it. The panel's own state is
-// the only place to see it coming, and the fixture and the specs read it through this one helper.
+// request itself, so a Playwright route or request listener MAY NOT see it (measured: seen on
+// `page.close()` and on a synthetic `pagehide`, not on a real navigation). The panel's own state is
+// the one place that does not depend on that, so the fixture and the specs read it through this
+// one helper, and the guard cancels the save in the page rather than relying on a route.
 
 type PageForPanel = {
   isClosed(): boolean;

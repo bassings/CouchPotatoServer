@@ -542,7 +542,7 @@ test.describe('Settings: the persistence guard covers the group-save route', () 
 });
 
 // A group save still waiting when the page closes is sent by the page itself (`pagehide`, keepalive),
-// where no route or request listener sees it. The fixture therefore reads the panel, cancels what is
+// where a route or request listener may not see it. The fixture therefore reads the panel, cancels what is
 // pending and fails the test (tests/e2e/fixtures.ts). `test.fail()` makes the canary pass only if the
 // test FAILS. It is not a combineGroupWriter() and the page clock is faked so the debounce cannot
 // fire inside the test: the only thing that can fail it is the fixture's pending-save guard.
@@ -555,7 +555,11 @@ test.describe('Settings: a test that ends with a group save pending', () => {
       test.fail(true, 'the fixture must fail a test that ends with a combine-group save still pending');
       await page.clock.install();
       await openSettings(page, 'Searchers');
+      // Nothing pending before the edit and the Newznab save pending after it, so the only failure
+      // left for teardown is the guard's (a failure of this body would also satisfy test.fail).
+      expect(await readPendingGroupSaves(page), 'something was pending before the edit').toEqual([]);
       await providerCard(page, 'Newznab').getByLabel('api key for row 1', { exact: true }).fill('placeholder-key-canary');
+      expect(await readPendingGroupSaves(page), 'the edit left no save pending, so the canary tests nothing').toEqual(['newznab']);
     });
   });
 
@@ -2377,7 +2381,18 @@ test.describe('Settings: the line coming and going does not disturb the rows aro
       const input = root.querySelector(`input[aria-label="host for row ${n}"]`);
       return input ? input.getBoundingClientRect().top - root.getBoundingClientRect().top : null;
     }));
-    const lineBlock = () => removedLine(card).evaluate((line) => line.getBoundingClientRect().height + Number.parseFloat(getComputedStyle(line).marginTop));
+    // The contract's numbers are FIXED here (a 4 px top margin), not read back from the page's own
+    // style, which would agree with whatever the page does. And the line must not overlap the row it sits under.
+    const LINE_MARGIN_TOP = 4;
+    const lineGeometry = () => card.evaluate((root) => {
+      const line = root.querySelector('[data-testid="combine-removed-line"]')!;
+      const above = root.querySelector('input[aria-label="host for row 1"]')!.closest('[data-testid="combine-row-cells"]')!;
+      return {
+        marginTop: getComputedStyle(line).marginTop,
+        height: line.getBoundingClientRect().height,
+        gapBelowRow: line.getBoundingClientRect().top - above.getBoundingClientRect().bottom,
+      };
+    });
     const [t1, t2, t3] = (await tops()) as number[];
     const pitch = t2 - t1;
     expect(t3 - t2, 'the rows are not evenly spaced to begin with').toBeCloseTo(pitch, 0);
@@ -2398,7 +2413,10 @@ test.describe('Settings: the line coming and going does not disturb the rows aro
     await expect(card.getByLabel('host for row 1', { exact: true })).toHaveValue(NEWZNAB_HOSTS[1]);
     const [afterT1, afterT2] = (await tops()) as number[];
     expect(afterT1, 'the row above the line moved').toBe(t1);
-    expect(afterT2 - afterT1, 'the row below the line is not one pitch plus the line below the one above').toBeCloseTo(pitch + (await lineBlock()), 0);
+    const line = await lineGeometry();
+    expect(line.marginTop, 'the line\'s top margin is not 4px').toBe(`${LINE_MARGIN_TOP}px`);
+    expect(line.gapBelowRow, 'the line overlaps the row it sits under').toBeGreaterThanOrEqual(0);
+    expect(Math.abs(afterT2 - afterT1 - (pitch + line.height + LINE_MARGIN_TOP)), 'the row below the line is not one pitch plus the line and its 4px margin below the one above').toBeLessThanOrEqual(1);
     await undoButton(card).click();
     expect(await tops(), 'a row did not return to where it was').toEqual([t1, t2, t3]);
     await expect(card.getByLabel('api key for row 3', { exact: true })).toHaveValue('placeholder-key-typed');

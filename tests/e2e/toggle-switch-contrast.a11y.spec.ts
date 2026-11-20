@@ -423,7 +423,7 @@ for (const theme of ['dark', 'light'] as const) {
 
     // The row toggles edited the Newznab group, and a group save waits out a 500 ms debounce. It
     // must go out HERE, to the mock above: a save still waiting when the page closes is sent by
-    // the browser as the page goes, where no route sees it, and lands on the shared server.
+    // the browser as the page goes, where a route may not see it, and can land on the shared server.
     //
     // The reader is proven to SEE here before it is trusted to report nothing: one more row toggle
     // is pressed and read at once (well inside the 500 ms), which must name Newznab. Without that,

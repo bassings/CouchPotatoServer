@@ -311,7 +311,9 @@ function assertWriterOwnsItsSeed(annotations: readonly { type: string }[], seedC
  * in the page, for a test that is not a declared writer (a writer owns its server and its changes
  * are restored, so its pending save is its own business and the page is not read). Cancelled so
  * that nothing is sent as the page closes: the Settings page sends a waiting group save on
- * `pagehide` by a request no route or listener can see, which would write the real server. See
+ * `pagehide` by a request a route or listener may not see (measured: a route saw it on `page.close()`
+ * and on a synthetic `pagehide`, and did not on a real navigation), which would write the real
+ * server. So this does not rely on a route: it cancels in the page. See
  * `readPendingGroupSaves`, which throws when it cannot see the panel.
  */
 async function cancelPendingGroupSaves(page: Page, annotations: Annotations): Promise<string[]> {
@@ -651,8 +653,9 @@ export const test = base.extend<{ settingsPersistenceGuard: void } & TestOptions
     await use();
     // A group save still waiting out its delay (the 500 ms debounce, or the 8 s undo window of a
     // removal) is SENT when the page closes: the Settings page flushes it on `pagehide`, as a
-    // `keepalive` request, which the browser makes itself, so no Playwright route (mocks and
-    // this guard included) and no request listener ever sees it. It lands on the real server.
+    // `keepalive` request, which the browser makes itself, so a Playwright route (mocks and this
+    // guard's own) or a request listener MAY NOT see it (measured: seen on `page.close()` and on a
+    // synthetic `pagehide`, not on a real navigation). Where it is not seen it lands on the real server.
     // So a test that is not a declared combine-group writer must not end with one pending: it is
     // read and CANCELLED here, in the page, so nothing is sent as the page closes. The failure is
     // thrown last, after the close, the restore and the audit have all run, so reporting it can

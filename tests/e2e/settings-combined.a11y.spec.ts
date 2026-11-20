@@ -300,8 +300,8 @@ for (const theme of THEMES) {
 
     /**
      * A removal still waiting out its window is sent when the page goes (the pagehide flush), and
-     * that request is made by the browser itself, so neither a route stub nor a request listener
-     * sees it: it reaches the server. A test that does not mean to write therefore ends by taking
+     * that request is made by the browser itself, so a route stub or request listener may not
+     * see it (it did not on a real navigation): it can reach the server. A test that does not mean to write therefore ends by taking
      * its removal back, which cancels the save.
      */
     async function endWithNothingPending(card: Locator) {
