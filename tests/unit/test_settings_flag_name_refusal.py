@@ -182,7 +182,7 @@ class TestTheServersOwnFlagWritesAreUnaffected:
         assert _sha(second) == written
 
 
-TAMPERED_SPELLINGS = ['rw', 'hidden', 'ro', 'RW']
+TAMPERED_SPELLINGS = ['rw', 'hidden', 'ro', 'RW', 'RO']
 UNDECLARED_OPTION = 'zz_undeclared'
 OTHER_SECTION = 'zz_other'
 

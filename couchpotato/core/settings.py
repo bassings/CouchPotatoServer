@@ -701,8 +701,10 @@ class Settings:
 
         `setDefault` only writes a missing option, so a flag overwritten before
         `settings.save` refused flag names (`rw` over `core.api_key`'s `ro`)
-        stayed that way. A flag that already matches is not touched, so a
-        load, register and save cycle leaves config.ini byte-identical.
+        stayed that way. The stored value is compared as written, so `RO` is
+        rewritten as `ro`. Setting a flag to the value it already holds changes
+        no byte of config.ini (the parser keeps the key's position), so the
+        test here saves a parser call, not a file difference.
         """
         with _PASSWORD_SAVE_LOCK:
             if self.p and (not self.p.has_option(section, option)
