@@ -61,6 +61,8 @@ _COMBINE_COLUMN_REFUSAL = (
 _BAD_OPTION_NAME_REFUSAL = (
     'An option name cannot be empty, contain a space, a control character, "=" or ":", '
     'or start with "[", "#" or ";". Nothing was saved.')
+_FLAG_NAME_REFUSAL = ('An option flag cannot be changed through settings.save. '
+                      'Nothing was saved.')
 _NOT_TEXT_REFUSAL = 'The section and the option name must each be text. Nothing was saved.'
 
 
@@ -237,7 +239,9 @@ class Settings:
             'desc': 'Save setting to config file (settings.conf). Refuses every column '
                     'of a multi-row group (use settings.save_group), any option name with '
                     'whitespace, a control character, "=" or ":", an empty name or one starting '
-                    'with "[", "#" or ";", and a section or name that is not text.',
+                    'with "[", "#" or ";", the name of an option\'s access flag '
+                    '("<option>_internal_meta", in any case), and a section or name '
+                    'that is not text.',
             'params': {
                 'section': {'desc': 'The section name'},
                 'name': {'desc': 'The option name'},
@@ -362,7 +366,7 @@ class Settings:
                 value = option.get('ui-meta').lower()
                 if value in ['hidden', 'rw', 'ro']:
                     meta_option_name = option_name + self.optionMetaSuffix()
-                    self.setDefault(section_name, meta_option_name, value)
+                    self._declareFlag(section_name, meta_option_name, value)
                 else:
                     self.log.warning('Wrong ui-meta value for %s.%s: "%s"', section_name, option_name, value)
 
@@ -690,6 +694,21 @@ class Settings:
     def setDefault(self, section, option, value):
         with _PASSWORD_SAVE_LOCK:
             if self.p and not self.p.has_option(section, option):
+                self.p.set(section, option, value)
+
+    def _declareFlag(self, section, option, value):
+        """Make a DECLARED access flag equal its declared value, at every registration.
+
+        `setDefault` only writes a missing option, so a flag overwritten before
+        `settings.save` refused flag names (`rw` over `core.api_key`'s `ro`)
+        stayed that way. The stored value is compared as written, so `RO` is
+        rewritten as `ro`. Setting a flag to the value it already holds changes
+        no byte of config.ini (the parser keeps the key's position), so the
+        test here saves a parser call, not a file difference.
+        """
+        with _PASSWORD_SAVE_LOCK:
+            if self.p and (not self.p.has_option(section, option)
+                           or self.p.get(section, option) != value):
                 self.p.set(section, option, value)
 
     def setType(self, section, option, type):
@@ -1067,6 +1086,12 @@ class Settings:
             self.log.warning('Refused a settings save: the section or the option name '
                              'was not text')
             return {'success': False, 'error': _NOT_TEXT_REFUSAL}
+        if self.isOptionMeta(section, name):
+            # Before the name rule, so ` x_internal_meta` gets this text. Neither
+            # the caller's spelling nor the value is logged or returned.
+            self.log.warning('Refused a settings save: the option name is an access '
+                             'flag (section=%.40r)', section)
+            return {'success': False, 'error': _FLAG_NAME_REFUSAL}
         column = self.combine_column(section, name)
         if column is not None:
             self.log.warning('Refused a per-column save of "%s.%s": it is saved '
@@ -1446,7 +1471,22 @@ class Settings:
         return '_internal_meta'
 
     def isOptionMeta(self, section, option):
-        return option.endswith(self.optionMetaSuffix())
+        """Is `option` the name of an option's access flag, in any spelling?
+
+        The name is lower-cased the way the config parser stores it
+        (`optionxform`): `API_KEY_INTERNAL_META` is stored as
+        `api_key_internal_meta`, the real flag, so a case-sensitive suffix test
+        let a caller overwrite a read-only option's flag. `strip()` is not what
+        the parser does on write (a name with whitespace is refused by the
+        unsafe-name rule either way); here it only decides which refusal text a
+        whitespace spelling gets. A name that is not text is not a flag name.
+        """
+        if not isinstance(option, str):
+            return False
+        # `str.lower` is the parser's own `optionxform` (nothing here replaces it;
+        # a test pins that). It is named directly so a parser stand-in whose
+        # `optionxform` is not a real function cannot make every name a flag.
+        return option.strip().lower().endswith(self.optionMetaSuffix())
 
     def isSectionReadable(self, section):
         meta = 'section_hidden' + self.optionMetaSuffix()

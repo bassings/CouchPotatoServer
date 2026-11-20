@@ -167,7 +167,7 @@ A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 registered for any column of these groups today.
 
 **Where an operator finds a refusal.** One WARNING per refused save in the log,
-with no value, in one of three forms:
+with no value, in one of four forms:
 
 - a refused group save: `Refused a settings group save: section=... first_row=...
   first_column=... reason=... offences=N`;
@@ -178,7 +178,9 @@ with no value, in one of three forms:
   per-column save of "section.option": it is saved with its group, not on its
   own` (the registered column, never the caller's spelling), or `Refused a
   settings save: the option name is not allowed (section=...)`, or `Refused a
-  settings save: the section or the option name was not text`.
+  settings save: the section or the option name was not text`;
+- a per-column save of an option's access-flag name: `Refused a settings save:
+  the option name is an access flag (section=...)`.
 
 > **Breaking change for scripts.** `settings.save` now refuses every column of
 > a multi-row group, in any case or with leading or trailing whitespace in the
@@ -195,6 +197,21 @@ with no value, in one of three forms:
 > with `[`, `#` or `;` (the config file cannot hold them: `=` and `:` break every
 > later save until restart, and a leading `#` or `;` reloads as a comment), and a
 > `section` or `name` that is not text. The name is never echoed in the refusal.
+> It also refuses, for every section, the name of an option's access flag
+> (`<option>_internal_meta`, which holds `ro`, `hidden` or `rw`) in any case and
+> with leading or trailing whitespace, whether or not the option is registered:
+> `{"success": false, "error": "An option flag cannot be changed through
+> settings.save. Nothing was saved."}`. Nothing but the server's own option
+> registration writes a flag, and registration sets each declared flag to its
+> declared value at every start.
+>
+> **Operator note.** Versions before this fix accepted a flag name in another
+> letter case. After upgrading, declared flags are restored automatically at
+> start-up. An operator who suspects earlier tampering should look in
+> `config.ini` for `_internal_meta` lines on options that should be changeable
+> (for example the password or the authentication switch) and remove them with
+> the server stopped. The server does not remove flags for options that declare
+> none.
 
 ### Downloaders
 
