@@ -2357,7 +2357,11 @@ test.describe('Settings: with one row left the line is under it, before Add', ()
     await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
     // Undo took back the latest removal only; the first (row 3) is committed by the save that follows.
     await expect(removedLine(card)).toHaveCount(0);
+    // Armed before the window ends: `networkidle` is already reached by now, so by itself it
+    // would let the file be read before the save has been answered.
+    const answered = groupSaveResponse(page);
     await endUndoWindow(page);
+    expect((await (await answered).json()).success).toBe(true);
     await page.waitForLoadState('networkidle');
     expect(configSha(testServer.configPath)).not.toBe(before);
     expect(configColumns(testServer.configPath, 'newznab')).toEqual(rowsWithout(2));
@@ -2421,7 +2425,9 @@ test.describe('Settings: the line coming and going does not disturb the rows aro
     expect(await tops(), 'a row did not return to where it was').toEqual([t1, t2, t3]);
     await expect(card.getByLabel('api key for row 3', { exact: true })).toHaveValue('placeholder-key-typed');
     await expect(card.getByLabel('api key for row 1', { exact: true })).toHaveValue(NEWZNAB_KEYS[0]);
+    const answered = groupSaveResponse(page);
     await endUndoWindow(page);
+    expect((await (await answered).json()).success).toBe(true);
     await page.waitForLoadState('networkidle');
     expect(configColumns(testServer.configPath, 'newznab').api_key).toBe([NEWZNAB_KEYS[0], NEWZNAB_KEYS[1], 'placeholder-key-typed'].join(','));
   });
