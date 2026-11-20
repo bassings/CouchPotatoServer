@@ -55,9 +55,12 @@ ENV PYTHONUNBUFFERED=1 \
 # - c-ares is pulled in transitively; pin it to the patched version to clear
 #   CVE-2026-33630 (HIGH, use-after-free/double-free) which fails the Trivy gate.
 #   Drop this explicit pin once the base image ships c-ares >= 1.34.8-r0.
-# - libcrypto3/libssl3 must stay at or above 3.5.8-r0 to avoid
-#   CVE-2026-14456. The pinned base currently ships 3.5.9-r0; keep these
-#   minimums to protect future base refreshes.
+# - libcrypto3/libssl3 must stay at or above 3.5.9-r1 to avoid
+#   CVE-2026-107496, CVE-2026-88822, CVE-2026-88823, CVE-2026-95691 and
+#   CVE-2026-95692 (all MEDIUM). The pinned base image still ships 3.5.9-r0,
+#   so this floor is what pulls the fix in from the Alpine repository; keep
+#   it for future base refreshes. (The earlier floor, 3.5.8-r0, was for
+#   CVE-2026-14456.)
 #
 #   libuuid is pinned for the same reason, and the package name is the trap.
 #   Trivy reports CVE-2026-78408, CVE-2026-78409 and CVE-2026-78410 against
@@ -81,8 +84,8 @@ RUN apk add --no-cache \
         libstdc++ \
         7zip \
         "c-ares>=1.34.8-r0" \
-        "libcrypto3>=3.5.8-r0" \
-        "libssl3>=3.5.8-r0" \
+        "libcrypto3>=3.5.9-r1" \
+        "libssl3>=3.5.9-r1" \
         "libuuid>=2.42.3-r1" \
         "zlib>=1.4-r0"
 
