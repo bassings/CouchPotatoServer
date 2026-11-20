@@ -75,7 +75,7 @@ describe('settings fixture restoration', () => {
       'fails closed on %s responses without unsafe restoration writes', async (failure) => {
         const before = { values: { core: { enabled: false } } };
         const after = { values: { core: { enabled: true } } };
-        const page = { route: vi.fn(), close: vi.fn() };
+        const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
         const use = vi.fn();
         const writes: string[] = [];
         let reads = 0;
@@ -118,11 +118,27 @@ describe('settings fixture restoration', () => {
     );
   });
 
+  it('fails a test that ends with a group save pending, naming the section, unless it is a declared writer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ values: {} }) })));
+    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => ['newznab']) };
+
+    const unannotated = await mocks.fixtures.settingsPersistenceGuard[0](
+      { page, testServer: workerServer }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },
+    ).catch((err: Error) => err);
+    const writer = await mocks.fixtures.settingsPersistenceGuard[0](
+      { page, testServer: { ...workerServer, configPath: 'x' }, seedConfig: 'newznab_aligned#writer' },
+      async () => {}, { annotations: [{ type: 'persistsSettings' }, { type: 'writesCombineGroup' }] },
+    ).catch((err: Error) => err);
+
+    expect((unannotated as Error).message).toContain('still pending (newznab)');
+    expect(String((writer as Error)?.message ?? '')).not.toContain('still pending');
+  });
+
   it.each(['http', 'network', 'payload'])('restores later values after masked and %s failures, then verifies and reports all names', async (failure) => {
     const before = { values: { core: { password: '****', failed: 'old', enabled: false, leftover: 'old' } } };
     const after = { values: { core: { password: '******', failed: 'new', enabled: true, leftover: 'new' } } };
     const restored = { values: { core: { password: '******', failed: 'new', enabled: false, leftover: 'new' } } };
-    const page = { route: vi.fn(), close: vi.fn() };
+    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
     const writes: string[] = [];
     let reads = 0;
     vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
@@ -151,6 +167,7 @@ describe('settings fixture restoration', () => {
     const page = {
       route: vi.fn(async (_pattern, handler) => { onRoute = handler; }),
       close: vi.fn(),
+      evaluate: vi.fn(async () => []),
     };
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ values: {} }) })));
     const result = mocks.fixtures.settingsPersistenceGuard[0](
@@ -172,7 +189,7 @@ describe('settings fixture restoration', () => {
   it.each([false, true])('verifies successful restore attempts (verification unavailable: %s)', async (verificationUnavailable) => {
     const before = { values: { core: { enabled: false } } };
     const after = { values: { core: { enabled: true } } };
-    const page = { route: vi.fn(), close: vi.fn() };
+    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
     let reads = 0;
     const fetchMock = vi.fn(async (_url, options) => {
       if (options) {
@@ -229,7 +246,7 @@ describe('settings fixture group-save coverage', () => {
     return { writes, reads: () => read };
   }
   const run = (annotations: { type: string }[], use: () => Promise<void> = async () => {}) => {
-    const page = { route: vi.fn(), close: vi.fn() };
+    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
     // A seeded server: a group changes only on a test's own server (see the shared-server tests).
     const result = mocks.fixtures.settingsPersistenceGuard[0](
       { page, testServer: workerServer, seedConfig: 'newznab_aligned#restore' }, use, { annotations });
@@ -254,7 +271,7 @@ describe('settings fixture group-save coverage', () => {
     stubServer([snapshot(aligned), snapshot(aligned)]);
     let onRoute: (route: unknown) => Promise<void> = async () => {};
     const fulfill = vi.fn();
-    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn() };
+    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn(), evaluate: vi.fn(async () => []) };
     const result = mocks.fixtures.settingsPersistenceGuard[0](
       { page, testServer: workerServer, seedConfig: 'newznab_aligned#unannotated' },
       async () => { await onRoute({ request: () => ({ url: () => GROUP_URL }), fulfill }); },
@@ -417,7 +434,7 @@ describe('group saves and the shared server', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => snapshot })));
     let onRoute: (route: unknown) => Promise<void> = async () => {};
     const route = { request: () => ({ url: () => url }), fulfill: vi.fn(), continue: vi.fn() };
-    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn() };
+    const page = { route: vi.fn(async (_pattern, handler) => { onRoute = handler; }), close: vi.fn(), evaluate: vi.fn(async () => []) };
     const result = (mocks.fixtures.settingsPersistenceGuard[0] as any)(
       { page, testServer: workerServer, seedConfig }, async () => { await onRoute(route); }, { annotations },
     );
@@ -459,7 +476,7 @@ describe('group saves and the shared server', () => {
       if (init) writes.push(init);
       return { ok: true, json: async () => (reads++ === 0 ? before : after) };
     }));
-    const page = { route: vi.fn(), close: vi.fn() };
+    const page = { route: vi.fn(), close: vi.fn(), evaluate: vi.fn(async () => []) };
 
     const error = await (mocks.fixtures.settingsPersistenceGuard[0] as any)(
       { page, testServer: workerServer, seedConfig: '' }, async () => {}, { annotations: [{ type: 'persistsSettings' }] },
