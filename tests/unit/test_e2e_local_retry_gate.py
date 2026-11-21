@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.conftest import sanitized_git_env
 from tests.unit.test_ci_required_contexts import flaky_problems, playwright_commands
 from tests.unit.test_e2e_flaky_summary import make_report
 
@@ -443,7 +444,7 @@ MIRRORS_ABOUT_SOMETHING_ELSE = {'scripts/check_test_traps.py', 'tests/unit/test_
 
 
 def _tracked_text_files():
-    names = subprocess.run(['git', 'ls-files'], cwd=REPO, capture_output=True, text=True, check=True).stdout.split('\n')
+    names = subprocess.run(['git', 'ls-files'], cwd=REPO, env=sanitized_git_env(), capture_output=True, text=True, check=True).stdout.split('\n')
     for name in names:
         if not name or name.startswith(('specs/', 'QA/', 'libs/', 'node_modules/')) or name in MIRRORS_ABOUT_SOMETHING_ELSE:
             continue
