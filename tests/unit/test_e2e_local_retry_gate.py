@@ -165,6 +165,7 @@ def test_ci_overrides_neither_the_retry_count_nor_the_flaky_flag():
 # report to PLAYWRIGHT_JSON_OUTPUT_NAME (flaky in one project) and can fail one.
 
 BANNER = 'All checks passed'
+SEAM_BANNER = 'ONLY step 7 ran'   # what --e2e-only prints instead of the full-gate banner
 LISTING = 'tests/e2e/settings.spec.ts:5'
 PROJECTS = ['chromium', 'isolation', 'mobile-chrome', 'accessibility']
 
@@ -202,13 +203,39 @@ def test_step7_green_run_lists_the_flaky_test_after_step_7_and_after_the_banner(
     assert code == 0, out
     assert out.count(LISTING) == 2
     assert out.rindex('STUB-RAN') < out.index(LISTING), 'the first listing was printed before the tests ran'
-    assert out.index(LISTING) < out.index(BANNER) < out.rindex(LISTING)
+    assert out.index(LISTING) < out.index(SEAM_BANNER) < out.rindex(LISTING)
 
 
 def test_step7_green_run_with_nothing_flaky_says_so_twice(tmp_path):
     code, out = run_step7(tmp_path, flaky='none')
     assert code == 0, out
     assert out.count('No flaky E2E tests') == 2
+
+
+def test_step7_only_run_never_claims_the_full_gate_passed(tmp_path):
+    """--e2e-only is a test seam. Its summary must say steps 0-6 were NOT run and
+    must not carry the full gate's all-clear, which would be a false green."""
+    code, out = run_step7(tmp_path)
+    assert code == 0, out
+    assert BANNER not in out
+    assert 'safe to open a PR' not in out
+    assert SEAM_BANNER in out
+    assert 'steps 0-6 were NOT run' in out
+
+
+def test_the_full_gate_banner_is_only_reachable_when_e2e_only_is_off():
+    """Walk back from the banner: its nearest `else` must belong to an
+    `if [[ "$E2E_ONLY" -eq 1 ]]`, with no `fi` between that `if` and the banner."""
+    lines = _verify_text().splitlines()
+    banner = next(i for i, line in enumerate(lines) if BANNER in line and not line.lstrip().startswith('#'))
+    els = max(i for i in range(banner) if lines[i].strip() == 'else')
+    cond = max(i for i in range(els) if re.match(r'\s*if \[\[ "\$E2E_ONLY" -eq 1 \]\]; then', lines[i]))
+    assert not any(lines[i].strip() == 'fi' for i in range(cond, banner))
+
+
+@pytest.mark.parametrize('path', ['.githooks/pre-push', 'Makefile'])
+def test_nothing_that_gates_a_push_passes_e2e_only(path):
+    assert '--e2e-only' not in (REPO / path).read_text(encoding='utf-8')
 
 
 @pytest.mark.parametrize('project', PROJECTS)

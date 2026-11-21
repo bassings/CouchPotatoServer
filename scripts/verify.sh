@@ -22,9 +22,11 @@
 # Usage:
 #   ./scripts/verify.sh            # full gate
 #   ./scripts/verify.sh --no-e2e   # skip the slow E2E stage (lint + unit only)
-#   ./scripts/verify.sh --e2e-only # run ONLY step 7 (steps 0-6 skipped). The seam
-#                                  # tests/unit/test_e2e_local_retry_gate.py drives
-#                                  # with a stub `npx`, so step 7 is run, not read.
+#   ./scripts/verify.sh --e2e-only # TEST SEAM, NOT A GATE: runs ONLY step 7 (steps
+#                                  # 0-6 skipped) and ends with a warning, never the
+#                                  # all-clear. tests/unit/test_e2e_local_retry_gate.py
+#                                  # drives it with a stub `npx`. Nothing that gates a
+#                                  # push (hook, Makefile) may pass it.
 #
 # Env:
 #   PYTHON   interpreter to use. Default: ./.venv/bin/python when it exists,
@@ -247,7 +249,12 @@ step "info: security lint (ruff S — non-blocking)"
 "$PYTHON" -m ruff check --select S --statistics couchpotato/ CouchPotato.py 2>/dev/null \
   | tail -5 || true
 
-printf '\n\033[1;32m✔ All checks passed — safe to open a PR.\033[0m\n'
+if [[ "$E2E_ONLY" -eq 1 ]]; then
+  # --e2e-only is a test seam, not a gate: it must never print the all-clear.
+  printf '\n\033[1;33m⚠ ONLY step 7 ran (--e2e-only): steps 0-6 were NOT run. This is not a pass of the gate.\033[0m\n'
+else
+  printf '\n\033[1;32m✔ All checks passed — safe to open a PR.\033[0m\n'
+fi
 if [[ "$RUN_E2E" -eq 1 ]]; then
   printf '%s\n' "$FLAKY_REPORT"
 fi

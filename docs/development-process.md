@@ -329,7 +329,9 @@ practice it only happened nightly, which meant survivors went unreviewed and the
   too (from the script's EXIT trap, before the reports are removed), so a test
   that only passed on retry in an earlier invocation is not lost; invocations
   that never ran read as UNKNOWN. `scripts/verify.sh --e2e-only` runs step 7
-  alone, which is the seam the behavioural test drives with a stub `npx`. A test that fails twice fails the gate as before.
+  alone. It is a test seam, not a gate: it ends with a warning that steps 0-6
+  were NOT run, never "All checks passed", and neither the pre-push hook nor
+  the Makefile passes it. The behavioural test drives it with a stub `npx`. A test that fails twice fails the gate as before.
   Treat a listed test as a defect to fix, not noise. CI is unchanged:
   `playwright.config.ts` retries twice under `CI` and every `ci.yml`
   invocation keeps `--fail-on-flaky-tests`, so a flaky test still fails CI.
