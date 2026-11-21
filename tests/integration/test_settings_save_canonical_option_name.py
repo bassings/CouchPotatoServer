@@ -101,7 +101,8 @@ class TestThePasswordIsHashedWhateverTheCase:
 
         assert response.json()['success'] is True
         for held in (settings.p.get('core', 'password'), stored_on_disk(settings, 'core', 'password')):
-            assert held.startswith('$2') and len(held) == 60
+            assert held.startswith('$2')
+            assert len(held) == 60
             assert check_password(md5(NEW_PASSWORD), held)
         assert NEW_PASSWORD not in file_text(settings)
 
