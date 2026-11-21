@@ -392,8 +392,9 @@ above the table. It reads `revision: unknown` when the scan token may not read
 the analysed revision, as it did for the first committed table.
 
 `tests/unit/test_analyser_rules_table.py` checks the committed table's shape
-and bounds (tracked regular file, size, printable ASCII only, fixed header,
-row and cell limits, nothing after the table), so a hand edit that breaks them
+and bounds (tracked regular file, size, printable ASCII only, the stamp line's
+exact format, fixed header, row
+and cell limits, nothing after the table), so a hand edit that breaks them
 fails the gate.
 
 ## Release & production deployment
