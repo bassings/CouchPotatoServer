@@ -10,7 +10,7 @@ from couchpotato.core.event import addEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, tryInt, tryFloat, cleanHost
 from couchpotato.core.logger import CPLog
-from couchpotato.core.settings import GroupMisaligned, unstorable_cell
+from couchpotato.core.settings import _PASSWORD_SAVE_LOCK, GroupMisaligned, unstorable_cell
 from couchpotato.environment import Env
 from couchpotato.core.media._base.providers.base import ResultList
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
@@ -39,6 +39,9 @@ _UNSAFE_ADDRESS = re.compile(
 KEY_REFUSAL_TEXT = ('The saved Jackett API key cannot be used with this Jackett address. '
                     'Check the address is your Jackett server, then enter the API key again '
                     'and press Sync again.')
+
+ROUTE_SYNC = 'torrentpotato.jackett_sync'
+ROUTE_TEST = 'torrentpotato.jackett_test'
 
 MISALIGNED_TEXT = ('The saved TorrentPotato rows do not line up, so a sync could pair a key '
                    'with the wrong host. Fix the rows in Settings first. Nothing was changed.')
@@ -133,7 +136,7 @@ class Base(TorrentProvider):
         addEvent('setting.save.torrentpotato.jackett_api_key', self.bind_saved_key)
 
         # Register API endpoint for Jackett sync
-        addApiView('torrentpotato.jackett_sync', self.jackettSync, docs={
+        addApiView(ROUTE_SYNC, self.jackettSync, docs={
             'desc': 'Sync TorrentPotato indexers from Jackett. Send no parameters to use the saved '
                     'Jackett URL and API key. A jackett_url must be sent with its own jackett_api_key '
                     '(the saved key is never sent to a URL in the request).',
@@ -149,7 +152,7 @@ class Base(TorrentProvider):
             'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
         })
 
-        addApiView('torrentpotato.jackett_test', self.jackettTest, docs={
+        addApiView(ROUTE_TEST, self.jackettTest, docs={
             'desc': 'Test Jackett connection and list available indexers. Send no parameters to use '
                     'the saved Jackett URL and API key; a jackett_url must come with its own key.',
             'params': {
@@ -420,7 +423,7 @@ class Base(TorrentProvider):
         return value
 
     @staticmethod
-    def _sendableAddress(address):
+    def _sendable_address(address):
         """The address of a request that brings its own key, as `getJackettIndexers` is handed it."""
         if not isinstance(address, str) or not address:
             return None
@@ -441,43 +444,51 @@ class Base(TorrentProvider):
         unbound, and fail closed. A saved key that is empty after stripping is no
         key at all, so the route answers that the URL and key are required.
 
-        Returns `(url, key, refusal)`. `url` is the string to send to, which for
-        a checked key is the normalised address that was compared; `refusal` is
-        a response dict with no submitted or stored value in it, or None. The
-        saved address is read once, so the check and the send cannot disagree.
+        Returns `(url, key, row_base, refusal)`. `url` is the string to send to,
+        which for a checked key is the normalised address that was compared.
+        `row_base` is what the rows of a sync are built from: the saved address as
+        the user saved it (after `cleanHost`), from the same single read, because
+        the merge and `_isJackettIndexerHost` compare host strings exactly and
+        must see what a sync wrote before the guard. `refusal` is a response dict
+        with no submitted or stored value in it, or None. The saved address is
+        read once, so the check and the send cannot disagree, and the three
+        reads of a checked key happen in one hold of the settings lock, so a key
+        save cannot land between them.
         """
         supplied = (jackett_url, jackett_api_key)
         if any(value and not isinstance(value, str) for value in supplied):
-            return None, None, {'success': False, 'error': 'Jackett URL and API key must be text'}
+            return None, None, None, {'success': False, 'error': 'Jackett URL and API key must be text'}
         if isinstance(jackett_api_key, str) and not jackett_api_key.strip():
             jackett_api_key = None  # a key that is empty after stripping is absent
         if jackett_url and not jackett_api_key:
-            return None, None, {
+            return None, None, None, {
                 'success': False,
                 'error': 'A Jackett URL must be sent with its own API key. '
                          'The saved API key is only used with the saved URL.'
             }
 
-        saved_url = self._savedJackettSetting('jackett_url')
         if jackett_url:
-            return self._sendableAddress(jackett_url), jackett_api_key, None
+            sendable = self._sendable_address(jackett_url)
+            return sendable, jackett_api_key, sendable, None
+        with _PASSWORD_SAVE_LOCK:  # the lock a key save holds; never held across the request
+            saved_url = self._savedJackettSetting('jackett_url')
+            saved_key = None if jackett_api_key else self._savedJackettSetting('jackett_api_key')
+            binding = None if jackett_api_key else self._savedJackettSetting(KEY_BINDING_OPTION)
+        sendable = self._sendable_address(saved_url)
         if jackett_api_key:
-            return self._sendableAddress(saved_url), jackett_api_key, None
-
-        saved_key = self._savedJackettSetting('jackett_api_key')
+            return sendable, jackett_api_key, sendable, None
         if not self._is_non_empty_key(saved_key):
-            return None, None, None
+            return None, None, None, None
         address = normalise_jackett_address(saved_url)
-        binding = self._savedJackettSetting(KEY_BINDING_OPTION)
-        reason = self._refusalReason(address, binding) if isinstance(saved_key, str) else 'unbound'
+        reason = self._refusal_reason(address, binding) if isinstance(saved_key, str) else 'unbound'
         if reason:
             log.warning('Refused %s: the saved Jackett API key is not bound to the saved address (reason=%s)',
                         route, reason)
-            return None, None, {'success': False, 'error': KEY_REFUSAL_TEXT}
-        return address, saved_key, None
+            return None, None, None, {'success': False, 'error': KEY_REFUSAL_TEXT}
+        return address, saved_key, sendable, None
 
     @staticmethod
-    def _refusalReason(address, binding):
+    def _refusal_reason(address, binding):
         """Why a saved key may not go to `address` ('unbound' or 'mismatch'), or None when it may."""
         if not isinstance(binding, str) or not binding.strip() or not address:
             return 'unbound'
@@ -485,8 +496,8 @@ class Base(TorrentProvider):
 
     def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
         """Test Jackett connection and return list of available indexers"""
-        jackett_url, jackett_api_key, refusal = self._jackettCredentials(
-            'torrentpotato.jackett_test', jackett_url, jackett_api_key)
+        jackett_url, jackett_api_key, row_base, refusal = self._jackettCredentials(
+            ROUTE_TEST, jackett_url, jackett_api_key)
         if refusal:
             return refusal
 
@@ -520,8 +531,8 @@ class Base(TorrentProvider):
             replace: True (or the text true, 1, yes, on) replaces all existing indexers;
                 anything else merges/adds new ones.
         """
-        jackett_url, jackett_api_key, refusal = self._jackettCredentials(
-            'torrentpotato.jackett_sync', jackett_url, jackett_api_key)
+        jackett_url, jackett_api_key, row_base, refusal = self._jackettCredentials(
+            ROUTE_SYNC, jackett_url, jackett_api_key)
         if refusal:
             return refusal
 
@@ -547,6 +558,8 @@ class Base(TorrentProvider):
                 'success': False,
                 'error': error
             }
+
+        indexers = self._rows_from_saved_address(indexers, jackett_url, row_base)
 
         if not indexers:
             return {
@@ -590,6 +603,19 @@ class Base(TorrentProvider):
             'total': outcome['total'],
             'indexers': storable
         }
+
+    @staticmethod
+    def _rows_from_saved_address(indexers, request_base, row_base):
+        """Indexers whose `potato_url` starts with `row_base`, not with the address the request went to.
+
+        The request goes to the normalised address and the rows are built from the
+        address as it was saved, which is what a sync wrote before the guard.
+        """
+        if not indexers or not row_base or row_base == request_base:
+            return indexers
+        return [dict(indexer, potato_url=row_base + indexer['potato_url'][len(request_base):])
+                if indexer['potato_url'].startswith(request_base) else indexer
+                for indexer in indexers]
 
     def _isReplace(self, replace):
         """Replace everything only for boolean True or the text true, 1, yes or on.

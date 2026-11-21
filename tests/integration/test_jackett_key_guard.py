@@ -13,7 +13,6 @@ so in its docstring.
 Hosts are ``.invalid`` or ``.local`` names and every key is a ``placeholder-``
 string.
 """
-import itertools
 import re
 import shutil
 import threading
@@ -82,6 +81,23 @@ def reached(request_url):
     """(scheme, host, port, path-before-the-query) the transport would connect to, by the transport's own parser."""
     parsed = parse_url(request_url)
     return parsed.scheme, parsed.host, parsed.port, (parsed.path or '').split('/torznab')[0]
+
+
+def reason_of(logs):
+    """The `reason=` code of the one WARNING a refused use writes (and that there was exactly one)."""
+    warnings = logs.at_or_above(30)
+    assert len(warnings) == 1, [w.getMessage() for w in warnings]
+    match = re.search(r'reason=(\w+)\)$', warnings[0].getMessage())
+    assert match, warnings[0].getMessage()
+    return match.group(1)
+
+
+def assert_refused_because(provider, operation, reason):
+    """Refused with the one text, nothing sent, and the WARNING names `reason`."""
+    with LogCapture() as logs:
+        result = run(provider, operation)
+    assert_refused(result)
+    assert reason_of(logs) == reason
 
 
 def assert_refused(result):
@@ -230,10 +246,24 @@ class TestTheRefusalOverTheRealRoutes:
             home = client.get('/')
             refused = [run(provider, 'jackettSync'), run(provider, 'jackettTest')]
 
-        assert home.status_code < 500
+        assert home.status_code == 200
         assert all(result['success'] is False for result in refused)
         assert logs.at_or_above(40) == []
         assert len(logs.at_or_above(30)) == 2, 'only the one WARNING per refused use'
+
+    def test_AC_OPS_10_a_missing_binding_does_not_touch_health_or_log_errors_either(self, world):
+        settings, client, provider, transport = world
+        bind(client)
+        remove_binding_option(settings)
+
+        with LogCapture() as logs:
+            home = client.get('/')
+            refused = [run(provider, 'jackettSync'), run(provider, 'jackettTest')]
+
+        assert home.status_code == 200
+        assert all(result == {'success': False, 'error': REFUSAL} for result in refused)
+        assert logs.at_or_above(40) == []
+        assert len(logs.at_or_above(30)) == 2
 
 
 @pytest.mark.parametrize('operation', OPERATIONS)
@@ -323,6 +353,34 @@ class TestEquivalentAddressesAreTheSameAddress:
 
 
 @pytest.mark.parametrize('operation', OPERATIONS)
+class TestAddressesAreComparedExactly:
+    """AC-SEC-2: host letter case, an explicit default port and a trailing slash do not matter;
+    userinfo and path are compared exactly, because the server does."""
+
+    @pytest.mark.parametrize('bound,used', [
+        ('http://saved-a.invalid:9117/Jackett', 'http://saved-a.invalid:9117/jackett'),
+        ('http://saved-a.invalid:9117/jackett', 'http://saved-a.invalid:9117/JACKETT'),
+        ('http://Test-User:test-pass@saved-a.invalid:9117', 'http://test-user:test-pass@saved-a.invalid:9117'),
+        ('http://test-user:Test-Pass@saved-a.invalid:9117', 'http://test-user:test-pass@saved-a.invalid:9117'),
+    ])
+    def test_a_difference_in_path_case_or_userinfo_case_is_a_mismatch(self, world, operation, bound, used):
+        settings, client, provider, transport = world
+        bind(client, bound)
+        save(client, URL_OPTION, used)
+
+        assert_refused_because(provider, operation, 'mismatch')
+        assert transport.requests == []
+
+    def test_a_difference_in_host_case_alone_is_the_same_address(self, world, operation):
+        settings, client, provider, transport = world
+        bind(client, 'http://Saved-A.Invalid:9117/Jackett')
+        save(client, URL_OPTION, 'HTTP://SAVED-A.INVALID:9117/Jackett/')
+
+        assert run(provider, operation)['success'] is True
+        assert len(transport.requests) == 1
+
+
+@pytest.mark.parametrize('operation', OPERATIONS)
 class TestAnUnboundKeyIsRefused:
     """AC-SEC-3, AC-QA-13 (sync clauses), AC-DATA-6 (sync clauses), AC-QA-15 (sync clause)"""
 
@@ -350,7 +408,7 @@ class TestAnUnboundKeyIsRefused:
         assert on_disk(settings, BINDING_OPTION) == ''
         before = sha(settings.file)
 
-        assert_refused(run(provider, operation))
+        assert_refused_because(provider, operation, 'unbound')
         assert transport.requests == []
         assert sha(settings.file) == before
 
@@ -385,6 +443,26 @@ class TestAnUnboundKeyIsRefused:
         assert run(provider, operation)['success'] is False
         assert transport.requests == []
 
+    @pytest.mark.parametrize('falsy', [0, False, None, []])
+    def test_a_falsy_non_text_key_is_refused_after_a_real_restart(
+            self, tmp_path, monkeypatch, operation, falsy):
+        """The file now holds the key as text, which is a key, saved with an empty binding."""
+        origin = tmp_path / 'before'
+        origin.mkdir()
+        with guarded_world(origin, monkeypatch) as (settings, client, provider, transport):
+            save(client, URL_OPTION, ADDRESS_A)
+            save_json(client, KEY_OPTION, falsy)
+            source = settings.file
+        restarted = tmp_path / 'after'
+        restarted.mkdir()
+        shutil.copyfile(source, restarted / 'config.ini')
+
+        with guarded_world(restarted, monkeypatch) as (settings, client, provider, transport):
+            assert on_disk(settings, KEY_OPTION) not in (None, '')
+            assert on_disk(settings, BINDING_OPTION) == ''
+            assert_refused_because(provider, operation, 'unbound')
+            assert transport.requests == []
+
     @pytest.mark.parametrize('label,saved', UNPARSEABLE[:4], ids=[row[0] for row in UNPARSEABLE[:4]])
     def test_AC_DATA_6_an_address_with_no_normal_form_binds_nothing_until_it_is_fixed_and_the_key_re_entered(
             self, world, operation, label, saved):
@@ -393,11 +471,11 @@ class TestAnUnboundKeyIsRefused:
         assert save(client, KEY_OPTION, PLACEHOLDER_KEY).json()['success'] is True
         assert on_disk(settings, BINDING_OPTION) == ''
 
-        assert_refused(run(provider, operation))
+        assert_refused_because(provider, operation, 'unbound')
         assert transport.requests == []
 
         save(client, URL_OPTION, ADDRESS_A)
-        assert_refused(run(provider, operation))
+        assert_refused_because(provider, operation, 'unbound')
         assert transport.requests == []
 
         save(client, KEY_OPTION, PLACEHOLDER_KEY)
@@ -475,9 +553,7 @@ class TestClearingAndRebinding:
         bind(client)
         save(client, URL_OPTION, '')
 
-        result = run(provider, operation)
-
-        assert result['success'] is False
+        assert_refused_because(provider, operation, 'unbound')
         assert transport.requests == []
 
     @pytest.mark.parametrize('refused_save', ['mask', 'faulted_replace', 'url_alone', 'group_save'])
@@ -613,9 +689,10 @@ class TestTheHappyPathAndTheSaveOrder:
         assert_refused(run(provider, operation))
         assert transport.requests == []
 
-    def test_AC_ARCH_9_the_wizards_order_with_a_delayed_address_save_is_not_refused(
+    def test_AC_ARCH_9_the_wizards_order_address_then_key_is_not_refused_at_either_address(
             self, world, operation):
-        """The wizard awaits the address save, then saves the key, then syncs."""
+        """The wizard saves the address, then the key, then syncs; nothing here delays a request. The
+        delayed-save ordering is proved in the browser (settings-jackett-sync.spec.ts)."""
         settings, client, provider, transport = world
         bind(client)
         for address, key in ((ADDRESS_B, OTHER_KEY), ('http://third-c.invalid:9117', PLACEHOLDER_KEY)):
@@ -629,48 +706,20 @@ class TestTheHappyPathAndTheSaveOrder:
 class TestConcurrentSaves:
     """AC-QA-12, AC-DATA-1 (sync clause), AC-DATA-4"""
 
-    def test_AC_QA_12_a_racing_address_and_key_save_never_sends_the_key_anywhere_else(self, world):
-        settings, client, provider, transport = world
-        bind(client)
-        addresses = ('http://race-%d.invalid:9117' % n for n in itertools.count(1))
-        for _ in range(50):
-            address = next(addresses)
-            barrier = threading.Barrier(2)
-
-            def save_address():
-                barrier.wait()
-                settings.saveView(section=SECTION, name=URL_OPTION, value=address)
-
-            def save_key():
-                barrier.wait()
-                settings.saveView(section=SECTION, name=KEY_OPTION, value=OTHER_KEY)
-
-            workers = [threading.Thread(target=save_address), threading.Thread(target=save_key)]
-            for worker in workers:
-                worker.start()
-            for worker in workers:
-                worker.join()
-            transport.requests.clear()
-
-            result = provider.jackettTest()
-
-            bound = on_disk(settings, BINDING_OPTION)
-            assert bound in (ADDRESS_A, address) or bound == ''
-            if result['success']:
-                assert len(transport.requests) == 1
-                assert transport.requests[0].startswith(bound + '/torznab/')
-                assert bound == address
-            else:
-                assert result['error'] == REFUSAL
-                assert transport.requests == []
-            bind(client)
-
     def test_AC_QA_12_an_address_save_waits_for_a_key_save_that_has_read_the_address(self, world):
         settings, client, provider, transport = world
         save(client, URL_OPTION, ADDRESS_A)
         paused, release = threading.Event(), threading.Event()
-        addEvent('setting.save.torrentpotato.jackett_api_key',
-                 lambda value: (paused.set(), release.wait(10)) and None)
+        bound_when_paused = []
+
+        def pause_after_the_binding_hook(value):
+            # The ordering this test depends on: handlers at equal priority run in the order they
+            # were registered, so the provider's own hook (registered by its constructor, earlier)
+            # has already read the address and set the binding when this one runs.
+            bound_when_paused.append(memory(settings, BINDING_OPTION))
+            paused.set()
+            release.wait(10)
+        addEvent('setting.save.torrentpotato.jackett_api_key', pause_after_the_binding_hook)
         key_save = threading.Thread(
             target=lambda: settings.saveView(section=SECTION, name=KEY_OPTION, value=OTHER_KEY))
         address_save = threading.Thread(
@@ -685,13 +734,12 @@ class TestConcurrentSaves:
         key_save.join(10)
         address_save.join(10)
 
+        assert bound_when_paused == [ADDRESS_A], 'the pause ran before the provider\'s own hook'
         assert blocked, 'the address save did not wait for the key save'
-        result = provider.jackettTest()
-        if result['success']:
-            assert reached(transport.requests[0])[1] == HOST_A
-        else:
-            assert_refused(result)
-            assert transport.requests == []
+        assert on_disk(settings, BINDING_OPTION) == ADDRESS_A
+        assert on_disk(settings, URL_OPTION) == ADDRESS_B
+        assert_refused_because(provider, 'jackettTest', 'mismatch')
+        assert transport.requests == []
 
     def test_AC_DATA_4_one_read_of_the_saved_address_serves_the_check_and_the_send(self, world):
         settings, client, provider, transport = world
@@ -784,7 +832,7 @@ class TestRestoreAndRollback:
 
         with guarded_world(legacy, monkeypatch) as (settings, client, provider, transport):
             assert on_disk(settings, BINDING_OPTION) == ''
-            assert_refused(provider.jackettSync())
+            assert_refused_because(provider, 'jackettSync', 'unbound')
             assert transport.requests == []
             save(client, KEY_OPTION, PLACEHOLDER_KEY)
             assert provider.jackettSync()['success'] is True
@@ -807,7 +855,7 @@ class TestRestoreAndRollback:
 
         with guarded_world(copy_dir, monkeypatch) as (settings, client, provider, transport):
             assert on_disk(settings, BINDING_OPTION) == ADDRESS_A
-            assert_refused(provider.jackettSync())
+            assert_refused_because(provider, 'jackettSync', 'mismatch')
             assert transport.requests == []
             assert on_disk(settings, BINDING_OPTION) == ADDRESS_A, 'a refusal never re-binds'
 
@@ -837,18 +885,23 @@ class TestStoredRowsAreUntouchedByTheBinding:
 
     def stored(self):
         return {SECTION: {
-            'use': '1', 'host': self.ROW_HOST, 'pass_key': self.ROW_KEY, 'name': 'Alpha',
+            'enabled': '1', 'use': '1', 'host': self.ROW_HOST, 'pass_key': self.ROW_KEY, 'name': 'Alpha',
             'seed_ratio': '1', 'seed_time': '40', 'extra_score': '0',
             'jackett_url': 'http://stored-row.invalid:9117', 'jackett_api_key': PLACEHOLDER_KEY}}
 
     def search_once(self, provider, transport):
+        """The real `search()` entry point with the real result container.
+
+        `ResultList.append` asks two events, release correctness and score, whose handlers live in
+        other plugins and are not loaded here; the stand-ins accept every row and score it 0, so
+        what is observed is what the provider asked for and what it handed the container.
+        """
+        addEvent('searcher.correct_release', lambda *args, **kwargs: 1)
+        addEvent('score.calculate', lambda *args, **kwargs: 0)
         transport.body = '{"results": [{"torrent_id": "1", "release_name": "Film.2020", "download_url": "http://dl.invalid/1.torrent", "size": 1, "seeders": 5, "leechers": 1}]}'
         transport.requests.clear()
         media = {'identifiers': {'imdb': 'tt0000001'}, 'info': {'year': 2020, 'titles': ['Film']}}
-        results = []  # the raw rows the provider would hand the release filter
-        host = provider.getHosts()[0]
-        provider._searchOnHost(host, media, None, results, manual=True)
-        return results
+        return provider.search(media, None, manual=True)
 
     def test_AC_PROD_5_an_upgraded_install_searches_its_stored_row_with_the_rows_own_key_and_only_sync_is_refused(
             self, tmp_path, monkeypatch):
@@ -863,6 +916,7 @@ class TestStoredRowsAreUntouchedByTheBinding:
             assert 'passkey=' + self.ROW_KEY in transport.requests[0]
             assert PLACEHOLDER_KEY not in transport.requests[0]
             assert [row['name'] for row in results] == ['Film.2020']
+            assert type(results).__name__ == 'ResultList'
             transport.requests.clear()
             assert_refused(provider.jackettSync())
             assert transport.requests == []
@@ -908,7 +962,7 @@ class TestTheNormaliserIsTheCheckersToo:
         bind(client)
         monkeypatch.setattr(torrentpotato_module, 'normalise_jackett_address', lambda value: None)
 
-        assert_refused(provider.jackettTest())
+        assert_refused_because(provider, 'jackettTest', 'unbound')
         assert transport.requests == []
 
     def test_the_checker_never_treats_an_empty_normal_form_as_matching_an_empty_binding(
@@ -918,7 +972,7 @@ class TestTheNormaliserIsTheCheckersToo:
         settings.set_internal(SECTION, BINDING_OPTION, '')
         monkeypatch.setattr(torrentpotato_module, 'normalise_jackett_address', lambda value: '')
 
-        assert_refused(provider.jackettTest())
+        assert_refused_because(provider, 'jackettTest', 'unbound')
         assert transport.requests == []
 
 
@@ -954,5 +1008,4 @@ class TestNothingGrows:
 
         extras = named - declared
         assert BINDING_OPTION in declared
-        assert extras <= {name + '_internal_meta' for name in declared}, 'an undeclared option was written'
-        assert BINDING_OPTION + '_internal_meta' in extras
+        assert extras == {BINDING_OPTION + '_internal_meta'}, 'the binding and its access flag, nothing else'

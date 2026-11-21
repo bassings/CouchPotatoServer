@@ -88,7 +88,7 @@ def test_the_one_reader_also_does_the_binding_check():
               for call in ast.walk(reader) if isinstance(call, ast.Call)}
 
     assert 'normalise_jackett_address' in called
-    assert '_refusalReason' in called
+    assert '_refusal_reason' in called
 
 
 @pytest.mark.parametrize('route', ['jackettTest', 'jackettSync'])
