@@ -99,8 +99,8 @@ def normalise_jackett_address(value):
 
     This string is what a Jackett API key is bound to, and it is final: the
     guard that refuses a key sent anywhere else reads what is stored from it.
-    The address is read the way `getJackettIndexers` sends it (`cleanHost`, so
-    `jackett.local:9117` is `http://jackett.local:9117`). The scheme and host
+    The address is read the way a request is sent (`cleanHost` on the stripped,
+    unwrapped text, so `jackett.local:9117` is `http://jackett.local:9117`). The scheme and host
     are lower case, the default port and any trailing slash are dropped, and
     userinfo and path keep their case, because the server compares both
     exactly. It never raises: an address either parser rejects returns None,
@@ -447,7 +447,9 @@ class Base(TorrentProvider):
         Returns `(url, key, row_base, refusal)`. `url` is the string to send to,
         which for a checked key is the normalised address that was compared.
         `row_base` is what the rows of a sync are built from: the saved address as
-        the user saved it (after `cleanHost`), from the same single read, because
+        the user saved it, cleaned (`_row_base`: `cleanHost` of the text the
+        normaliser was given, or the normalised address where that is not
+        ASCII), from the same single read, because
         the merge and `_isJackettIndexerHost` compare host strings exactly and
         must see what a sync wrote before the guard. `refusal` is a response dict
         with no submitted or stored value in it, or None. The saved address is

@@ -14,13 +14,11 @@ read.
 Hosts are ``.invalid`` or ``.local`` names and every key is a ``placeholder-`` string.
 """
 import threading
-from urllib.parse import quote
 
 import pytest
 import requests
 from urllib3.util import parse_url
 
-from couchpotato.core.helpers.encoding import ss
 
 from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
 from tests.helpers.jackett_binding import (
@@ -172,9 +170,15 @@ def test_an_own_url_request_writes_rows_from_the_url_it_supplied_as_before(tmp_p
         assert host_cells(settings) == ['HTTP://Caller.Invalid:80/potato/alpha/api']
 
 
-def as_the_transport_reads_it(url):
-    """(scheme, host, port) of `url` after the preparation the HTTP client applies to every request."""
-    prepared = requests.Request('GET', quote(ss(url), safe="%/:=&?~#+!$,;'@()*[]")).prepare()
+def as_the_transport_reads_it(url, provider, transport):
+    """(scheme, host, port) of `url` after the preparation the HTTP client applies to every request.
+
+    The real client is driven (its own quoting runs), the transport records the URL it is handed,
+    and `requests` prepares that exactly as the session would before sending.
+    """
+    transport.requests.clear()
+    provider.http_client.request(url)
+    prepared = requests.Request('GET', transport.requests[-1]).prepare()
     parsed = parse_url(prepared.url)
     return parsed.scheme, parsed.host, parsed.port or {'http': 80, 'https': 443}[parsed.scheme]
 
@@ -192,6 +196,8 @@ UNUSUAL = [
      'http://jackett:9117/potato/alpha/api'),
     ('a leading space', ' jackett:9117', 'http://jackett:9117', 'http://jackett:9117/potato/alpha/api'),
     ('the bytes wrapper and a trailing space', "b'http://jackett:9117' ", 'http://jackett:9117',
+     'http://jackett:9117/potato/alpha/api'),
+    ('the bytes wrapper with a space inside', "b' jackett:9117'", 'http://jackett:9117',
      'http://jackett:9117/potato/alpha/api'),
 ]
 
@@ -213,10 +219,11 @@ def test_AC_SEC_17_every_row_a_sync_writes_resolves_to_the_host_the_key_was_boun
         assert result['success'] is True
         assert host_cells(settings) == [row_host]
         expected = ('http', 'jackett', 9117)
-        assert as_the_transport_reads_it(binding) == expected
-        assert as_the_transport_reads_it(transport.requests[0]) == expected
+        sent = transport.requests[0].split('/torznab/')[0]
+        assert as_the_transport_reads_it(binding, provider, transport) == expected
+        assert as_the_transport_reads_it(sent, provider, transport) == expected
         for row in host_cells(settings):
-            assert as_the_transport_reads_it(row) == expected
+            assert as_the_transport_reads_it(row, provider, transport) == expected
 
 
 def test_a_request_with_its_own_key_and_no_url_writes_rows_by_the_formula_master_used(tmp_path, monkeypatch):

@@ -741,7 +741,9 @@ class TestConcurrentSaves:
         assert_refused_because(provider, 'jackettTest', 'mismatch')
         assert transport.requests == []
 
-    def test_AC_DATA_4_one_read_of_the_saved_address_serves_the_check_and_the_send(self, world):
+    @pytest.mark.parametrize('operation', OPERATIONS)
+    def test_AC_DATA_4_one_read_of_the_saved_address_serves_the_check_the_send_and_the_rows(
+            self, world, operation):
         settings, client, provider, transport = world
         bind(client)
         real, reads = provider.conf, []
@@ -753,11 +755,13 @@ class TestConcurrentSaves:
             return real(name, *args, **kwargs)
         provider.conf = flapping
 
-        result = provider.jackettTest()
+        result = run(provider, operation, **({'replace': True} if operation == 'jackettSync' else {}))
 
         assert result['success'] is True
         assert len(reads) == 1
         assert [reached(r)[1] for r in transport.requests] == [HOST_A]
+        if operation == 'jackettSync':
+            assert on_disk(settings, 'host') == ADDRESS_A + '/potato/alpha/api'
 
     def test_AC_DATA_4_a_first_read_of_B_is_refused_and_A_is_never_reached_on_a_second_read(self, world):
         settings, client, provider, transport = world
