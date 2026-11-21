@@ -74,7 +74,9 @@ test.describe('Wizard: a refused save must not read as success', () => {
       (window as any).__toastSeen = 0;
       // `last` is what the toast held at the previous mutation, empty included, so the same
       // refusal shown twice (with the clear between them) is two toasts, while unrelated
-      // mutations that find the same text still on screen are not.
+      // mutations that find the same text still on screen are not. The same refusal shown again
+      // WITHOUT a clear in between is not a second toast either: Alpine does not re-render an
+      // unchanged value, so there is no mutation to see.
       let last = '';
       new MutationObserver(() => {
         const text = document.querySelector('[x-text="message"]')?.textContent?.trim() ?? '';

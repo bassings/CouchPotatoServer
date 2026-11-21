@@ -325,7 +325,11 @@ practice it only happened nightly, which meant survivors went unreviewed and the
   JSON report and `scripts/e2e_flaky_summary.py` lists every test Playwright
   itself classed as flaky (file:line, project, title) at the end of step 7 and
   again after the final banner, or says none were flaky, or says UNKNOWN when a
-  report could not be read. A test that fails twice fails the gate as before.
+  report could not be read. When the gate fails in step 7 the list is printed
+  too (from the script's EXIT trap, before the reports are removed), so a test
+  that only passed on retry in an earlier invocation is not lost; invocations
+  that never ran read as UNKNOWN. `scripts/verify.sh --e2e-only` runs step 7
+  alone, which is the seam the behavioural test drives with a stub `npx`. A test that fails twice fails the gate as before.
   Treat a listed test as a defect to fix, not noise. CI is unchanged:
   `playwright.config.ts` retries twice under `CI` and every `ci.yml`
   invocation keeps `--fail-on-flaky-tests`, so a flaky test still fails CI.
