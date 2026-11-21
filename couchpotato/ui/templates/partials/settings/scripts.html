@@ -513,13 +513,18 @@ function settingsPanel() {
     },
 
     /**
-     * Run every debounced save NOW and wait for all of them.
+     * Run every debounced save NOW and wait for them, each for at most
+     * SAVE_WAIT_DEADLINE_MS after it was sent (see saveSingle).
      *
      * For a control that acts on a setting the user has only just typed. The
      * 500ms debounce is right for keystrokes and wrong the moment something
      * READS the saved value: Trakt authorisation asked the server for a
      * device code using whichever credentials the server had before the edit
      * had landed, which on first setup is none of them.
+     *
+     * The wait is bounded: a save sent and not answered for the deadline stops
+     * being waited for, and what follows then runs against what the server still
+     * holds (on `master` it waited for ever).
      *
      * Safe to call when nothing is pending: it resolves immediately.
      */
@@ -999,8 +1004,10 @@ function settingsPanel() {
      * A request that never answers delays each save behind it by one deadline and is
      * not aborted: it may still succeed on the server. After a deadline a later save
      * CAN be sent ahead of an earlier one that has not been answered, so a key can
-     * then be bound to the address saved before it; nothing is sent to an address the
-     * key was not saved for. The chain is dropped once its last link has settled.
+     * then be bound to the address saved before it: the key is only sent to the
+     * address the SERVER held when the key was saved, which after a deadline can be
+     * the address from before the edit. The chain is dropped once its last link has
+     * settled.
      */
     saveSingle(section, name, value) {
       delete this.pendingSaves[section + '.' + name];
@@ -1520,7 +1527,9 @@ function traktDeviceAuth() {
       // which is what someone setting this up does, would otherwise ask Trakt
       // for a code using whatever the server held BEFORE the edit: reported
       // as missing while visibly on screen, or worse, a code issued for the
-      // old client and polled for with the new one.
+      // old client and polled for with the new one. That wait is bounded: a
+      // save sent and not answered for SAVE_WAIT_DEADLINE_MS is no longer waited
+      // for, and the code is then asked for against what the server still holds.
       const panel = this.getPanel();
       if (panel && typeof panel.flushPendingSaves === 'function') {
         await panel.flushPendingSaves();

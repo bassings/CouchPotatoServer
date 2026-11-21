@@ -132,6 +132,13 @@ function withAlpineMagics(field: any) {
   field.$el = { querySelector: () => null };
 }
 
+/** A reply that never settles, on purpose: the request is sent and no answer ever comes. */
+function neverAnswered(): Promise<Reply> {
+  return new Promise<Reply>(() => {
+    // Neither resolve nor reject is kept: this promise stays pending for the whole test.
+  });
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -1377,7 +1384,7 @@ describe('a button in a section with a combine group: the rows are locked from t
       it('sends one save at a time behind a stalled one: at the deadline only the address goes, the key waits for it', async () => {
         const net = installFetch();
         const address = deferred<Reply>();
-        net.replies.push(new Promise<Reply>(() => {}), address.promise, { body: { success: true } }, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+        net.replies.push(neverAnswered(), address.promise, { body: { success: true } }, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
         const { panel } = torrentPanel();
         const sent = () => saved(net).map((body) => body.name);
         void panel.saveSingle('torrentpotato', 'seed_ratio', '2');
@@ -1401,7 +1408,7 @@ describe('a button in a section with a combine group: the rows are locked from t
 
       it('with several saves that never answer, one more goes out per deadline, not all together', async () => {
         const net = installFetch();
-        for (let i = 0; i < 4; i += 1) net.replies.push(new Promise<Reply>(() => {}));
+        for (let i = 0; i < 4; i += 1) net.replies.push(neverAnswered());
         const { panel } = torrentPanel();
         const sent = () => saved(net).map((body) => body.name);
         ['one', 'two', 'three', 'four'].forEach((name) => { void panel.saveSingle('torrentpotato', name, '1'); });
@@ -1414,9 +1421,9 @@ describe('a button in a section with a combine group: the rows are locked from t
         expect(sent()).toEqual(['one', 'two', 'three']);
       });
 
-      it('the button itself stops waiting on its own save that never answers, a deadline after that save was sent', async () => {
+      it('the button stops waiting on its own save that never answers, so it finishes at the deadline', async () => {
         const net = installFetch();
-        net.replies.push(new Promise<Reply>(() => {}), { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+        net.replies.push(neverAnswered(), { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
         const { panel } = torrentPanel();
         panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
 
