@@ -201,7 +201,7 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   on_exit() {
     local status=$?
     if [[ "$status" -eq 0 && "$GATE_DONE" -ne 1 ]]; then
-      printf '\n\033[1;31m✖ verify.sh stopped before its last statement yet exited 0 (bash 3.2 does that on an unbound variable once an EXIT trap is set). Treated as a FAILURE.\033[0m\n' >&2
+      printf '\n\033[1;31m✖ verify.sh exited 0 before its last statement, which is treated as a FAILURE (bash 3.2 does this for an unbound variable once an EXIT trap is set; that is one known cause).\033[0m\n' >&2
       status=1
     fi
     if [[ "$status" -ne 0 ]]; then

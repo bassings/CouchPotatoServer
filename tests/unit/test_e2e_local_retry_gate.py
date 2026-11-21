@@ -22,7 +22,6 @@ What each guard here protects:
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -109,6 +108,11 @@ def test_every_local_invocation_writes_its_own_json_report():
         reporters = re.search(r'--reporter=(\S+)', command)
         assert reporters
         assert 'json' in reporters.group(1).split(',')
+
+
+def test_the_completion_marker_is_the_last_statement_of_the_script():
+    code_lines = [line for line in _verify_text().splitlines() if line.strip() and not line.lstrip().startswith('#')]
+    assert re.fullmatch(r'GATE_DONE=1(\s+#.*)?', code_lines[-1]), code_lines[-1]
 
 
 def _summary_commands(text: str) -> list[str]:
@@ -284,15 +288,20 @@ def test_step7_the_summary_script_itself_failing_is_reported_not_read_as_none(tm
 
 FAKE_PYTHON = r"""#!/bin/bash
 echo "PYTHON $*" >> "$TRACE"
+if [ -n "$FAKE_FAIL" ]; then case "$*" in "$FAKE_FAIL"*) exit 1;; esac; fi
 case "$*" in
-  "-m ruff --version") echo "ruff $FAKE_RUFF_VERSION"; exit 0;;
+  "-m ruff --version") [ "$FAKE_FAIL" = "-m ruff --version" ] && exit 1; echo "ruff $FAKE_RUFF_VERSION"; exit 0;;
   *scripts/e2e_flaky_summary.py*)
     [ -n "$FAKE_SUMMARY_FAILS" ] && exit 1
     exec "$REAL_PYTHON" "$@";;
 esac
 exit 0
 """
-FAKE_NPM = '#!/bin/bash\necho "NPM $*" >> "$TRACE"\nexit 0\n'.replace('\\n', '\n')
+FAKE_NPM = """#!/bin/bash
+echo "NPM $*" >> "$TRACE"
+if [ -n "$FAKE_FAIL" ]; then case "$*" in "$FAKE_FAIL"*) exit 1;; esac; fi
+exit 0
+"""
 FAKE_NPX = r"""#!/bin/bash
 echo "NPX $*" >> "$TRACE"
 project=$(echo "$*" | sed -n 's/.*--project=\([^ ]*\).*/\1/p')
@@ -315,7 +324,7 @@ PLAYWRIGHT_RUNS = [f'NPX playwright test --project={project}' for project in PRO
 BASH = '/bin/bash' if Path('/bin/bash').exists() else 'bash'
 
 
-def run_gate(tmp_path, args, script=None, summary_fails=False, timeout=30):
+def run_gate(tmp_path, args, script=None, summary_fails=False, fail_command='', timeout=30):
     """Run verify.sh (or a copy) under the fakes. Returns (exit code, output, trace lines)."""
     bin_dir = tmp_path / 'fakes'
     bin_dir.mkdir(exist_ok=True)
@@ -327,7 +336,7 @@ def run_gate(tmp_path, args, script=None, summary_fails=False, timeout=30):
     pin = re.search(r'^ruff==(\S+)', (REPO / 'requirements-dev.txt').read_text(encoding='utf-8'), re.M).group(1)
     env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}', PYTHON=str(bin_dir / 'python'),
                REAL_PYTHON=sys.executable, TRACE=str(trace), FAKE_RUFF_VERSION=pin,
-               FAKE_SUMMARY_FAILS='1' if summary_fails else '')
+               FAKE_SUMMARY_FAILS='1' if summary_fails else '', FAKE_FAIL=fail_command)
     proc = subprocess.Popen([BASH, str(script or VERIFY), *args], cwd=REPO, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, start_new_session=True)
     try:
@@ -377,6 +386,21 @@ def test_gate_with_no_e2e_runs_steps_0_to_6_skips_step_7_and_says_so(tmp_path):
     assert BANNER in out
 
 
+@pytest.mark.parametrize('step', STEPS_0_TO_6)
+def test_a_failing_step_0_to_6_fails_the_gate_and_stops_there(tmp_path, step):
+    """Every step is fail-guarded today (including the ruff version read, whose empty
+    output is what fails). Softening any `|| fail` to `|| true` must be seen."""
+    code, out, trace = run_gate(tmp_path, [], fail_command=step.partition(' ')[2].strip())
+    assert code != 0, out
+    assert BANNER not in out
+    assert SEAM_BANNER not in out
+    position = STEPS_0_TO_6.index(step)
+    assert _in_order(trace, STEPS_0_TO_6[:position + 1]) is None, trace
+    later = [line for line in trace if any(line.startswith(s) for s in STEPS_0_TO_6[position + 1:])]
+    assert not later, f'ran after the failing step: {later}'
+    assert not [line for line in trace if line.startswith('NPX')], 'step 7 ran after a failing step'
+
+
 def test_gate_with_e2e_only_runs_none_of_steps_0_to_6(tmp_path):
     code, out, trace = run_gate(tmp_path, ['--e2e-only'])
     assert code == 0, out
@@ -386,12 +410,6 @@ def test_gate_with_e2e_only_runs_none_of_steps_0_to_6(tmp_path):
 
 
 # ---- A clean-looking exit that never reached the end must not read as a pass ----
-
-def _bash_exits_zero_on_unbound_variable_with_a_trap(tmp_path):
-    probe = tmp_path / 'probe.sh'
-    probe.write_text("set -euo pipefail\ntrap 'true' EXIT\necho \"$NO_SUCH_VARIABLE\"\n", encoding='utf-8')
-    return subprocess.run([BASH, str(probe)], capture_output=True, check=False).returncode == 0
-
 
 def _copy_with_injection(tmp_path, injected):
     """verify.sh copied beside a symlink to the summary script, with a line added just after the trap."""
@@ -416,13 +434,6 @@ def test_a_gate_that_stops_early_with_status_0_is_a_failure(tmp_path, injected):
     assert SEAM_BANNER not in out
 
 
-def test_the_bash_quirk_this_guards_is_real_on_this_machine_or_the_probe_says_otherwise(tmp_path):
-    """Not a guard: it records whether the unbound-variable case above exercised the quirk
-    (bash 3.2) or only the premature-exit case did (newer bash)."""
-    quirk = _bash_exits_zero_on_unbound_variable_with_a_trap(tmp_path)
-    assert quirk in (True, False)
-
-
 # ---- Every place that says the gate mirrors CI names the retry exception ----
 
 MIRRORS = re.compile(r'mirrors? (what )?CI|green in CI', re.I)
@@ -442,14 +453,25 @@ def _tracked_text_files():
             continue
 
 
+def _claim_context(lines, index):
+    """The text a reader takes with the claim: a table row or a Makefile `##` help line stands
+    alone; otherwise the paragraph, i.e. the contiguous non-blank lines around it."""
+    if lines[index].lstrip().startswith('|') or '## ' in lines[index]:
+        return lines[index]
+    start, end = index, index
+    while start > 0 and lines[start - 1].strip():
+        start -= 1
+    while end + 1 < len(lines) and lines[end + 1].strip():
+        end += 1
+    return ' '.join(lines[start:end + 1])
+
+
 def mirror_claims_without_the_exception(files):
     missing = []
     for name, lines in files:
         for index, line in enumerate(lines):
-            if MIRRORS.search(line):
-                nearby = ' '.join(lines[max(0, index - 8):index + 9])
-                if not re.search(r'retr(y|ies)', nearby, re.I):
-                    missing.append(f'{name}:{index + 1}')
+            if MIRRORS.search(line) and not re.search(r'retr(y|ies)', _claim_context(lines, index), re.I):
+                missing.append(f'{name}:{index + 1}')
     return missing
 
 
@@ -462,3 +484,9 @@ def test_the_mirror_claim_scan_can_fail_and_does_find_claims():
     assert len(found) >= 4, 'the scan matched almost nothing; its patterns have drifted'
     assert mirror_claims_without_the_exception([('x.md', ['make verify mirrors CI exactly.'])]) == ['x.md:1']
     assert mirror_claims_without_the_exception([('x.md', ['it mirrors CI, but a retry is listed'])]) == []
+    # An unrelated "retries" in the next paragraph, a neighbouring table row, or the next help line is not the exception.
+    unrelated = 'The downloader retries a failed fetch three times.'
+    assert mirror_claims_without_the_exception([('x.md', ['make verify mirrors CI exactly.', '', unrelated])]) == ['x.md:1']
+    assert mirror_claims_without_the_exception([('x.md', ['| `make verify` | mirrors CI |', '| `x` | ' + unrelated + ' |'])]) == ['x.md:1']
+    assert mirror_claims_without_the_exception([('Makefile', ['verify: ## mirrors CI', 'x: ## ' + unrelated])]) == ['Makefile:1']
+    assert mirror_claims_without_the_exception([('x.md', ['make verify mirrors CI exactly,', 'but a retry is listed.'])]) == []
