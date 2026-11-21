@@ -26,7 +26,7 @@ _DEFAULT_PORTS = {'http': 80, 'https': 443}
 # Whitespace, a control character, a backslash, a "?" or a "#" anywhere in an
 # address. The two parsers read each of the first three differently, a backslash
 # is the one character that moves a host across the `@` of
-# `http://evil\\@jackett:9117`, and the address is the base of
+# `http://evil\@jackett:9117`, and the address is the base of
 # `/torznab/all/api?apikey=...`, so a query or a fragment, even an empty one,
 # has no place in it.
 _UNSAFE_ADDRESS = re.compile(r'[\s\x00-\x1f\x7f\\?#]')
