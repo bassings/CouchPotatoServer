@@ -763,8 +763,8 @@ class Settings:
         that was `rw` or `ro` already has its flag in the file and keeps its
         value. So before marking an existing option `hidden`, ship its flag
         first (declare it `rw` or `ro` for a release) or migrate the value
-        yourself. A test fails when any `hidden` option other than the Jackett
-        key binding is declared.
+        yourself. A test fails when a `hidden` option it does not already know
+        of is declared (`tests/unit/test_hidden_options_in_the_tree.py`).
 
         A clear that fails is logged and NOT retried at a later start: the flag
         is declared regardless, so the next start finds it. That is deliberate,
