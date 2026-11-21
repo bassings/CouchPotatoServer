@@ -11,7 +11,7 @@
 #   1. ruff lint
 #   2. test-trap check (false-green guard — see scripts/check_test_traps.py)
 #   3. UI conformance check (design-system drift — a REQUIRED CI check that this
-#      gate used to omit, so "green locally" did not imply "green in CI")
+#      gate used to omit, so a local pass did not imply a CI pass)
 #   4. Python unit tests (tests/unit, host interpreter, PYTHONPATH=libs)
 #   5. Python integration tests (tests/integration, host interpreter,
 #      PYTHONPATH=libs: the direct regression net for the SQLiteAdapter
@@ -39,6 +39,7 @@ RUN_E2E=1
 E2E_ONLY=0
 FLAKY_REPORT=''
 FLAKY_DIR=''
+GATE_DONE=0
 [[ "${1:-}" == "--no-e2e" ]] && RUN_E2E=0
 [[ "${1:-}" == "--e2e-only" ]] && E2E_ONLY=1
 
@@ -184,8 +185,13 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   FLAKY_DIR="$(mktemp -d)"
   # The list is also printed when the gate FAILS in step 7: a test that only
   # passed on retry in an earlier invocation must not vanish because a later
-  # one failed. It runs from the EXIT trap, before the reports are removed, and
-  # exit status is kept (the trap does not call `exit`). Reports for
+  # one failed. It runs from the EXIT trap, before the reports are removed.
+  # The trap also closes a hole it opens: on macOS /bin/bash 3.2 with `set -eu`,
+  # an unbound-variable abort exits 0 once ANY EXIT trap is set (measured; without
+  # a trap it exits 1), which would end this script silently green. So GATE_DONE=1
+  # is the very last statement of the script, and a trap that sees status 0
+  # without it reports a failure and exits 1. A failing status is passed on
+  # unchanged. Reports for
   # invocations that never ran read as UNKNOWN: a missing file cannot tell
   # "did not run" from "ran and wrote nothing", so it is not guessed.
   flaky_summary() {
@@ -194,10 +200,15 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   }
   on_exit() {
     local status=$?
+    if [[ "$status" -eq 0 && "$GATE_DONE" -ne 1 ]]; then
+      printf '\n\033[1;31m✖ verify.sh stopped before its last statement yet exited 0 (bash 3.2 does that on an unbound variable once an EXIT trap is set). Treated as a FAILURE.\033[0m\n' >&2
+      status=1
+    fi
     if [[ "$status" -ne 0 ]]; then
       printf '\n%s\n' "$(flaky_summary)"
     fi
     rm -rf "$FLAKY_DIR"
+    exit "$status"
   }
   trap on_exit EXIT
   # The html reporter is kept (CI uploads it); `never` stops it opening a
@@ -258,3 +269,4 @@ fi
 if [[ "$RUN_E2E" -eq 1 ]]; then
   printf '%s\n' "$FLAKY_REPORT"
 fi
+GATE_DONE=1  # keep this the LAST statement: on_exit treats status 0 without it as a failure

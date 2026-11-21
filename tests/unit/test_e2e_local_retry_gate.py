@@ -22,6 +22,8 @@ What each guard here protects:
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -243,6 +245,7 @@ def test_step7_a_failed_invocation_fails_the_gate_with_no_banner(tmp_path, proje
     code, out = run_step7(tmp_path, fail=project)
     assert code != 0
     assert BANNER not in out
+    assert SEAM_BANNER not in out, 'a red run printed the seam warning banner as if it had finished'
 
 
 def test_step7_red_gate_still_lists_a_test_that_passed_only_on_retry_earlier(tmp_path):
@@ -252,6 +255,7 @@ def test_step7_red_gate_still_lists_a_test_that_passed_only_on_retry_earlier(tmp
     assert code != 0
     assert out.count(LISTING) == 1
     assert BANNER not in out
+    assert SEAM_BANNER not in out, 'a red run printed the seam warning banner as if it had finished'
     assert 'Accessibility tests failed' in out
 
 
@@ -260,3 +264,201 @@ def test_step7_red_gate_reports_invocations_that_never_ran_as_unknown(tmp_path):
     assert code != 0
     assert out.count('UNKNOWN') == 3
     assert 'No flaky' not in out
+
+
+def test_step7_the_summary_script_itself_failing_is_reported_not_read_as_none(tmp_path):
+    code, out, _ = run_gate(tmp_path, ['--e2e-only'], summary_fails=True)
+    assert code == 0, out
+    assert out.count('UNKNOWN: the flaky-test summary itself failed to run.') == 2
+    assert 'No flaky' not in out
+
+
+# ---- The normal gate still runs steps 0-6 -----------------------------------
+#
+# Fakes for PYTHON, npm and npx record their argv to a trace and exit 0, so the
+# real verify.sh runs end to end in about a second and can never run the real
+# pytest (no recursion). PYTHON passes through to the real interpreter for
+# exactly scripts/e2e_flaky_summary.py, which is the one thing the script needs
+# real output from. Each child runs in its own process group with a timeout and
+# the group is killed if it overruns.
+
+FAKE_PYTHON = r"""#!/bin/bash
+echo "PYTHON $*" >> "$TRACE"
+case "$*" in
+  "-m ruff --version") echo "ruff $FAKE_RUFF_VERSION"; exit 0;;
+  *scripts/e2e_flaky_summary.py*)
+    [ -n "$FAKE_SUMMARY_FAILS" ] && exit 1
+    exec "$REAL_PYTHON" "$@";;
+esac
+exit 0
+"""
+FAKE_NPM = '#!/bin/bash\necho "NPM $*" >> "$TRACE"\nexit 0\n'.replace('\\n', '\n')
+FAKE_NPX = r"""#!/bin/bash
+echo "NPX $*" >> "$TRACE"
+project=$(echo "$*" | sed -n 's/.*--project=\([^ ]*\).*/\1/p')
+[ -z "$project" ] && exit 0
+echo '{"suites": []}' > "$PLAYWRIGHT_JSON_OUTPUT_NAME"
+exit 0
+"""
+# What steps 0-6 run, in order, as they appear in the trace (the prefix the fake logs).
+STEPS_0_TO_6 = [
+    'PYTHON -c import bcrypt, httpx, ruff',
+    'PYTHON -m ruff --version',
+    'PYTHON -m ruff check .',
+    'PYTHON scripts/check_test_traps.py --require-git',
+    'PYTHON scripts/check_conformance.py',
+    'PYTHON -m pytest tests/unit/',
+    'PYTHON -m pytest tests/integration/',
+    'NPM run test:unit',
+]
+PLAYWRIGHT_RUNS = [f'NPX playwright test --project={project}' for project in PROJECTS]
+BASH = '/bin/bash' if Path('/bin/bash').exists() else 'bash'
+
+
+def run_gate(tmp_path, args, script=None, summary_fails=False, timeout=30):
+    """Run verify.sh (or a copy) under the fakes. Returns (exit code, output, trace lines)."""
+    bin_dir = tmp_path / 'fakes'
+    bin_dir.mkdir(exist_ok=True)
+    for name, body in (('python', FAKE_PYTHON), ('npm', FAKE_NPM), ('npx', FAKE_NPX)):
+        (bin_dir / name).write_text(body, encoding='utf-8')
+        (bin_dir / name).chmod(0o755)
+    trace = tmp_path / 'trace.txt'
+    trace.write_text('', encoding='utf-8')
+    pin = re.search(r'^ruff==(\S+)', (REPO / 'requirements-dev.txt').read_text(encoding='utf-8'), re.M).group(1)
+    env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}', PYTHON=str(bin_dir / 'python'),
+               REAL_PYTHON=sys.executable, TRACE=str(trace), FAKE_RUFF_VERSION=pin,
+               FAKE_SUMMARY_FAILS='1' if summary_fails else '')
+    proc = subprocess.Popen([BASH, str(script or VERIFY), *args], cwd=REPO, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise
+    return proc.returncode, out, trace.read_text(encoding='utf-8').splitlines()
+
+
+def _in_order(trace, expected):
+    position = 0
+    for want in expected:
+        while position < len(trace) and not trace[position].startswith(want):
+            position += 1
+        if position == len(trace):
+            return want
+        position += 1
+    return None
+
+
+def test_the_expected_steps_0_to_6_are_what_the_script_contains():
+    """The list above is not a second opinion: each command must really be in verify.sh."""
+    text = _verify_text().replace('"', '')
+    for entry in STEPS_0_TO_6:
+        tool, _, command = entry.partition(' ')
+        needle = command.strip().replace('PYTHON ', '')
+        assert needle in text, f'{entry!r} is not in verify.sh: update STEPS_0_TO_6'
+
+
+def test_gate_with_no_flag_runs_steps_0_to_6_then_all_four_playwright_runs_then_the_all_clear(tmp_path):
+    code, out, trace = run_gate(tmp_path, [])
+    assert code == 0, out
+    assert _in_order(trace, STEPS_0_TO_6 + PLAYWRIGHT_RUNS) is None, trace
+    assert BANNER in out
+    assert 'safe to open a PR' in out
+    assert SEAM_BANNER not in out
+
+
+def test_gate_with_no_e2e_runs_steps_0_to_6_skips_step_7_and_says_so(tmp_path):
+    code, out, trace = run_gate(tmp_path, ['--no-e2e'])
+    assert code == 0, out
+    assert _in_order(trace, STEPS_0_TO_6) is None, trace
+    assert not [line for line in trace if line.startswith('NPX')]
+    assert 'SKIPPED' in out
+    assert BANNER in out
+
+
+def test_gate_with_e2e_only_runs_none_of_steps_0_to_6(tmp_path):
+    code, out, trace = run_gate(tmp_path, ['--e2e-only'])
+    assert code == 0, out
+    assert _in_order(trace, PLAYWRIGHT_RUNS) is None, trace
+    ran = [line for line in trace if line.startswith('NPM') or line.startswith(('PYTHON -c', 'PYTHON -m ruff --version', 'PYTHON -m ruff check .', 'PYTHON -m pytest', 'PYTHON scripts/check_'))]
+    assert not ran, ran
+
+
+# ---- A clean-looking exit that never reached the end must not read as a pass ----
+
+def _bash_exits_zero_on_unbound_variable_with_a_trap(tmp_path):
+    probe = tmp_path / 'probe.sh'
+    probe.write_text("set -euo pipefail\ntrap 'true' EXIT\necho \"$NO_SUCH_VARIABLE\"\n", encoding='utf-8')
+    return subprocess.run([BASH, str(probe)], capture_output=True, check=False).returncode == 0
+
+
+def _copy_with_injection(tmp_path, injected):
+    """verify.sh copied beside a symlink to the summary script, with a line added just after the trap."""
+    scripts = tmp_path / 'tree' / 'scripts'
+    scripts.mkdir(parents=True)
+    text = _verify_text()
+    marker = '  trap on_exit EXIT\n'
+    assert text.count(marker) == 1
+    (scripts / 'verify.sh').write_text(text.replace(marker, marker + injected + '\n'), encoding='utf-8')
+    (scripts / 'e2e_flaky_summary.py').symlink_to(REPO / 'scripts' / 'e2e_flaky_summary.py')
+    return scripts / 'verify.sh'
+
+
+@pytest.mark.parametrize('injected', ['echo "$NO_SUCH_VARIABLE"', 'exit 0'], ids=['unbound-variable', 'premature-exit-0'])
+def test_a_gate_that_stops_early_with_status_0_is_a_failure(tmp_path, injected):
+    """On macOS /bin/bash 3.2 an unbound variable aborts with exit 0 once an EXIT trap is set
+    (measured); `exit 0` shows the same shape on any bash. Neither may read as a pass."""
+    script = _copy_with_injection(tmp_path, injected)
+    code, out, _ = run_gate(tmp_path, ['--e2e-only'], script=script)
+    assert code != 0, out
+    assert BANNER not in out
+    assert SEAM_BANNER not in out
+
+
+def test_the_bash_quirk_this_guards_is_real_on_this_machine_or_the_probe_says_otherwise(tmp_path):
+    """Not a guard: it records whether the unbound-variable case above exercised the quirk
+    (bash 3.2) or only the premature-exit case did (newer bash)."""
+    quirk = _bash_exits_zero_on_unbound_variable_with_a_trap(tmp_path)
+    assert quirk in (True, False)
+
+
+# ---- Every place that says the gate mirrors CI names the retry exception ----
+
+MIRRORS = re.compile(r'mirrors? (what )?CI|green in CI', re.I)
+# These say "mirrors CI" about pytest roots in the trap checker, not about browser retries.
+MIRRORS_ABOUT_SOMETHING_ELSE = {'scripts/check_test_traps.py', 'tests/unit/test_check_test_traps.py',
+                                'tests/unit/test_e2e_local_retry_gate.py'}
+
+
+def _tracked_text_files():
+    names = subprocess.run(['git', 'ls-files'], cwd=REPO, capture_output=True, text=True, check=True).stdout.split('\n')
+    for name in names:
+        if not name or name.startswith(('specs/', 'QA/', 'libs/', 'node_modules/')) or name in MIRRORS_ABOUT_SOMETHING_ELSE:
+            continue
+        try:
+            yield name, (REPO / name).read_text(encoding='utf-8').splitlines()
+        except (UnicodeDecodeError, OSError):
+            continue
+
+
+def mirror_claims_without_the_exception(files):
+    missing = []
+    for name, lines in files:
+        for index, line in enumerate(lines):
+            if MIRRORS.search(line):
+                nearby = ' '.join(lines[max(0, index - 8):index + 9])
+                if not re.search(r'retr(y|ies)', nearby, re.I):
+                    missing.append(f'{name}:{index + 1}')
+    return missing
+
+
+def test_every_claim_that_the_local_gate_mirrors_ci_names_the_retry_exception():
+    assert mirror_claims_without_the_exception(_tracked_text_files()) == []
+
+
+def test_the_mirror_claim_scan_can_fail_and_does_find_claims():
+    found = [(n, l) for n, l in _tracked_text_files() if any(MIRRORS.search(x) for x in l)]
+    assert len(found) >= 4, 'the scan matched almost nothing; its patterns have drifted'
+    assert mirror_claims_without_the_exception([('x.md', ['make verify mirrors CI exactly.'])]) == ['x.md:1']
+    assert mirror_claims_without_the_exception([('x.md', ['it mirrors CI, but a retry is listed'])]) == []

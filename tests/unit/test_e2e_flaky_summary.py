@@ -130,6 +130,14 @@ def test_flaky_tests_are_collected_across_several_invocations(tmp_path):
     assert 'wizard.spec.ts:77' in text
 
 
+def test_a_flaky_report_and_an_unreadable_one_are_both_reported(tmp_path):
+    good = tmp_path / 'chromium.json'
+    good.write_text(json.dumps(make_report()), encoding='utf-8')
+    text = summary.summarise([str(good), str(tmp_path / 'accessibility.json')])
+    assert 'settings.spec.ts:5' in text
+    assert 'UNKNOWN: could not read the "accessibility" results' in text
+
+
 def test_a_missing_results_file_is_reported_as_unknown_not_as_none(tmp_path):
     """No file means the gate cannot say nothing was flaky. Saying 'none' would
     be a false all-clear."""

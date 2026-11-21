@@ -48,8 +48,9 @@ shape: the test waited for a state that was already true before the hand-off
 toast read at one instant when it clears itself after 3 s) or moved focus
 itself before the page's own open-time focus move had landed.
 
-What settled each was not a CPU-load run (under 12 CPU hogs the original tests
-failed once in 50 for the setup picker and never in the other groups; the run
+What settled each was not a CPU-load run (under CPU load, in the runs the
+commit messages record, the original tests failed once in 50 for the setup
+picker and never in the other groups; the run
 counts are in the commit messages of 62bd8bf1b, e16283123 and 312f230a8) but
 holding or delaying the one callback and watching the old test fail with the
 field's exact message. Wait for the page's

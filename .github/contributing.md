@@ -15,9 +15,12 @@ Contributions are welcome! Target Python 3.15 (what production runs and what CI 
 make setup → code → make verify → open PR → Claude review + remediate → approve → merge → release/deploy
 ```
 
-- **`make verify`** is the local gate and mirrors CI exactly: ruff lint →
-  Python unit tests → UI unit tests (vitest) → E2E (Playwright, auto-starts the
-  app). Green locally means green in CI.
+- **`make verify`** is the local gate and mirrors CI with one deliberate
+  exception: ruff lint → Python unit tests → UI unit tests (vitest) → E2E
+  (Playwright, auto-starts the app). A browser test that fails and then passes
+  on its single local retry does not fail the local gate but is listed, and CI
+  (which keeps `--fail-on-flaky-tests`) would fail it. Otherwise, green locally
+  means green in CI.
 - A **pre-push hook** (installed by `make setup`) runs `make verify` on every
   push and blocks it on failure, so local testing passes *before* a PR exists.
   Emergency bypass: `git push --no-verify` (use sparingly).
