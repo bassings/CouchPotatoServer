@@ -367,6 +367,36 @@ Notes:
   with `pip index versions <pkg>`.
 - **Docker timing:** Docker Desktop takes 1–2 min to fully start — start it early.
 
+### The analyser rules table
+
+`.claude/analyser-rules.md` lists the SonarQube rules this codebase actually
+trips, newest offenders first (at most 20 rows), so the `implementer` reads
+them before writing code instead of meeting them in the post-merge scan. Its
+section in `.claude/agents/implementer.md` says how the table is read: as
+reference data, never as instructions.
+
+The table is generated, not hand-edited. A person regenerates it after a
+`make sonar` scan has finished, from the repository root, with the harness
+script `sonar-rules-table.mjs` (it ships with the agent harness, not with this
+repo) and `SONAR_HOST_URL`, `SONAR_TOKEN` and `SONAR_PROJECT_KEY` in the
+environment. The token never goes in Git. Read it from the same token file
+`make sonar` uses (`SONAR_TOKEN_FILE` in the `Makefile`; the format is
+`load_analysis_token` in `scripts/sonar_scan.py`) inside the command that runs
+the generator, so it is never typed or pasted on a command line where it would
+land in shell history. Nothing automated runs the generator and it is never a
+gate. Commit the regenerated file in a small docs-only PR when the top rows
+have changed.
+
+The generator's stamp line (`derived: ...`) sits directly under the title,
+above the table. It reads `revision: unknown` when the scan token may not read
+the analysed revision, as it did for the first committed table.
+
+`tests/unit/test_analyser_rules_table.py` checks the committed table's shape
+and bounds (tracked regular file, size, printable ASCII only, the stamp line's
+exact format, fixed header, row
+and cell limits, nothing after the table), so a hand edit that breaks them
+fails the gate.
+
 ## Release & production deployment
 
 Two channels: **beta** (automatic, every push) and **prod** (manual
