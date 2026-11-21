@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 SECTION = 'unrelated_plugin'
 HIDDEN_VALUE = 'hidden-value'
-HIDDEN = 'secret_note'
+HIDDEN_OPTION = 'secret_note'
 READ_ONLY = 'locked'
 HIDDEN_FLAG = 'hidden'
 FLAG_NAME = 'secret_note_internal_meta'
@@ -32,7 +32,7 @@ def settings(tmp_path, monkeypatch):
     instance.setFile(str(tmp_path / 'config.ini'))
     instance.registerDefaults(SECTION, {
         'shown': {'default': 'visible-value'},
-        HIDDEN: {'default': HIDDEN_VALUE, 'ui-meta': HIDDEN_FLAG},
+        HIDDEN_OPTION: {'default': HIDDEN_VALUE, 'ui-meta': HIDDEN_FLAG},
         READ_ONLY: {'default': 'ro-value', 'ui-meta': 'ro'},
         'open': {'default': 'rw-value', 'ui-meta': 'rw'},
     })
@@ -55,7 +55,7 @@ class TestTheReadOmitsWhatIsNotReadable:
     def test_a_hidden_option_in_any_section_is_not_returned(self, settings):
         values = settings.getValues()
 
-        assert HIDDEN not in values[SECTION]
+        assert HIDDEN_OPTION not in values[SECTION]
 
     def test_the_hidden_value_does_not_appear_anywhere_in_the_read(self, settings):
         assert HIDDEN_VALUE not in repr(settings.getValues())
@@ -68,7 +68,7 @@ class TestTheReadOmitsWhatIsNotReadable:
         assert values['open'] == 'rw-value'
 
     def test_the_view_reports_the_same(self, settings):
-        assert HIDDEN not in settings.view()['values'][SECTION]
+        assert HIDDEN_OPTION not in settings.view()['values'][SECTION]
 
 
 class TestSetInternal:
@@ -77,16 +77,16 @@ class TestSetInternal:
         settings.save()
         before = digest(settings.file)
 
-        settings.set_internal(SECTION, HIDDEN, 'server-wrote-this')
+        settings.set_internal(SECTION, HIDDEN_OPTION, 'server-wrote-this')
 
-        assert settings.p.get(SECTION, HIDDEN) == 'server-wrote-this'
+        assert settings.p.get(SECTION, HIDDEN_OPTION) == 'server-wrote-this'
         assert digest(settings.file) == before
 
     def test_set_refuses_the_same_option(self, settings):
         """The bypass is for the server only: the ordinary writer still refuses it."""
-        settings.set(SECTION, HIDDEN, 'user-wrote-this')
+        settings.set(SECTION, HIDDEN_OPTION, 'user-wrote-this')
 
-        assert settings.p.get(SECTION, HIDDEN) == HIDDEN_VALUE
+        assert settings.p.get(SECTION, HIDDEN_OPTION) == HIDDEN_VALUE
 
     def test_it_writes_a_read_only_option_too(self, settings):
         settings.set_internal(SECTION, READ_ONLY, 'changed')
@@ -104,7 +104,7 @@ class TestSetInternal:
         calls = []
         monkeypatch.setattr(settings, 'save', lambda: calls.append(1))
 
-        settings.set_internal(SECTION, HIDDEN, 'x')
+        settings.set_internal(SECTION, HIDDEN_OPTION, 'x')
 
         assert calls == []
 
@@ -114,5 +114,5 @@ class TestSetInternal:
         assert settings.p.get('a_new_section', 'anything') == 'x'
 
     def test_it_reports_whether_the_write_happened(self, settings):
-        assert settings.set_internal(SECTION, HIDDEN, 'x') is True
+        assert settings.set_internal(SECTION, HIDDEN_OPTION, 'x') is True
         assert settings.set_internal(SECTION, FLAG_NAME, 'rw') is False

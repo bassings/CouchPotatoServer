@@ -359,6 +359,9 @@ class Settings:
         )
 
         for option_name, option in options.items():
+            # Whether config.ini as loaded already held this option, asked before
+            # the default is written: only a stored value can be a planted one.
+            stored_before = bool(self.p) and self.p.has_option(section_name, option_name)
             self.setDefault(section_name, option_name, option.get('default', ''))
 
             # Set UI-meta for option (hidden/ro/rw)
@@ -366,6 +369,8 @@ class Settings:
                 value = option.get('ui-meta').lower()
                 if value in ['hidden', 'rw', 'ro']:
                     meta_option_name = option_name + self.optionMetaSuffix()
+                    if value == 'hidden' and stored_before:
+                        self._clear_value_without_flag(section_name, option_name, meta_option_name)
                     self._declare_flag(section_name, meta_option_name, value)
                 else:
                     self.log.warning('Wrong ui-meta value for %s.%s: "%s"', section_name, option_name, value)
@@ -737,6 +742,32 @@ class Settings:
             if self.p and (not self.p.has_option(section, option)
                            or self.p.get(section, option) != value):
                 self.p.set(section, option, value)
+
+    def _clear_value_without_flag(self, section, option, flag):
+        """Empty a hidden option's STORED value when the loaded config has no flag for it, once.
+
+        A hidden option is written only by the server. If config.ini has a value
+        for it but no flag, the file is from before the option was declared, so
+        whatever wrote that value was not the server: a caller of an older
+        release could plant it, and it would otherwise be trusted. This runs in
+        `registerDefaults`, before `_declare_flag` writes the flag, so a file
+        that already has the flag is left exactly as it is, and the flag is in
+        memory for any later pass, which therefore clears nothing. Memory only:
+        the next save persists it. It never writes a non-empty value, logs only
+        the section and option names, and never raises, so it cannot block a
+        start.
+        """
+        try:
+            with _PASSWORD_SAVE_LOCK:
+                if not self.p or self.p.has_option(section, flag):
+                    return
+                if self.p.get(section, option, fallback='') in ('', None):
+                    return
+                self.p.set(section, option, '')
+            self.log.info('Cleared "%s.%s": it held a value from before its access flag existed',
+                          section, option)
+        except Exception as error:
+            self.log.warning('Could not clear "%s.%s" (%s)', section, option, type(error).__name__)
 
     def setType(self, section, option, type):
         if not self.types.get(section):
@@ -1147,8 +1178,8 @@ class Settings:
             with _PASSWORD_SAVE_LOCK:
                 return self._saveView(**kwargs)
         if self._has_value_hook(kwargs['section'], kwargs['name']):
-            # A value hook may set a companion option (the Jackett key's binding
-            # is set from the hook of the key). The hook, the writes and the file
+            # A value hook may set a companion option (a hidden option the server
+            # keeps beside the one being saved). The hook, the writes and the file
             # save must be one hold of the lock, or another writer can change
             # what the hook read between its read and the save, and a failed
             # save has nothing to restore. Any option with a hook, by rule.
