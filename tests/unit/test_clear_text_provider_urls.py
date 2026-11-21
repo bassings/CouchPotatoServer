@@ -194,7 +194,13 @@ def test_userscript_includes_are_scheme_agnostic(module_name, provider_cls):
     assert includes, f"{module_name}.py: {provider_cls.__name__}.includes is empty"
 
     for pattern in includes:
-        assert "http://" not in pattern and "https://" not in pattern, (
+        assert "http://" not in pattern, (
+            f"{module_name}.py: includes pattern {pattern!r} is scheme-pinned "
+            f"-- use the scheme-agnostic '*://' form instead (see imdb.py, "
+            f"letterboxd.py, trakt.py and other siblings in the same "
+            f"directory for the shape)"
+        )
+        assert "https://" not in pattern, (
             f"{module_name}.py: includes pattern {pattern!r} is scheme-pinned "
             f"-- use the scheme-agnostic '*://' form instead (see imdb.py, "
             f"letterboxd.py, trakt.py and other siblings in the same "

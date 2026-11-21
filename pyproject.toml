@@ -21,7 +21,15 @@ select = ["E", "F", "W", "UP", "B"]
 # against, just moved to ruff. S113 alone is narrow, unambiguous (a hang has
 # one cause: no timeout), and was the rule that would have caught T17's
 # Synology/Discord/Telegram findings before they needed a manual scan.
-extend-select = ["S113"]
+#
+# PT018 (composite assertion) and PT012 (`pytest.raises` block holding more
+# than one statement) only, not the whole PT (flake8-pytest-style) family: they
+# are the analyser's python:S9073 and python:S5778, the rules new test code
+# trips most often, and each hides which half of a check failed. Measured on
+# 2026-11-22 at exactly 1 violation repo-wide, because earlier PRs had already
+# split the rest. [tool.ruff.lint.per-file-ignores] for tests does not cover PT,
+# so both apply to tests, which is the point.
+extend-select = ["S113", "PT018", "PT012"]
 
 ignore = [
     # Bare except — legacy code uses these everywhere
