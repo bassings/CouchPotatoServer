@@ -1,10 +1,12 @@
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 import re
 import xml.etree.ElementTree as ET
 
 from requests import HTTPError
+from urllib3.util import parse_url
 
 from couchpotato.api import addApiView
+from couchpotato.core.event import addEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, tryInt, tryFloat, cleanHost
 from couchpotato.core.logger import CPLog
@@ -16,8 +18,95 @@ from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
 
 log = CPLog(__name__)
 
+# The one stored value that ties a saved Jackett API key to an address: the
+# normalised address the key was saved for. Hidden (`ui-meta`), so it is never
+# rendered, written or read through the settings routes (SEC-005).
+KEY_BINDING_OPTION = 'jackett_key_binding'
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+# Whitespace, a control character, a backslash, a "?" or a "#" anywhere in an
+# address. The two parsers read each of the first three differently, a backslash
+# is the one character that moves a host across the `@` of
+# `http://evil\@jackett:9117`, and the address is the base of
+# `/torznab/all/api?apikey=...`, so a query or a fragment, even an empty one,
+# has no place in it.
+_UNSAFE_ADDRESS = re.compile(r'[\s\x00-\x1f\x7f\\?#]')
+
 MISALIGNED_TEXT = ('The saved TorrentPotato rows do not line up, so a sync could pair a key '
                    'with the wrong host. Fix the rows in Settings first. Nothing was changed.')
+
+
+def _decoded(value):
+    """Bytes as UTF-8 text (settings may hand back bytes); anything else as it is."""
+    return value.decode('utf-8') if isinstance(value, bytes) else value
+
+
+def _without_bytes_wrapper(text):
+    """Text that looks like a bytes repr, "b'...'", without the wrapper."""
+    if text.startswith("b'") and text.endswith("'"):
+        return text[2:-1]
+    return text
+
+
+def _address_text(value):
+    """The saved address as plain text, or '' when it is not text."""
+    value = _decoded(value)
+    if not isinstance(value, str):
+        return ''
+    return _without_bytes_wrapper(value.strip()).strip()
+
+
+def _agreed_parts(candidate):
+    """(scheme, userinfo, host, port, path) when both URL parsers read `candidate` alike, else None.
+
+    `urllib.parse` is what the rest of this module reads an address with;
+    `urllib3.util.parse_url` is what the transport uses to decide where a
+    request goes. An address on which they differ about the host, the port, the
+    userinfo or the path is one whose destination cannot be told from the text,
+    so it has no normal form. A query or a fragment is refused outright: the
+    address is the base of `/torznab/all/api?apikey=...`, so neither belongs in
+    it, and `http://jackett#@evil` is a fragment on one reading and a host on
+    another.
+    """
+    std = urlsplit(candidate)
+    ref = parse_url(candidate)
+    if std.query or std.fragment or ref.query or ref.fragment:
+        return None
+    userinfo = std.netloc.rpartition('@')[0] if '@' in std.netloc else None
+    host = (std.hostname or '')
+    if not host or std.scheme not in _DEFAULT_PORTS:
+        return None
+    if ref.scheme != std.scheme or (ref.host or '').strip('[]') != host or ref.port != std.port:
+        return None
+    if ref.auth != userinfo or (ref.path or '').rstrip('/') != std.path.rstrip('/'):
+        return None
+    return std.scheme, userinfo, host, std.port, std.path.rstrip('/')
+
+
+def normalise_jackett_address(value):
+    """The one normal form of a saved Jackett address, or None when it has none.
+
+    This string is what a Jackett API key is bound to, and it is final: the
+    guard that refuses a key sent anywhere else reads what is stored from it.
+    The address is read the way `getJackettIndexers` sends it (`cleanHost`, so
+    `jackett.local:9117` is `http://jackett.local:9117`). The scheme and host
+    are lower case, the default port and any trailing slash are dropped, and
+    userinfo and path keep their case, because the server compares both
+    exactly. It never raises: an address either parser rejects returns None,
+    which a key save stores as an empty binding.
+    """
+    try:
+        text = _address_text(value)
+        candidate = cleanHost(text).rstrip('/') if text else ''
+        parts = None if not candidate or _UNSAFE_ADDRESS.search(candidate) else _agreed_parts(candidate)
+    except Exception:  # either parser raises on a bad port, a bad bracket or a bad escape
+        return None
+    if parts is None:
+        return None
+    scheme, userinfo, host, port, path = parts
+    if ':' in host:
+        host = '[%s]' % host
+    authority = host if port in (None, _DEFAULT_PORTS[scheme]) else '%s:%d' % (host, port)
+    return '%s://%s%s%s' % (scheme, '%s@' % userinfo if userinfo else '', authority, path)
 
 
 class Base(TorrentProvider):
@@ -29,6 +118,10 @@ class Base(TorrentProvider):
 
     def __init__(self):
         super().__init__()
+
+        # The value hook of the existing per-option save event, so that the key
+        # and the address it belongs to land in one config.ini write (SEC-005).
+        addEvent('setting.save.torrentpotato.jackett_api_key', self.bind_saved_key)
 
         # Register API endpoint for Jackett sync
         addApiView('torrentpotato.jackett_sync', self.jackettSync, docs={
@@ -275,16 +368,45 @@ class Base(TorrentProvider):
             log.error('Failed to fetch Jackett indexers: %s', type(e).__name__)
             return None, f'Failed to connect to Jackett: {type(e).__name__}'
 
+    def bind_saved_key(self, value):
+        """Value hook for a save of `jackett_api_key`: bind the key to the saved address.
+
+        Runs inside `settings.save`, before the key is stored and before the file
+        is written, and sets the binding in memory only, so the key and the
+        binding are one write. A non-empty key is bound to the normalised saved
+        address, or to nothing when that address has no normal form; an empty
+        key clears the binding, so the file never holds a binding with no key.
+        An address save never reaches here, so it never moves the binding.
+
+        It returns None, which leaves the submitted key as it was. It must not
+        raise for any value the route accepts: `fireEvent` would log the
+        exception and discard it, and the key would then be stored with the
+        previous key's binding. Nothing here is logged, because every value in
+        reach (the key, the address, the binding) is a secret or a private path.
+        """
+        binding = ''
+        try:
+            if self._is_non_empty_key(value):
+                binding = normalise_jackett_address(self._savedJackettSetting('jackett_url')) or ''
+        except Exception:
+            binding = ''
+        Env.get('settings').set_internal('torrentpotato', KEY_BINDING_OPTION, binding)
+
+    @staticmethod
+    def _is_non_empty_key(value):
+        """Does a submitted key count as a key? Text must survive stripping; a falsy non-text value is read as none."""
+        if isinstance(value, str):
+            return bool(value.strip())
+        return bool(value)
+
     def _savedJackettSetting(self, name):
         value = self.conf(name)
 
-        # Ensure values are strings (settings may return bytes)
-        if isinstance(value, bytes):
-            value = value.decode('utf-8')
-
-        # Also handle str that looks like bytes repr: "b'...'"
-        if isinstance(value, str) and value.startswith("b'") and value.endswith("'"):
-            value = value[2:-1]
+        # Ensure values are strings (settings may return bytes), and unwrap a
+        # str that looks like a bytes repr: "b'...'"
+        value = _decoded(value)
+        if isinstance(value, str):
+            value = _without_bytes_wrapper(value)
         return value
 
     def _jackettCredentials(self, jackett_url, jackett_api_key):
@@ -552,6 +674,14 @@ config = [{
                     'type': 'password',
                     'default': '',
                     'description': 'API key from Jackett (found in Jackett settings)',
+                },
+                {
+                    # The address the saved key was saved for (SEC-005). Written
+                    # only by the key's value hook; hidden, so never rendered,
+                    # read or written through the settings routes.
+                    'name': KEY_BINDING_OPTION,
+                    'default': '',
+                    'ui-meta': 'hidden',
                 },
                 {
                     'name': 'jackett_sync',

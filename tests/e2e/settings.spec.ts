@@ -1685,7 +1685,7 @@ test.describe('Settings: the rows are locked while a button acts, and until the 
   test.describe('an action that answers success false', () => {
     test.use({ seedConfig: 'torrentpotato_aligned#lock-refused' });
 
-    test('unlocks at once with the rows as they were, and the next edit saves three', async ({ page, testServer }) => {
+    test('unlocks once the rows are re-read, which are as they were, and the next edit saves three', async ({ page, testServer }) => {
       test.info().annotations.push(...combineGroupWriter());
       const sync = await stubSync(page, testServer.apiBase, testServer.configPath, 'refused');
       const card = await openTorrentCard(page);

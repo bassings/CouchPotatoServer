@@ -1157,7 +1157,8 @@ describe('a button in a section with a combine group: the rows are locked from t
     inFlight.resolve({ body: { success: true } });
     await running;
 
-    expect(calls(net)).toEqual(['settings.save_group', 'settings.save_group', 'torrentpotato.jackett_sync']);
+    // The last call is the re-read after the refused action (SEC-005 C1).
+    expect(calls(net)).toEqual(['settings.save_group', 'settings.save_group', 'torrentpotato.jackett_sync', 'settings']);
     expect(net.body(1).rows[1].host).toBe('https://placeholder-second.invalid/api');
     expect(net.body(1).rows[2].host).toBe(HOSTS[2]);
     expect(group.rows[2][1]).toBe(HOSTS[2]);
@@ -1183,18 +1184,82 @@ describe('a button in a section with a combine group: the rows are locked from t
     expect(net.groupSaves()).toHaveLength(2);
   });
 
-  it('h: an action that answers success false is unlocked at once, with no re-read, rows as flushed', async () => {
-    const { net, action, running, panel, option, group } = await startedAction();
+  it('h: an action that answers success false is re-read, and unlocked once the server\'s rows are back (SEC-005 C1)', async () => {
+    const { net, action, running, panel, option, group } = await startedAction([serverRows(HOSTS)]);
 
     action.resolve({ body: { success: false, error: 'Jackett refused' } });
     await running;
 
-    expect(calls(net)).toEqual(['torrentpotato.jackett_sync']);
+    expect(calls(net)).toEqual(['torrentpotato.jackett_sync', 'settings']);
     expect(group.locked).toBe(false);
     expect(group.rows).toHaveLength(3);
     fieldOf(panel, option).updateRow(0, 1, 'https://placeholder-next.invalid/api');
     await vi.advanceTimersByTimeAsync(500);
     expect(net.body(net.calls.length - 1).rows).toHaveLength(3);
+  });
+
+  describe('SEC-005 C1: a button sends its own section\'s typed values, in order, before the action', () => {
+    const saved = (net: ReturnType<typeof installFetch>) => net.calls
+      .filter((call) => /settings\.save\//.test(call.url))
+      .map((call) => Object.fromEntries(new URLSearchParams(String(call.init.body))));
+
+    it('sends the address and then the key, one at a time in the order typed, and only then the action', async () => {
+      const net = installFetch();
+      const first = deferred<Reply>();
+      net.replies.push(first.promise, { body: { success: true } }, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+      const { panel } = torrentPanel();
+      panel.setVal('torrentpotato', 'jackett_url', 'http://typed-jackett.invalid:9117');
+      panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
+
+      const running = button(panel).execute();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // The key's save waits for the address's answer: in order, never together.
+      expect(saved(net).map((body) => body.name)).toEqual(['jackett_url']);
+      first.resolve({ body: { success: true } });
+      await running;
+      expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+      expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_api_key']);
+    });
+
+    it('cancels the debounce timers, so nothing is sent a second time when they would have fired', async () => {
+      const net = installFetch();
+      net.replies.push({ body: { success: true } }, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+      const { panel } = torrentPanel();
+      panel.setVal('torrentpotato', 'jackett_url', 'http://typed-jackett.invalid:9117');
+
+      await button(panel).execute();
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(saved(net)).toHaveLength(1);
+      expect(panel.pendingSaves).toEqual({});
+    });
+
+    it('sends nothing of another section\'s: not a single value, not a group with a removal waiting', async () => {
+      const net = installFetch();
+      net.replies.push({ body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+      const { panel } = torrentPanel();
+      panel.setVal('newznab', 'enabled', '0');
+      const other = panel.ensureGroup('newznab', combinedOption(panel.options));
+      other.rows[0][1] = 'https://placeholder-other.invalid/api';
+      panel.editGroup('newznab');
+
+      await button(panel).execute();
+
+      expect(saved(net)).toEqual([]);
+      expect(net.groupSaves()).toEqual([]);
+      expect(Object.keys(panel.pendingSaves)).toEqual(['newznab.enabled']);
+    });
+
+    it('with nothing typed it sends no save at all', async () => {
+      const net = installFetch();
+      net.replies.push({ body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+      const { panel } = torrentPanel();
+
+      await button(panel).execute();
+
+      expect(calls(net)).toEqual(['torrentpotato.jackett_sync', 'settings']);
+    });
   });
 
   it('i: if the re-read fails the group stays locked, says so, and nothing can be saved', async () => {

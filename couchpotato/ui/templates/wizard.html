@@ -1675,9 +1675,12 @@ function setupWizard() {
               this.saveSetting('torrentpotato', 'enabled', this.formData.torrentpotato.enabled ? '1' : '0'),
             );
             if (this.formData.torrentpotato.enabled) {
+              // The key is stored with the address it is saved for, so the address
+              // save is AWAITED before the key save starts (SEC-005), as
+              // `syncJackett` does. They must never go out in the same batch.
               saves.push(
-                this.saveSetting('torrentpotato', 'jackett_url', this.formData.torrentpotato.jackett_url),
-                this.saveSetting('torrentpotato', 'jackett_api_key', this.formData.torrentpotato.jackett_api_key),
+                this.saveSetting('torrentpotato', 'jackett_url', this.formData.torrentpotato.jackett_url)
+                  .then(() => this.saveSetting('torrentpotato', 'jackett_api_key', this.formData.torrentpotato.jackett_api_key)),
               );
             }
             
