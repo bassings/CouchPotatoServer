@@ -26,12 +26,15 @@ ROOT_ERROR = '<error code="100" description="Invalid API Key"/>'
 NESTED_ERROR = '<results><error code="100" description="Invalid API Key"/></results>'
 PARSE_TEXT = 'Failed to parse Jackett response XML'
 EMPTY_INDEXERS = '<indexers/>'
+# (label, the description as written in the XML, a distinctive part of it as it
+# reads once parsed). Every row must show its OWN marker absent from the log.
 HOSTILE_DESCRIPTIONS = [
-    ('html tags', '&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;'),
-    ('5000 characters', 'A' * 5000),
-    ('control characters XML allows', 'bad&#127;&#133;[31mred&#9;tab'),
-    ('crlf', 'line one&#13;&#10;Set-Cookie: x=1'),
+    ('html tags', '&lt;script&gt;alert(1)&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;', 'onerror=alert'),
+    ('5000 characters', 'A' * 5000, 'A' * 50),
+    ('control characters XML allows', 'qzx&#127;&#133;[31mred&#9;tab', 'qzx'),
+    ('crlf', 'line one&#13;&#10;Set-Cookie: x=1', 'Set-Cookie'),
 ]
+DESCRIPTION = 'Invalid API Key'
 
 
 @pytest.fixture
@@ -55,7 +58,7 @@ def answer(world, operation, body):
 
 def assert_error_reply(result, logs, settings):
     assert result == {'success': False, 'error': ERROR_TEXT}
-    for private in (PLACEHOLDER_KEY, ADDRESS_A, HOST_A, 'apikey='):
+    for private in (PLACEHOLDER_KEY, ADDRESS_A, HOST_A, 'apikey=', DESCRIPTION):
         assert private not in str(result)
         assert private not in logs.text()
 
@@ -81,11 +84,14 @@ class TestAnErrorReply:
         assert [(r.levelname, r.getMessage()) for r in root_logs.at_or_above(40)] == \
                [(r.levelname, r.getMessage()) for r in nested_logs.at_or_above(40)]
         assert len(root_logs.at_or_above(40)) == 1
+        for logs in (root_logs, nested_logs):
+            assert DESCRIPTION not in logs.text()
+            assert all(DESCRIPTION not in r.getMessage() for r in logs.records)
 
-    @pytest.mark.parametrize('label,description', HOSTILE_DESCRIPTIONS,
+    @pytest.mark.parametrize('label,description,marker', HOSTILE_DESCRIPTIONS,
                              ids=[row[0] for row in HOSTILE_DESCRIPTIONS])
     def test_a_hostile_description_never_reaches_the_response_or_the_log(
-            self, world, operation, label, description):
+            self, world, operation, label, description, marker):
         settings = world[0]
         before = sha(settings.file)
         body = f'<error code="100" description="{description}"/>'
@@ -93,9 +99,10 @@ class TestAnErrorReply:
         result, logs = answer(world, operation, body)
 
         assert result == {'success': False, 'error': ERROR_TEXT}
-        assert 'script' not in logs.text()
-        assert 'Set-Cookie' not in logs.text()
-        assert 'AAAA' not in logs.text()
+        assert marker not in str(result)
+        assert logs.records, 'the capture saw nothing, so an absent marker proves nothing'
+        assert marker not in logs.text()
+        assert all(marker not in r.getMessage() for r in logs.records)
         assert sha(settings.file) == before
 
     def test_a_description_with_a_control_character_xml_forbids_is_a_parse_failure_not_a_success(

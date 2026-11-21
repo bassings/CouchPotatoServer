@@ -328,12 +328,13 @@ class Base(TorrentProvider):
             # Parse XML response
             root = ET.fromstring(response)
 
-            # Check for Jackett error response. `find('.//error')` searches the
-            # descendants only, and Jackett answers an invalid API key with a
-            # document whose ROOT is the `<error>`, so the root is tested too.
-            # Nothing from the reply's `code` or `description` is returned or
-            # logged: the text below is fixed.
-            if root.tag == 'error' or root.find('.//error') is not None:
+            # Check for Jackett error response. `Element.iter` yields the root
+            # itself and then every descendant, so an `<error>` is found whether
+            # it is the whole reply or nested in one; `find('.//error')` searched
+            # descendants only, and a reply whose root was `<error>` read as
+            # success with no indexers. Nothing from the reply's `code` or
+            # `description` is returned or logged: the text below is fixed.
+            if next(root.iter('error'), None) is not None:
                 log.error('Jackett returned an error response')
                 return None, 'Jackett returned an error response'
 
