@@ -4,14 +4,20 @@ The local gate retries a failed browser test once and must not let a test that
 only passed on retry disappear: the owner decision (2026-11-21) is that local
 retries, CI stays strict, and every retry-pass is listed. The list comes from
 Playwright's own JSON results, so these fixtures follow the shape Playwright
-really writes (captured from a real run: a flaky test is `ok: true`, exactly
-like a pass, and is distinguishable only by `status == "flaky"`).
+1.65 really writes: a flaky test is `ok: true`, exactly like a pass, and is
+distinguishable only by `status == "flaky"`. The `config` block was taken from
+a real `--list --reporter=json` run of this repo with the absolute prefix
+replaced by a fake one of the same shape: `rootDir` is the resolved testDir,
+`configFile` is the repo's playwright.config.ts, and a spec's `file` is
+relative to `rootDir`.
 """
 import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / 'scripts' / 'e2e_flaky_summary.py'
@@ -34,8 +40,9 @@ def make_report():
     """One passed, one failed twice, one flaky, one skipped; the flaky and the
     failed ones sit inside a describe so the title carries its group."""
     return {
-        'config': {'rootDir': '/private/abs/repo',
-                   'projects': [{'testDir': '/private/abs/repo/tests/e2e'}]},
+        'config': {'configFile': '/private/abs/repo/playwright.config.ts',
+                   'rootDir': '/private/abs/repo/tests/e2e',
+                   'projects': [{'name': 'chromium', 'testDir': '/private/abs/repo/tests/e2e'}]},
         'suites': [{
             'title': 'settings.spec.ts', 'file': 'settings.spec.ts', 'line': 0,
             'specs': [
@@ -58,16 +65,16 @@ def make_report():
 
 def test_lists_exactly_the_flaky_test():
     found = summary.find_flaky(make_report())
-    assert [(f['line'], f['title']) for f in found] == [(5, 'Undo by keyboard › flaky one')]
+    assert [(f.line, f.title) for f in found] == [(5, 'Undo by keyboard › flaky one')]
 
 
 def test_a_test_that_failed_twice_is_not_listed_as_flaky():
-    titles = [f['title'] for f in summary.find_flaky(make_report())]
+    titles = [f.title for f in summary.find_flaky(make_report())]
     assert 'Undo by keyboard › always fails' not in titles
 
 
 def test_passed_and_skipped_tests_are_not_listed():
-    titles = ' '.join(f['title'] for f in summary.find_flaky(make_report()))
+    titles = ' '.join(f.title for f in summary.find_flaky(make_report()))
     assert 'passes' not in titles
     assert 'skipped' not in titles
 
@@ -78,12 +85,15 @@ def test_a_flaky_test_is_found_by_its_status_not_by_ok_or_result_count():
     report = make_report()
     flaky = report['suites'][0]['suites'][0]['specs'][1]
     assert flaky['ok'] is True
-    assert [f['line'] for f in summary.find_flaky(report)] == [5]
+    assert [f.line for f in summary.find_flaky(report)] == [5]
 
 
-def test_file_path_is_relative_and_never_absolute():
+def test_file_path_is_repo_relative_and_never_absolute():
+    """Resolved against the config file's directory, so the path can be pasted
+    into `npx playwright test`. The fake prefix must not appear."""
     found = summary.find_flaky(make_report())
-    assert found[0]['file'] == 'tests/e2e/settings.spec.ts'
+    assert '/private/abs' not in found[0].file
+    assert found[0].file == 'tests/e2e/settings.spec.ts'
 
 
 def test_nothing_flaky_is_reported_as_none_not_as_silence(tmp_path):
@@ -133,6 +143,29 @@ def test_a_malformed_results_file_is_reported_as_unknown(tmp_path):
     bad.write_text('{not json', encoding='utf-8')
     text = summary.summarise([str(bad)])
     assert 'UNKNOWN' in text
+
+
+def test_a_report_without_a_config_file_falls_back_to_the_basename():
+    report = make_report()
+    del report['config']['configFile']
+    found = summary.find_flaky(report)
+    assert found[0].file == 'settings.spec.ts'
+
+
+def test_a_test_dir_outside_the_repo_falls_back_to_the_basename():
+    report = make_report()
+    report['config']['configFile'] = '/elsewhere/other/playwright.config.ts'
+    assert summary.find_flaky(report)[0].file == 'settings.spec.ts'
+
+
+@pytest.mark.parametrize('payload', ['null', '[]', '3', '"text"', '{"suites": null}', '{"suites": [1]}'])
+def test_valid_json_that_is_not_a_report_is_unknown_and_does_not_raise(tmp_path, payload):
+    """The script always exits 0: JSON that parses but is not a report is unreadable."""
+    path = tmp_path / 'chromium.json'
+    path.write_text(payload, encoding='utf-8')
+    text = summary.summarise([str(path)])
+    assert 'UNKNOWN' in text
+    assert 'No flaky' not in text
 
 
 def test_the_unknown_warning_does_not_leak_the_directory(tmp_path):

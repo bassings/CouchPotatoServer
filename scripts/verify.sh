@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
 # verify.sh — the canonical local gate. Mirrors what CI enforces so that
-# "green here" means "green in CI". Run this before opening a PR; the
-# pre-push git hook (.githooks/pre-push) runs it automatically.
+# "green here" means "green in CI", with ONE deliberate exception: a browser
+# test that fails and then passes on its one local retry is green here and red
+# in CI (owner decision 2026-11-21), and is listed at the end of step 7 and
+# again in the final summary. Run this before opening a PR; the pre-push git
+# hook (.githooks/pre-push) runs it automatically.
 #
 # Stages (fail-fast, single exit code):
 #   1. ruff lint
@@ -19,6 +22,9 @@
 # Usage:
 #   ./scripts/verify.sh            # full gate
 #   ./scripts/verify.sh --no-e2e   # skip the slow E2E stage (lint + unit only)
+#   ./scripts/verify.sh --e2e-only # run ONLY step 7 (steps 0-6 skipped). The seam
+#                                  # tests/unit/test_e2e_local_retry_gate.py drives
+#                                  # with a stub `npx`, so step 7 is run, not read.
 #
 # Env:
 #   PYTHON   interpreter to use. Default: ./.venv/bin/python when it exists,
@@ -28,8 +34,11 @@
 set -euo pipefail
 
 RUN_E2E=1
+E2E_ONLY=0
 FLAKY_REPORT=''
+FLAKY_DIR=''
 [[ "${1:-}" == "--no-e2e" ]] && RUN_E2E=0
+[[ "${1:-}" == "--e2e-only" ]] && E2E_ONLY=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -54,6 +63,9 @@ export PYTHONPATH="${PROJECT_DIR}/libs${PYTHONPATH:+:$PYTHONPATH}"
 step() { printf '\n\033[1;34m▶ %s\033[0m\n' "$1"; }
 fail() { printf '\n\033[1;31m✖ %s\033[0m\n' "$1" >&2; exit 1; }
 
+# Steps 0-6 run unless --e2e-only; the `if` closes just before step 7 and is
+# deliberately not re-indented, to keep this diff reviewable.
+if [[ "$E2E_ONLY" -eq 0 ]]; then
 # ── 0. Preflight: required Python deps present? ─────────────────────────────
 if ! "$PYTHON" -c "import bcrypt, httpx, ruff" >/dev/null 2>&1; then
   fail "Python deps missing (bcrypt/httpx/ruff). Run 'make setup' (or:
@@ -132,6 +144,8 @@ if [[ ! -d node_modules ]]; then
 fi
 npm run test:unit || fail "UI unit tests failed"
 
+fi  # end of steps 0-6 (skipped by --e2e-only)
+
 # ── 7. E2E tests ────────────────────────────────────────────────────────────
 if [[ "$RUN_E2E" -eq 1 ]]; then
   step "7/7 E2E tests (Playwright: chromium + a11y + mobile)"
@@ -166,7 +180,24 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # The summary is given the four report files by name, never a glob: an
   # invocation that wrote no report must read as UNKNOWN, not as "none flaky".
   FLAKY_DIR="$(mktemp -d)"
-  trap 'rm -rf "$FLAKY_DIR"' EXIT
+  # The list is also printed when the gate FAILS in step 7: a test that only
+  # passed on retry in an earlier invocation must not vanish because a later
+  # one failed. It runs from the EXIT trap, before the reports are removed, and
+  # exit status is kept (the trap does not call `exit`). Reports for
+  # invocations that never ran read as UNKNOWN: a missing file cannot tell
+  # "did not run" from "ran and wrote nothing", so it is not guessed.
+  flaky_summary() {
+    "$PYTHON" scripts/e2e_flaky_summary.py "$FLAKY_DIR/chromium.json" "$FLAKY_DIR/isolation.json" "$FLAKY_DIR/mobile-chrome.json" "$FLAKY_DIR/accessibility.json" \
+      || echo 'UNKNOWN: the flaky-test summary itself failed to run.'
+  }
+  on_exit() {
+    local status=$?
+    if [[ "$status" -ne 0 ]]; then
+      printf '\n%s\n' "$(flaky_summary)"
+    fi
+    rm -rf "$FLAKY_DIR"
+  }
+  trap on_exit EXIT
   # The html reporter is kept (CI uploads it); `never` stops it opening a
   # browser on a failed run, which the config's own reporter entry does too.
   export PLAYWRIGHT_HTML_OPEN=never
@@ -204,7 +235,7 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   PLAYWRIGHT_JSON_OUTPUT_NAME="$FLAKY_DIR/accessibility.json" \
   npx playwright test --project=accessibility --trace=retain-on-failure --retries=1 --reporter=list,html,json \
     || fail "Accessibility tests failed"
-  FLAKY_REPORT="$("$PYTHON" scripts/e2e_flaky_summary.py "$FLAKY_DIR/chromium.json" "$FLAKY_DIR/isolation.json" "$FLAKY_DIR/mobile-chrome.json" "$FLAKY_DIR/accessibility.json" || echo 'UNKNOWN: the flaky-test summary itself failed to run.')"
+  FLAKY_REPORT="$(flaky_summary)"
   printf '\n%s\n' "$FLAKY_REPORT"
 else
   step "7/7 E2E tests: SKIPPED (--no-e2e)"

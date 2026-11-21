@@ -14,14 +14,22 @@ What each guard here protects:
   - JSON per invocation plus an explicit file list: the flaky list must come
     from Playwright's result data, and a glob would turn an invocation that
     wrote nothing into a silent "none flaky";
-  - the list printed twice: at the end of step 7 and in the final summary.
+  - the list printed twice: at the end of step 7 and in the final summary;
+  - and, because text and position cannot show that a line DOES anything,
+    `test_step7_*` below run the real `scripts/verify.sh --e2e-only` against a
+    stub `npx` and read what it prints and how it exits.
 """
+import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from tests.unit.test_ci_required_contexts import flaky_problems, playwright_commands
+from tests.unit.test_e2e_flaky_summary import make_report
 
 yaml = pytest.importorskip('yaml')
 
@@ -146,3 +154,82 @@ def test_ci_overrides_neither_the_retry_count_nor_the_flaky_flag():
     assert playwright_commands(run_text), 'no CI Playwright invocations found'
     assert '--retries' not in run_text
     assert flaky_problems(run_text) == []
+
+
+# ---- Step 7 RUN, not read ----------------------------------------------------
+#
+# The text guards above cannot tell a summary line that runs from one turned into
+# an `echo`, an assignment moved below its prints, a print moved before any test,
+# or `|| fail` softened to `|| true`. These run the real step 7 (`--e2e-only`
+# skips steps 0-6) with a stub `npx` first on PATH. The stub writes a real-shaped
+# report to PLAYWRIGHT_JSON_OUTPUT_NAME (flaky in one project) and can fail one.
+
+BANNER = 'All checks passed'
+LISTING = 'tests/e2e/settings.spec.ts:5'
+PROJECTS = ['chromium', 'isolation', 'mobile-chrome', 'accessibility']
+
+STUB_NPX = r"""#!/bin/bash
+project=$(echo "$*" | sed -n 's/.*--project=\([^ ]*\).*/\1/p')
+[ -z "$project" ] && exit 0                     # `npx playwright install chromium`
+if [ "$project" = "$STUB_FLAKY_PROJECT" ]; then
+  cp "$STUB_REPORT" "$PLAYWRIGHT_JSON_OUTPUT_NAME"
+else
+  echo '{"suites": []}' > "$PLAYWRIGHT_JSON_OUTPUT_NAME"
+fi
+echo "STUB-RAN $project"
+[ "$project" = "$STUB_FAIL_PROJECT" ] && exit 1
+exit 0
+"""
+
+
+def run_step7(tmp_path, flaky='chromium', fail=''):
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    npx = bin_dir / 'npx'
+    npx.write_text(STUB_NPX, encoding='utf-8')
+    npx.chmod(0o755)
+    report = tmp_path / 'flaky.json'
+    report.write_text(json.dumps(make_report()), encoding='utf-8')
+    env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}', PYTHON=sys.executable,
+               STUB_REPORT=str(report), STUB_FLAKY_PROJECT=flaky, STUB_FAIL_PROJECT=fail)
+    result = subprocess.run(['bash', str(VERIFY), '--e2e-only'], cwd=REPO, env=env,
+                            capture_output=True, text=True, timeout=120, check=False)
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_step7_green_run_lists_the_flaky_test_after_step_7_and_after_the_banner(tmp_path):
+    code, out = run_step7(tmp_path)
+    assert code == 0, out
+    assert out.count(LISTING) == 2
+    assert out.rindex('STUB-RAN') < out.index(LISTING), 'the first listing was printed before the tests ran'
+    assert out.index(LISTING) < out.index(BANNER) < out.rindex(LISTING)
+
+
+def test_step7_green_run_with_nothing_flaky_says_so_twice(tmp_path):
+    code, out = run_step7(tmp_path, flaky='none')
+    assert code == 0, out
+    assert out.count('No flaky E2E tests') == 2
+
+
+@pytest.mark.parametrize('project', PROJECTS)
+def test_step7_a_failed_invocation_fails_the_gate_with_no_banner(tmp_path, project):
+    code, out = run_step7(tmp_path, fail=project)
+    assert code != 0
+    assert BANNER not in out
+
+
+def test_step7_red_gate_still_lists_a_test_that_passed_only_on_retry_earlier(tmp_path):
+    """Flaky in chromium, hard failure in accessibility: the listing is shown once
+    (from the EXIT trap, before the reports are removed) and the exit stays non-zero."""
+    code, out = run_step7(tmp_path, flaky='chromium', fail='accessibility')
+    assert code != 0
+    assert out.count(LISTING) == 1
+    assert BANNER not in out
+    assert 'Accessibility tests failed' in out
+
+
+def test_step7_red_gate_reports_invocations_that_never_ran_as_unknown(tmp_path):
+    code, out = run_step7(tmp_path, flaky='none', fail='chromium')
+    assert code != 0
+    assert out.count('UNKNOWN') == 3
+    assert 'No flaky' not in out

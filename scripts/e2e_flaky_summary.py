@@ -18,21 +18,39 @@ Stdlib only. Prints repo-relative paths, never absolute ones.
 import json
 import os
 import sys
+from typing import NamedTuple
 
-TITLE_SEP = ' › '
+TITLE_SEP = ' \u203a '
+
+
+class Flaky(NamedTuple):
+    file: str
+    line: int
+    title: str
+    project: str
+
+    def display(self):
+        project = '[%s] ' % self.project if self.project else ''
+        return '  %s:%s  %s%s' % (self.file, self.line, project, self.title)
 
 
 def _display_file(report, file):
-    """Repo-relative path for a spec file, never an absolute one."""
+    """Repo-relative path for a spec file, never an absolute one.
+
+    Playwright writes `file` relative to `config.rootDir` (the resolved testDir),
+    so it is resolved against the directory of `config.configFile`, the repo
+    root. Anything that cannot be placed inside that directory is shown as its
+    bare file name.
+    """
     try:
         config = report['config']
-        test_dir = config['projects'][0]['testDir']
-        relative_dir = os.path.relpath(test_dir, config['rootDir'])
-        if relative_dir.startswith('..'):
-            return os.path.basename(file)
-        return os.path.normpath(os.path.join(relative_dir, file)).replace(os.sep, '/')
-    except (KeyError, IndexError, TypeError, ValueError):
+        repo_root = os.path.dirname(config['configFile'])
+        relative = os.path.relpath(os.path.join(config['rootDir'], file), repo_root)
+    except (KeyError, TypeError, ValueError):
         return os.path.basename(file)
+    if relative.startswith('..') or os.path.isabs(relative):
+        return os.path.basename(file)
+    return relative.replace(os.sep, '/')
 
 
 def _walk(suite, parents):
@@ -48,16 +66,15 @@ def find_flaky(report):
     found = []
     for file_suite in report.get('suites', []):
         for parents, spec in _walk(file_suite, []):
+            title = TITLE_SEP.join([p for p in parents if p] + [spec.get('title', '')])
             for test in spec.get('tests', []):
-                if test.get('status') != 'flaky':
-                    continue
-                title = TITLE_SEP.join([p for p in parents if p] + [spec.get('title', '')])
-                found.append({
-                    'file': _display_file(report, spec.get('file', '')),
-                    'line': spec.get('line', 0),
-                    'title': title,
-                    'project': test.get('projectName') or '',
-                })
+                if test.get('status') == 'flaky':
+                    found.append(Flaky(
+                        _display_file(report, spec.get('file', '')),
+                        spec.get('line', 0),
+                        title,
+                        test.get('projectName') or '',
+                    ))
     return found
 
 
@@ -72,14 +89,14 @@ def summarise(paths):
         try:
             with open(path, encoding='utf-8') as handle:
                 flaky.extend(find_flaky(json.load(handle)))
-        except (OSError, ValueError):
+        # Valid JSON that is not a report (`null`, `[]`, a number) fails on `.get` with
+        # AttributeError or TypeError. All of it is "unreadable", and this script never raises.
+        except (OSError, ValueError, TypeError, AttributeError):
             unreadable.append(_label(path))
     lines = []
     if flaky:
         lines.append('FLAKY E2E TESTS: passed only on retry (CI would fail these):')
-        for item in flaky:
-            project = '[%s] ' % item['project'] if item['project'] else ''
-            lines.append('  %s:%s  %s%s' % (item['file'], item['line'], project, item['title']))
+        lines.extend(item.display() for item in flaky)
     elif not unreadable:
         lines.append('No flaky E2E tests (nothing passed only on retry).')
     for label in unreadable:
