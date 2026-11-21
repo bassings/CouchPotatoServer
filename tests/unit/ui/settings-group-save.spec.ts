@@ -1222,6 +1222,92 @@ describe('a button in a section with a combine group: the rows are locked from t
       expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_api_key']);
     });
 
+    describe('a save already in flight when the button is pressed', () => {
+      /** The address's debounce has fired and its request has left but not returned. */
+      async function addressInFlight(addressReply: Reply | Promise<Reply>) {
+        const net = installFetch();
+        net.replies.push(addressReply, { body: { success: true } }, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+        const ctx = torrentPanel();
+        ctx.panel.setVal('torrentpotato', 'jackett_url', 'http://typed-jackett.invalid:9117');
+        await vi.advanceTimersByTimeAsync(500);
+        ctx.panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
+        return { net, ...ctx };
+      }
+
+      it('holds the key back until the address has been answered, then sends the action', async () => {
+        const held = deferred<Reply>();
+        const { net, panel } = await addressInFlight(held.promise);
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url']);
+
+        const running = button(panel).execute();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url']);
+        expect(calls(net)).toEqual(['settings.save']);
+        held.resolve({ body: { success: true } });
+        await running;
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_api_key']);
+        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+      });
+
+      it('holds the action back until the address has been answered, when no key is waiting', async () => {
+        const net = installFetch();
+        const held = deferred<Reply>();
+        net.replies.push(held.promise, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_url', 'http://typed-jackett.invalid:9117');
+        await vi.advanceTimersByTimeAsync(500);
+
+        const running = button(panel).execute();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(calls(net)).toEqual(['settings.save']);
+        held.resolve({ body: { success: true } });
+        await running;
+        expect(calls(net)).toEqual(['settings.save', 'torrentpotato.jackett_sync', 'settings']);
+      });
+
+      it('still finishes, and sends the key and the action, when the address was refused', async () => {
+        const held = deferred<Reply>();
+        const { net, panel } = await addressInFlight(held.promise);
+
+        const running = button(panel).execute();
+        await vi.advanceTimersByTimeAsync(0);
+        held.resolve({ status: 500, text: 'no' });
+        await running;
+
+        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+      });
+
+      it('still finishes when the address request itself failed', async () => {
+        const held = deferred<Reply>();
+        const { net, panel } = await addressInFlight(held.promise);
+
+        const running = button(panel).execute();
+        await vi.advanceTimersByTimeAsync(0);
+        held.promise.catch(() => undefined);
+        held.resolve({ status: 503, body: { success: false, error: 'busy' } });
+        await running;
+
+        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+      });
+
+      it('lets go of the section once its saves are answered, and leaves another section alone', async () => {
+        const held = deferred<Reply>();
+        const { net, panel } = await addressInFlight(held.promise);
+        net.replies.push({ body: { success: true } });
+        const other = panel.saveSingle('newznab', 'enabled', '0');
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(net.calls.map((call) => Object.fromEntries(new URLSearchParams(String(call.init.body))).name)).toEqual(['jackett_url', 'enabled']);
+        held.resolve({ body: { success: true } });
+        await other;
+        await panel.saveSingle('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(panel.saveChains).toEqual({});
+      });
+    });
+
     it('cancels the debounce timers, so nothing is sent a second time when they would have fired', async () => {
       const net = installFetch();
       net.replies.push({ body: { success: true } }, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));

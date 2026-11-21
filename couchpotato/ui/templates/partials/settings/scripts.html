@@ -147,6 +147,7 @@ function settingsPanel() {
     lastSaved: false,
     saveTimers: {},
     pendingSaves: {},
+    saveChains: {},
     // Combine groups (SEC-004 P3). `combineState` is what the settings read says
     // about each group (`misaligned`, `rows`); the page never derives either.
     // `groupState` holds each group's rows, refusal and in-flight save at PANEL
@@ -558,9 +559,14 @@ function settingsPanel() {
         }
         delete this.pendingSaves[key];
       }
-      for (const [, save] of pending) {
-        await this.saveSingle(save.section, save.name, save.value);
-      }
+      // Every save of a section joins one chain (see saveSingle), so these are sent
+      // in the order typed and each waits for any save of the section whose request
+      // has already left (the Jackett address typed a moment ago) to be answered.
+      // The chain never rejects, so a refused save cannot leave this hanging.
+      await Promise.all([
+        ...pending.map(([, save]) => this.saveSingle(save.section, save.name, save.value)),
+        this.saveChains[section],
+      ]);
     },
 
     /* ── Combine groups: one save per group, as rows (SEC-004) ──────────────
@@ -971,8 +977,25 @@ function settingsPanel() {
       group.refusalKey = this.refusalKeyOf(group.refusal);
     },
 
-    async saveSingle(section, name, value) {
+    /**
+     * Save one option, after any save of the same section that is still in flight
+     * (SEC-005 C1). Saves of one section go out one at a time in the order they
+     * started, so a key can never reach the server ahead of the address typed
+     * before it, and `flushPendingSavesFor` can wait for them all. The chain holds
+     * a link that never rejects, and is dropped once its last save has settled.
+     */
+    saveSingle(section, name, value) {
       delete this.pendingSaves[section + '.' + name];
+      const run = (this.saveChains[section] || Promise.resolve()).then(() => this.sendSingleSave(section, name, value));
+      const link = run.catch(() => undefined);
+      this.saveChains[section] = link;
+      link.then(() => {
+        if (this.saveChains[section] === link) delete this.saveChains[section];
+      });
+      return run;
+    },
+
+    async sendSingleSave(section, name, value) {
       this.saving = true;
       this.lastSaved = false;
       try {
