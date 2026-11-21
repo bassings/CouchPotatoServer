@@ -33,6 +33,7 @@ from tests.helpers.combine_groups import (
     snapshot,
     stored_group,
 )
+from tests.helpers.jackett_binding import bind_saved_pair
 
 JACKETT = 'http://jackett.invalid:9117'
 JACKETT_KEY = 'placeholder-jackett-key'
@@ -56,9 +57,10 @@ def indexer(identifier, title):
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
-    stored = {'torrentpotato': dict(STORED, jackett_url=JACKETT, jackett_api_key=JACKETT_KEY)}
+    stored = {'torrentpotato': dict(STORED)}
     with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
         monkeypatch.setattr(Env, '_settings', settings)
+        bind_saved_pair(settings, JACKETT, JACKETT_KEY)  # a bound key, through the production writer (AC-QA-20)
         from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
         provider = TorrentPotato.__new__(TorrentPotato)
         provider.fetched = []
@@ -182,6 +184,7 @@ class TestASuccessfulSync:
         defaults = {'torrentpotato': {'jackett_url': JACKETT, 'jackett_api_key': JACKETT_KEY}}
         with group_settings(tmp_path, monkeypatch, stored=defaults) as settings:
             monkeypatch.setattr(Env, '_settings', settings)
+            bind_saved_pair(settings, JACKETT, JACKETT_KEY)  # a bound key, through the production writer (AC-QA-20)
             from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
             provider = TorrentPotato.__new__(TorrentPotato)
             monkeypatch.setattr(provider, 'getJackettIndexers',
@@ -203,6 +206,7 @@ class TestWhichStoredRowsSurviveAMerge:
 
     def sync(self, settings, monkeypatch):
         monkeypatch.setattr(Env, '_settings', settings)
+        bind_saved_pair(settings, JACKETT, JACKETT_KEY)  # a bound key, through the production writer (AC-QA-20)
         from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
         provider = TorrentPotato.__new__(TorrentPotato)
         monkeypatch.setattr(provider, 'getJackettIndexers',
@@ -484,6 +488,7 @@ def misaligned_world(tmp_path, monkeypatch):
     stored = {'torrentpotato': dict(MISALIGNED, jackett_url=JACKETT, jackett_api_key=JACKETT_KEY)}
     with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
         monkeypatch.setattr(Env, '_settings', settings)
+        bind_saved_pair(settings, JACKETT, JACKETT_KEY)  # a bound key, through the production writer (AC-QA-20)
         from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
         provider = TorrentPotato.__new__(TorrentPotato)
         requested = []
@@ -535,6 +540,7 @@ class TestAMisalignedStoredGroup:
             (tmp_path / short).mkdir()
             with group_settings(tmp_path / short, monkeypatch, stored=stored) as settings:
                 monkeypatch.setattr(Env, '_settings', settings)
+                bind_saved_pair(settings, JACKETT, JACKETT_KEY)  # a bound key, through the production writer (AC-QA-20)
                 from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
                 provider = TorrentPotato.__new__(TorrentPotato)
                 monkeypatch.setattr(provider, 'getJackettIndexers',
@@ -579,6 +585,7 @@ class TestAMisalignedStoredGroup:
         defaults = {'torrentpotato': {'jackett_url': JACKETT, 'jackett_api_key': JACKETT_KEY}}
         with group_settings(tmp_path, monkeypatch, stored=defaults) as settings:
             monkeypatch.setattr(Env, '_settings', settings)
+            bind_saved_pair(settings, JACKETT, JACKETT_KEY)  # a bound key, through the production writer (AC-QA-20)
             from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
             provider = TorrentPotato.__new__(TorrentPotato)
             monkeypatch.setattr(provider, 'getJackettIndexers',

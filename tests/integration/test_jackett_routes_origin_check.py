@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from couchpotato import ORIGIN_CHECKED_API_ROUTES, create_app
 from couchpotato.environment import Env
 from tests.helpers.combine_groups import group_settings, sha
+from tests.helpers.jackett_binding import bind_saved_pair
 
 pytestmark = pytest.mark.integration
 
@@ -35,9 +36,9 @@ CROSS_ORIGIN_REFUSED = {'success': False, 'error': 'Cross-origin request refused
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
-    stored = {'torrentpotato': {'jackett_url': SAVED_URL, 'jackett_api_key': SAVED_KEY}}
-    with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
+    with group_settings(tmp_path, monkeypatch) as settings:
         monkeypatch.setattr(Env, '_settings', settings)
+        bind_saved_pair(settings, SAVED_URL, SAVED_KEY)  # a bound key, through the production writer (AC-QA-20)
         monkeypatch.setattr(Env, '_web_base', '/', raising=False)
         monkeypatch.setattr(Env, '_api_base', '/api/%s/' % API_KEY, raising=False)
         monkeypatch.setattr(Env, '_static_path', '/static/', raising=False)
