@@ -537,6 +537,18 @@ class Settings:
 
         return value
 
+    def isOptionInRead(self, section, option_name):
+        """Whether `getValues` reports this option at all.
+
+        Meta options never are. Nor is an option whose flag says it is not
+        readable ('hidden'), in any section: hiding it from the rendered options
+        (`getOptions`) is not enough, because this read is the one a script of
+        the API key reads, and it returned a hidden option verbatim.
+        """
+        if self.isOptionMeta(section, option_name):
+            return False
+        return self.isOptionReadable(section, option_name)
+
     def getValues(self):
         from couchpotato.environment import Env
 
@@ -547,15 +559,7 @@ class Settings:
             values[section] = {}
             registered_in_section = self.registered_options.get(section, set())
             for option_name, option_value in self.p.items(section):
-                if self.isOptionMeta(section, option_name):
-                    continue
-
-                # An option whose flag says it is not readable ('hidden') is
-                # not part of the read at all, in any section. Hiding it from
-                # the rendered options (`getOptions`) is not enough: this read
-                # is the one a script of the API key reads, and it returned a
-                # hidden option verbatim.
-                if not self.isOptionReadable(section, option_name):
+                if not self.isOptionInRead(section, option_name):
                     continue
 
                 if option_name not in registered_in_section:
