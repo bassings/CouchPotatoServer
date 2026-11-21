@@ -120,6 +120,12 @@ const REREAD_TIMEOUT_MS = 15000;
  *  at once. */
 const REMOVAL_UNDO_WINDOW_MS = 8000;
 
+/** How long the saves of a section wait for a save of the same section whose request has
+ *  been SENT and not answered, before the next one is sent anyway (SEC-005 C1). The clock
+ *  starts when that request is sent, never while it is still queued. The unanswered request
+ *  is not aborted: it may still succeed on the server. */
+const SAVE_WAIT_DEADLINE_MS = 10000;
+
 /* ── Settings panel (main) ── */
 function settingsPanel() {
   return {
@@ -147,6 +153,7 @@ function settingsPanel() {
     lastSaved: false,
     saveTimers: {},
     pendingSaves: {},
+    saveChains: {},
     // Combine groups (SEC-004 P3). `combineState` is what the settings read says
     // about each group (`misaligned`, `rows`); the page never derives either.
     // `groupState` holds each group's rows, refusal and in-flight save at PANEL
@@ -506,13 +513,18 @@ function settingsPanel() {
     },
 
     /**
-     * Run every debounced save NOW and wait for all of them.
+     * Run every debounced save NOW and wait for them, each for at most
+     * SAVE_WAIT_DEADLINE_MS after it was sent (see saveSingle).
      *
      * For a control that acts on a setting the user has only just typed. The
      * 500ms debounce is right for keystrokes and wrong the moment something
      * READS the saved value: Trakt authorisation asked the server for a
      * device code using whichever credentials the server had before the edit
      * had landed, which on first setup is none of them.
+     *
+     * The wait is bounded: a save sent and not answered for the deadline stops
+     * being waited for, and what follows then runs against what the server still
+     * holds (on `master` it waited for ever).
      *
      * Safe to call when nothing is pending: it resolves immediately.
      */
@@ -539,8 +551,11 @@ function settingsPanel() {
      * the order they were typed, and wait for them (SEC-005 C1).
      *
      * For a button that acts on the saved settings of its own section: a Sync
-     * pressed straight after the Jackett address or key is typed must go out
-     * after those saves, not before them. Only this section's saves are sent. A
+     * pressed straight after the Jackett address or key is typed goes out after
+     * those saves, and after a save of the section already in flight, not before
+     * them. That wait is bounded: a save sent and not answered for
+     * SAVE_WAIT_DEADLINE_MS stops being waited for, so the saves behind it, and
+     * the action, then go out ahead of it (see saveSingle). Only this section's saves are sent. A
      * combine group in another section keeps its 8-second Undo window (a panel
      * wide flush would commit a removed row at once), and a section's own
      * combine group is flushed by `flushGroupFor`. In order, not together, so
@@ -558,9 +573,17 @@ function settingsPanel() {
         }
         delete this.pendingSaves[key];
       }
-      for (const [, save] of pending) {
-        await this.saveSingle(save.section, save.name, save.value);
-      }
+      // Every save of a section joins one chain (see saveSingle), so these are sent
+      // in the order typed, one at a time, each after the save before it has been
+      // answered or has had its wait deadline. What is awaited here are the chain's
+      // links, which never reject and are bounded, so neither a refused save nor a
+      // request that never answers holds the button for ever (worst case, one
+      // deadline per save queued ahead). After a deadline a later save CAN be sent
+      // ahead of an earlier one that has not been answered.
+      await Promise.all([
+        ...pending.map(([, save]) => this.saveSingle(save.section, save.name, save.value)),
+        this.saveChains[section],
+      ]);
     },
 
     /* ── Combine groups: one save per group, as rows (SEC-004) ──────────────
@@ -971,8 +994,46 @@ function settingsPanel() {
       group.refusalKey = this.refusalKeyOf(group.refusal);
     },
 
-    async saveSingle(section, name, value) {
+    /**
+     * Save one option, after the save of the same section ahead of it has been
+     * answered or has had its wait deadline since it was SENT (SEC-005 C1). Saves of
+     * one section go out one at a time in the order they started, so a key is not
+     * sent ahead of the address typed before it, and `flushPendingSavesFor` can wait
+     * for them. Returns the chain's link for this save: it resolves when the save is
+     * answered or its deadline passes, and never rejects (callers may ignore it).
+     * A request that never answers delays each save behind it by one deadline and is
+     * not aborted: it may still succeed on the server. After a deadline a later save
+     * CAN be sent ahead of an earlier one that has not been answered, so a key can
+     * then be bound to the address saved before it: the key is only sent to the
+     * address the SERVER held when the key was saved, which after a deadline can be
+     * the address from before the edit. The chain is dropped once its last link has
+     * settled.
+     */
+    saveSingle(section, name, value) {
       delete this.pendingSaves[section + '.' + name];
+      const link = (this.saveChains[section] || Promise.resolve())
+        .then(() => this.settledOrDeadline(this.sendSingleSave(section, name, value)));
+      this.saveChains[section] = link;
+      link.then(() => {
+        if (this.saveChains[section] === link) delete this.saveChains[section];
+      });
+      return link;
+    },
+
+    /** Resolves when `sent` (a request that has just been sent) settles, or after
+     *  SAVE_WAIT_DEADLINE_MS from now, whichever is first. Never rejects. */
+    settledOrDeadline(sent) {
+      return new Promise((resolve) => {
+        const timer = setTimeout(resolve, SAVE_WAIT_DEADLINE_MS);
+        const done = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        sent.then(done, done);
+      });
+    },
+
+    async sendSingleSave(section, name, value) {
       this.saving = true;
       this.lastSaved = false;
       try {
@@ -1466,7 +1527,9 @@ function traktDeviceAuth() {
       // which is what someone setting this up does, would otherwise ask Trakt
       // for a code using whatever the server held BEFORE the edit: reported
       // as missing while visibly on screen, or worse, a code issued for the
-      // old client and polled for with the new one.
+      // old client and polled for with the new one. That wait is bounded: a
+      // save sent and not answered for SAVE_WAIT_DEADLINE_MS is no longer waited
+      // for, and the code is then asked for against what the server still holds.
       const panel = this.getPanel();
       if (panel && typeof panel.flushPendingSaves === 'function') {
         await panel.flushPendingSaves();

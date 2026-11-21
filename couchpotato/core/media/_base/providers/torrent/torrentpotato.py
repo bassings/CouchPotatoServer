@@ -28,8 +28,11 @@ _DEFAULT_PORTS = {'http': 80, 'https': 443}
 # is the one character that moves a host across the `@` of
 # `http://evil\@jackett:9117`, and the address is the base of
 # `/torznab/all/api?apikey=...`, so a query or a fragment, even an empty one,
-# has no place in it.
-_UNSAFE_ADDRESS = re.compile(r'[\s\x00-\x1f\x7f\\?#]')
+# has no place in it. Spelled as the control range plus the space and the
+# Unicode spaces `\s` adds (U+0085, U+00A0, U+1680, U+2000-200A, U+2028,
+# U+2029, U+202F, U+205F, U+3000), so that no range overlaps another.
+_UNSAFE_ADDRESS = re.compile(
+    r'[\x00-\x20\x7f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\\?#]')
 
 MISALIGNED_TEXT = ('The saved TorrentPotato rows do not line up, so a sync could pair a key '
                    'with the wrong host. Fix the rows in Settings first. Nothing was changed.')
