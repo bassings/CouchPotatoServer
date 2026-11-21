@@ -276,6 +276,10 @@ image.
   rules 9–11; see "Verification discipline" above for the judgement half.
 - **security-lint** (ruff `S`/bandit) — INFORMATIONAL, non-blocking (~169
   legacy findings); ratchet S codes into the blocking `lint` as cleared.
+- **ruff `PT018` / `PT012`** (composite assertions; `pytest.raises` blocks of more
+  than one statement) — blocking in `lint` via `extend-select` in `pyproject.toml`,
+  tests included; guarded by `tests/unit/test_ruff_config.py`, which runs ruff itself on a
+  test-path probe. Nearest counterparts to Sonar S9073/S5778, not equivalents.
 - Plus the `claude-review` prompt covers security qualitatively.
 
 ## Mutation testing
