@@ -1362,12 +1362,71 @@ describe('a button in a section with a combine group: the rows are locked from t
         await Promise.all([one, two, three]);
         expect(sent()).toEqual(['jackett_url', 'jackett_api_key', 'seed_ratio']);
         await vi.advanceTimersByTimeAsync(0);
-        // Every wait-deadline timer a save started was cleared when the save before it settled.
+        // Every wait-deadline timer a save started was cleared when that save was answered.
         const deadlineTimers = started.mock.calls
           .map((args, index) => (args[1] === saveWaitDeadlineMs() ? started.mock.results[index].value : undefined))
           .filter((id) => id !== undefined);
-        expect(deadlineTimers).toHaveLength(2);
+        expect(deadlineTimers).toHaveLength(3);
         expect(cleared.mock.calls.map((args) => args[0])).toEqual(expect.arrayContaining(deadlineTimers));
+      });
+
+      it('pins the wait deadline at 10 seconds', () => {
+        expect(saveWaitDeadlineMs()).toBe(10000);
+      });
+
+      it('sends one save at a time behind a stalled one: at the deadline only the address goes, the key waits for it', async () => {
+        const net = installFetch();
+        const address = deferred<Reply>();
+        net.replies.push(new Promise<Reply>(() => {}), address.promise, { body: { success: true } }, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        const sent = () => saved(net).map((body) => body.name);
+        void panel.saveSingle('torrentpotato', 'seed_ratio', '2');
+        panel.setVal('torrentpotato', 'jackett_url', 'http://typed-jackett.invalid:9117');
+        panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
+
+        const running = button(panel).execute();
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(sent()).toEqual(['seed_ratio']);
+        await vi.advanceTimersByTimeAsync(5000);
+
+        // The stalled save has had its deadline: the address goes, and the key still waits for the address.
+        expect(sent()).toEqual(['seed_ratio', 'jackett_url']);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(sent()).toEqual(['seed_ratio', 'jackett_url']);
+        address.resolve({ body: { success: true } });
+        await running;
+        expect(sent()).toEqual(['seed_ratio', 'jackett_url', 'jackett_api_key']);
+        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+      });
+
+      it('with several saves that never answer, one more goes out per deadline, not all together', async () => {
+        const net = installFetch();
+        for (let i = 0; i < 4; i += 1) net.replies.push(new Promise<Reply>(() => {}));
+        const { panel } = torrentPanel();
+        const sent = () => saved(net).map((body) => body.name);
+        ['one', 'two', 'three', 'four'].forEach((name) => { void panel.saveSingle('torrentpotato', name, '1'); });
+
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sent()).toEqual(['one']);
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs());
+        expect(sent()).toEqual(['one', 'two']);
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs());
+        expect(sent()).toEqual(['one', 'two', 'three']);
+      });
+
+      it('the button itself stops waiting on its own save that never answers, a deadline after that save was sent', async () => {
+        const net = installFetch();
+        net.replies.push(new Promise<Reply>(() => {}), { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
+
+        const running = button(panel).execute();
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(calls(net)).toEqual(['settings.save']);
+        await vi.advanceTimersByTimeAsync(5000);
+        await running;
+
+        expect(calls(net)).toEqual(['settings.save', 'torrentpotato.jackett_sync', 'settings']);
       });
 
       it('lets go of the section once its saves are answered, and leaves another section alone', async () => {
