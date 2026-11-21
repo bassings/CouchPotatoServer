@@ -1,22 +1,24 @@
 """SEC-004 P2, AC-SEC-9 rule (a): one request cannot pair a caller-supplied URL with the saved key.
 
-What is guaranteed is that, and no more: someone who can call ``settings.save``
-can still change ``jackett_url`` alone and then call a route with no parameters,
-which sends the saved key to the new URL (measured, on master too; recorded as
-debt).
+What is guaranteed is that, and no more: the saved key is only sent to the
+address it was bound to (SEC-005), so a parameterless call is refused when the
+saved address differs from the one the key was saved for, and
+``tests/integration/test_jackett_key_guard.py`` proves that.
 
 ``jackettTest`` and ``jackettSync`` used to combine a request-supplied
 ``jackett_url`` with the saved ``jackett_api_key``, so a request that named any
 host sent the stored key to it. Here the real provider reads a real ``Settings``
 over a temporary ``config.ini``; only the network call (``urlopen``) is
 replaced, by a recorder, so what each request would have sent is observable.
+The saved pair is entered through ``settings.save`` (address, then key), the
+production writer, so it is bound the way a user's is.
 
 Hosts are ``.invalid`` and every credential is a ``placeholder-`` string.
 """
 import pytest
 
-from couchpotato.environment import Env
-from tests.helpers.combine_groups import group_settings, sha
+from tests.helpers.combine_groups import sha
+from tests.helpers.jackett_binding import bind_saved_pair, jackett_settings
 
 SAVED_URL = 'http://saved-jackett.invalid:9117'
 SAVED_KEY = 'placeholder-saved-jackett-key'
@@ -32,11 +34,8 @@ OPERATIONS = ('jackettTest', 'jackettSync')
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
-    stored = {'torrentpotato': {'jackett_url': SAVED_URL, 'jackett_api_key': SAVED_KEY}}
-    with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
-        monkeypatch.setattr(Env, '_settings', settings)
-        from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
-        provider = TorrentPotato.__new__(TorrentPotato)
+    with jackett_settings(tmp_path, monkeypatch) as (settings, provider):
+        bind_saved_pair(settings, SAVED_URL, SAVED_KEY)
         requested = []
 
         def recording_urlopen(url, **kwargs):

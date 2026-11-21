@@ -115,3 +115,67 @@ def jackett_settings(tmp_path, monkeypatch, stored=None):
         from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
         provider = TorrentPotato()
         yield settings, provider
+
+
+# --- SEC-005 P2: the guard ---------------------------------------------------
+
+REFUSAL = ('The saved Jackett API key cannot be used with this Jackett address. Check the '
+           'address is your Jackett server, then enter the API key again and press Sync again.')
+REQUIRED = 'Jackett URL and API key are required'
+INDEXERS_XML = ('<indexers><indexer id="alpha" configured="true"><title>Alpha</title></indexer>'
+                '</indexers>')
+OPERATIONS = ('jackettTest', 'jackettSync')
+ROUTE_OF = {'jackettTest': 'torrentpotato.jackett_test', 'jackettSync': 'torrentpotato.jackett_sync'}
+
+
+class Reply:
+    """What the HTTP session hands back: enough of a ``requests.Response`` for ``HttpClient``."""
+    status_code = 200
+
+    def __init__(self, body):
+        self.content = body.encode('utf-8')
+
+    def raise_for_status(self):
+        return None
+
+
+class Transport:
+    """The HTTP session behind ``Env.get('http_opener')``: records every request that would leave.
+
+    ``HttpClient`` runs for real in front of it, so what is recorded is what the
+    process would have put on the wire.
+    """
+
+    def __init__(self, body=INDEXERS_XML):
+        self.requests = []
+        self.body = body
+
+    def request(self, method, url, **kwargs):
+        self.requests.append(url)
+        return Reply(self.body)
+
+
+@contextlib.contextmanager
+def guarded_world(tmp_path, monkeypatch, stored=None):
+    """``jackett_world`` plus a recording transport. Yields ``(settings, client, provider, transport)``."""
+    with jackett_world(tmp_path, monkeypatch, stored=stored) as (settings, client, provider):
+        transport = Transport()
+        monkeypatch.setattr(Env, '_http_opener', transport)
+        provider.http_client.time_between_calls = 0
+        yield settings, client, provider, transport
+
+
+def bind_saved_pair(settings, address, key):
+    """Enter the saved Jackett pair the way a user does: a ``settings.save`` of the address, then of the key.
+
+    The key save is the production writer of the binding, so a test that needs
+    "an install with a working saved key" gets one that is bound, and never
+    writes the binding's name or a precomputed value (AC-QA-20). It builds a
+    real provider so that the value hook the writer runs through is registered
+    on the event bus the caller's ``Settings`` isolates.
+    """
+    from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
+    TorrentPotato()
+    for name, value in ((URL_OPTION, address), (KEY_OPTION, key)):
+        saved = settings.saveView(section=SECTION, name=name, value=value)
+        assert saved['success'] is True, saved

@@ -23,6 +23,7 @@ from tests.helpers.combine_groups import (
     snapshot,
     stored_group,
 )
+from tests.helpers.jackett_binding import bind_saved_pair
 
 JACKETT = 'http://jackett.invalid:9117'
 JACKETT_KEY = 'placeholder-jackett-key'
@@ -47,10 +48,11 @@ def legacy(columns):
 @pytest.fixture
 def make_world(tmp_path, monkeypatch):
     def build(columns):
-        stored = {'torrentpotato': dict(columns, jackett_url=JACKETT, jackett_api_key=JACKETT_KEY)}
+        stored = {'torrentpotato': dict(columns)}
         manager = group_settings(tmp_path, monkeypatch, stored=stored)
         settings = manager.__enter__()
         monkeypatch.setattr(Env, '_settings', settings)
+        bind_saved_pair(settings, JACKETT, JACKETT_KEY)  # a bound key, through the production writer (AC-QA-20)
         from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
         provider = TorrentPotato.__new__(TorrentPotato)
         monkeypatch.setattr(provider, 'getJackettIndexers', lambda url, key, movies_only=True: (

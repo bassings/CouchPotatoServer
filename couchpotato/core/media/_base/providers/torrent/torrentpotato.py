@@ -10,7 +10,7 @@ from couchpotato.core.event import addEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, tryInt, tryFloat, cleanHost
 from couchpotato.core.logger import CPLog
-from couchpotato.core.settings import GroupMisaligned, unstorable_cell
+from couchpotato.core.settings import _PASSWORD_SAVE_LOCK, GroupMisaligned, unstorable_cell
 from couchpotato.environment import Env
 from couchpotato.core.media._base.providers.base import ResultList
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
@@ -33,6 +33,15 @@ _DEFAULT_PORTS = {'http': 80, 'https': 443}
 # U+2029, U+202F, U+205F, U+3000), so that no range overlaps another.
 _UNSAFE_ADDRESS = re.compile(
     r'[\x00-\x20\x7f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\\?#]')
+
+# What a Jackett route answers, as the API `error`, when the saved key may not be
+# used with the saved address (AC-DESIGN-5). It carries no address and no key.
+KEY_REFUSAL_TEXT = ('The saved Jackett API key cannot be used with this Jackett address. '
+                    'Check the address is your Jackett server, then enter the API key again '
+                    'and press Sync again.')
+
+ROUTE_SYNC = 'torrentpotato.jackett_sync'
+ROUTE_TEST = 'torrentpotato.jackett_test'
 
 MISALIGNED_TEXT = ('The saved TorrentPotato rows do not line up, so a sync could pair a key '
                    'with the wrong host. Fix the rows in Settings first. Nothing was changed.')
@@ -90,8 +99,8 @@ def normalise_jackett_address(value):
 
     This string is what a Jackett API key is bound to, and it is final: the
     guard that refuses a key sent anywhere else reads what is stored from it.
-    The address is read the way `getJackettIndexers` sends it (`cleanHost`, so
-    `jackett.local:9117` is `http://jackett.local:9117`). The scheme and host
+    The address is read the way a request is sent (`cleanHost` on the stripped,
+    unwrapped text, so `jackett.local:9117` is `http://jackett.local:9117`). The scheme and host
     are lower case, the default port and any trailing slash are dropped, and
     userinfo and path keep their case, because the server compares both
     exactly. It never raises: an address either parser rejects returns None,
@@ -127,7 +136,7 @@ class Base(TorrentProvider):
         addEvent('setting.save.torrentpotato.jackett_api_key', self.bind_saved_key)
 
         # Register API endpoint for Jackett sync
-        addApiView('torrentpotato.jackett_sync', self.jackettSync, docs={
+        addApiView(ROUTE_SYNC, self.jackettSync, docs={
             'desc': 'Sync TorrentPotato indexers from Jackett. Send no parameters to use the saved '
                     'Jackett URL and API key. A jackett_url must be sent with its own jackett_api_key '
                     '(the saved key is never sent to a URL in the request).',
@@ -143,7 +152,7 @@ class Base(TorrentProvider):
             'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
         })
 
-        addApiView('torrentpotato.jackett_test', self.jackettTest, docs={
+        addApiView(ROUTE_TEST, self.jackettTest, docs={
             'desc': 'Test Jackett connection and list available indexers. Send no parameters to use '
                     'the saved Jackett URL and API key; a jackett_url must come with its own key.',
             'params': {
@@ -305,7 +314,8 @@ class Base(TorrentProvider):
             movies_only: If True, only return indexers that support movie searches
         """
         try:
-            jackett_url = cleanHost(jackett_url).rstrip('/')
+            # `jackett_url` arrives in the form that was checked (`_jackettCredentials`),
+            # and is interpolated unchanged: the string checked is the string sent.
             # Use the torznab endpoint with t=indexers to get all indexers
             indexers_url = f'{jackett_url}/torznab/all/api?apikey={jackett_api_key}&t=indexers'
 
@@ -412,36 +422,84 @@ class Base(TorrentProvider):
             value = _without_bytes_wrapper(value)
         return value
 
-    def _jackettCredentials(self, jackett_url, jackett_api_key):
-        """Pick the Jackett URL and API key a request may use.
+    @staticmethod
+    def _sendable_address(address):
+        """The address of a request that brings its own key, as `getJackettIndexers` is handed it."""
+        if not isinstance(address, str) or not address:
+            return None
+        return cleanHost(address).rstrip('/')
 
-        A single request cannot pair a caller-supplied URL with the saved key: a
-        request that supplies its own `jackett_url` must supply its own
-        `jackett_api_key` (AC-SEC-9 rule (a)), because combining them would send
-        the stored key to a host the caller chose. (This does not bind the saved
-        key to the saved URL: `settings.save` can change the URL alone.) Returns `(url, key, refusal)`;
-        `refusal` is a response dict, with no submitted value in it, or None.
+    def _jackettCredentials(self, route, jackett_url, jackett_api_key):
+        """Pick the Jackett URL and API key a request may use, and the only reader of the saved key.
+
+        A request that supplies its own `jackett_url` must supply its own
+        `jackett_api_key` (AC-SEC-9 rule (a)), and neither it nor a request that
+        supplies only its own key is checked against anything: the saved key is
+        not used by either. The saved key is only sent to the address it was
+        bound to. It is used only when the stored binding (written by a key save,
+        `bind_saved_key`) is non-empty and equals the normalised saved address;
+        otherwise nothing is returned for the route to send and the refusal is
+        the one text of `KEY_REFUSAL_TEXT`, whatever the cause. An empty or
+        absent binding, and an address with no normal form, are one state,
+        unbound, and fail closed. A saved key that is empty after stripping is no
+        key at all, so the route answers that the URL and key are required.
+
+        Returns `(url, key, row_base, refusal)`. `url` is the string to send to,
+        which for a checked key is the normalised address that was compared.
+        `row_base` is what the rows of a sync are built from: the saved address as
+        the user saved it, cleaned (`_row_base`: `cleanHost` of the text the
+        normaliser was given, or the normalised address where that is not
+        ASCII), from the same single read, because
+        the merge and `_isJackettIndexerHost` compare host strings exactly and
+        must see what a sync wrote before the guard. `refusal` is a response dict
+        with no submitted or stored value in it, or None. The saved address is
+        read once, so the check and the send cannot disagree, and the three
+        reads of a checked key happen in one hold of the settings lock, so a key
+        save cannot land between them.
         """
         supplied = (jackett_url, jackett_api_key)
         if any(value and not isinstance(value, str) for value in supplied):
-            return None, None, {'success': False, 'error': 'Jackett URL and API key must be text'}
+            return None, None, None, {'success': False, 'error': 'Jackett URL and API key must be text'}
         if isinstance(jackett_api_key, str) and not jackett_api_key.strip():
             jackett_api_key = None  # a key that is empty after stripping is absent
         if jackett_url and not jackett_api_key:
-            return None, None, {
+            return None, None, None, {
                 'success': False,
                 'error': 'A Jackett URL must be sent with its own API key. '
                          'The saved API key is only used with the saved URL.'
             }
 
-        saved_url = self._savedJackettSetting('jackett_url')
-        saved_key = self._savedJackettSetting('jackett_api_key')
+        if jackett_url:
+            sendable = self._sendable_address(jackett_url)
+            return sendable, jackett_api_key, sendable, None
+        with _PASSWORD_SAVE_LOCK:  # the lock a key save holds; never held across the request
+            saved_url = self._savedJackettSetting('jackett_url')
+            saved_key = None if jackett_api_key else self._savedJackettSetting('jackett_api_key')
+            binding = None if jackett_api_key else self._savedJackettSetting(KEY_BINDING_OPTION)
+        sendable = self._sendable_address(saved_url)
+        if jackett_api_key:
+            return sendable, jackett_api_key, sendable, None
+        if not self._is_non_empty_key(saved_key):
+            return None, None, None, None
+        address = normalise_jackett_address(saved_url)
+        reason = self._refusal_reason(address, binding) if isinstance(saved_key, str) else 'unbound'
+        if reason:
+            log.warning('Refused %s: the saved Jackett API key is not bound to the saved address (reason=%s)',
+                        route, reason)
+            return None, None, None, {'success': False, 'error': KEY_REFUSAL_TEXT}
+        return address, saved_key, self._row_base(saved_url, address), None
 
-        return jackett_url or saved_url, jackett_api_key or saved_key, None
+    @staticmethod
+    def _refusal_reason(address, binding):
+        """Why a saved key may not go to `address` ('unbound' or 'mismatch'), or None when it may."""
+        if not isinstance(binding, str) or not binding.strip() or not address:
+            return 'unbound'
+        return None if address == binding else 'mismatch'
 
     def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
         """Test Jackett connection and return list of available indexers"""
-        jackett_url, jackett_api_key, refusal = self._jackettCredentials(jackett_url, jackett_api_key)
+        jackett_url, jackett_api_key, row_base, refusal = self._jackettCredentials(
+            ROUTE_TEST, jackett_url, jackett_api_key)
         if refusal:
             return refusal
 
@@ -475,7 +533,8 @@ class Base(TorrentProvider):
             replace: True (or the text true, 1, yes, on) replaces all existing indexers;
                 anything else merges/adds new ones.
         """
-        jackett_url, jackett_api_key, refusal = self._jackettCredentials(jackett_url, jackett_api_key)
+        jackett_url, jackett_api_key, row_base, refusal = self._jackettCredentials(
+            ROUTE_SYNC, jackett_url, jackett_api_key)
         if refusal:
             return refusal
 
@@ -501,6 +560,8 @@ class Base(TorrentProvider):
                 'success': False,
                 'error': error
             }
+
+        indexers = self._rows_from_saved_address(indexers, jackett_url, row_base)
 
         if not indexers:
             return {
@@ -544,6 +605,31 @@ class Base(TorrentProvider):
             'total': outcome['total'],
             'indexers': storable
         }
+
+    @staticmethod
+    def _row_base(saved_url, address):
+        """What the rows of a sync are built from, for a saved key that passed the check.
+
+        The saved address as the user saved it, cleaned the way a sync always did, but from the
+        very text the normaliser was given (stripped, wrapper removed), so that it cannot name
+        something other than `address`: a Kelvin-sign host or a trailing no-break space would
+        otherwise write a row for a host the key was never bound to. Where that text is not
+        ASCII the normalised address stands in for it.
+        """
+        text = _address_text(saved_url)
+        base = cleanHost(text).rstrip('/') if text else ''
+        return base if base and base.isascii() else address
+
+    @staticmethod
+    def _rows_from_saved_address(indexers, request_base, row_base):
+        """Indexers whose `potato_url` starts with `row_base` instead of `request_base`.
+
+        `getJackettIndexers` builds every `potato_url` from the address it was handed, so each one
+        starts with `request_base`; the request goes to the normalised address and the rows are
+        built from the address as saved, which is what a sync wrote before the guard.
+        """
+        return [dict(indexer, potato_url=row_base + indexer['potato_url'][len(request_base):])
+                for indexer in indexers]
 
     def _isReplace(self, replace):
         """Replace everything only for boolean True or the text true, 1, yes or on.
