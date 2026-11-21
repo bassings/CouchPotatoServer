@@ -23,25 +23,36 @@ log = CPLog(__name__)
 # rendered, written or read through the settings routes (SEC-005).
 KEY_BINDING_OPTION = 'jackett_key_binding'
 _DEFAULT_PORTS = {'http': 80, 'https': 443}
-# Whitespace, a control character or a backslash anywhere in an address. The two
-# parsers read each of these differently, and a backslash is the one character
-# that moves a host across the `@` of `http://evil\@jackett:9117`.
-_UNSAFE_ADDRESS = re.compile(r'[\s\x00-\x1f\x7f\\]')
+# Whitespace, a control character, a backslash, a "?" or a "#" anywhere in an
+# address. The two parsers read each of the first three differently, a backslash
+# is the one character that moves a host across the `@` of
+# `http://evil\\@jackett:9117`, and the address is the base of
+# `/torznab/all/api?apikey=...`, so a query or a fragment, even an empty one,
+# has no place in it.
+_UNSAFE_ADDRESS = re.compile(r'[\s\x00-\x1f\x7f\\?#]')
 
 MISALIGNED_TEXT = ('The saved TorrentPotato rows do not line up, so a sync could pair a key '
                    'with the wrong host. Fix the rows in Settings first. Nothing was changed.')
 
 
+def _decoded(value):
+    """Bytes as UTF-8 text (settings may hand back bytes); anything else as it is."""
+    return value.decode('utf-8') if isinstance(value, bytes) else value
+
+
+def _without_bytes_wrapper(text):
+    """Text that looks like a bytes repr, "b'...'", without the wrapper."""
+    if text.startswith("b'") and text.endswith("'"):
+        return text[2:-1]
+    return text
+
+
 def _address_text(value):
     """The saved address as plain text, or '' when it is not text."""
-    if isinstance(value, bytes):
-        value = value.decode('utf-8')
+    value = _decoded(value)
     if not isinstance(value, str):
         return ''
-    value = value.strip()
-    if value.startswith("b'") and value.endswith("'"):
-        value = value[2:-1].strip()
-    return value
+    return _without_bytes_wrapper(value.strip()).strip()
 
 
 def _agreed_parts(candidate):
@@ -391,13 +402,11 @@ class Base(TorrentProvider):
     def _savedJackettSetting(self, name):
         value = self.conf(name)
 
-        # Ensure values are strings (settings may return bytes)
-        if isinstance(value, bytes):
-            value = value.decode('utf-8')
-
-        # Also handle str that looks like bytes repr: "b'...'"
-        if isinstance(value, str) and value.startswith("b'") and value.endswith("'"):
-            value = value[2:-1]
+        # Ensure values are strings (settings may return bytes), and unwrap a
+        # str that looks like a bytes repr: "b'...'"
+        value = _decoded(value)
+        if isinstance(value, str):
+            value = _without_bytes_wrapper(value)
         return value
 
     def _jackettCredentials(self, jackett_url, jackett_api_key):

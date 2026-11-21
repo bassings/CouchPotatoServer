@@ -18,6 +18,9 @@ pytestmark = pytest.mark.unit
 
 SECTION = 'unrelated_plugin'
 HIDDEN_VALUE = 'hidden-value'
+HIDDEN = 'secret_note'
+READ_ONLY = 'locked'
+HIDDEN_FLAG = 'hidden'
 FLAG_NAME = 'secret_note_internal_meta'
 
 
@@ -29,8 +32,8 @@ def settings(tmp_path, monkeypatch):
     instance.setFile(str(tmp_path / 'config.ini'))
     instance.registerDefaults(SECTION, {
         'shown': {'default': 'visible-value'},
-        'secret_note': {'default': HIDDEN_VALUE, 'ui-meta': 'hidden'},
-        'locked': {'default': 'ro-value', 'ui-meta': 'ro'},
+        HIDDEN: {'default': HIDDEN_VALUE, 'ui-meta': HIDDEN_FLAG},
+        READ_ONLY: {'default': 'ro-value', 'ui-meta': 'ro'},
         'open': {'default': 'rw-value', 'ui-meta': 'rw'},
     })
     monkeypatch.setattr(Env, '_settings', instance)
@@ -52,7 +55,7 @@ class TestTheReadOmitsWhatIsNotReadable:
     def test_a_hidden_option_in_any_section_is_not_returned(self, settings):
         values = settings.getValues()
 
-        assert 'secret_note' not in values[SECTION]
+        assert HIDDEN not in values[SECTION]
 
     def test_the_hidden_value_does_not_appear_anywhere_in_the_read(self, settings):
         assert HIDDEN_VALUE not in repr(settings.getValues())
@@ -61,11 +64,11 @@ class TestTheReadOmitsWhatIsNotReadable:
         values = settings.getValues()[SECTION]
 
         assert values['shown'] == 'visible-value'
-        assert values['locked'] == 'ro-value'
+        assert values[READ_ONLY] == 'ro-value'
         assert values['open'] == 'rw-value'
 
     def test_the_view_reports_the_same(self, settings):
-        assert 'secret_note' not in settings.view()['values'][SECTION]
+        assert HIDDEN not in settings.view()['values'][SECTION]
 
 
 class TestSetInternal:
@@ -74,34 +77,34 @@ class TestSetInternal:
         settings.save()
         before = digest(settings.file)
 
-        settings.set_internal(SECTION, 'secret_note', 'server-wrote-this')
+        settings.set_internal(SECTION, HIDDEN, 'server-wrote-this')
 
-        assert settings.p.get(SECTION, 'secret_note') == 'server-wrote-this'
+        assert settings.p.get(SECTION, HIDDEN) == 'server-wrote-this'
         assert digest(settings.file) == before
 
     def test_set_refuses_the_same_option(self, settings):
         """The bypass is for the server only: the ordinary writer still refuses it."""
-        settings.set(SECTION, 'secret_note', 'user-wrote-this')
+        settings.set(SECTION, HIDDEN, 'user-wrote-this')
 
-        assert settings.p.get(SECTION, 'secret_note') == HIDDEN_VALUE
+        assert settings.p.get(SECTION, HIDDEN) == HIDDEN_VALUE
 
     def test_it_writes_a_read_only_option_too(self, settings):
-        settings.set_internal(SECTION, 'locked', 'changed')
+        settings.set_internal(SECTION, READ_ONLY, 'changed')
 
-        assert settings.p.get(SECTION, 'locked') == 'changed'
+        assert settings.p.get(SECTION, READ_ONLY) == 'changed'
 
     @pytest.mark.parametrize('name', [FLAG_NAME, 'SECRET_NOTE_INTERNAL_META',
                                       ' secret_note_internal_meta'])
     def test_it_still_refuses_an_access_flag(self, settings, name):
         settings.set_internal(SECTION, name, 'rw')
 
-        assert settings.p.get(SECTION, FLAG_NAME) == 'hidden'
+        assert settings.p.get(SECTION, FLAG_NAME) == HIDDEN_FLAG
 
     def test_it_never_saves_the_file_itself(self, settings, monkeypatch):
         calls = []
         monkeypatch.setattr(settings, 'save', lambda: calls.append(1))
 
-        settings.set_internal(SECTION, 'secret_note', 'x')
+        settings.set_internal(SECTION, HIDDEN, 'x')
 
         assert calls == []
 
@@ -111,5 +114,5 @@ class TestSetInternal:
         assert settings.p.get('a_new_section', 'anything') == 'x'
 
     def test_it_reports_whether_the_write_happened(self, settings):
-        assert settings.set_internal(SECTION, 'secret_note', 'x') is True
+        assert settings.set_internal(SECTION, HIDDEN, 'x') is True
         assert settings.set_internal(SECTION, FLAG_NAME, 'rw') is False

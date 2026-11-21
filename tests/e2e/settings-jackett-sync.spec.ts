@@ -24,6 +24,9 @@ const KEY_ONE = 'placeholder-key-one';
 const KEY_TWO = 'placeholder-key-two';
 const CONNECT_FAILURE = /Failed to connect to Jackett/;
 const SYNC_ROUTE = 'torrentpotato.jackett_sync';
+const SECTION = 'torrentpotato';
+const SAVE_URL = 'save:jackett_url';
+const SAVE_KEY = 'save:jackett_api_key';
 
 type Step = { kind: 'request' | 'response'; name: string };
 
@@ -56,7 +59,7 @@ const position = (steps: Step[], kind: Step['kind'], name: string, nth = 0) => {
 
 async function saveThroughApi(page: Page, apiBase: string, name: string, value: string) {
   const response = await page.request.post(`${apiBase}/settings.save/`, {
-    form: { section: 'torrentpotato', name, value },
+    form: { section: SECTION, name, value },
   });
   expect((await response.json()).success).toBe(true);
 }
@@ -103,20 +106,22 @@ test.describe('Settings: Sync sends its own section\'s typed values first (SEC-0
     await urlField(card).fill(LOOPBACK_URL);
     const first = await pressSync(page, card);
 
-    expect(position(steps, 'response', 'save:jackett_url'), 'the address was never saved').toBeGreaterThanOrEqual(0);
-    expect(position(steps, 'response', 'save:jackett_url')).toBeLessThan(position(steps, 'request', 'sync'));
-    // It went to the address just typed, not the seeded one: the loopback has no listener.
+    expect(position(steps, 'response', SAVE_URL), 'the address was never saved').toBeGreaterThanOrEqual(0);
+    expect(position(steps, 'response', SAVE_URL)).toBeLessThan(position(steps, 'request', 'sync'));
+    // This only shows the sync reached the network and failed: the seeded `.invalid` address
+    // gives the same text. That it used the address just typed is shown by the order check
+    // above (the address save was answered before the sync was sent) and by the config read below.
     expect(first.success).toBe(false);
     expect(first.error).toMatch(CONNECT_FAILURE);
     await expect(card.getByText(CONNECT_FAILURE)).toBeVisible();
-    expect(configSection(testServer.configPath, 'torrentpotato').jackett_url).toBe(LOOPBACK_URL);
+    expect(configSection(testServer.configPath, SECTION).jackett_url).toBe(LOOPBACK_URL);
 
     // The key is entered again and Sync is pressed with no wait: the press commits the field.
     await keyField(card).fill(KEY_TWO);
     const second = await pressSync(page, card);
 
-    expect(position(steps, 'response', 'save:jackett_api_key'), 'the key was never saved').toBeGreaterThanOrEqual(0);
-    expect(position(steps, 'response', 'save:jackett_api_key')).toBeLessThan(position(steps, 'request', 'sync', 1));
+    expect(position(steps, 'response', SAVE_KEY), 'the key was never saved').toBeGreaterThanOrEqual(0);
+    expect(position(steps, 'response', SAVE_KEY)).toBeLessThan(position(steps, 'request', 'sync', 1));
     expect(second.success).toBe(false);
     expect(second.error).not.toMatch(/URL and API key are required/);
     expect(second.error).toMatch(CONNECT_FAILURE);
@@ -204,9 +209,9 @@ test.describe('Wizard: the address is saved before the key (SEC-005 AC-ARCH-9)',
     await page.getByRole('button', { name: /Continue/i }).click();
     await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeHidden({ timeout: 10000 });
 
-    await expect.poll(() => configSection(testServer.configPath, 'torrentpotato').jackett_key_binding,
+    await expect.poll(() => configSection(testServer.configPath, SECTION).jackett_key_binding,
       { message: 'the key was not bound to the address typed in the step' }).toBe(wizardUrl);
-    expect(position(steps, 'response', 'save:jackett_url')).toBeLessThan(position(steps, 'request', 'save:jackett_api_key'));
-    expect(configSection(testServer.configPath, 'torrentpotato').jackett_api_key).toBe(KEY_ONE);
+    expect(position(steps, 'response', SAVE_URL)).toBeLessThan(position(steps, 'request', SAVE_KEY));
+    expect(configSection(testServer.configPath, SECTION).jackett_api_key).toBe(KEY_ONE);
   });
 });

@@ -24,14 +24,17 @@ BINDING_FLAG_OPTION = BINDING_OPTION + '_internal_meta'
 PLACEHOLDER_KEY = 'placeholder-jackett-key-one'
 OTHER_KEY = 'placeholder-jackett-key-two'
 
+PLAIN_HOST = 'http://jackett.local'
+HOST_9117 = 'http://jackett.local:9117'
+
 # (label, the address as saved, the binding a key save must store for it).
 NORMALISER_TABLE = [
     ('no scheme', 'localhost:9117', 'http://localhost:9117'),
-    ('no scheme and no port', 'jackett.local', 'http://jackett.local'),
-    ('trailing slash', 'http://jackett.local:9117/', 'http://jackett.local:9117'),
-    ('upper case scheme and host', 'HTTP://Jackett.Local:9117', 'http://jackett.local:9117'),
-    ('explicit default http port', 'http://jackett.local:80', 'http://jackett.local'),
-    ('explicit default http port and slash', 'HTTP://Jackett.Local:80/', 'http://jackett.local'),
+    ('no scheme and no port', 'jackett.local', PLAIN_HOST),
+    ('trailing slash', 'http://jackett.local:9117/', HOST_9117),
+    ('upper case scheme and host', 'HTTP://Jackett.Local:9117', HOST_9117),
+    ('explicit default http port', 'http://jackett.local:80', PLAIN_HOST),
+    ('explicit default http port and slash', 'HTTP://Jackett.Local:80/', PLAIN_HOST),
     ('explicit default https port', 'https://jackett.local:443/', 'https://jackett.local'),
     ('a port that is only default for the other scheme', 'https://jackett.local:80',
      'https://jackett.local:80'),
@@ -43,8 +46,8 @@ NORMALISER_TABLE = [
     ('empty parts of the userinfo are still userinfo', 'http://:@jackett.local', 'http://:@jackett.local'),
     ('userinfo keeps its case, the host does not', 'http://Test-User:Test-Pass@Jackett.Local',
      'http://Test-User:Test-Pass@jackett.local'),
-    ('a bytes-literal wrapper', "b'http://jackett.local:9117/'", 'http://jackett.local:9117'),
-    ('surrounding whitespace', '  http://jackett.local:9117  ', 'http://jackett.local:9117'),
+    ('a bytes-literal wrapper', "b'http://jackett.local:9117/'", HOST_9117),
+    ('surrounding whitespace', '  http://jackett.local:9117  ', HOST_9117),
 ]
 
 # Saved addresses that cannot be normalised: no value, and an empty binding.
@@ -63,6 +66,10 @@ UNPARSEABLE = [
     ('another scheme', 'ftp://jackett.local'),
     ('an empty userinfo before the host', 'http://@jackett.local'),
     ('a query', 'http://jackett.local:9117?x=1'),
+    ('an empty query after a path', 'http://jackett.local:9117/a?'),
+    ('an empty query after the port', 'http://jackett.local:9117?'),
+    ('an empty fragment after a slash', 'http://jackett.local:9117/#'),
+    ('an empty fragment after a path', 'http://jackett.local:9117/a#'),
     ('a fragment hiding a second host', 'http://jackett.local#@evil.invalid'),
     ('a fragment ahead of a host', 'http://evil.invalid#@jackett.local:9117'),
     ('a backslash before the real host', r'http://evil.invalid\@jackett.local:9117'),

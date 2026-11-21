@@ -120,19 +120,20 @@ class TestAKeySaveWritesTheBinding:
         assert on_disk(settings, BINDING_OPTION) == BOUND_B
         assert memory(settings, BINDING_OPTION) == BOUND_B
 
-    @pytest.mark.parametrize('label,value', [
-        ('plain text', 'placeholder-plain-key'),
-        ('a control character', 'placeholder-key\x01with-control'),
-        ('text with surrounding spaces', '  placeholder-padded-key  '),
+    @pytest.mark.parametrize('label,value,stored', [
+        ('plain text', 'placeholder-plain-key', 'placeholder-plain-key'),
+        ('a control character', 'placeholder-key\x01with-control', 'placeholder-key\x01with-control'),
+        # A fresh parser trims the padding when it reads the file back.
+        ('text with surrounding spaces', '  placeholder-padded-key  ', 'placeholder-padded-key'),
     ])
-    def test_a_non_empty_text_key_is_bound(self, world, label, value):
+    def test_a_non_empty_text_key_is_bound(self, world, label, value, stored):
         settings, client, _ = world
         save(client, URL_OPTION, ADDRESS_A)
 
         response = save(client, KEY_OPTION, value)
 
         assert response.json()['success'] is True
-        assert on_disk(settings, KEY_OPTION) is not None
+        assert on_disk(settings, KEY_OPTION) == stored
         assert on_disk(settings, BINDING_OPTION) == BOUND_A
 
     def test_a_non_text_key_is_stored_and_bound(self, world):
@@ -316,11 +317,12 @@ class TestAFailedWriteLeavesNothingBehind:
         def refuse_replace(src, dst):
             raise OSError('replace faulted by the test')
 
-        monkeypatch.setattr(settings_module.os, 'replace', refuse_replace)
-        first = save(client, KEY_OPTION, OTHER_KEY)
-        monkeypatch.undo()
+        with monkeypatch.context() as fault:
+            fault.setattr(settings_module.os, 'replace', refuse_replace)
+            first = save(client, KEY_OPTION, OTHER_KEY)
 
-        assert first.status_code >= 400 or first.json().get('success') is False
+        assert first.status_code == 200
+        assert first.json()['success'] is False
         assert sha(settings.file) == before
         assert memory(settings, KEY_OPTION) == PLACEHOLDER_KEY
         assert memory(settings, BINDING_OPTION) == BOUND_A
@@ -337,11 +339,10 @@ class TestAFailedWriteLeavesNothingBehind:
         before = memory(settings, URL_OPTION)
         import couchpotato.core.settings as settings_module
         addEvent('setting.save.torrentpotato.jackett_url', lambda value: None)
-        monkeypatch.setattr(settings_module.os, 'replace',
-                            lambda src, dst: (_ for _ in ()).throw(OSError('faulted')))
-
-        save(client, URL_OPTION, ADDRESS_B)
-        monkeypatch.undo()
+        with monkeypatch.context() as fault:
+            fault.setattr(settings_module.os, 'replace',
+                          lambda src, dst: (_ for _ in ()).throw(OSError('faulted')))
+            save(client, URL_OPTION, ADDRESS_B)
 
         assert memory(settings, URL_OPTION) == before
 

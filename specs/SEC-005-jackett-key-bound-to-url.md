@@ -612,3 +612,18 @@ reader must check that.
   `torrentpotato.jackett_test` are already in `ORIGIN_CHECKED_API_ROUTES`.
 - The `_internal_meta` prerequisite is outside the slices (it lands on `master`
   first); AC-SEC-15 proves it for the binding in P1.
+
+---
+
+## Spec gaps found at review
+
+Found while building P1 and at its first review round (2026-11-21). No criterion
+text was changed; each is a gap a planning lens could have caught.
+
+| Gap | What was missing | Lens that could have caught it | Now carried by |
+|---|---|---|---|
+| (a) Normaliser edge cases | The treatment of a query, a fragment (even an empty one), an internationalised (IDN) host, and whitespace, control characters or a backslash was unspecified. Decided at build: such an address has no normal form, so a key saved over it gets an empty binding. An IDN-host user therefore cannot bind a key, and P4's `docs/reference/API.md` known limits must say so. | security, architecture | AC-ARCH-5, AC-OPS-7 (tests in `tests/unit/test_jackett_address_normaliser.py`) |
+| (b) Flush after a refused save | The Settings flush carries on to the next save, and to the action, after a refused own-section save (`saveSingle` never throws, and AC-SIMP-7 freezes it), whereas the wizard stops. P2 must list it as an accepted gap or close it. | qa, product | AC-SIMP-6, AC-SIMP-7, decision C1 |
+| (c) Falsy non-text key | A falsy non-text key value (JSON `0`, `false`, `null`, `[]`) stores an empty binding, because it is read as no key until a restart. The criteria only said nothing is sent. | data | AC-SEC-3, AC-SEC-6 |
+| (d) Wizard on a failed address save | The wizard no longer sends the key save when the address save fails (AC-ARCH-9 asked only for the order). | product | AC-ARCH-9 |
+| (e) Re-read scope | The read after a refused action applies to any button in a section with a combine group. Today there is exactly one such button option in the tree. | architecture | AC-SIMP-6 |

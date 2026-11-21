@@ -66,12 +66,14 @@ def test_addresses_that_reach_different_places_give_different_strings(first, sec
 
 
 @pytest.mark.parametrize(TABLE_ARGS, NORMALISER_TABLE, ids=[row[0] for row in NORMALISER_TABLE])
-def test_the_string_is_one_both_parsers_read_the_same_way(label, saved, expected):
+def test_what_the_normaliser_returns_is_read_the_same_way_by_both_parsers(label, saved, expected):
     """What is stored is what the transport connects to, whichever parser reads it."""
     from urllib3.util import parse_url
 
-    std = urllib.parse.urlsplit(expected)
-    ref = parse_url(expected)
+    value = normalise_jackett_address(saved)
+    std = urllib.parse.urlsplit(value)
+    ref = parse_url(value)
+    assert value == expected
     assert (std.hostname or '') == re.sub(r'^\[|\]$', '', ref.host)
     assert std.port == ref.port
     assert std.path == (ref.path or '')
@@ -79,7 +81,7 @@ def test_the_string_is_one_both_parsers_read_the_same_way(label, saved, expected
     assert not std.fragment
 
 
-@pytest.mark.parametrize('unsafe', ['\t', '\n', '\r', ' ', '\\', '\x00', '\x01', '\x1f', '\x7f'])
+@pytest.mark.parametrize('unsafe', ['\t', '\n', '\r', ' ', '\\', '\x00', '\x01', '\x1f', '\x7f', '?', '#'])
 @pytest.mark.parametrize('template', ['http://jackett{}.local:9117', 'http://jackett.local:9117/a{}b',
                                       'http://us{}er@jackett.local:9117'])
 def test_whitespace_a_control_character_and_a_backslash_are_refused_even_if_both_parsers_agree(
