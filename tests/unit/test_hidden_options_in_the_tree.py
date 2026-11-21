@@ -23,8 +23,8 @@ MESSAGE = (
     'EMPTIES the stored value of a hidden option whose flag config.ini does not yet hold, because it '
     'assumes such a value was planted. If this option existed in an earlier release without a ui-meta, '
     'every upgraded install would silently lose the value a user entered. Do not just add it to ALLOWED: '
-    'ship the flag first (declare the option "rw" or "ro" for one release) or migrate the value, then '
-    'update this test and AC-SEC-16.')
+    'migrate the value. Declaring the option "rw" or "ro" for one release first protects only installs that '
+    'ran that release; an install that skips it still loses the value. Then update this test and AC-SEC-16.')
 
 
 def declared_hidden_options():

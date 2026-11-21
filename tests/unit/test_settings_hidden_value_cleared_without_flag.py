@@ -83,8 +83,6 @@ def test_the_clear_is_memory_only_and_the_next_save_persists_it(isolated, tmp_pa
     assert line(FLAG, HIDDEN) in path.read_text(encoding='utf-8')
 
 
-
-
 def test_a_value_is_kept_when_the_flag_is_already_in_the_file(isolated, tmp_path):
     path = write(tmp_path, [line(OPTION, PLANTED), line(FLAG, HIDDEN)])
 

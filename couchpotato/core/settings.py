@@ -761,9 +761,10 @@ class Settings:
         with NO `ui-meta` at all and a later one marks `hidden`: a value a user
         entered then is emptied on every upgraded install (measured). An option
         that was `rw` or `ro` already has its flag in the file and keeps its
-        value. So before marking an existing option `hidden`, ship its flag
-        first (declare it `rw` or `ro` for a release) or migrate the value
-        yourself. A test fails when a `hidden` option it does not already know
+        value. So before marking an existing option `hidden`, migrate the value
+        yourself. Declaring it `rw` or `ro` for a release first protects only
+        the installs that ran that release; one that skips it loses the value
+        (measured). A test fails when a `hidden` option it does not already know
         of is declared (`tests/unit/test_hidden_options_in_the_tree.py`).
 
         A clear that fails is logged and NOT retried at a later start: the flag
