@@ -222,11 +222,11 @@ def test_exactly_the_size_ceiling_is_accepted(tmp_path):
     "hostile",
     [
         pytest.param("\U000e0041", id="tag-character"),
-        pytest.param("‮", id="bidi-control"),
+        pytest.param("\u202e", id="bidi-control"),
         pytest.param("\x1b[2J", id="escape"),
         pytest.param("\t", id="tab"),
         pytest.param("\r", id="carriage-return"),
-        pytest.param("é", id="non-ascii-letter"),
+        pytest.param("\xe9", id="non-ascii-letter"),
     ],
 )
 def test_non_printable_or_non_ascii_content_is_rejected(tmp_path, hostile):
@@ -452,3 +452,12 @@ def test_free_text_paragraph_after_the_table_is_rejected(tmp_path):
 
 def test_blank_lines_after_the_table_are_accepted(tmp_path):
     assert validate_table(_write(tmp_path, _table_text(after="\n\n"))) == []
+
+
+def test_this_test_file_is_printable_ascii_so_no_literal_control_can_return():
+    # A literal bidi control or tag character in source is the trojan-source
+    # pattern (and trips SonarQube text:S6389). The hostile fixtures above are
+    # written as escapes; this keeps a literal from creeping back in.
+    raw = Path(__file__).read_bytes()
+    offenders = sorted({b for b in raw if b != 0x0A and not 0x20 <= b <= 0x7E})
+    assert offenders == []
