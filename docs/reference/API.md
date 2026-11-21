@@ -212,6 +212,14 @@ with no value, in one of four forms:
 > (for example the password or the authentication switch) and remove them with
 > the server stopped. The server does not remove flags for options that declare
 > none.
+>
+> **Behaviour change: option names are matched without regard to case.**
+> `settings.save` handles an option under its registered (lower-case) name
+> whatever case the caller sends, so the same validation, password hashing,
+> `auth_required` check, soft chroot confinement, masked-value refusal and events
+> apply to `core.PASSWORD` as to `core.password`. A script that sent an
+> upper-case name and relied on it skipping one of those steps no longer can. A
+> section name is still matched exactly.
 
 ### Downloaders
 
