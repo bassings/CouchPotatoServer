@@ -640,6 +640,10 @@ the old test stays green, the new one fails.
      every sync, the form is never pre-filled, and an empty key clears the
      saved one. Found at SEC-005 review round 1; on `master` today and not
      fixed.
+  11. After the SEC-005 guard (P2), a Settings press that follows a refused
+     address save but a successful key save binds the key to the address the
+     server still holds, and Sync goes there (spec gap (b)). Owner decision
+     pending on a Settings follow-up. Found at the P2 review, 2026-11-22.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
