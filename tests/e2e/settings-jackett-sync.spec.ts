@@ -7,12 +7,11 @@ import { configSection } from './helpers';
 import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
 
 /**
- * SEC-005 P1: what the Settings Sync button and the wizard do BEFORE any guard exists.
+ * SEC-005 P1 and P2: what the Settings Sync button and the wizard do, and the guard on the real server.
  *
- * Nothing here reads the stored binding to refuse anything (that is a later slice), so every
- * Jackett address used is either a `.invalid` name or the loopback address with no listener
- * (`http://127.0.0.1:9`): a Sync that reaches the network answers "Failed to connect to
- * Jackett" and nothing leaves the machine. The sync route is NOT stubbed in any test of this
+ * Every Jackett address used is either a `.invalid` name or the loopback address with no listener
+ * (`http://127.0.0.1:9`): a Sync that is not refused answers "Failed to connect to Jackett" and
+ * nothing leaves the machine. The guard's refusal is the other answer, so the two are told apart. The sync route is NOT stubbed in any test of this
  * file, and the debounce is on the fake clock, so a value typed in the page can only reach the
  * server through the flush the button makes, never through the page's own 500 ms timer.
  *
@@ -23,6 +22,8 @@ const LOOPBACK_URL = 'http://127.0.0.1:9';
 const KEY_ONE = 'placeholder-key-one';
 const KEY_TWO = 'placeholder-key-two';
 const CONNECT_FAILURE = /Failed to connect to Jackett/;
+const REFUSAL = 'The saved Jackett API key cannot be used with this Jackett address. Check the '
+  + 'address is your Jackett server, then enter the API key again and press Sync again.';
 const SYNC_ROUTE = 'torrentpotato.jackett_sync';
 const SECTION = 'torrentpotato';
 const SAVE_URL = 'save:jackett_url';
@@ -108,12 +109,13 @@ test.describe('Settings: Sync sends its own section\'s typed values first (SEC-0
 
     expect(position(steps, 'response', SAVE_URL), 'the address was never saved').toBeGreaterThanOrEqual(0);
     expect(position(steps, 'response', SAVE_URL)).toBeLessThan(position(steps, 'request', 'sync'));
-    // This only shows the sync reached the network and failed: the seeded `.invalid` address
-    // gives the same text. That it used the address just typed is shown by the order check
-    // above (the address save was answered before the sync was sent) and by the config read below.
-    expect(first.success).toBe(false);
-    expect(first.error).toMatch(CONNECT_FAILURE);
-    await expect(card.getByText(CONNECT_FAILURE)).toBeVisible();
+    // From P2 the key saved for the seeded address is refused at the address just typed, so the
+    // first press meets the guard and not the network. That it was judged against the address just
+    // typed is shown by the order check above (the address save was answered before the sync was
+    // sent), by the refusal itself (the seeded address would have been accepted) and by the config
+    // read below.
+    expect(first).toEqual({ success: false, error: REFUSAL });
+    await expect(card.getByText(REFUSAL)).toBeVisible();
     expect(configSection(testServer.configPath, SECTION).jackett_url).toBe(LOOPBACK_URL);
 
     // The key is entered again and Sync is pressed with no wait: the press commits the field.
@@ -213,5 +215,33 @@ test.describe('Wizard: the address is saved before the key (SEC-005 AC-ARCH-9)',
       { message: 'the key was not bound to the address typed in the step' }).toBe(wizardUrl);
     expect(position(steps, 'response', SAVE_URL)).toBeLessThan(position(steps, 'request', SAVE_KEY));
     expect(configSection(testServer.configPath, SECTION).jackett_api_key).toBe(KEY_ONE);
+    // AC-ARCH-9 (not-refused clause, P2): the key the wizard bound is accepted by the guard. The
+    // address is a `.invalid` name, so the sync is not refused and answers "Failed to connect".
+    const answer = await (await page.request.get(`${testServer.apiBase}/${SYNC_ROUTE}/`, {
+      headers: { Origin: new URL(testServer.apiBase).origin },
+    })).json();
+    expect(answer.error).toMatch(CONNECT_FAILURE);
+    expect(answer.error).not.toBe(REFUSAL);
+  });
+});
+
+test.describe('The guard on the real server (SEC-005 P2)', () => {
+  test.use({ seedConfig: 'fresh_defaults#jackett-guard' });
+
+  const callSync = async (page: Page, apiBase: string) => (await page.request.get(
+    `${apiBase}/${SYNC_ROUTE}/`, { headers: { Origin: new URL(apiBase).origin } })).json();
+
+  test('a key saved for one address is refused at another, and accepted once the address is back', async ({ page, testServer }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    await saveThroughApi(page, testServer.apiBase, 'jackett_url', SEEDED_URL);
+    await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', KEY_ONE);
+    await saveThroughApi(page, testServer.apiBase, 'jackett_url', LOOPBACK_URL);
+
+    const refused = await callSync(page, testServer.apiBase);
+
+    expect(refused).toEqual({ success: false, error: REFUSAL });
+    await saveThroughApi(page, testServer.apiBase, 'jackett_url', SEEDED_URL);
+    const accepted = await callSync(page, testServer.apiBase);
+    expect(accepted.error).toMatch(CONNECT_FAILURE);
   });
 });
