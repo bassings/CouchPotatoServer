@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 #
 # verify.sh — the canonical local gate. Mirrors what CI enforces so that
-# "green here" means "green in CI". Run this before opening a PR; the
-# pre-push git hook (.githooks/pre-push) runs it automatically.
+# "green here" means "green in CI", with ONE deliberate exception: a browser
+# test that fails and then passes on its one local retry is green here and red
+# in CI (owner decision 2026-11-21), and is listed at the end of step 7 and
+# again in the final summary. Run this before opening a PR; the pre-push git
+# hook (.githooks/pre-push) runs it automatically.
 #
 # Stages (fail-fast, single exit code):
 #   1. ruff lint
 #   2. test-trap check (false-green guard — see scripts/check_test_traps.py)
 #   3. UI conformance check (design-system drift — a REQUIRED CI check that this
-#      gate used to omit, so "green locally" did not imply "green in CI")
+#      gate used to omit, so a local pass did not imply a CI pass)
 #   4. Python unit tests (tests/unit, host interpreter, PYTHONPATH=libs)
 #   5. Python integration tests (tests/integration, host interpreter,
 #      PYTHONPATH=libs: the direct regression net for the SQLiteAdapter
@@ -19,6 +22,11 @@
 # Usage:
 #   ./scripts/verify.sh            # full gate
 #   ./scripts/verify.sh --no-e2e   # skip the slow E2E stage (lint + unit only)
+#   ./scripts/verify.sh --e2e-only # TEST SEAM, NOT A GATE: runs ONLY step 7 (steps
+#                                  # 0-6 skipped) and ends with a warning, never the
+#                                  # all-clear. tests/unit/test_e2e_local_retry_gate.py
+#                                  # drives it with a stub `npx`. Nothing that gates a
+#                                  # push (hook, Makefile) may pass it.
 #
 # Env:
 #   PYTHON   interpreter to use. Default: ./.venv/bin/python when it exists,
@@ -28,7 +36,12 @@
 set -euo pipefail
 
 RUN_E2E=1
+E2E_ONLY=0
+FLAKY_REPORT=''
+FLAKY_DIR=''
+GATE_DONE=0
 [[ "${1:-}" == "--no-e2e" ]] && RUN_E2E=0
+[[ "${1:-}" == "--e2e-only" ]] && E2E_ONLY=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -53,6 +66,9 @@ export PYTHONPATH="${PROJECT_DIR}/libs${PYTHONPATH:+:$PYTHONPATH}"
 step() { printf '\n\033[1;34m▶ %s\033[0m\n' "$1"; }
 fail() { printf '\n\033[1;31m✖ %s\033[0m\n' "$1" >&2; exit 1; }
 
+# Steps 0-6 run unless --e2e-only; the `if` closes just before step 7 and is
+# deliberately not re-indented, to keep this diff reviewable.
+if [[ "$E2E_ONLY" -eq 0 ]]; then
 # ── 0. Preflight: required Python deps present? ─────────────────────────────
 if ! "$PYTHON" -c "import bcrypt, httpx, ruff" >/dev/null 2>&1; then
   fail "Python deps missing (bcrypt/httpx/ruff). Run 'make setup' (or:
@@ -131,6 +147,8 @@ if [[ ! -d node_modules ]]; then
 fi
 npm run test:unit || fail "UI unit tests failed"
 
+fi  # end of steps 0-6 (skipped by --e2e-only)
+
 # ── 7. E2E tests ────────────────────────────────────────────────────────────
 if [[ "$RUN_E2E" -eq 1 ]]; then
   step "7/7 E2E tests (Playwright: chromium + a11y + mobile)"
@@ -147,14 +165,55 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # teardown ran; that is a real problem to go look at, not something this
   # script should paper over by deleting it for you.
   #
-  # --fail-on-flaky-tests (AC-A11Y-4/QA-56): a no-op HERE, since
-  # playwright.config.ts sets `retries: 0` locally and nothing can be
-  # classified flaky (failed once, passed on retry) without a retry ever
-  # happening -- passed for parity with the CI invocations of this exact
-  # command, where retries: 2 makes it load-bearing: a test that fails then
-  # passes on retry must still fail CI rather than quietly going green,
-  # which is what let a 1-in-5 shared-state race pass as "the suite is
-  # green" for a long time.
+  # Local differs from CI on purpose (owner decision, 2026-11-21): each
+  # invocation below RETRIES a failed test ONCE (--retries=1) and does NOT pass
+  # --fail-on-flaky-tests. A test that fails twice fails the gate exactly as
+  # before. A test that fails and then passes does not, but it is never hidden:
+  # every invocation also writes Playwright's JSON report, and
+  # scripts/e2e_flaky_summary.py lists every test whose own status is "flaky"
+  # at the end of this step and again in the final summary. CI is unchanged:
+  # playwright.config.ts gives it `retries: 2` and every ci.yml invocation
+  # keeps --fail-on-flaky-tests (AC-A11Y-4/QA-56), so a test that fails then
+  # passes still fails CI rather than quietly going green, which is what let a
+  # 1-in-5 shared-state race pass as "the suite is green" for a long time.
+  # Locally the config's `retries` stays 0, so a plain `npx playwright test`
+  # run is unchanged and the retry comes from this script alone.
+  # tests/unit/test_e2e_local_retry_gate.py pins all of this.
+  #
+  # The summary is given the four report files by name, never a glob: an
+  # invocation that wrote no report must read as UNKNOWN, not as "none flaky".
+  FLAKY_DIR="$(mktemp -d)"
+  # The list is also printed when the gate FAILS in step 7: a test that only
+  # passed on retry in an earlier invocation must not vanish because a later
+  # one failed. It runs from the EXIT trap, before the reports are removed.
+  # The trap also closes a hole it opens: on macOS /bin/bash 3.2 with `set -eu`,
+  # an unbound-variable abort exits 0 once ANY EXIT trap is set (measured; without
+  # a trap it exits 1), which would end this script silently green. So GATE_DONE=1
+  # is the very last statement of the script, and a trap that sees status 0
+  # without it reports a failure and exits 1. A failing status is passed on
+  # unchanged. Reports for
+  # invocations that never ran read as UNKNOWN: a missing file cannot tell
+  # "did not run" from "ran and wrote nothing", so it is not guessed.
+  flaky_summary() {
+    "$PYTHON" scripts/e2e_flaky_summary.py "$FLAKY_DIR/chromium.json" "$FLAKY_DIR/isolation.json" "$FLAKY_DIR/mobile-chrome.json" "$FLAKY_DIR/accessibility.json" \
+      || echo 'UNKNOWN: the flaky-test summary itself failed to run.'
+  }
+  on_exit() {
+    local status=$?
+    if [[ "$status" -eq 0 && "$GATE_DONE" -ne 1 ]]; then
+      printf '\n\033[1;31m✖ verify.sh exited 0 before its last statement, which is treated as a FAILURE (bash 3.2 does this for an unbound variable once an EXIT trap is set; that is one known cause).\033[0m\n' >&2
+      status=1
+    fi
+    if [[ "$status" -ne 0 ]]; then
+      printf '\n%s\n' "$(flaky_summary)"
+    fi
+    rm -rf "$FLAKY_DIR"
+    exit "$status"
+  }
+  trap on_exit EXIT
+  # The html reporter is kept (CI uploads it); `never` stops it opening a
+  # browser on a failed run, which the config's own reporter entry does too.
+  export PLAYWRIGHT_HTML_OPEN=never
   # `npx playwright test`, NOT `npm run test:e2e -- --project=...`.
   # Playwright UNIONS repeated --project flags, and test:e2e now names its
   # own three projects (it had to: a bare `npx playwright test` also selects
@@ -163,19 +222,22 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # line ran chromium + accessibility + mobile-chrome, 158 tests, and the
   # three separate steps below then re-ran two of them. The gate must name
   # exactly what each step runs.
-  npx playwright test --project=chromium --trace=retain-on-failure --fail-on-flaky-tests \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="$FLAKY_DIR/chromium.json" \
+  npx playwright test --project=chromium --trace=retain-on-failure --retries=1 --reporter=list,html,json \
     || fail "E2E tests failed"
   # AC-QA-50's isolation proof, pinned to 2 workers because it only
   # demonstrates anything when the mutating and asserting specs land on
   # different workers. The chromium project above runs at workers: 1
   # (AC-SIMP-12), so this cannot ride along with it.
-  npx playwright test --project=isolation --workers=2 --trace=retain-on-failure --fail-on-flaky-tests \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="$FLAKY_DIR/isolation.json" \
+  npx playwright test --project=isolation --workers=2 --trace=retain-on-failure --retries=1 --reporter=list,html,json \
     || fail "E2E worker-isolation proof failed"
   # Small-screen coverage. AGENTS.md treats a mobile layout regression that
   # blocks a core flow as high-priority, and the mobile-chrome project existed
   # for a long time without anything running it. Scoped by testMatch to
   # *.mobile.spec.ts, so this adds seconds, not minutes.
-  npx playwright test --project=mobile-chrome --trace=retain-on-failure --fail-on-flaky-tests \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="$FLAKY_DIR/mobile-chrome.json" \
+  npx playwright test --project=mobile-chrome --trace=retain-on-failure --retries=1 --reporter=list,html,json \
     || fail "Mobile E2E tests failed"
   # Accessibility. These have their own project (testMatch *.a11y.spec.ts) and
   # the chromium project now testIgnores them -- previously they rode along in
@@ -183,8 +245,11 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # SILENTLY DROPPED a11y from the local gate. CI has always run them as a
   # separate job (.github/workflows/ci.yml, `test:a11y`); this makes the local
   # gate mirror it, which is the whole contract of this script.
-  npx playwright test --project=accessibility --trace=retain-on-failure --fail-on-flaky-tests \
+  PLAYWRIGHT_JSON_OUTPUT_NAME="$FLAKY_DIR/accessibility.json" \
+  npx playwright test --project=accessibility --trace=retain-on-failure --retries=1 --reporter=list,html,json \
     || fail "Accessibility tests failed"
+  FLAKY_REPORT="$(flaky_summary)"
+  printf '\n%s\n' "$FLAKY_REPORT"
 else
   step "7/7 E2E tests: SKIPPED (--no-e2e)"
 fi
@@ -195,4 +260,13 @@ step "info: security lint (ruff S — non-blocking)"
 "$PYTHON" -m ruff check --select S --statistics couchpotato/ CouchPotato.py 2>/dev/null \
   | tail -5 || true
 
-printf '\n\033[1;32m✔ All checks passed — safe to open a PR.\033[0m\n'
+if [[ "$E2E_ONLY" -eq 1 ]]; then
+  # --e2e-only is a test seam, not a gate: it must never print the all-clear.
+  printf '\n\033[1;33m⚠ ONLY step 7 ran (--e2e-only): steps 0-6 were NOT run. This is not a pass of the gate.\033[0m\n'
+else
+  printf '\n\033[1;32m✔ All checks passed — safe to open a PR.\033[0m\n'
+fi
+if [[ "$RUN_E2E" -eq 1 ]]; then
+  printf '%s\n' "$FLAKY_REPORT"
+fi
+GATE_DONE=1  # keep this the LAST statement: on_exit treats status 0 without it as a failure

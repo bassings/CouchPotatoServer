@@ -38,6 +38,27 @@ file; only the second is caught by asking what property makes this input
 actually violate the thing, and asserting that property before trusting the
 result. Getting it wrong the other way files a bug against working code.
 
+### An E2E wait that is already true before the thing it waits for (2026-11-22)
+
+Alpine's `$nextTick` is `queueMicrotask` followed by `setTimeout`, so any
+focus hand-off the settings and wizard pages make "after the render" runs on a
+timer, after the input events a test sends. Three flaky specs shared one
+shape: the test waited for a state that was already true before the hand-off
+(`focusedControl` equal to a name the focused Remove button already carried; a
+toast read at one instant when it clears itself after 3 s) or moved focus
+itself before the page's own open-time focus move had landed.
+
+What settled each was not a CPU-load run (under CPU load, in the runs the
+commit messages record, the original tests failed once in 50 for the setup
+picker and never in the other groups; the run
+counts are in the commit messages of 62bd8bf1b, e16283123 and 312f230a8) but
+holding or delaying the one callback and watching the old test fail with the
+field's exact message. Wait for the page's
+own event instead: its `focus()` call (`recordFocusCalls`), the focus landing
+on the control the product documents, or a MutationObserver armed before the
+trigger. Prove the new wait with a product mutation that removes the hand-off:
+the old test stays green, the new one fails.
+
 ## Known technical debt
 
 > Refreshed 2026-07-07 — most of the old list was stale (verified against
@@ -368,8 +389,11 @@ result. Getting it wrong the other way files a bug against working code.
 
 - **Limits of the Playwright flag guards, deliberately not fixed (2026-11-12).**
   `playwright_commands` in `tests/unit/test_ci_required_contexts.py` backs the
-  `--trace=retain-on-failure` and `--fail-on-flaky-tests` guards on
-  `scripts/verify.sh`. It is a regex, not a shell parser, so: a ` #` inside
+  `--trace=retain-on-failure` guard on `scripts/verify.sh`, the local
+  `--retries=1` and no-`--fail-on-flaky-tests` guard in
+  `tests/unit/test_e2e_local_retry_gate.py` (the local gate retries once and
+  lists flaky tests, owner decision 2026-11-21), and the `--fail-on-flaky-tests`
+  guard on `ci.yml`. It is a regex, not a shell parser, so: a ` #` inside
   quotes is treated as a comment (on the real file only the exactly-four-commands
   pin catches the damage), and a quoted `|` or `;` gives a false red. A
   shell-level retry loop around a correctly flagged command

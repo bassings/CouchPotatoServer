@@ -18,7 +18,7 @@ state, and an Alpine-based Docker image. The application entry point is
 | Command | Purpose |
 |---|---|
 | `make setup` | Install dependencies and the repository pre-push hook once per clone. |
-| `make verify` | Run the full local gate that mirrors CI. |
+| `make verify` | Run the full local gate that mirrors CI (a browser test that passes only on its one local retry is listed, not failed). |
 | `make verify-fast` | Run the fast lint and unit-test gate. |
 | `make check-traps` | Detect known false-green test and shell-gate patterns. |
 | `make check-secrets` | Run the working-tree secret scan used by CI. |

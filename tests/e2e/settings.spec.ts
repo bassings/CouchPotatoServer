@@ -1906,6 +1906,23 @@ async function recordFocusCalls(page: Page) {
   });
 }
 
+/** Forget every focus() call so far, so the next wait sees only what the next action causes. */
+const forgetFocusCalls = (page: Page) => page.evaluate(() => { (window as any).__focusCalls.length = 0; });
+
+/**
+ * Wait until the page has HANDED focus on after a removal, not merely until focus is where it
+ * will end up. The hand-off runs after the render, on Alpine's timer (a macrotask), and after
+ * removing the first or a middle row focus is already on a control with the final name (the
+ * Remove button keeps its index). Waiting for that name is therefore satisfied BEFORE the
+ * hand-off, and the Tab that follows races it: a late hand-off pulls focus off the control the
+ * Tab reached. The page's own focus() call is the event to wait for. Needs `recordFocusCalls`
+ * armed before the page loaded and `forgetFocusCalls` before the removal.
+ */
+async function expectFocusHandedTo(page: Page, control: string) {
+  await expect.poll(() => page.evaluate(() => (window as any).__focusCalls as string[])).toContain(control.replace(/^button:/, ''));
+  await expect.poll(() => focusedControl(page)).toBe(control);
+}
+
 /** Reach Remove for `row` (1-based) with the keyboard alone, press it, and wait for the one group save. */
 async function removeRowByKeyboard(page: Page, card: Locator, row: number, key = 'Enter') {
   await card.getByLabel(`custom tag for row ${row}`, { exact: true }).focus();
@@ -2054,6 +2071,7 @@ for (const held of HELD) {
       test.info().annotations.push(...combineGroupWriter());
       await page.clock.install();
       const net = await recordRequests(page);
+      await recordFocusCalls(page);
       await openSettings(page, 'Searchers');
       const card = providerCard(page, 'Newznab');
       await card.getByLabel(`custom tag for row ${held.tabFrom}`, { exact: true }).focus();
@@ -2061,10 +2079,11 @@ for (const held of HELD) {
       await recordRowCounts(card);
       const saved = groupSaveResponse(page);
       if (held.late) {
+        await forgetFocusCalls(page);
         await page.keyboard.down('Enter');
         await expect(card.getByRole('button', { name: /^Remove row/ })).toHaveCount(2);
-        // Polled: focus is handed over after the render, which can land a frame after the row count.
-        await expect.poll(() => focusedControl(page)).toBe(held.focus);
+        // The page's own hand-off, not the final focus name: that name is already true before it for row 1.
+        await expectFocusHandedTo(page, held.focus);
         for (let i = 0; i < 5; i += 1) await page.keyboard.down('Enter');
         await page.keyboard.up('Enter');
       } else {
@@ -2302,13 +2321,15 @@ for (const { name, seed, row, focus, after, press } of UNDO_KEYS) {
     test('Undo is the next Tab stop after the control focus lands on, the row returns once and no further row is removed or saved', async ({ page, testServer }) => {
       await page.clock.install();
       const net = await recordRequests(page);
+      await recordFocusCalls(page);
       const before = configSha(testServer.configPath);
       await openSettings(page, 'Searchers');
       const card = providerCard(page, 'Newznab');
       const shown = await shownRows(card);
 
+      await forgetFocusCalls(page);
       await pressRemoveByKeyboard(page, card, row);
-      await expect.poll(() => focusedControl(page)).toBe(focus);
+      await expectFocusHandedTo(page, focus);
       await page.keyboard.press('Tab');
       await expect(undoButton(card)).toBeFocused();
       // And on from Undo: the next row's first control, or Add.

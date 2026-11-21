@@ -43,6 +43,7 @@ test.describe('Wizard: a refused save must not read as success', () => {
 
   /** Welcome -> Security, without any save happening on the way. */
   async function gotoSecurityStep(page) {
+    await recordToastTexts(page);
     await page.goto('/wizard/');
     await expect(page.getByRole('button', { name: /Continue/i })).toBeVisible({
       timeout: 10000,
@@ -57,6 +58,34 @@ test.describe('Wizard: a refused save must not read as success', () => {
     // exposed that: it should PASS before any fix.
     await expect(SECURITY_USERNAME(page)).toBeVisible({ timeout: 5000 });
   }
+
+  /**
+   * Every text the visible toast has held since the page loaded, armed before any
+   * script runs. The toast clears itself 3 s after it appears (`toast()` in
+   * wizard.html), so a read or a visibility check at one instant can miss a
+   * refusal that really was shown, as soon as the test process is delayed by
+   * more than that. `__toastSeen` is how many of them an outcome has already
+   * consumed, so each click is judged on the toasts it caused.
+   */
+  async function recordToastTexts(page: any) {
+    await page.addInitScript(() => {
+      const heard: string[] = [];
+      (window as any).__toastTexts = heard;
+      (window as any).__toastSeen = 0;
+      // `last` is what the toast held at the previous mutation, empty included, so the same
+      // refusal shown twice (with the clear between them) is two toasts, while unrelated
+      // mutations that find the same text still on screen are not. The same refusal shown again
+      // WITHOUT a clear in between is not a second toast either: Alpine does not re-render an
+      // unchanged value, so there is no mutation to see.
+      let last = '';
+      new MutationObserver(() => {
+        const text = document.querySelector('[x-text="message"]')?.textContent?.trim() ?? '';
+        if (text && text !== last) heard.push(text);
+        last = text;
+      }).observe(document, { subtree: true, childList: true, characterData: true });
+    });
+  }
+  const toastTexts = (page: any): Promise<string[]> => page.evaluate(() => (window as any).__toastTexts);
 
   /** The header's current-step label, e.g. "Providers" or "Done". */
   const stepLabel = (page: any) => page.locator('[x-text="steps[currentStep]"]');
@@ -90,21 +119,21 @@ test.describe('Wizard: a refused save must not read as success', () => {
    * "Library" on every earlier step. One signal, no special case.
    */
   async function waitForWizardStepOutcome(page: any, beforeStepName: string | null): Promise<void> {
-    const toast = page.locator('[x-text="message"]');
     await expect
       .poll(
         async () => {
-          const [stepText, toastVisible] = await Promise.all([
+          const [stepText, unseenToasts] = await Promise.all([
             stepLabel(page).textContent().catch(() => null),
-            toast.isVisible().catch(() => false),
+            page.evaluate(() => (window as any).__toastTexts.length - (window as any).__toastSeen),
           ]);
           if (stepText !== beforeStepName) return 'advanced';
-          if (toastVisible) return 'refused';
+          if (unseenToasts > 0) return 'refused';
           return 'pending';
         },
         { timeout: 5000 },
       )
       .not.toBe('pending');
+    await page.evaluate(() => { (window as any).__toastSeen = (window as any).__toastTexts.length; });
   }
 
   test('a refused password save is reported to the operator', async ({ page }) => {
@@ -361,14 +390,14 @@ test.describe('Wizard: a refused save must not read as success', () => {
       const beforeStep = await stepLabel(page).textContent();
       await next.click();
       await waitForWizardStepOutcome(page, beforeStep);
-      const msg = await page.locator('[x-text="message"]').textContent().catch(() => '');
-      if (msg && /fail|refus|error/i.test(msg)) break;
+      if ((await toastTexts(page)).some((text) => /fail|refus|error/i.test(text))) break;
     }
 
-    await expect(
-      page.locator('[x-text="message"]'),
-      'a refused save on a later step was swallowed -- the fix is step-1 only',
-    ).toContainText(/fail|refus|error/i, { timeout: 5000 });
+    await expect
+      .poll(() => toastTexts(page), {
+        message: 'a refused save on a later step was swallowed -- the fix is step-1 only',
+      })
+      .toContainEqual(expect.stringMatching(/fail|refus|error/i));
   });
 
   test('a save that succeeds still advances, so the guard is not a wall', async ({ page }) => {
