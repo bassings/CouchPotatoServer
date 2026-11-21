@@ -59,6 +59,11 @@ test('setup picker keeps its form value on HTTP failure and selects after retry 
 
   const browser = page.locator('[x-show="browserOpen"]').filter({ hasText: 'Browse Folders' });
   await expect(browser.getByRole('alert')).toContainText('Unable to list directory');
+  // The dialog's own open-time focus move (browseDirectory's $nextTick, a timer) must have landed
+  // before this test moves focus itself. If it lands after, it pulls focus to Close, and the Enter
+  // below closes the dialog instead of being refused: the form value check then fails, or Retry is
+  // gone. Waiting for it is also the documented behaviour: focus never waits on the network.
+  await expect(browser.getByRole('button', { name: 'Close directory browser' })).toBeFocused();
   await expect(browser.getByText('Empty folder')).toBeHidden();
   await expect(browser.getByRole('button', { name: 'Up' })).toHaveCSS('opacity', '0.3');
   await browser.getByRole('button', { name: 'Select This Folder' }).focus();
