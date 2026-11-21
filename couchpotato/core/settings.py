@@ -1109,6 +1109,12 @@ class Settings:
         refusal = self._refuse_per_column(kwargs.get('section'), kwargs.get('name'))
         if refusal is not None:
             return refusal
+        # ConfigParser folds an option name (`optionxform`), but the mask check,
+        # `getType`, the value hook, the events and the lock below are keyed on
+        # the exact string. Hand them the name the option is stored under.
+        parser = getattr(self, 'p', None)
+        fold = parser.optionxform if parser else str.lower
+        kwargs['name'] = fold(kwargs['name'])
         if (kwargs.get('section') == 'core'
                 and kwargs.get('name') in ('password', 'auth_required')):
             with _PASSWORD_SAVE_LOCK:
