@@ -129,10 +129,9 @@ on `master`: `settings.save` passed the caller's spelling of an option name
 through, the parser folds the name, and the value hook was dispatched under
 the caller's spelling, so a save of `JACKETT_API_KEY` stored the key and ran
 no hook. With the writer of this spec that would replace the key and keep the
-earlier key's binding. It is fixed on `master` in its own change (branch
-`fix/settings-save-canonical-option-name`): `settings.save` handles an option
-under its registered name whatever case the caller sends. No SEC-005 slice is
-built before it merges. AC-SEC-6 carries the proof for the key, in P1.
+earlier key's binding. It is fixed on `master` in its own change (merged as
+#615, `41e36d007`): `settings.save` handles an option under its registered
+name whatever case the caller sends. AC-SEC-6 carries the proof for the key, in P1.
 
 ## Decisions
 
