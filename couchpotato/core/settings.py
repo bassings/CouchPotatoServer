@@ -9,7 +9,7 @@ from typing import Any, Optional
 from pydantic import TypeAdapter
 from CodernityDB.hash_index import HashIndex
 from couchpotato.api import addApiView
-from couchpotato.core.event import addEvent, fireEvent
+from couchpotato.core.event import addEvent, fireEvent, getEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import mergeDicts
 
@@ -396,6 +396,25 @@ class Settings:
             return None
         return self.p.set(section, option, value)
 
+    def set_internal(self, section, option, value):
+        """Set an option in MEMORY ONLY, for the server's own use. True when it was set.
+
+        `set()` refuses an option whose flag is not `rw`, which is right for the
+        settings routes and wrong for a value only the server writes (a hidden
+        option). This bypasses that and nothing else: an access flag
+        (`<option>_internal_meta`, in any spelling) is still refused, and the
+        file is not written. The caller saves once, so that this value and the
+        one that caused it land in a single atomic write; a second `save()`
+        here would make them two.
+        """
+        with _PASSWORD_SAVE_LOCK:
+            if self.isOptionMeta(section, option):
+                self.log.warning('set_internal::option "%s.%s" cancelled (META option)', section, option)
+                return False
+            self.addSection(section)
+            self.p.set(section, option, value)
+            return True
+
     def clearSessionRotationPending(self):
         """Persist an internal revocation marker without UI writeability rules.
 
@@ -524,6 +543,14 @@ class Settings:
             registered_in_section = self.registered_options.get(section, set())
             for option_name, option_value in self.p.items(section):
                 if self.isOptionMeta(section, option_name):
+                    continue
+
+                # An option whose flag says it is not readable ('hidden') is
+                # not part of the read at all, in any section. Hiding it from
+                # the rendered options (`getOptions`) is not enough: this read
+                # is the one a script of the API key reads, and it returned a
+                # hidden option verbatim.
+                if not self.isOptionReadable(section, option_name):
                     continue
 
                 if option_name not in registered_in_section:
@@ -1119,7 +1146,51 @@ class Settings:
                 and kwargs.get('name') in ('password', 'auth_required')):
             with _PASSWORD_SAVE_LOCK:
                 return self._saveView(**kwargs)
+        if self._has_value_hook(kwargs['section'], kwargs['name']):
+            # A value hook may set a companion option (the Jackett key's binding
+            # is set from the hook of the key). The hook, the writes and the file
+            # save must be one hold of the lock, or another writer can change
+            # what the hook read between its read and the save, and a failed
+            # save has nothing to restore. Any option with a hook, by rule.
+            with _PASSWORD_SAVE_LOCK:
+                return self._saveView(**kwargs)
         return self._saveView(**kwargs)
+
+    def _has_value_hook(self, section, option):
+        return bool(getEvent('setting.save.%s.%s' % (section, option)))
+
+    def _section_snapshot(self, section):
+        """Every option of `section` as memory holds it now, or None for a missing section."""
+        if not self.p.has_section(section):
+            return None
+        return {name: self.p.get(section, name) for name in self.p.options(section)}
+
+    def _restore_section(self, section, snapshot):
+        """Put the section back as `_section_snapshot` found it, and say nothing about the file."""
+        if snapshot is None or not self.p.has_section(section):
+            return
+        for name in self.p.options(section):
+            if name not in snapshot:
+                self.p.remove_option(section, name)
+        for name, value in snapshot.items():
+            self.p.set(section, name, value)
+
+    def _recover_failed_save(self, section, snapshots, stored, marker, submitted):
+        """After `save()` raised: put memory back so the next writer cannot persist this attempt.
+
+        The file is replaced whole or not at all (`_save`), so a failure that
+        reaches here left it as it was. The password and `auth_required` saves
+        have their own recovery, which also checks what the file holds; every
+        other save restores the section it may have changed, so a companion
+        option a value hook set is not written out by the next, unrelated save.
+        """
+        password_snapshot, auth_snapshot, section_snapshot = snapshots
+        if password_snapshot is not None:
+            self._recover_failed_password_save(password_snapshot, stored, marker, submitted)
+        elif auth_snapshot is not None:
+            self._recover_failed_auth_save(auth_snapshot[0], stored)
+        else:
+            self._restore_section(section, section_snapshot)
 
     def _password_save_snapshot(self):
         """Keep the gate and revocation marker until a new hook prepares both."""
@@ -1337,6 +1408,8 @@ class Settings:
         # session-rotation marker in this parser. If the atomic file save
         # fails, restore all three in memory: a later unrelated settings
         # save must not silently commit the failed password attempt.
+        # Taken before the value hook runs: a hook may set a companion option.
+        section_snapshot = self._section_snapshot(section) if self._has_value_hook(section, option) else None
         (new_value, password_snapshot, auth_snapshot, marker,
          refusal) = self._prepare_saved_value(section, option, value)
         if refusal is not None:
@@ -1348,11 +1421,8 @@ class Settings:
         try:
             self.save()
         except Exception:
-            if password_snapshot is not None:
-                self._recover_failed_password_save(
-                    password_snapshot, stored, marker, value)
-            elif auth_snapshot is not None:
-                self._recover_failed_auth_save(auth_snapshot[0], stored)
+            self._recover_failed_save(
+                section, (password_snapshot, auth_snapshot, section_snapshot), stored, marker, value)
             raise
 
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)

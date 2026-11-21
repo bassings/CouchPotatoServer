@@ -534,6 +534,35 @@ function settingsPanel() {
       ]);
     },
 
+    /**
+     * Run the debounced single-option saves of ONE section NOW, one at a time in
+     * the order they were typed, and wait for them (SEC-005 C1).
+     *
+     * For a button that acts on the saved settings of its own section: a Sync
+     * pressed straight after the Jackett address or key is typed must go out
+     * after those saves, not before them. Only this section's saves are sent. A
+     * combine group in another section keeps its 8-second Undo window (a panel
+     * wide flush would commit a removed row at once), and a section's own
+     * combine group is flushed by `flushGroupFor`. In order, not together, so
+     * the address typed first is stored before the key typed second, which is the
+     * order the key is bound in.
+     *
+     * Safe to call when nothing is pending: it resolves immediately.
+     */
+    async flushPendingSavesFor(section) {
+      const pending = Object.entries(this.pendingSaves).filter(([, save]) => save.section === section);
+      for (const [key] of pending) {
+        if (this.saveTimers[key]) {
+          clearTimeout(this.saveTimers[key]);
+          delete this.saveTimers[key];
+        }
+        delete this.pendingSaves[key];
+      }
+      for (const [, save] of pending) {
+        await this.saveSingle(save.section, save.name, save.value);
+      }
+    },
+
     /* ── Combine groups: one save per group, as rows (SEC-004) ──────────────
        A group is edited as rows but stored as one comma-separated list per
        column. It is saved as ROWS in one request, so the server can refuse a
@@ -893,8 +922,10 @@ function settingsPanel() {
     /** The action is over. `mayHaveWritten`: it said it succeeded, or it threw or answered
      *  something that is not JSON, so nobody can know. Then the server's rows are read
      *  NOW and replace the group's, and only then is it unlocked; if that read fails the
-     *  group stays locked, because rows that may be stale must never be editable. An
-     *  action that plainly wrote nothing (it answered success false) unlocks at once. */
+     *  group stays locked, because rows that may be stale must never be editable. Only an
+     *  action that never ran (its flush was refused) unlocks at once: an action that ran
+     *  and answered success false is re-read too, so the section's fields show what the
+     *  server holds (SEC-005 C1). */
     async endAction(section, mayHaveWritten) {
       const group = this.groupState[section];
       if (!group) return;
@@ -1267,8 +1298,15 @@ function buttonField(section, opt) {
           this.result = 'Fix the rows marked in this section first: they could not be saved.';
           return;
         }
+        // What the user has just typed in THIS section is saved before the action
+        // reads it, and nothing in any other section is sent (SEC-005 C1).
+        if (panel) await panel.flushPendingSavesFor(this.section);
+        // Set before the request is sent and never cleared by its answer: an action
+        // that answered success false is re-read as well, so the fields show the
+        // saved values (a refused Sync must not leave the page showing an address
+        // the server no longer holds).
         mayHaveWritten = true;
-        mayHaveWritten = await this.runAction();
+        await this.runAction();
       } catch (e) {
         this.success = false;
         this.result = 'Error: ' + e.message;
@@ -1290,7 +1328,7 @@ function buttonField(section, opt) {
       return this.running || !!(group && group.actionRunning);
     },
 
-    /** Returns whether the action may have written. */
+    /** Runs the action and shows its answer. Returns whether the action reported success. */
     async runAction() {
       const resp = await fetch(CP.apiBase + '/' + opt.button_action + '/');
       const data = await resp.json();
