@@ -537,7 +537,7 @@ class Settings:
 
         return value
 
-    def isOptionInRead(self, section, option_name):
+    def _option_in_read(self, section, option_name):
         """Whether `getValues` reports this option at all.
 
         Meta options never are. Nor is an option whose flag says it is not
@@ -559,7 +559,7 @@ class Settings:
             values[section] = {}
             registered_in_section = self.registered_options.get(section, set())
             for option_name, option_value in self.p.items(section):
-                if not self.isOptionInRead(section, option_name):
+                if not self._option_in_read(section, option_name):
                     continue
 
                 if option_name not in registered_in_section:

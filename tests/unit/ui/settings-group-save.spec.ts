@@ -41,6 +41,13 @@ function undoWindowMs(): number {
 }
 const UNDO_WINDOW = 8000;
 
+/** How long a later save of a section waits for an earlier, unanswered one, read from the page's own constant. */
+function saveWaitDeadlineMs(): number {
+  const html = fs.readFileSync(TEMPLATE, 'utf8');
+  const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
+  return new Function(`${code}\nreturn SAVE_WAIT_DEADLINE_MS;`)();
+}
+
 const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
 const NEWZNAB_PAIRING = ['host', 'api_key', 'use'];
 
@@ -127,8 +134,9 @@ function withAlpineMagics(field: any) {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 function makePanel(values: Record<string, Record<string, string>>, combineState: Record<string, any>, options = newznabOptions()) {
@@ -1279,17 +1287,87 @@ describe('a button in a section with a combine group: the rows are locked from t
         expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
       });
 
-      it('still finishes when the address request itself failed', async () => {
+      it('still finishes when the address request itself failed (the fetch rejects)', async () => {
         const held = deferred<Reply>();
         const { net, panel } = await addressInFlight(held.promise);
 
         const running = button(panel).execute();
         await vi.advanceTimersByTimeAsync(0);
-        held.promise.catch(() => undefined);
-        held.resolve({ status: 503, body: { success: false, error: 'busy' } });
+        held.reject(new TypeError('network down'));
         await running;
 
         expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+      });
+
+      it('sends the key and finishes once the wait deadline has passed, when the address is never answered', async () => {
+        const held = deferred<Reply>();
+        const { net, panel } = await addressInFlight(held.promise);
+
+        let finished = false;
+        const running = button(panel).execute().then(() => { finished = true; });
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs() - 1);
+
+        // Before the deadline nothing goes ahead of the unanswered address.
+        expect(calls(net)).toEqual(['settings.save']);
+        expect(finished).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await running;
+
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_api_key']);
+        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+        held.resolve({ body: { success: true } });
+      });
+
+      it('with no key waiting, the action goes out once the deadline has passed on an unanswered address', async () => {
+        const net = installFetch();
+        const held = deferred<Reply>();
+        net.replies.push(held.promise, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_url', 'http://typed-jackett.invalid:9117');
+        await vi.advanceTimersByTimeAsync(500);
+
+        const running = button(panel).execute();
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs());
+        await running;
+
+        expect(calls(net)).toEqual(['settings.save', 'torrentpotato.jackett_sync', 'settings']);
+        held.resolve({ body: { success: true } });
+      });
+
+      it('sends a third save of the section only after the second has been answered', async () => {
+        const net = installFetch();
+        const first = deferred<Reply>();
+        const second = deferred<Reply>();
+        net.replies.push(first.promise, second.promise, { body: { success: true } });
+        const { panel } = torrentPanel();
+        const sent = () => saved(net).map((body) => body.name);
+        const started = vi.spyOn(globalThis, 'setTimeout');
+        const cleared = vi.spyOn(globalThis, 'clearTimeout');
+
+        const one = panel.saveSingle('torrentpotato', 'jackett_url', 'http://one.invalid:9117');
+        const two = panel.saveSingle('torrentpotato', 'jackett_api_key', 'placeholder-two');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sent()).toEqual(['jackett_url']);
+
+        first.resolve({ body: { success: true } });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sent()).toEqual(['jackett_url', 'jackett_api_key']);
+
+        const three = panel.saveSingle('torrentpotato', 'seed_ratio', '2');
+        await vi.advanceTimersByTimeAsync(0);
+        // The second is still unanswered: the third waits for it.
+        expect(sent()).toEqual(['jackett_url', 'jackett_api_key']);
+
+        second.resolve({ body: { success: true } });
+        await Promise.all([one, two, three]);
+        expect(sent()).toEqual(['jackett_url', 'jackett_api_key', 'seed_ratio']);
+        await vi.advanceTimersByTimeAsync(0);
+        // Every wait-deadline timer a save started was cleared when the save before it settled.
+        const deadlineTimers = started.mock.calls
+          .map((args, index) => (args[1] === saveWaitDeadlineMs() ? started.mock.results[index].value : undefined))
+          .filter((id) => id !== undefined);
+        expect(deadlineTimers).toHaveLength(2);
+        expect(cleared.mock.calls.map((args) => args[0])).toEqual(expect.arrayContaining(deadlineTimers));
       });
 
       it('lets go of the section once its saves are answered, and leaves another section alone', async () => {

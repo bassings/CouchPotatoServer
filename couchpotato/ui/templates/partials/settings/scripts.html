@@ -120,6 +120,11 @@ const REREAD_TIMEOUT_MS = 15000;
  *  at once. */
 const REMOVAL_UNDO_WINDOW_MS = 8000;
 
+/** How long a save of a section, or a button's flush, waits for an earlier save of the same
+ *  section to be answered before it goes ahead anyway (SEC-005 C1). The request that has not
+ *  been answered is never aborted: it may still succeed on the server. */
+const SAVE_WAIT_DEADLINE_MS = 10000;
+
 /* ── Settings panel (main) ── */
 function settingsPanel() {
   return {
@@ -560,12 +565,13 @@ function settingsPanel() {
         delete this.pendingSaves[key];
       }
       // Every save of a section joins one chain (see saveSingle), so these are sent
-      // in the order typed and each waits for any save of the section whose request
-      // has already left (the Jackett address typed a moment ago) to be answered.
-      // The chain never rejects, so a refused save cannot leave this hanging.
+      // in the order typed. A save of the section whose request has already left (the
+      // Jackett address typed a moment ago) is waited for, but only up to the wait
+      // deadline: a request that never answers must not hold the button for ever.
+      const inFlight = this.saveChains[section];
       await Promise.all([
         ...pending.map(([, save]) => this.saveSingle(save.section, save.name, save.value)),
-        this.saveChains[section],
+        this.settledOrDeadline(inFlight),
       ]);
     },
 
@@ -978,21 +984,35 @@ function settingsPanel() {
     },
 
     /**
-     * Save one option, after any save of the same section that is still in flight
-     * (SEC-005 C1). Saves of one section go out one at a time in the order they
-     * started, so a key can never reach the server ahead of the address typed
-     * before it, and `flushPendingSavesFor` can wait for them all. The chain holds
-     * a link that never rejects, and is dropped once its last save has settled.
+     * Save one option, after any earlier save of the same section has been answered
+     * or the wait deadline has passed (SEC-005 C1). Saves of one section go out one
+     * at a time in the order they started, so a key can never reach the server ahead
+     * of the address typed before it, and `flushPendingSavesFor` can wait for them.
+     * The chain holds a link that never rejects, and is dropped once its last save
+     * has settled. A request that never answers delays the saves behind it by the
+     * deadline, not for ever, and is not aborted: it may still succeed on the server.
      */
     saveSingle(section, name, value) {
       delete this.pendingSaves[section + '.' + name];
-      const run = (this.saveChains[section] || Promise.resolve()).then(() => this.sendSingleSave(section, name, value));
+      const run = this.settledOrDeadline(this.saveChains[section]).then(() => this.sendSingleSave(section, name, value));
       const link = run.catch(() => undefined);
       this.saveChains[section] = link;
       link.then(() => {
         if (this.saveChains[section] === link) delete this.saveChains[section];
       });
       return run;
+    },
+
+    /** Resolves when `link` settles or after SAVE_WAIT_DEADLINE_MS, whichever is first. Never rejects. */
+    settledOrDeadline(link) {
+      if (!link) return Promise.resolve();
+      return new Promise((resolve) => {
+        const timer = setTimeout(resolve, SAVE_WAIT_DEADLINE_MS);
+        link.then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
     },
 
     async sendSingleSave(section, name, value) {
