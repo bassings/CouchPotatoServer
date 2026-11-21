@@ -33,6 +33,10 @@ def isolated(monkeypatch):
     monkeypatch.setattr(Settings, 'types', {})
 
 
+def line(name, value):
+    return '%s = %s' % (name, value)
+
+
 def write(tmp_path, lines):
     path = tmp_path / 'config.ini'
     path.write_text('[%s]\n%s\n' % (SECTION, '\n'.join(lines)), encoding='utf-8')
@@ -55,8 +59,12 @@ def held(settings):
     return settings.p.get(SECTION, OPTION)
 
 
-def test_a_value_with_no_flag_in_the_file_is_emptied_in_memory(isolated, tmp_path):
-    path = write(tmp_path, ['%s = %s' % (OPTION, PLANTED)])
+@pytest.mark.parametrize('name', [OPTION, OPTION.upper()], ids=['as declared', 'upper case'])
+def test_a_value_with_no_flag_in_the_file_is_emptied_in_memory(isolated, tmp_path, name):
+    # Both spellings are one case: the parser folds an option name when it reads
+    # the file, so an older release's upper-case save reaches this code as the
+    # lower-case name. The row only pins that the fold happens before the check.
+    path = write(tmp_path, [line(name, PLANTED)])
 
     settings = load(path)
 
@@ -64,7 +72,7 @@ def test_a_value_with_no_flag_in_the_file_is_emptied_in_memory(isolated, tmp_pat
 
 
 def test_the_clear_is_memory_only_and_the_next_save_persists_it(isolated, tmp_path):
-    path = write(tmp_path, ['%s = %s' % (OPTION, PLANTED)])
+    path = write(tmp_path, [line(OPTION, PLANTED)])
     before = digest(path)
 
     settings = load(path)
@@ -72,24 +80,20 @@ def test_the_clear_is_memory_only_and_the_next_save_persists_it(isolated, tmp_pa
     assert digest(path) == before
     settings.save()
     assert PLANTED not in path.read_text(encoding='utf-8')
-    assert '%s = %s' % (FLAG, HIDDEN) in path.read_text(encoding='utf-8')
+    assert line(FLAG, HIDDEN) in path.read_text(encoding='utf-8')
 
 
-def test_a_value_planted_under_an_upper_case_name_is_emptied_too(isolated, tmp_path):
-    path = write(tmp_path, ['%s = %s' % (OPTION.upper(), PLANTED)])
-
-    assert held(load(path)) == ''
 
 
 def test_a_value_is_kept_when_the_flag_is_already_in_the_file(isolated, tmp_path):
-    path = write(tmp_path, ['%s = %s' % (OPTION, PLANTED), '%s = %s' % (FLAG, HIDDEN)])
+    path = write(tmp_path, [line(OPTION, PLANTED), line(FLAG, HIDDEN)])
 
     assert held(load(path)) == PLANTED
 
 
 def test_a_value_is_kept_when_the_flag_in_the_file_has_another_value(isolated, tmp_path):
     """Only the flag's presence decides; the flag itself is then put right."""
-    path = write(tmp_path, ['%s = %s' % (OPTION, PLANTED), '%s = rw' % FLAG])
+    path = write(tmp_path, [line(OPTION, PLANTED), line(FLAG, 'rw')])
 
     settings = load(path)
 
@@ -124,7 +128,7 @@ def test_a_declared_default_on_a_fresh_install_is_not_a_planted_value(isolated, 
 
 
 def test_other_options_of_the_section_are_untouched(isolated, tmp_path):
-    path = write(tmp_path, ['%s = %s' % (OPTION, PLANTED), 'plain = kept-value'])
+    path = write(tmp_path, [line(OPTION, PLANTED), 'plain = kept-value'])
 
     assert load(path).p.get(SECTION, 'plain') == 'kept-value'
 
@@ -140,7 +144,7 @@ def test_an_option_that_is_not_hidden_is_never_cleared(isolated, tmp_path):
 
 
 def test_the_clear_is_logged_once_naming_the_option_and_never_the_value(isolated, tmp_path):
-    path = write(tmp_path, ['%s = %s' % (OPTION, PLANTED)])
+    path = write(tmp_path, [line(OPTION, PLANTED)])
 
     with LogCapture() as logs:
         load(path, passes=2)
@@ -153,7 +157,7 @@ def test_the_clear_is_logged_once_naming_the_option_and_never_the_value(isolated
     assert PLANTED not in logs.text()
 
 
-@pytest.mark.parametrize('lines', [[], ['%s = ' % OPTION], ['%s = %s' % (OPTION, PLANTED), '%s = %s' % (FLAG, HIDDEN)]],
+@pytest.mark.parametrize('lines', [[], [line(OPTION, '')], [line(OPTION, PLANTED), line(FLAG, HIDDEN)]],
                          ids=['nothing stored', 'already empty', 'flag present'])
 def test_a_start_with_nothing_to_clear_logs_nothing(isolated, tmp_path, lines):
     path = write(tmp_path, lines)
@@ -164,8 +168,10 @@ def test_a_start_with_nothing_to_clear_logs_nothing(isolated, tmp_path, lines):
     assert [r for r in logs.records if 'Cleared' in r.getMessage()] == []
 
 
-def test_a_failing_clear_never_blocks_the_start(isolated, tmp_path, monkeypatch):
-    path = write(tmp_path, ['%s = %s' % (OPTION, PLANTED)])
+def test_a_failing_clear_is_warned_once_not_retried_and_never_blocks_the_start(isolated, tmp_path, monkeypatch):
+    """The pinned consequence: the flag is still declared, the planted value stays, and no
+    later start retries (the flag is in the file by then). An undeclared flag would be worse."""
+    path = write(tmp_path, [line(OPTION, PLANTED)])
     settings = Settings()
     settings.setFile(str(path))
     real_set = settings.p.set
@@ -177,7 +183,14 @@ def test_a_failing_clear_never_blocks_the_start(isolated, tmp_path, monkeypatch)
 
     monkeypatch.setattr(settings.p, 'set', failing_set)
 
-    settings.registerDefaults(SECTION, DECLARED, save=False)
+    with LogCapture() as logs:
+        settings.registerDefaults(SECTION, DECLARED, save=False)
 
+    warnings = [r for r in logs.records if r.name.startswith('couchpotato') and r.levelno == logging.WARNING]
+    assert [r.getMessage().split('] ', 1)[-1] for r in warnings] == [
+        'Could not clear "%s.%s" (RuntimeError)' % (SECTION, OPTION)]
     assert settings.p.get(SECTION, FLAG) == HIDDEN
     assert settings.p.get(SECTION, 'plain') == 'x'
+    assert held(settings) == PLANTED
+    settings.save()
+    assert load(path).p.get(SECTION, OPTION) == PLANTED

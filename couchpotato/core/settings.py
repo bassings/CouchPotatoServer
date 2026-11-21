@@ -747,15 +747,29 @@ class Settings:
         """Empty a hidden option's STORED value when the loaded config has no flag for it, once.
 
         A hidden option is written only by the server. If config.ini has a value
-        for it but no flag, the file is from before the option was declared, so
-        whatever wrote that value was not the server: a caller of an older
-        release could plant it, and it would otherwise be trusted. This runs in
-        `registerDefaults`, before `_declare_flag` writes the flag, so a file
-        that already has the flag is left exactly as it is, and the flag is in
-        memory for any later pass, which therefore clears nothing. Memory only:
-        the next save persists it. It never writes a non-empty value, logs only
-        the section and option names, and never raises, so it cannot block a
-        start.
+        for it but no flag, the file is from before the option was declared
+        hidden, and this assumes whatever wrote that value was not the server: a
+        caller of an older release could plant it, and it would otherwise be
+        trusted. This runs in `registerDefaults`, before `_declare_flag` writes
+        the flag, so a file that already has the flag is left exactly as it is,
+        and the flag is in memory for any later pass, which therefore clears
+        nothing. Memory only: the next save persists it. It never writes a
+        non-empty value, logs only the section and option names, and never
+        raises, so it cannot block a start.
+
+        THE ASSUMPTION IS FALSE for an option that an earlier release declared
+        with NO `ui-meta` at all and a later one marks `hidden`: a value a user
+        entered then is emptied on every upgraded install (measured). An option
+        that was `rw` or `ro` already has its flag in the file and keeps its
+        value. So before marking an existing option `hidden`, ship its flag
+        first (declare it `rw` or `ro` for a release) or migrate the value
+        yourself. A test fails when any `hidden` option other than the Jackett
+        key binding is declared.
+
+        A clear that fails is logged and NOT retried at a later start: the flag
+        is declared regardless, so the next start finds it. That is deliberate,
+        because an undeclared flag would leave the option writable, which is
+        worse than a value left in place.
         """
         try:
             with _PASSWORD_SAVE_LOCK:
