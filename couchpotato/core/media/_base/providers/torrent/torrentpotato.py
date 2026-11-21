@@ -485,7 +485,7 @@ class Base(TorrentProvider):
             log.warning('Refused %s: the saved Jackett API key is not bound to the saved address (reason=%s)',
                         route, reason)
             return None, None, None, {'success': False, 'error': KEY_REFUSAL_TEXT}
-        return address, saved_key, sendable, None
+        return address, saved_key, self._row_base(saved_url, address), None
 
     @staticmethod
     def _refusal_reason(address, binding):
@@ -605,16 +605,28 @@ class Base(TorrentProvider):
         }
 
     @staticmethod
-    def _rows_from_saved_address(indexers, request_base, row_base):
-        """Indexers whose `potato_url` starts with `row_base`, not with the address the request went to.
+    def _row_base(saved_url, address):
+        """What the rows of a sync are built from, for a saved key that passed the check.
 
-        The request goes to the normalised address and the rows are built from the
-        address as it was saved, which is what a sync wrote before the guard.
+        The saved address as the user saved it, cleaned the way a sync always did, but from the
+        very text the normaliser was given (stripped, wrapper removed), so that it cannot name
+        something other than `address`: a Kelvin-sign host or a trailing no-break space would
+        otherwise write a row for a host the key was never bound to. Where that text is not
+        ASCII the normalised address stands in for it.
         """
-        if not indexers or not row_base or row_base == request_base:
-            return indexers
+        text = _address_text(saved_url)
+        base = cleanHost(text).rstrip('/') if text else ''
+        return base if base and base.isascii() else address
+
+    @staticmethod
+    def _rows_from_saved_address(indexers, request_base, row_base):
+        """Indexers whose `potato_url` starts with `row_base` instead of `request_base`.
+
+        `getJackettIndexers` builds every `potato_url` from the address it was handed, so each one
+        starts with `request_base`; the request goes to the normalised address and the rows are
+        built from the address as saved, which is what a sync wrote before the guard.
+        """
         return [dict(indexer, potato_url=row_base + indexer['potato_url'][len(request_base):])
-                if indexer['potato_url'].startswith(request_base) else indexer
                 for indexer in indexers]
 
     def _isReplace(self, replace):

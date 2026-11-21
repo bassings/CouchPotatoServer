@@ -14,9 +14,13 @@ read.
 Hosts are ``.invalid`` or ``.local`` names and every key is a ``placeholder-`` string.
 """
 import threading
+from urllib.parse import quote
 
 import pytest
+import requests
 from urllib3.util import parse_url
+
+from couchpotato.core.helpers.encoding import ss
 
 from couchpotato.core.settings import _PASSWORD_SAVE_LOCK
 from tests.helpers.jackett_binding import (
@@ -168,14 +172,73 @@ def test_an_own_url_request_writes_rows_from_the_url_it_supplied_as_before(tmp_p
         assert host_cells(settings) == ['HTTP://Caller.Invalid:80/potato/alpha/api']
 
 
-class TestTheKeyIsReadUnderTheSettingsLock:
-    """B: a key save cannot land between the reader's key read and its binding read."""
+def as_the_transport_reads_it(url):
+    """(scheme, host, port) of `url` after the preparation the HTTP client applies to every request."""
+    prepared = requests.Request('GET', quote(ss(url), safe="%/:=&?~#+!$,;'@()*[]")).prepare()
+    parsed = parse_url(prepared.url)
+    return parsed.scheme, parsed.host, parsed.port or {'http': 80, 'https': 443}[parsed.scheme]
 
-    def test_a_key_save_waits_for_a_reader_that_has_read_the_key_and_the_key_never_goes_to_the_new_binding(
-            self, tmp_path, monkeypatch):
-        """The reader is held after reading K1 (address already read as B); a real key save of K2
-        then runs in another thread. Without the lock it sets the binding to B, the reader reads
-        it, and K1 is sent to B."""
+
+# (label, the address as saved, the binding a key save must store, the row host a sync must write).
+# Every string is a literal; the whitespace and the Kelvin sign are written as escapes so they stay visible.
+UNUSUAL = [
+    ('a Kelvin-sign host', 'http://jac\u212aett:9117', 'http://jackett:9117',
+     'http://jackett:9117/potato/alpha/api'),
+    ('a trailing no-break space', 'http://jackett:9117\u00a0', 'http://jackett:9117',
+     'http://jackett:9117/potato/alpha/api'),
+    ('a trailing ideographic space', 'http://jackett:9117\u3000', 'http://jackett:9117',
+     'http://jackett:9117/potato/alpha/api'),
+    ('a trailing next-line character', 'http://jackett:9117\u0085', 'http://jackett:9117',
+     'http://jackett:9117/potato/alpha/api'),
+    ('a leading space', ' jackett:9117', 'http://jackett:9117', 'http://jackett:9117/potato/alpha/api'),
+    ('the bytes wrapper and a trailing space', "b'http://jackett:9117' ", 'http://jackett:9117',
+     'http://jackett:9117/potato/alpha/api'),
+]
+
+
+@pytest.mark.parametrize('label,saved,binding,row_host', UNUSUAL, ids=[row[0] for row in UNUSUAL])
+def test_AC_SEC_17_every_row_a_sync_writes_resolves_to_the_host_the_key_was_bound_to(
+        tmp_path, monkeypatch, label, saved, binding, row_host):
+    """Simulation of the saved address as the running process holds it in memory (the file's round
+    trip strips surrounding whitespace, so only a process that has not restarted holds these);
+    the key is then saved through settings.save, which binds it."""
+    with guarded_world(tmp_path, monkeypatch) as (settings, client, provider, transport):
+        settings.p.set(SECTION, URL_OPTION, saved)
+        assert memory(settings, URL_OPTION) == saved
+        assert save(client, KEY_OPTION, PLACEHOLDER_KEY).json()['success'] is True
+        assert on_disk(settings, BINDING_OPTION) == binding
+
+        result = provider.jackettSync(replace=True)
+
+        assert result['success'] is True
+        assert host_cells(settings) == [row_host]
+        expected = ('http', 'jackett', 9117)
+        assert as_the_transport_reads_it(binding) == expected
+        assert as_the_transport_reads_it(transport.requests[0]) == expected
+        for row in host_cells(settings):
+            assert as_the_transport_reads_it(row) == expected
+
+
+def test_a_request_with_its_own_key_and_no_url_writes_rows_by_the_formula_master_used(tmp_path, monkeypatch):
+    with guarded_world(tmp_path, monkeypatch) as (settings, client, provider, transport):
+        save(client, URL_OPTION, 'HTTP://Jackett.Local:80/')
+
+        result = provider.jackettSync(jackett_api_key=OTHER_KEY, replace=True)
+
+        assert result['success'] is True
+        assert host_cells(settings) == ['HTTP://Jackett.Local:80/potato/alpha/api']
+
+
+class TestTheKeyIsReadUnderTheSettingsLock:
+    """B: a key save cannot land between the reader's reads of address, key and binding."""
+
+    @pytest.mark.parametrize('pause_after', [KEY_OPTION, BINDING_OPTION])
+    def test_a_key_save_waits_for_a_reader_that_has_not_finished_its_reads(
+            self, tmp_path, monkeypatch, pause_after):
+        """The reader is held after one of its reads (address already read as B); a real key save of K2
+        then runs in another thread. Without the lock it sets the binding to B; paused after the key
+        read, the reader then reads it and K1 goes to B. Paused after the binding read, the binding
+        read itself being outside the lock is what lets the save land."""
         with guarded_world(tmp_path, monkeypatch) as (settings, client, provider, transport):
             bind(client)
             save(client, URL_OPTION, 'http://other-b.invalid:9117')
@@ -183,13 +246,13 @@ class TestTheKeyIsReadUnderTheSettingsLock:
             paused, release = threading.Event(), threading.Event()
             real = provider._savedJackettSetting
 
-            def held_after_the_key(name):
+            def held_after_the_read(name):
                 value = real(name)
-                if name == KEY_OPTION:
+                if name == pause_after:
                     paused.set()
                     assert release.wait(10)
                 return value
-            monkeypatch.setattr(provider, '_savedJackettSetting', held_after_the_key)
+            monkeypatch.setattr(provider, '_savedJackettSetting', held_after_the_read)
             results = []
             reader = threading.Thread(target=lambda: results.append(provider.jackettTest()))
             writer = threading.Thread(target=lambda: results.append(
@@ -210,7 +273,9 @@ class TestTheKeyIsReadUnderTheSettingsLock:
             assert memory(settings, BINDING_OPTION) == 'http://other-b.invalid:9117'
             assert PLACEHOLDER_KEY not in ' '.join(transport.requests)
 
-    def test_a_reader_holds_the_lock_only_for_its_reads_never_for_the_request(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize('operation', OPERATIONS)
+    def test_a_reader_holds_the_lock_only_for_its_reads_never_for_the_request(
+            self, tmp_path, monkeypatch, operation):
         with guarded_world(tmp_path, monkeypatch) as (settings, client, provider, transport):
             bind(client)
             held = []
@@ -222,26 +287,5 @@ class TestTheKeyIsReadUnderTheSettingsLock:
                 return real_request(method, url, **kwargs)
             transport.request = watching
 
-            assert provider.jackettTest()['success'] is True
+            assert run(provider, operation)['success'] is True
             assert held == [False]
-
-
-def test_AC_DATA_4_the_check_the_request_and_the_rows_all_come_from_one_read_of_the_address(
-        tmp_path, monkeypatch):
-    with guarded_world(tmp_path, monkeypatch) as (settings, client, provider, transport):
-        bind(client)
-        real, reads = provider.conf, []
-
-        def flapping(name, *args, **kwargs):
-            if name == URL_OPTION:
-                reads.append(name)
-                return 'http://saved-a.invalid:9117' if len(reads) == 1 else 'http://other-b.invalid:9117'
-            return real(name, *args, **kwargs)
-        provider.conf = flapping
-
-        result = provider.jackettSync(replace=True)
-
-        assert result['success'] is True
-        assert len(reads) == 1
-        assert [denotation(r.split('/torznab/')[0])[1] for r in transport.requests] == ['saved-a.invalid']
-        assert host_cells(settings) == ['http://saved-a.invalid:9117/potato/alpha/api']
