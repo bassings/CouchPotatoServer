@@ -318,6 +318,19 @@ practice it only happened nightly, which meant survivors went unreviewed and the
   pair needs two workers and has its own script, and `npm run test:e2e --
   --project=X` does NOT scope a run -- Playwright unions --project flags, so
   composing on top of a script that already names projects widens it.)
+- **Local retry, CI strict (owner decision 2026-11-21).** The local gate
+  (`scripts/verify.sh`, step 7) runs each of its four Playwright invocations
+  with `--retries=1`: a browser test that fails once and then passes does not
+  fail the gate, but it is never hidden. Each invocation writes Playwright's
+  JSON report and `scripts/e2e_flaky_summary.py` lists every test Playwright
+  itself classed as flaky (file:line, project, title) at the end of step 7 and
+  again after the final banner, or says none were flaky, or says UNKNOWN when a
+  report could not be read. A test that fails twice fails the gate as before.
+  Treat a listed test as a defect to fix, not noise. CI is unchanged:
+  `playwright.config.ts` retries twice under `CI` and every `ci.yml`
+  invocation keeps `--fail-on-flaky-tests`, so a flaky test still fails CI.
+  A plain `npx playwright test` run locally still does not retry.
+  `tests/unit/test_e2e_local_retry_gate.py` pins both halves.
 - For any UI change, check and update:
   - `tests/e2e/filters.spec.ts`
   - `tests/e2e/navigation.spec.ts`

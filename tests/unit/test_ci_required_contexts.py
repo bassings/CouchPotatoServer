@@ -126,6 +126,17 @@ def test_every_playwright_invocation_in_ci_keeps_fail_on_flaky_tests(ci_workflow
         'these CI Playwright invocations can retry a failure into green: %s' % unguarded
     )
 
+    # The shared matcher over the same text, so `flaky_problems` (and its case
+    # table below) guards the real ci.yml rather than only itself. The LOCAL gate
+    # deliberately does the opposite now -- retry once, list what only passed on
+    # retry (owner decision 2026-11-21, tests/unit/test_e2e_local_retry_gate.py).
+    ci_runs = '\n'.join(
+        str(step.get('run', ''))
+        for job in ci_workflow['jobs'].values()
+        for step in job.get('steps', [])
+    )
+    assert flaky_problems(ci_runs) == []
+
 
 NO_INVOCATIONS = 'no Playwright invocations found; the guard would be vacuous'
 
@@ -206,22 +217,10 @@ def flaky_problems(script_text: str) -> list[str]:
     return [c for c in commands if '--fail-on-flaky-tests' not in c]
 
 
-def test_the_local_gate_keeps_fail_on_flaky_tests_too(ci_workflow):
-    """`scripts/verify.sh` is the gate the pre-push hook runs, so it must not
-    drift from CI: a local run that retries into green is how untested code
-    reaches a push."""
-    verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
-    problems = flaky_problems(verify)
-    assert not problems, (
-        'these verify.sh Playwright invocations can retry a failure into green: %s'
-        % problems
-    )
-
-
 def test_the_local_gate_retains_a_trace_for_every_failed_e2e_test():
-    """Locally `retries` is 0, so the config's `trace: 'on-first-retry'` never
-    records anything and a one-off local failure leaves no evidence behind.
-    `--trace=retain-on-failure` on each invocation is what keeps one."""
+    """The config's `trace: 'on-first-retry'` records nothing for a failure that
+    is not retried, and the local gate's retry is only one. `--trace=retain-on-failure`
+    on each invocation keeps evidence for every failed attempt."""
     verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
     problems = trace_problems(verify)
     assert not problems, (
