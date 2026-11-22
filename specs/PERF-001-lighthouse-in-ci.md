@@ -102,7 +102,7 @@ fails on day one and immediately learning to ignore.
 ### Dependency and architecture
 
 - **AC-SEC-1 / AC-ARCH-1:** `package.json` directly pins
-  `lighthouse@13.5.0` and every package imported by repository code. It removes
+  an exact `lighthouse` version (the one `tests/unit/lighthouse_runner.test.ts` asserts; 13.6.0 since 2026-11-22) and every package imported by repository code. It removes
   `@lhci/cli` and `@lhci/utils` without an override or compatibility shim.
 - **AC-SEC-2 / AC-QA-12:** A clean `npm ci` followed by
   `npm ls extract-zip @lhci/cli @lhci/utils --all` finds none of those packages;
