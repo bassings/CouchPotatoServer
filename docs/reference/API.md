@@ -19,7 +19,9 @@ decoded at all. Earlier versions decoded every string a second time, so
 `a%41b` arrived as `aAb`. A client that percent-encoded its values twice to work
 around that must now encode once; a client that already encoded once is
 unaffected. Values that an earlier version stored in changed form are not
-repaired and must be entered again.
+repaired and must be entered again. That includes the UI password: one that
+was saved with `%41`-style text in it was stored in its decoded spelling, which
+is still what logs in after upgrading, until the password is saved again.
 
 ## Core Endpoints
 
@@ -416,9 +418,13 @@ and the clear is logged once at INFO naming the section and option only.
     stored as `jack%C3%A9tt`; then enter the key again. (b) Take a copy of
     `config.ini` first. With CouchPotato stopped, set `jackett_url` in
     `config.ini` to `http://h:9117/jack%C3%A9tt`, start it, then enter the key
-    again. Both bind, and a parameterless sync is not refused. A value stored
-    either way is kept as it is when you upgrade to a later version, and the
-    caution not to save the field again no longer applies there. Rows already
+    again. Both bind, and a parameterless sync is not refused. **Fragile on
+    those versions:** the Settings page then shows `jack%C3%A9tt`; if that
+    field is saved again as shown, or the encoded address is typed into the
+    setup wizard, it is decoded to `jackétt`, the key is left unbound and the
+    next sync is refused until (a) or (b) is repeated. A value stored either
+    way is kept as it is when you upgrade to a later version, where saving the
+    field again is safe. Rows already
     stored under the old spelling are matched by exact text, so a merge sync can
     add a second copy of each.
 - **A planted access flag defeats the start-up clear.** Someone who can write

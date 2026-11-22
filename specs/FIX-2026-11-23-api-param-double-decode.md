@@ -63,10 +63,11 @@ every other route and add a branch naming routes to shared plumbing.
    non-string values behave as before; the existing tests for them pass
    unmodified.
 5. **AC-5 (the comma check).** The combined-group save still refuses a literal
-   comma by every transport. An encoded comma (`%2C`) sent by form or by
-   bracket key is now three literal characters, as it already was by JSON: it
-   is stored as sent and the number of stored positions equals the number of
-   rows. The two SEC-004 tests that pin "refused after decoding" are rewritten
+   comma by every transport. An encoded comma (`%2C`) under a bracket key,
+   called through the handler, is now three literal characters, as it already
+   was by JSON: it is stored as sent and the number of stored positions equals the number of
+   rows. (A form body to the group route is refused outright, as before.) The
+   two SEC-004 tests that pin "refused after decoding" are rewritten
    to pin this, and the SEC-004 spec gets a dated note; no SEC-004 criterion
    text is changed.
 6. **AC-6 (Jackett address).** A Jackett address typed in percent-encoded form
