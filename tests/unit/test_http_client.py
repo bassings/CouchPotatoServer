@@ -137,6 +137,91 @@ class TestHttpClient:
 
         assert 'jackett.example:9117' in client.failed_disabled
 
+    @staticmethod
+    def _response(status, url):
+        response = requests.Response()
+        response.status_code = status
+        response.url = url
+        return response
+
+    def test_rejected_credential_401_never_disables_host(self, mock_env):
+        """A wrong API key is the host answering, not the host failing (SEC-005 gap q)."""
+        _, session, _ = mock_env
+        client = HttpClient()
+        url = 'http://jackett.example:9117/api/v2.0/indexers/all/results/torznab/api'
+        ok = requests.Response()
+        ok.status_code = 200
+        ok._content = b'<indexers />'
+        session.request.side_effect = (
+            [self._response(401, url)] * (MAX_FAILURES_BEFORE_DISABLE + 2) + [ok]
+        )
+
+        for _ in range(MAX_FAILURES_BEFORE_DISABLE + 2):
+            with pytest.raises(requests.HTTPError):
+                client.request(url)
+
+        assert 'jackett.example:9117' not in client.failed_disabled
+        assert client.failed_request.get('jackett.example:9117', 0) == 0
+        # The next request really goes to the transport rather than being refused.
+        assert client.request(url) == b'<indexers />'
+        assert session.request.call_count == MAX_FAILURES_BEFORE_DISABLE + 3
+
+    def test_401_leaves_an_existing_failure_count_unchanged(self, mock_env):
+        _, session, _ = mock_env
+        client = HttpClient()
+        url = 'http://jackett.example:9117/api'
+        session.request.side_effect = [self._response(500, url)] * 3 + [self._response(401, url)]
+
+        for _ in range(3):
+            with pytest.raises(requests.HTTPError):
+                client.request(url)
+        assert client.failed_request['jackett.example:9117'] == 3
+
+        with pytest.raises(requests.HTTPError):
+            client.request(url)
+
+        assert client.failed_request['jackett.example:9117'] == 3
+        assert 'jackett.example:9117' not in client.failed_disabled
+
+    def test_401_does_not_lift_a_host_that_is_already_disabled(self, mock_env):
+        _, session, _ = mock_env
+        client = HttpClient()
+        disabled_at = time.time() - 60
+        client.failed_request['jackett.example:9117'] = MAX_FAILURES_BEFORE_DISABLE
+        client.failed_disabled['jackett.example:9117'] = disabled_at
+        client._record_failure('jackett.example:9117', status_code=401)
+        assert client.failed_disabled['jackett.example:9117'] == disabled_at
+        assert client.failed_request['jackett.example:9117'] == MAX_FAILURES_BEFORE_DISABLE
+
+    @pytest.mark.parametrize('status', [403, 500, 502])
+    def test_other_statuses_count_and_disable_after_threshold(self, mock_env, status):
+        _, session, _ = mock_env
+        client = HttpClient()
+        url = 'http://remote.example:9117/api'
+        session.request.return_value = self._response(status, url)
+
+        for _ in range(MAX_FAILURES_BEFORE_DISABLE):
+            with pytest.raises(requests.HTTPError):
+                client.request(url)
+        assert client.failed_request['remote.example:9117'] == MAX_FAILURES_BEFORE_DISABLE
+        assert 'remote.example:9117' not in client.failed_disabled
+
+        with pytest.raises(requests.HTTPError):
+            client.request(url)
+        assert 'remote.example:9117' in client.failed_disabled
+
+    def test_connection_error_without_a_status_still_counts(self, mock_env):
+        _, session, _ = mock_env
+        client = HttpClient()
+        session.request.side_effect = requests.ConnectionError('refused')
+
+        for _ in range(MAX_FAILURES_BEFORE_DISABLE + 1):
+            with pytest.raises(requests.ConnectionError):
+                client.request('http://remote.example:9117/api')
+
+        assert client.failed_request['remote.example:9117'] == MAX_FAILURES_BEFORE_DISABLE + 1
+        assert 'remote.example:9117' in client.failed_disabled
+
     def test_disabled_host_returns_empty(self, mock_env):
         env, session, response = mock_env
         client = HttpClient()

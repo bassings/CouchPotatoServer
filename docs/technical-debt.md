@@ -656,13 +656,12 @@ the old test stays green, the new one fails.
      width: above WCAG 2.2's 24 px minimum for target size (2.5.8), below the
      project's 44 px floor. It predates SEC-005 and is not touched there.
      Owner decision, 2026-11-22: fix later (spec gap (o)).
-  13. A rejected Jackett key (HTTP 401) counts towards the HTTP client's per-host
-     failure cut-off: against a Jackett reached by a host name (including a
-     Docker service name; loopback and private addresses are exempt), six wrong
-     keys in a row disable the host for 15 minutes, so Sync answers "No response
-     from Jackett" and searches through that Jackett are refused too. Owner
-     decision, 2026-11-22: stop a 401 counting, fixed BEFORE THE RELEASE in its
-     own small PR after the SEC-005 P3 branch (spec gap (q)).
+  13. A rejected Jackett key (HTTP 401) used to count towards the HTTP client's
+     per-host failure cut-off, so six wrong keys in a row against a Jackett
+     reached by a host name disabled the host for 15 minutes. Fixed
+     2026-11-22 (spec gap (q)): a 401 no longer counts towards the cut-off for
+     any caller. The other two parts of (q) stay open: D9 is unobserved against
+     a real Jackett, and a proxy's 401 is reported as a rejected key.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
