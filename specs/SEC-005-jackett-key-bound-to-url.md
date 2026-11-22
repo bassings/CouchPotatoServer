@@ -402,12 +402,11 @@ Items 1, 2, 4, 6, 8 and 9 belong in the release notes (item 10 is an edge case, 
    answer has been seen from a real Jackett yet; both are Jackett's documented
    behaviour as recalled. A 401 from something else in front of Jackett (for
    example a reverse proxy asking for a password) reads the same way, and
-   copying the key again will not fix that. **Known problem, to be fixed before
-   the release (owner decision 2026-11-22):** six wrong keys in a row against a
-   Jackett reached by name (a host name, including a Docker service name such as
-   `jackett`; addresses like 192.168.x.x and localhost are exempt) stop Sync, and
-   searches through that Jackett, for 15 minutes ("No response from Jackett")
-   or until CouchPotato restarts.
+   copying the key again will not fix that. Repeated wrong keys no longer stop
+   Sync: until 2026-11-22 six in a row against a Jackett reached by name stopped
+   Sync, and searches through that Jackett, for 15 minutes; a rejected key
+   (HTTP 401) no longer counts towards that cut-off (owner decision 2026-11-22,
+   gap (q)).
 10. **Order of saving at a press:** the button saves the unsaved values in the
    order each first became unsaved, and a value you retype keeps its place. If
    the key was refused earlier, then you typed the address, then retyped the
