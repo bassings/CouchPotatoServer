@@ -180,6 +180,8 @@ function settingsPanel() {
     // values; this says which section and option a key is (a section name could hold a dot), so a button
     // can find its own section's unsaved values (SEC-005 D7). Cleared with `dirty`, in applyAcceptedSave.
     dirtyOpts: {},
+    // key -> the number of the newest save queued for it, so a landing save can tell whether a newer one is behind it.
+    saveTickets: {},
     // Combine groups (SEC-004 P3). `combineState` is what the settings read says
     // about each group (`misaligned`, `rows`); the page never derives either.
     // `groupState` holds each group's rows, refusal and in-flight save at PANEL
@@ -634,8 +636,13 @@ function settingsPanel() {
     async flushPendingSavesFor(section, captured = this.openSavesOf(section)) {
       const entries = this.unsavedOf(section);
       const inFlight = this.openSavesOf(section);
-      const sameValue = (link, entry) => link.saveKey === entry.key && String(link.saveValue) === String(entry.value);
-      const toSend = entries.filter((entry) => !inFlight.some((link) => sameValue(link, entry)));
+      // A value is already covered only when the LAST save of that option in flight or queued carries it:
+      // A in flight, B queued behind it, then A typed again must send A again, after B.
+      const lastOf = (key) => inFlight.filter((link) => link.saveKey === key).pop();
+      const toSend = entries.filter((entry) => {
+        const last = lastOf(entry.key);
+        return !(last && String(last.saveValue) === String(entry.value));
+      });
       for (const entry of entries) {
         if (this.saveTimers[entry.key]) {
           clearTimeout(this.saveTimers[entry.key]);
@@ -1080,8 +1087,10 @@ function settingsPanel() {
      */
     saveSingle(section, name, value, batch) {
       delete this.pendingSaves[section + '.' + name];
+      const key = section + '.' + name;
+      const ticket = (this.saveTickets[key] = (this.saveTickets[key] || 0) + 1);
       const link = (this.saveChains[section] || Promise.resolve())
-        .then(() => this.sendInTurn(section, name, value, batch));
+        .then(() => this.sendInTurn(section, name, value, batch, ticket));
       link.saveKey = section + '.' + name;
       link.saveValue = value;
       this.saveChains[section] = link;
@@ -1092,7 +1101,7 @@ function settingsPanel() {
     /** One link of a section's chain, run when the save ahead has settled: sends the save and resolves
      *  to how it ended. A button's batch stops at the first value that did not land, ahead of it or in
      *  it, and its later saves resolve to SAVE_SKIPPED without being sent. */
-    async sendInTurn(section, name, value, batch) {
+    async sendInTurn(section, name, value, batch, ticket) {
       if (batch) {
         const ahead = await Promise.all(batch.ahead);
         if (batch.stopped || ahead.some((outcome) => outcome !== SAVE_LANDED)) {
@@ -1100,7 +1109,7 @@ function settingsPanel() {
           return SAVE_SKIPPED;
         }
       }
-      const outcome = await this.settledOrDeadline(this.sendSingleSave(section, name, value));
+      const outcome = await this.settledOrDeadline(this.sendSingleSave(section, name, value, ticket));
       if (batch && outcome !== SAVE_LANDED) batch.stopped = true;
       return outcome;
     },
@@ -1132,7 +1141,7 @@ function settingsPanel() {
     /** Sends one save. Resolves to SAVE_LANDED, SAVE_REFUSED (the server said no, in
      *  any form) or SAVE_FAILED (the request itself failed); callers that ignore it
      *  behave as before. */
-    async sendSingleSave(section, name, value) {
+    async sendSingleSave(section, name, value, ticket) {
       this.saving = true;
       this.lastSaved = false;
       try {
@@ -1168,7 +1177,7 @@ function settingsPanel() {
           return SAVE_REFUSED;   // leave the value dirty and unchanged: it did NOT save
         }
 
-        this.applyAcceptedSave(section, name, payload);
+        this.applyAcceptedSave(section, name, payload, { ticket, value });
       } catch (e) {
         this.toast('Failed to save ' + this.optionLabel(section, name) + ': ' + e.message, 'error');
         this.saving = false;
@@ -1197,7 +1206,17 @@ function settingsPanel() {
       }
     },
 
-    applyAcceptedSave(section, name, payload) {
+    /** Whether the value that has just been accepted is still the page's latest for that option: no newer
+     *  save is queued behind it and the page holds no different value typed since. Only then is the option
+     *  no longer unsaved; otherwise an earlier A landing would hide that B, and the final A, are outstanding.
+     *  Called with no `landed` (a direct call) it is always true. */
+    stillLatest(key, landed) {
+      if (!landed) return true;
+      if (landed.ticket !== undefined && landed.ticket !== this.saveTickets[key]) return false;
+      return !(key in this.dirty) || String(this.dirty[key]) === String(landed.value);
+    },
+
+    applyAcceptedSave(section, name, payload, landed) {
       // Store what the SERVER stored, not what we submitted.
       //
       // A save hook may rewrite the value: `Core.guardAuthRequired` turns a
@@ -1229,8 +1248,10 @@ function settingsPanel() {
         if (!this.values[section]) this.values[section] = {};
         this.values[section][name] = payload.value;
       }
-      delete this.dirty[section + '.' + name];
-      delete this.dirtyOpts[section + '.' + name];
+      if (this.stillLatest(section + '.' + name, landed)) {
+        delete this.dirty[section + '.' + name];
+        delete this.dirtyOpts[section + '.' + name];
+      }
 
       // Say so when the server did not take what was asked for. Silently
       // showing a different value than the one just typed is how the operator

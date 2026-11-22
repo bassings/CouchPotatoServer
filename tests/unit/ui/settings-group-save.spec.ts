@@ -1710,6 +1710,108 @@ describe('a button in a section with a combine group: the rows are locked from t
         expect(field.result).toBe(DID_NOT_SAVE);
       });
 
+      describe('a value changed and changed back while an earlier save of it is still unanswered (Codex P2 on #625)', () => {
+        const ADDRESS_A = 'http://address-a.invalid:9117';
+        const ADDRESS_B = 'http://address-b.invalid:9117';
+        const urlKey = 'torrentpotato.jackett_url';
+
+        /** A is in flight and unanswered, B is typed and queued behind it, then A is typed again: the page shows A. */
+        async function aThenBThenA(replies: Array<Reply | Promise<Reply>>) {
+          const net = installFetch();
+          net.replies.push(...replies);
+          const ctx = torrentPanel();
+          ctx.panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          await vi.advanceTimersByTimeAsync(500);
+          ctx.panel.setVal('torrentpotato', 'jackett_url', ADDRESS_B);
+          await vi.advanceTimersByTimeAsync(500);
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A]);
+          ctx.panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          return { net, ...ctx };
+        }
+
+        it('sends the final A after B, runs the action only after it lands, and the server ends holding A', async () => {
+          const firstA = deferred<Reply>();
+          const queuedB = deferred<Reply>();
+          const { net, panel } = await aThenBThenA([firstA.promise, queuedB.promise, { body: { success: true } }, SYNCED, serverRows(HOSTS)]);
+          const field = button(panel);
+
+          const running = field.execute();
+          await vi.advanceTimersByTimeAsync(0);
+          firstA.resolve({ body: { success: true } });
+          await vi.advanceTimersByTimeAsync(0);
+          // The first A landed, but B and the final A are still outstanding: the page still holds A as unsaved.
+          expect(panel.dirty[urlKey]).toBe(ADDRESS_A);
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A, ADDRESS_B]);
+          queuedB.resolve({ body: { success: true } });
+          await running;
+
+          // A, B, A: the last value saved is the value on the page, and the action went out after it.
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A, ADDRESS_B, ADDRESS_A]);
+          expect(calls(net)).toEqual(['settings.save', 'settings.save', 'settings.save', ACTION, 'settings']);
+          expect(actionCalls(net)).toHaveLength(1);
+          expect(panel.dirty).toEqual({});
+        });
+
+        it('keeps the value unsaved when the final A is refused after the earlier saves landed, so the next press sees it', async () => {
+          const firstA = deferred<Reply>();
+          const { net, panel } = await aThenBThenA([
+            firstA.promise, { body: { success: true } }, { body: { success: false, error: 'no' } },
+            { body: { success: true } }, SYNCED, serverRows(HOSTS)]);
+          const field = button(panel);
+
+          const running = field.execute();
+          await vi.advanceTimersByTimeAsync(0);
+          firstA.resolve({ body: { success: true } });
+          await running;
+
+          expect(actionCalls(net)).toEqual([]);
+          expect(field.result).toBe(DID_NOT_SAVE);
+          expect(panel.dirty[urlKey]).toBe(ADDRESS_A);
+          await field.execute();
+
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A, ADDRESS_B, ADDRESS_A, ADDRESS_A]);
+          expect(actionCalls(net)).toHaveLength(1);
+        });
+
+        it('keeps a value typed after the save left as unsaved when that save lands, so it is not read as saved', async () => {
+          const net = installFetch();
+          const held = deferred<Reply>();
+          net.replies.push(held.promise, { body: { success: true } });
+          const { panel } = torrentPanel();
+          panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          await vi.advanceTimersByTimeAsync(500);
+          panel.setVal('torrentpotato', 'jackett_url', ADDRESS_B);
+
+          held.resolve({ body: { success: true } });
+          await vi.advanceTimersByTimeAsync(0);
+
+          // A landed; B was typed after it left and is still on its timer: it is still unsaved.
+          expect(panel.dirty[urlKey]).toBe(ADDRESS_B);
+          await vi.advanceTimersByTimeAsync(500);
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A, ADDRESS_B]);
+          expect(panel.dirty).toEqual({});
+        });
+
+        it('does not send a duplicate when the value typed again is the LAST one in flight', async () => {
+          const net = installFetch();
+          const held = deferred<Reply>();
+          net.replies.push(held.promise, SYNCED, serverRows(HOSTS));
+          const { panel } = torrentPanel();
+          panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          await vi.advanceTimersByTimeAsync(500);
+          panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          const field = button(panel);
+
+          const running = field.execute();
+          await vi.advanceTimersByTimeAsync(0);
+          held.resolve({ body: { success: true } });
+          await running;
+
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A]);
+          expect(actionCalls(net)).toHaveLength(1);
+        });
+      });
+
       it('a value whose save has had no answer stays unsaved: the next press sends it again and stops again', async () => {
         const net = installFetch();
         net.replies.push(neverAnswered(), neverAnswered(), SYNCED, serverRows(HOSTS));
