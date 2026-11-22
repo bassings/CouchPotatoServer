@@ -132,8 +132,6 @@ const SAVE_LANDED = 'landed';
 const SAVE_REFUSED = 'refused';
 const SAVE_FAILED = 'failed';
 const SAVE_UNANSWERED = 'unanswered';
-/** A save of a button's own batch that was not sent because an earlier save of the batch did not land. */
-const SAVE_SKIPPED = 'skipped';
 
 /** The result region's text when a button did not run because a value of its own section is not
  *  saved (SEC-005 AC-PROD-12). Fixed apart from the button's own label (shown as text by x-text);
@@ -588,18 +586,14 @@ function settingsPanel() {
       return [...(this.openSaves[section] || [])];
     },
 
-    /** Every single-option value of `section` the page holds as unsaved, in the order typed: those
-     *  accepted by no save yet (`dirty`, which a refused or failed value stays in) and any still on its
-     *  debounce timer. A combine row is not one (it is a group, saved as rows). */
+    /** Every single-option value of `section` the page holds as unsaved, in the order each first became
+     *  unsaved: those accepted by no save yet (`dirty`, which a refused or failed value stays in, and which
+     *  includes a value still on its debounce timer: `setVal` writes `dirty` before it schedules the save).
+     *  A combine row is not one (it is a group, saved as rows). */
     unsavedOf(section) {
-      const entries = new Map();
-      for (const [key, meta] of Object.entries(this.dirtyOpts)) {
-        if (meta.section === section && key in this.dirty) entries.set(key, { key, name: meta.name, value: this.dirty[key] });
-      }
-      for (const [key, save] of Object.entries(this.pendingSaves)) {
-        if (save.section === section) entries.set(key, { key, name: save.name, value: save.value });
-      }
-      return [...entries.values()];
+      return Object.entries(this.dirtyOpts)
+        .filter(([key, meta]) => meta.section === section && key in this.dirty)
+        .map(([key, meta]) => ({ key, name: meta.name, value: this.dirty[key] }));
     },
 
     /** Whether a button in `section` has anything to wait for: an unsaved single value, a save in
@@ -652,14 +646,13 @@ function settingsPanel() {
       }
       // Saves of the section already sent are ahead of these in the chain; if one of them did not
       // land, these are not sent (see above).
-      const batch = { stopped: false, ahead: [...new Set([...captured, ...inFlight])] };
+      const batch = { cause: null, ahead: [...new Set([...captured, ...inFlight])] };
       const sent = toSend.map((entry) => this.saveSingle(section, entry.name, entry.value, batch));
       const outcomes = await Promise.all([...batch.ahead, ...sent]);
       if (outcomes.some((outcome) => outcome === SAVE_REFUSED || outcome === SAVE_FAILED)) return 'refused';
-      if (outcomes.includes(SAVE_UNANSWERED)) return 'unanswered';
-      // Never reached with a skip alone: a skipped save always comes with the refused, failed or unanswered
-      // one that stopped the batch, returned above. Kept so that a skip can never read as landed.
-      return outcomes.includes(SAVE_SKIPPED) ? 'refused' : 'landed';
+      // A save that was not sent resolves to the outcome that stopped its batch (see `sendInTurn`), so a
+      // press whose saves were all held back still reads as what really went wrong, never as landed.
+      return outcomes.includes(SAVE_UNANSWERED) ? 'unanswered' : 'landed';
     },
 
     /* ── Combine groups: one save per group, as rows (SEC-004) ──────────────
@@ -1100,17 +1093,16 @@ function settingsPanel() {
 
     /** One link of a section's chain, run when the save ahead has settled: sends the save and resolves
      *  to how it ended. A button's batch stops at the first value that did not land, ahead of it or in
-     *  it, and its later saves resolve to SAVE_SKIPPED without being sent. */
+     *  it: its later saves are not sent and resolve to the outcome that stopped it (`batch.cause`), which
+     *  is what the press then reports. */
     async sendInTurn(section, name, value, batch, ticket) {
       if (batch) {
         const ahead = await Promise.all(batch.ahead);
-        if (batch.stopped || ahead.some((outcome) => outcome !== SAVE_LANDED)) {
-          batch.stopped = true;
-          return SAVE_SKIPPED;
-        }
+        batch.cause = batch.cause || ahead.find((outcome) => outcome !== SAVE_LANDED) || null;
+        if (batch.cause) return batch.cause;
       }
       const outcome = await this.settledOrDeadline(this.sendSingleSave(section, name, value, ticket));
-      if (batch && outcome !== SAVE_LANDED) batch.stopped = true;
+      if (batch && outcome !== SAVE_LANDED) batch.cause = outcome;
       return outcome;
     },
 

@@ -11,8 +11,6 @@
  *
  * Hosts are `.invalid` and every credential is a `placeholder-` string.
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -24,28 +22,22 @@ import {
   rowRemovedAnnouncement,
   rowRestoredAnnouncement,
 } from '../../../couchpotato/static/scripts/ui/settings-values.js';
-
-const TEMPLATE = path.resolve(__dirname, '../../../couchpotato/ui/templates/partials/settings/scripts.html');
+import { loadSettingsScript } from './settings-script';
 
 function loadComponents(): Record<string, (...args: any[]) => any> {
-  const html = fs.readFileSync(TEMPLATE, 'utf8');
-  const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-  return new Function(`${code}\nreturn { settingsPanel, combinedField, buttonField };`)();
+  const { settingsPanel, combinedField, buttonField } = loadSettingsScript();
+  return { settingsPanel, combinedField, buttonField };
 }
 
 /** The undo window of a removal, read from the page's own named constant (8 seconds, owner decision 2026-11-18). */
 function undoWindowMs(): number {
-  const html = fs.readFileSync(TEMPLATE, 'utf8');
-  const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-  return new Function(`${code}\nreturn REMOVAL_UNDO_WINDOW_MS;`)();
+  return loadSettingsScript().REMOVAL_UNDO_WINDOW_MS;
 }
 const UNDO_WINDOW = 8000;
 
 /** How long a later save of a section waits for an earlier, unanswered one, read from the page's own constant. */
 function saveWaitDeadlineMs(): number {
-  const html = fs.readFileSync(TEMPLATE, 'utf8');
-  const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-  return new Function(`${code}\nreturn SAVE_WAIT_DEADLINE_MS;`)();
+  return loadSettingsScript().SAVE_WAIT_DEADLINE_MS;
 }
 
 const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
