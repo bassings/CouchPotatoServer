@@ -35,13 +35,13 @@ stevedore==5.10.0  # was held at 5.8.0 because 5.9.0 requires >=3.11; that
                   # on 2026-08-09 and prod moved to python:3.14-alpine
 pysubs2==1.9.1
 pymediainfo==7.0.1
-knowit==0.7.1
+knowit==0.8.0
 rebulk==6.0.2
 srt==3.5.3
 tomlkit==0.15.2
 click-option-group==0.5.10
 defusedxml==0.7.1
-trakit==0.4.0
+trakit==0.5.0
 decorator==5.3.2
 # 4.5 is a SECURITY fix, not a routine minor: GHSA-94vx-95fq-wwvp (High),
 # unbounded read with comments, published 2026-08-02. No CVE was assigned,
