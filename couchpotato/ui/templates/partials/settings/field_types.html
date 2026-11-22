@@ -146,7 +146,7 @@
             type="button"
             :aria-disabled="busy ? 'true' : null"
             :class="busy ? 'cursor-not-allowed' : ''"
-            :aria-label="(busy ? 'Running… ' : '') + (opt.button_text || opt.label || 'Execute')"
+            :aria-label="(busy ? (waitingOnSaves ? 'Saving… ' : 'Running… ') : '') + (opt.button_text || opt.label || 'Execute')"
             class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:underline transition-colors">
       <span x-show="!busy" x-text="opt.button_text || 'Execute'"></span>
       <span x-show="busy" class="flex items-center gap-2">
@@ -154,7 +154,7 @@
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
         </svg>
-        Running…
+        <span x-text="waitingOnSaves ? 'Saving…' : 'Running…'"></span>
       </span>
     </button>
     {#- A persistent status region with dynamic text, not one that appears together with its

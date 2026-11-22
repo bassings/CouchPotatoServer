@@ -46,6 +46,11 @@ describe('the Settings button result region', () => {
     expect(resultRegionTag()).not.toMatch(/\bx-html=/);
   });
 
+  it('is a polite live region: aria-live is exactly "polite" (not off, not assertive)', () => {
+    const tag = resultRegionTag();
+    expect(tag.match(/\baria-live="([^"]*)"/)?.[1], tag).toBe('polite');
+  });
+
   it('keeps the danger and success styles', () => {
     expect(resultRegionTag()).toMatch(/text-cp-danger/);
     expect(resultRegionTag()).toMatch(/text-cp-success/);
