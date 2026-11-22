@@ -176,6 +176,11 @@ class HttpClient:
                     self.failed_disabled[host] = time.time()
                     return
 
+                if status_code == 401:
+                    # The host answered and refused the credential: that is not a
+                    # host failure, so it neither counts nor clears the count.
+                    return
+
                 count = self.failed_request.get(host, 0) + 1
                 self.failed_request[host] = count
 
