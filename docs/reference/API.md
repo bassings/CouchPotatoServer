@@ -12,7 +12,7 @@ When running, FastAPI provides automatic OpenAPI documentation:
 
 ## Changed: parameters are decoded once
 
-In versions after v3.310.0 an API parameter reaches its handler exactly as the
+In versions after v3.311.0-beta.1 an API parameter reaches its handler exactly as the
 web framework delivered it. A value in a query string or a form body is
 percent-decoded once, by the framework, and a value in a JSON body is not
 decoded at all. Earlier versions decoded every string a second time, so
@@ -404,11 +404,11 @@ and the clear is logged once at INFO naming the section and option only.
   - An address with non-ASCII characters in its path or its userinfo
     (`http://h:9117/jackétt`) may have synced before and is now refused: the
     key cannot be bound to it. The percent-encoded spelling
-    (`http://h:9117/jack%C3%A9tt`) can be bound, and in versions after v3.310.0
+    (`http://h:9117/jack%C3%A9tt`) can be bound, and in versions after v3.311.0-beta.1
     it can be typed directly into the Jackett URL field: it is stored as typed,
     and a key entered after it is bound to it. The setup wizard and a saved
     field behave the same way, and saving the field again keeps the value.
-    **v3.310.0 and earlier only:** typing it into Settings does not work, because
+    **v3.311.0-beta.1 and earlier only:** typing it into Settings does not work, because
     the settings save decoded every value one more time, so `jack%C3%A9tt` was
     stored as `jackétt` and the binding stayed empty (the same by form, JSON or
     GET). Two ways that do work on those versions. (a) Type the double-encoded

@@ -129,6 +129,26 @@ class TestOneDecodeRemains:
         assert body['dirs'] == [str(spaced / 'inner') + '/'], body
 
 
+class TestARealFolderWhoseNameHasPercentText:
+    """A folder named `a%41b` is listed when its name is encoded once, not as `aAb`."""
+
+    @pytest.mark.parametrize('name', ['a%41b', 'p%25w'])
+    def test_the_child_is_listed(self, world, tmp_path, monkeypatch, name):
+        from couchpotato.core.plugins.browser import FileBrowser
+        _, client = world
+        folder = tmp_path / name
+        (folder / 'child').mkdir(parents=True)
+        disabled = SoftChroot()
+        disabled.initialize('')
+        monkeypatch.setattr(Env, '_softchroot', disabled)
+        FileBrowser()
+
+        body = client.get(url(route='directory.list') + '?path=' + quote(str(folder) + '/', safe='')
+                          ).json()
+
+        assert body.get('dirs') == [str(folder / 'child') + '/'], body
+
+
 class TestSettingsSaveStoresExactlyWhatWasSent:
     """AC-2: a plain option and a `password` option, by every transport."""
 
@@ -179,6 +199,31 @@ class TestAJackettAddressTypedPercentEncoded:
             assert on_disk(settings, BINDING_OPTION) == self.ADDRESS
 
 
+class TestSavingTheJackettFieldAgainKeepsIt:
+    """The API reference says saving the field again, as the page shows it, keeps the value."""
+
+    ADDRESS = 'http://h.invalid:9117/jack%C3%A9tt'
+
+    def test_a_save_of_the_value_as_read_leaves_the_address_and_the_binding_unchanged(
+            self, tmp_path, monkeypatch):
+        from tests.helpers.jackett_binding import jackett_world
+        with jackett_world(tmp_path, monkeypatch) as (settings, client, _provider):
+            send(client, SAVE, {'section': SECTION, 'name': URL_OPTION, 'value': self.ADDRESS},
+                 'form')
+            send(client, SAVE, {'section': SECTION, 'name': KEY_OPTION,
+                                'value': 'placeholder-jackett-key-one'}, 'form')
+
+            read = client.get(url(route='settings')).json()
+            shown = read['values'][SECTION][URL_OPTION]
+            assert shown == self.ADDRESS, 'the read must show the address unmasked'
+            again = send(client, SAVE, {'section': SECTION, 'name': URL_OPTION, 'value': shown},
+                         'form')
+
+            assert again.json()['success'] is True
+            assert on_disk(settings, URL_OPTION) == self.ADDRESS
+            assert on_disk(settings, BINDING_OPTION) == self.ADDRESS
+
+
 class TestALoginPasswordWithPercentText:
     """AC-7: a password containing `%41` saved through the UI must log in as typed."""
 
@@ -203,4 +248,21 @@ class TestALoginPasswordWithPercentText:
             response = client.post('/login/', data={'username': '', 'password': self.TYPED},
                                    follow_redirects=False)
 
+        assert 'user' in response.cookies, response.status_code
+
+    def test_the_login_form_accepts_a_username_with_percent_text(self, core_world):
+        """The login compares the raw form text with the stored name."""
+        from tests.unit.session_helper import stored_session_secret
+        settings, client = core_world
+        username = 'placeholder-us%41er'
+        send(client, SAVE, {'section': 'core', 'name': 'username', 'value': username}, 'form')
+        send(client, SAVE, {'section': 'core', 'name': 'password', 'value': 'placeholder-plain'},
+             'form')
+
+        with stored_session_secret():
+            response = client.post('/login/', data={'username': username,
+                                                    'password': 'placeholder-plain'},
+                                   follow_redirects=False)
+
+        assert settings.p.get('core', 'username') == username
         assert 'user' in response.cookies, response.status_code

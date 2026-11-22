@@ -54,6 +54,9 @@ every other route and add a branch naming routes to shared plumbing.
    query string or form body, as every page of the UI does
    (`encodeURIComponent`), still reaches the handler decoded once:
    `directory.list?path=%2Ftmp%2Fa%20b` is handled as `/tmp/a b`.
+   Example: a real folder named `a%41b` (or `p%25w`) holding a child folder is
+   listed by `directory.list` when its name is sent encoded once (`a%2541b`);
+   before the fix that listed nothing, because the name was decoded to `aAb`.
 4. **AC-4 (unchanged behaviour).** Bracket-key nesting, natural key ordering,
    `dictToList`, the flat `true` / `false` coercion and the pass-through of
    non-string values behave as before; the existing tests for them pass
@@ -80,9 +83,12 @@ every other route and add a branch naming routes to shared plumbing.
    boundary, and drops the double-encoding workaround for versions with this
    fix. A short "Changed" note states that a client which percent-encoded its
    values twice to work around the old behaviour must now encode once.
-9. **AC-9 (scope).** Product code changes are confined to
+9. **AC-9 (scope).** Product CODE changes are confined to
    `couchpotato/core/helpers/request.py`. No route gains a decode of its own.
-   The now-unused `unquote` import is removed.
+   The now-unused `unquote` import is removed. Two comments in
+   `couchpotato/__init__.py` (on `STRICT_JSON_API_ROUTES` and in the
+   `_strict_json_refusal` docstring) are corrected because they described the
+   removed decode; no code line there changes.
 
 ## Not in scope
 

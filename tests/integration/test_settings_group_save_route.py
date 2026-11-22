@@ -416,55 +416,39 @@ class TestEveryTransportOfAComma:
                 kwargs['rows[%d][%s]' % (index, column)] = value
         return kwargs
 
-    def test_a_percent_2c_under_a_nested_bracket_key_is_stored_as_three_characters(self, world):
+    # A form body to this route is refused outright (TestTransportIsJsonPostOnly), so
+    # bracket keys reach the handler only when it is called directly.
+    CELLS = [(1, 'host', 'https://a.invalid', 'https://b.invalid'),
+             (2, 'api_key', 'placeholder', 'placeholder')]
+
+    @pytest.mark.parametrize('row, column, left, right', CELLS)
+    def test_a_percent_2c_under_a_bracket_key_through_the_handler_is_stored_as_three_characters(
+            self, world, row, column, left, right):
         """The shared parser no longer decodes it, so there is no comma to refuse."""
         settings, _ = world
         columns = settings.combine_groups()['newznab']
         kwargs = self.bracket_kwargs(settings)
-        kwargs['rows[1][host]'] = 'https://a.invalid%2Chttps://b.invalid'
+        kwargs['rows[%d][%s]' % (row, column)] = left + '%2C' + right
 
         result = callApiHandler(ROUTE, **kwargs)
 
         assert result == {'success': True}
         stored = stored_group(settings.file, 'newznab', columns)
-        assert stored['host'].split(',')[1] == 'https://a.invalid%2Chttps://b.invalid'
+        assert stored[column].split(',')[row] == left + '%2C' + right
         assert self.stored_positions(settings, columns) == {3}
 
-    def test_a_form_body_percent_2c_is_stored_as_three_characters(self, world):
-        settings, _ = world
-        columns = settings.combine_groups()['newznab']
-        kwargs = self.bracket_kwargs(settings)
-        kwargs['rows[2][api_key]'] = 'placeholder%2Cplaceholder'
-
-        result = callApiHandler(ROUTE, **kwargs)
-
-        assert result == {'success': True}
-        stored = stored_group(settings.file, 'newznab', columns)
-        assert stored['api_key'].split(',')[2] == 'placeholder%2Cplaceholder'
-        assert self.stored_positions(settings, columns) == {3}
-
-    def test_a_literal_comma_under_a_nested_bracket_key_is_still_refused(self, world):
+    @pytest.mark.parametrize('row, column, left, right', CELLS)
+    def test_a_literal_comma_under_a_bracket_key_through_the_handler_is_still_refused(
+            self, world, row, column, left, right):
         settings, _ = world
         before = sha(settings.file)
         kwargs = self.bracket_kwargs(settings)
-        kwargs['rows[1][host]'] = 'https://a.invalid,https://b.invalid'
+        kwargs['rows[%d][%s]' % (row, column)] = left + ',' + right
 
         result = callApiHandler(ROUTE, **kwargs)
 
         assert result['success'] is False
-        assert result['invalid'] == [{'row': 1, 'column': 'host', 'reason': 'comma'}]
-        assert sha(settings.file) == before
-
-    def test_a_literal_comma_in_a_form_body_value_is_still_refused(self, world):
-        settings, _ = world
-        before = sha(settings.file)
-        kwargs = self.bracket_kwargs(settings)
-        kwargs['rows[2][api_key]'] = 'placeholder,placeholder'
-
-        result = callApiHandler(ROUTE, **kwargs)
-
-        assert result['success'] is False
-        assert result['invalid'] == [{'row': 2, 'column': 'api_key', 'reason': 'comma'}]
+        assert result['invalid'] == [{'row': row, 'column': column, 'reason': 'comma'}]
         assert sha(settings.file) == before
 
     def test_no_transport_stores_more_positions_than_rows(self, world):

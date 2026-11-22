@@ -712,15 +712,22 @@ the old test stays green, the new one fails.
   Fixed by removing both `unquote` calls from `getParams` and nothing else; no
   route gained a decode of its own. One decode now remains, the framework's, so
   a client that percent-encodes once (every page of the UI does) is unaffected.
-  Driven through the real routes, including the login form: a UI password
-  containing `%41`-style text, saved through Settings, is accepted when typed.
-  Before the fix it was not (the login form reads the raw value, the save had
-  decoded it), so such a user was locked out until `config.ini` was edited.
+  Driven through the real routes, including the login form: a UI password or
+  username containing `%41`-style text, saved through Settings, is now accepted
+  when typed. Measured with the old decode restored: the stored password was the
+  hash of the decoded spelling (`placeholder-paAss`), so typing that spelling
+  logged in and typing what was saved (`placeholder-pa%41ss`) did not, and
+  nothing told the user. The stored username was decoded the same way
+  (`placeholder-usAer`), and the login compares the raw form text with the
+  stored name.
   What remains:
   - Values that earlier versions stored in changed form are not repaired. They
     cannot be told apart from values the user meant, so a setting that was
-    saved with a `%41`-style sequence in it must be entered again. A password
-    set that way and then typed at the login form is the visible case.
+    saved with a `%41`-style sequence in it must be entered again.
+  - Upgrading does not touch a stored password hash, so someone who has been
+    logging in with the decoded spelling keeps doing so, and must save the
+    password again to use the spelling they originally typed. The same goes for
+    a username.
   - A third-party client that percent-encoded its values twice to work around
     the old behaviour now has one layer of encoding stored. None is known.
   - The flat `true` / `false` coercion in `getParams` is a separate debt (next
