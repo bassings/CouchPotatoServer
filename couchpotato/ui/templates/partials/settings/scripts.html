@@ -632,7 +632,7 @@ function settingsPanel() {
       const inFlight = this.openSavesOf(section);
       // A value is already covered only when the LAST save of that option in flight or queued carries it:
       // A in flight, B queued behind it, then A typed again must send A again, after B.
-      const lastOf = (key) => inFlight.filter((link) => link.saveKey === key).pop();
+      const lastOf = (key) => inFlight.findLast((link) => link.saveKey === key);
       const toSend = entries.filter((entry) => {
         const last = lastOf(entry.key);
         return !(last && String(last.saveValue) === String(entry.value));
@@ -1108,7 +1108,8 @@ function settingsPanel() {
 
     /** Remember a chain link as open until it settles; the chain and the open set are dropped with the last. */
     trackOpenSave(section, link) {
-      (this.openSaves[section] = this.openSaves[section] || new Set()).add(link);
+      this.openSaves[section] = this.openSaves[section] || new Set();
+      this.openSaves[section].add(link);
       link.then(() => {
         if (this.saveChains[section] === link) delete this.saveChains[section];
         this.openSaves[section].delete(link);
