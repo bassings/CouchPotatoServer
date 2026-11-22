@@ -599,10 +599,8 @@ the old test stays green, the new one fails.
      stopped. Revisit once no writer can leave a group misaligned: gaps 1 and 2
      below closed (or each indexer stored as one record), and item e repaired
      or aged out. Until then guarding these lookups is unsafe.
-  c. `getParams` (`couchpotato/core/helpers/request.py`) URL-decodes saved
-     values a second time for non-combined settings. So `%2C` typed on the
-     Settings page is stored as a comma, and any saved value containing a literal
-     `%xx` is rewritten.
+  c. Moved to its own entry, "Settings values are URL-decoded a second time on
+     save" (below), which also carries what was item 14.
   e. Installs that saved misaligned lists through the wizard before v3.278.0
      cannot be detected or repaired automatically.
   Four gaps the SEC-004 spec declined:
@@ -611,7 +609,9 @@ the old test stays green, the new one fails.
   2. The automation readers drop empty cells before pairing, so an empty cell
      shifts the rows after it (owner decision D6).
   3. A failed per-column save of a non-combine option stays in memory until the
-     next save writes it out.
+     next save writes it out. Narrowed, not closed, by SEC-005: an option that
+     has a value hook (the Jackett key, which sets its binding) is now put back
+     in memory when its save fails; every other option is as described.
   4. A save built from a stale read (a second tab or a Jackett sync landing
      between a page's read and its group save) overwrites the newer rows
      wholesale. It cannot mispair, because each group save comes from one
@@ -619,10 +619,11 @@ the old test stays green, the new one fails.
      `save_group`). The setup wizard re-reads before saving (AC-DATA-23), so
      for it only the window between that re-read and its save remains.
   Three Jackett items:
-  5. The saved Jackett key is not bound to the saved URL: `settings.save` can
-     change `jackett_url` alone, after which a parameterless `jackett_test` or
-     `jackett_sync` sends the saved key there. The same on master; it needs the
-     API key.
+  5. Closed by SEC-005: the saved key is only sent to the address it was saved
+     for. The readable copy in synced rows is the separate open item
+     "Credentials in combined rows are returned unmasked by the settings read".
+     Exception, open: with an outbound proxy configured and a plain-http Jackett
+     address, the request, key included, goes through the proxy (SEC-005 gap (j)).
   6. A redirect from the saved Jackett forwards the key, because it travels in
      the query string.
   7. A merge sync does not update the `pass_key` of indexers already stored
@@ -662,6 +663,8 @@ the old test stays green, the new one fails.
      2026-11-22 (spec gap (q)): a 401 no longer counts towards the cut-off for
      any caller. The other two parts of (q) stay open: D9 is unobserved against
      a real Jackett, and a proxy's 401 is reported as a rejected key.
+  14. Moved to the entry "Settings values are URL-decoded a second time on
+     save" (below), together with item c.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
@@ -673,8 +676,12 @@ the old test stays green, the new one fails.
   Jackett sync `torrentpotato.pass_key` holds the Jackett API key, copied into
   every synced row, so the one key that `torrentpotato.jackett_api_key` masks
   is readable beside it; `newznab.api_key` holds every Newznab indexer key. A
-  holder of the CouchPotato API key can read all of them in one request. It
-  is not fixed by SEC-005: owner decision D3 (2026-11-21) narrowed that spec to
+  holder of the CouchPotato API key can read all of them in one request, so
+  SEC-005 does not protect the Jackett key from that holder: they can read it
+  from `pass_key` after any sync, including one they start themselves. What it
+  stops is an actor who can cause a settings write but cannot read the reply
+  from having the saved key sent to an address of their choosing. It is not
+  fixed by SEC-005: owner decision D3 (2026-11-21) narrowed that spec to
   stopping a settings change from redirecting the saved Jackett key, and
   queued this as the NEXT spec, which is why it is recorded here. The fix
   needs masking on read together with a `settings.save_group` that never writes
@@ -685,7 +692,36 @@ the old test stays green, the new one fails.
   refused, and a per-column save of `host` is refused), so there is no second
   redirect path through the rows. The same measurement is the warning: a masked
   read plus today's `save_group` would destroy stored keys, because the mask
-  would be written back over them. Revisit when SEC-005 has landed.
+  would be written back over them. Condition for revisiting: SEC-005 has now
+  landed (P1 to P4), so this is the next spec.
+- **Settings values are URL-decoded a second time on save (open, 2026-11-23;
+  owner decision 2026-11-23: fix it next, as the change after SEC-005 P4 and
+  ahead of the proxy plan).** Every option saved through the API goes through
+  `callApiHandler` and then `getParams` (`couchpotato/api.py:62`,
+  `couchpotato/core/helpers/request.py:30,43`), which runs `unquote` on the value
+  after the web framework has already decoded it. This is pre-existing and was
+  found at the SEC-005 P4 review (it was first recorded as items c and 14 of the
+  "Newznab positional lists" entry, which now point here). It affects every
+  setting saved through the API, including API keys, downloader and proxy
+  passwords and `core.password`. Placeholder values only below.
+  Measured by a reviewer through the real `settings.save` route, by form and by
+  JSON:
+  - The trigger is a `%` followed by two hex digits. A lone `%` (`100%`) is
+    unchanged.
+  - `placeholder-pa%41ss` is stored as `placeholder-paAss`; `placeholder-p%25w`
+    is stored as `placeholder-p%w`; a `%FF`-style non-UTF-8 escape is replaced
+    by U+FFFD, so the value that was typed cannot be recovered from what is
+    stored.
+  - The save replies `success: true`, so nothing tells the user the value changed.
+  - Earlier note (item c): `%2C` typed on the Settings page is stored as a comma.
+  - Seen through SEC-005: a Jackett address with a percent-encoded path or
+    userinfo (`jack%C3%A9tt`) cannot be saved as typed, and so cannot be bound to
+    the saved key (see the Jackett section of `docs/reference/API.md`).
+  Reasoned, NOT driven: the login form reads the raw form value without this
+  second decode (`couchpotato/__init__.py`, `login_post`), so a UI password that
+  contains `%41`-style text and was saved through Settings would probably not
+  accept what the user typed; recovery would be to edit `config.ini`. Not
+  measured.
 - **A removed Settings row waits 8 seconds before it is saved (2026-11-18).**
   Owner decision: removing a row from a combined field shows "Row N removed."
   with an Undo button, and the group save that carries the removal is delayed
