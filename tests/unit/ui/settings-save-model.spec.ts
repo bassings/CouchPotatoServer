@@ -12,19 +12,26 @@
  * server (the last value it accepted per option, and every request it received) and of what the user
  * typed is kept beside it, and after every event the page is checked against it.
  *
- * The six invariants, in plain words:
+ * The seven invariants, in plain words:
  *  I1 When an action request goes out, every option of the button's section holds on the server what
  *     the user last TYPED (bar a value typed after that press began, and a late overwrite, below).
  *  I2 Once a save of the section has not landed (refused, failed, or unanswered at its deadline) in a
  *     press, that press sends no further save it queued.
  *  I3 An option the page does not mark as unsaved shows what the server accepted, and the value the
  *     user last typed has not been lost: it is saved, or still marked unsaved.
- *  I4 Every press ends within a bound (one deadline per save ahead of it or queued by it), a stop text
- *     is justified by a save of the section that really did not land, and once the server accepts
- *     everything, one press runs the action and leaves nothing unsaved.
+ *  I4 Every press ends within a bound (one deadline per save ahead of it or queued by it), and once the
+ *     server accepts everything, one press runs the action and leaves nothing unsaved. A stop text is
+ *     justified BY CAUSE: "did not save" only if, by the model's own account, a save the press waited on was
+ *     refused or failed, and "not finished saving" only if the cause was an unanswered save (a refusal wins
+ *     when both are present). This holds for a press held back by another press's saves (two buttons) too,
+ *     which must report the cause that stopped those; it is judged on the model's record of each save, not
+ *     on what the page carried.
  *  I5 Per section, one save is out at a time inside its deadline; per option, saves are sent in the
  *     order they were queued.
  *  I6 A press never queues a value that is already the last one in flight or queued for that option.
+ *  I7 Every save resolves to what happened to it: landed, refused, failed or unanswered, as its request
+ *     ended inside its deadline; and a save that was not sent resolves to the outcome of the save that held
+ *     it back (never to a marker of its own).
  *
  * Why I1 and I3 compare with what the user TYPED and not with what the field DISPLAYS: the first
  * version compared the server with the displayed value, and three deliberate mutants survived, because
@@ -141,8 +148,14 @@ type Req = {
   resolve?: (r: any) => void; reject?: (e: any) => void;
   failedAt?: number;      // when the CLIENT knew it had not landed (refused, failed, or its deadline)
   failSeq?: number;
+  // How the client ought to have judged this save: landed, refused (the server said no), failed (the
+  // request itself failed) or unanswered (its deadline fell first, whatever came later).
+  truth?: 'landed' | 'refused' | 'failed' | 'unanswered';
 };
-type Press = { id: number; button: number; start: number; startSeq: number; end?: number; nAhead: number; result?: string; actionSent: boolean };
+type Press = {
+  id: number; button: number; start: number; startSeq: number; end?: number; nAhead: number; result?: string; actionSent: boolean;
+  awaited?: any[];   // the records of every save this press waited on: those ahead of it and those it queued
+};
 
 const STATS: Record<string, number> = {};
 const bump = (k: string) => { STATS[k] = (STATS[k] || 0) + 1; };
@@ -192,8 +205,9 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
   });
 
   // Instrumentation: which saveSingle calls a press queued (its batch), and when each link settled.
-  type Rec = { key: string; value: string; ticket: number; batch: any; settled: boolean; pressId?: number };
+  type Rec = { key: string; value: string; ticket: number; batch: any; settled: boolean; pressId?: number; outcome?: string; index: number; judged?: boolean };
   const recs: Rec[] = [];
+  const recOfLink = new Map<object, Rec>();
   const batchPress = new WeakMap<object, number>();
   let currentPress: number | undefined;
   let sending: { key: string; ticket: number; pressId?: number } | undefined;
@@ -210,9 +224,10 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
       }
     }
     const link = origSaveSingle(section, name, value, batch);
-    const rec: Rec = { key, value: String(value), ticket: panel.saveTickets[key], batch, settled: false, pressId };
+    const rec: Rec = { key, value: String(value), ticket: panel.saveTickets[key], batch, settled: false, pressId, index: recs.length };
     recs.push(rec);
-    link.then(() => { rec.settled = true; });
+    recOfLink.set(link, rec);
+    link.then((outcome: string) => { rec.settled = true; rec.outcome = outcome; });
     return link;
   };
   // A press's flush can run after an await (the combine group's flush), so the press is handed over in order.
@@ -220,6 +235,9 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
   const origFlushFor = panel.flushPendingSavesFor.bind(panel);
   panel.flushPendingSavesFor = function (section: string, captured?: any) {
     currentPress = flushQueue.shift();
+    const thisPress = presses.find((x) => x.id === currentPress);
+    // Everything this press waits on: the saves ahead of it (taken at the press and at the flush) and its own.
+    const ahead = new Set<object>([...(captured || []), ...panel.openSavesOf(section)]);
     {
       const open = panel.openSavesOf(section);
       for (const entry of panel.unsavedOf(section)) {
@@ -228,7 +246,16 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
         if (mine.some((l: any) => String(l.saveValue) === String(entry.value)) && !(last && String(last.saveValue) === String(entry.value))) bump('press: value equals an earlier open save but not the last (A,B,A)');
       }
     }
-    try { return origFlushFor(section, captured); } finally { currentPress = undefined; }
+    try {
+      const done = origFlushFor(section, captured);
+      // The press's own saves were queued synchronously by the call above.
+      if (thisPress) {
+        thisPress.awaited = [...ahead].map((l) => recOfLink.get(l)).filter(Boolean)
+          .concat(recs.filter((r) => r.pressId === thisPress.id && !ahead.has(r)));
+        thisPress.awaited = [...new Set(thisPress.awaited)];
+      }
+      return done;
+    } finally { currentPress = undefined; }
   };
   const origSend = panel.sendSingleSave.bind(panel);
   panel.sendSingleSave = function (section: string, name: string, value: any, ticket: number) {
@@ -309,6 +336,7 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
     req.done = true;
     const now = Date.now();
     const inDeadline = now - req.sentAt < DEADLINE;
+    if (req.truth === undefined) req.truth = !inDeadline ? 'unanswered' : how === 'accept' ? 'landed' : how === 'refuse' ? 'refused' : 'failed';
     if (how === 'accept') {
       server[req.key!] = req.value!;
       if (!inDeadline) lateSince[req.key!] = true;
@@ -328,7 +356,7 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
   function markDeadlines() {
     const now = Date.now();
     for (const r of reqs) {
-      if (r.kind === 'save' && !r.done && r.failedAt === undefined && now - r.sentAt >= DEADLINE) { r.failedAt = r.sentAt + DEADLINE; r.failSeq = ++seq; }
+      if (r.kind === 'save' && !r.done && r.failedAt === undefined && now - r.sentAt >= DEADLINE) { r.failedAt = r.sentAt + DEADLINE; r.failSeq = ++seq; r.truth = r.truth ?? 'unanswered'; }
     }
   }
 
@@ -340,7 +368,7 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
       // Mark deadlines that fall inside this step before running its timers.
       const until = Date.now() + step;
       for (const r of reqs) {
-        if (r.kind === 'save' && !r.done && r.failedAt === undefined && until - r.sentAt >= DEADLINE) { r.failedAt = r.sentAt + DEADLINE; r.failSeq = ++seq; }
+        if (r.kind === 'save' && !r.done && r.failedAt === undefined && until - r.sentAt >= DEADLINE) { r.failedAt = r.sentAt + DEADLINE; r.failSeq = ++seq; r.truth = r.truth ?? 'unanswered'; }
       }
       await vi.advanceTimersByTimeAsync(step);
       left -= step;
@@ -365,6 +393,27 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
     });
   }
 
+  /**
+   * What really stopped a save, by the model and not by what the page carried. A save that was sent: how its
+   * request ended inside its deadline. A save that was NOT sent was held back by the first save of its batch's
+   * reach (those ahead of the batch when it was made, then the batch's own earlier saves) that did not land,
+   * and has that save's cause; with nothing ahead of it having failed it should have been sent.
+   */
+  function truthCause(rec: Rec, depth = 0): string | undefined {
+    const req = reqs.find((r) => r.kind === 'save' && r.key === rec.key && r.ticket === rec.ticket);
+    if (req) return req.truth;
+    if (depth > 50) return undefined;
+    const reach: Rec[] = [];
+    for (const l of rec.batch?.ahead ?? []) { const r = recOfLink.get(l); if (r) reach.push(r); }
+    for (const r of recs) if (r.batch === rec.batch && r.index < rec.index) reach.push(r);
+    reach.sort((a, b) => a.index - b.index);
+    for (const r of reach) {
+      const t = truthCause(r, depth + 1);
+      if (t === 'refused' || t === 'failed' || t === 'unanswered') return t;
+    }
+    return undefined;
+  }
+
   function checkAlways() {
     const now = Date.now();
     // I3
@@ -380,6 +429,25 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
         }
       }
     }
+    // I7: every settled save resolved to what the model says happened to it. A save that was sent: landed,
+    // refused, failed or unanswered, exactly as its request ended inside its deadline. A save that was NOT
+    // sent resolves to a real cause: the outcome of a save of the section queued before it that did not land.
+    for (const rec of recs) {
+      if (!rec.settled || rec.judged) continue;
+      const req = reqs.find((r) => r.kind === 'save' && r.key === rec.key && r.ticket === rec.ticket);
+      if (req) {
+        rec.judged = true;
+        if (req.truth !== undefined && rec.outcome !== req.truth) {
+          fail('I7', `save ${rec.key}='${rec.value}' (ticket ${rec.ticket}) resolved to '${rec.outcome}', the model says '${req.truth}'`);
+        }
+      } else {
+        rec.judged = true;
+        const cause = truthCause(rec);
+        if (rec.outcome !== cause) {
+          fail('I7', `save ${rec.key}='${rec.value}' was not sent and resolved to '${rec.outcome}', but what held it back was '${cause}'`);
+        }
+      }
+    }
     // I4: bound and justification.
     for (const p of presses) {
       const batchCount = recs.filter((r) => r.pressId === p.id).length;
@@ -387,17 +455,18 @@ async function runSeq(evs: Ev[], withSecondButton: boolean, opts: { liveness?: b
       if (p.end === undefined && now - p.start > bound) fail('I4', `press ${p.id} still running after ${now - p.start} ms (bound ${bound})`);
       if (p.end !== undefined && p.result !== undefined && !(p as any).judged) {
         (p as any).judged = true;
-        // With two buttons a press can be held back by a save an overlapping press queued, and report what
-        // stopped that one: its failure may precede this press's start, so the window is not bounded below.
-        const inPress = reqs.filter((r) => r.kind === 'save' && r.section === SECTION && r.failedAt !== undefined
-          && (withSecondButton || r.failSeq! > p.startSeq) && r.failedAt <= p.end!);
         if (/^Error/.test(p.result)) fail('I4', `press ${p.id} ended in an error: ${p.result}`);
-        if (/did not save/.test(p.result) && !inPress.some((r) => r.failedAt! < r.sentAt + DEADLINE)) {
-          fail('I4', `press ${p.id} said a change did not save, but no save of ${SECTION} was refused or failed in it`);
+        // The text is justified BY CAUSE: what the press reports must be what stopped the saves it waited on,
+        // judged on the model's own account of each save (`truthCause`), not on what the page carried, so a
+        // press held back by another press's saves (two buttons) must report the cause that stopped those.
+        const outcomes = (p.awaited ?? []).map((r) => truthCause(r));
+        const cause = outcomes.some((o) => o === 'refused' || o === 'failed') ? 'refused'
+          : outcomes.includes('unanswered') ? 'unanswered' : 'landed';
+        const said = /did not save/.test(p.result) ? 'refused' : /not finished saving/.test(p.result) ? 'unanswered' : null;
+        if (said && said !== cause) {
+          fail('I4', `press ${p.id} said ${said === 'refused' ? 'a change did not save' : 'the changes are not finished saving'}, but what really stopped the saves it waited on was ${cause} (model outcomes ${JSON.stringify(outcomes)})`);
         }
-        if (/not finished saving/.test(p.result) && inPress.length === 0) {
-          fail('I4', `press ${p.id} said not finished saving, but no save of ${SECTION} reached its deadline in it`);
-        }
+        if (!said && cause !== 'landed' && p.result === 'Synced') fail('I4', `press ${p.id} ran the action though a save it waited on ended ${cause}`);
         if (p.result === 'Synced' && !p.actionSent) fail('I4', `press ${p.id} says Synced and sent no action`);
       }
     }
@@ -527,9 +596,10 @@ const RUNS = Number(process.env.MODEL_RUNS || 100);
 const BASE = Number(process.env.MODEL_SEED || 1);
 const ONLY_TWO = process.env.MODEL_TWO_BUTTONS === '1';
 const ONLY_GROUP = process.env.MODEL_GROUP;
-// The two-button run in the default file: fixed seeds that include the one that found the held-back press
-// reporting the wrong text (seed 102327).
-const TWO_BUTTON_DEFAULT = { base: 102320, runs: 30 };
+// The two-button run in the default file: a fixed range, and the seeds that found a press held back by
+// another press's saves reporting the wrong cause on the script before that was fixed (found by a soak of
+// 4,000; about one seed in 700, so a short range alone would not reach them).
+const TWO_BUTTON_DEFAULT = { base: 102320, runs: 30, extra: [269, 331, 374, 405, 593, 921] };
 
 beforeEach(() => {
   vi.stubGlobal('CP', {
@@ -542,11 +612,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function soak(label: string, base: number, runs: number, two: boolean, group: boolean) {
+async function soak(label: string, base: number, runs: number, two: boolean, group: boolean, extra: number[] = []) {
   WITH_GROUP = group;
   const failures: string[] = [];
   const seen = new Set<string>();
-  for (let s = base; s < base + runs; s += 1) {
+  const seeds = [...Array.from({ length: runs }, (_, i) => base + i), ...extra];
+  for (const s of seeds) {
     const evs = genSeq(s, two);
     const v = await runFresh(evs, two);
     if (v) {
@@ -565,14 +636,14 @@ describe('SEC-005 D7 single-option save bookkeeping, against a model', () => {
   const shapes: Array<[string, boolean]> = [['a plain section', false], ['a section with a combine group', true]];
   for (const [name, group] of shapes) {
     if (ONLY_TWO || (ONLY_GROUP !== undefined && ONLY_GROUP !== '' && (ONLY_GROUP === '1') !== group)) continue;
-    it(`holds I1 to I6 over ${RUNS} seeded sequences from seed ${BASE}: ${name}, one button`, async () => {
+    it(`holds I1 to I7 over ${RUNS} seeded sequences from seed ${BASE}: ${name}, one button`, async () => {
       await soak(name, BASE, RUNS, false, group);
     }, 3_600_000);
   }
 
-  it(`holds I1 to I6 with two buttons in one section and overlapping presses${ONLY_TWO ? `: ${RUNS} sequences from seed ${BASE}` : ': a short fixed run'}`, async () => {
-    const [base, runs] = ONLY_TWO ? [BASE, RUNS] : [TWO_BUTTON_DEFAULT.base, TWO_BUTTON_DEFAULT.runs];
-    await soak('two buttons', base, runs, true, ONLY_GROUP === '1');
+  it(`holds I1 to I7 with two buttons in one section and overlapping presses${ONLY_TWO ? `: ${RUNS} sequences from seed ${BASE}` : ': a short fixed run'}`, async () => {
+    const [base, runs, extra] = ONLY_TWO ? [BASE, RUNS, []] : [TWO_BUTTON_DEFAULT.base, TWO_BUTTON_DEFAULT.runs, TWO_BUTTON_DEFAULT.extra];
+    await soak('two buttons', base, runs, true, ONLY_GROUP === '1', extra as number[]);
   }, 3_600_000);
 });
 
@@ -585,12 +656,12 @@ describe('SEC-005 D7 the earlier defects, as scripted sequences through the same
   const URL_ = 0;
   const KEY = 1;
 
-  async function scripted(evs: Ev[]) {
+  async function scripted(evs: Ev[], twoButtons = false) {
     WITH_GROUP = false;
     vi.useRealTimers();
     vi.useFakeTimers();
     vi.setSystemTime(0);
-    const out = await runSeq(evs, false, { liveness: false });
+    const out = await runSeq(evs, twoButtons, { liveness: false });
     return out;
   }
   const sent = (out: any) => out.reqs.filter((r: any) => r.kind === 'save').map((r: any) => `${r.key.split('.')[1]}=${r.value}`);
@@ -643,5 +714,18 @@ describe('SEC-005 D7 the earlier defects, as scripted sequences through the same
     expect(out.server['jk.url']).toBe('a');
     expect(String(out.panel.getVal('jk', 'url'))).toBe('a');
     expect(out.panel.dirty).toEqual({});
+  });
+
+  it('7 (two buttons, F1): a press held back by another press\'s saves reports the cause that stopped them, not the wrong one', async () => {
+    const DID_NOT_SAVE = (label: string) => `${label} did not run because a change above did not save. Fix it if needed, then press ${label} to save and run again.`;
+    // The url save is sent and, while it is open, the SECOND button is pressed (B1). The url request then FAILS,
+    // so B1 stops with the "did not save" text. The first button (B0) is then pressed: what it waits on is held
+    // back behind that failed save, so B0 must report the failure too, not that the changes are "not finished
+    // saving". Found by the model on the pre-fix script (seed 331, shrunk).
+    const out = await scripted([T(URL_, 'b'), T(KEY, '0'), tick(500), T(URL_, 'c'), { t: 'press2' },
+      ans(URL_, 'reject'), press], true);
+    expect(sent(out)).toEqual(['url=b', 'key=0']);
+    expect(actions(out)).toBe(0);
+    expect(out.presses.map((p: any) => p.result)).toEqual([DID_NOT_SAVE('B1'), DID_NOT_SAVE('B0')]);
   });
 });
