@@ -10,6 +10,17 @@ When running, FastAPI provides automatic OpenAPI documentation:
 - **ReDoc**: `http://localhost:5050/redoc`
 - **OpenAPI JSON**: `http://localhost:5050/openapi.json`
 
+## Changed: parameters are decoded once
+
+In versions after v3.310.0 an API parameter reaches its handler exactly as the
+web framework delivered it. A value in a query string or a form body is
+percent-decoded once, by the framework, and a value in a JSON body is not
+decoded at all. Earlier versions decoded every string a second time, so
+`a%41b` arrived as `aAb`. A client that percent-encoded its values twice to work
+around that must now encode once; a client that already encoded once is
+unaffected. Values that an earlier version stored in changed form are not
+repaired and must be entered again.
+
 ## Core Endpoints
 
 ### Application
@@ -393,23 +404,21 @@ and the clear is logged once at INFO naming the section and option only.
   - An address with non-ASCII characters in its path or its userinfo
     (`http://h:9117/jackétt`) may have synced before and is now refused: the
     key cannot be bound to it. The percent-encoded spelling
-    (`http://h:9117/jack%C3%A9tt`) can be bound, but **typing it into Settings
-    does not work**: the settings save decodes every value one more time, so
-    `jack%C3%A9tt` is stored as `jackétt` again and the binding stays empty
-    (the same by form, JSON or GET). Two ways that do work. (a) Type the
-    double-encoded spelling (`http://h:9117/jack%25C3%25A9tt`) in the Jackett URL
-    field; it is stored as `jack%C3%A9tt`; then enter the key again. (b) Take a
-    copy of `config.ini` first. With CouchPotato stopped, set `jackett_url` in
+    (`http://h:9117/jack%C3%A9tt`) can be bound, and in versions after v3.310.0
+    it can be typed directly into the Jackett URL field: it is stored as typed,
+    and a key entered after it is bound to it. The setup wizard and a saved
+    field behave the same way, and saving the field again keeps the value.
+    **v3.310.0 and earlier only:** typing it into Settings does not work, because
+    the settings save decoded every value one more time, so `jack%C3%A9tt` was
+    stored as `jackétt` and the binding stayed empty (the same by form, JSON or
+    GET). Two ways that do work on those versions. (a) Type the double-encoded
+    spelling (`http://h:9117/jack%25C3%25A9tt`) in the Jackett URL field; it is
+    stored as `jack%C3%A9tt`; then enter the key again. (b) Take a copy of
+    `config.ini` first. With CouchPotato stopped, set `jackett_url` in
     `config.ini` to `http://h:9117/jack%C3%A9tt`, start it, then enter the key
-    again. Both bind, and a parameterless sync is not refused. **Fragile:** the
-    Settings page then shows `jack%C3%A9tt`; if that field is saved again as
-    shown, it is decoded to `jackétt`, which has no normal form, so the next
-    sync is refused as `unbound` (entering the key then leaves the binding
-    empty) until (a) or (b) is repeated. The setup wizard saves whatever is in
-    its Jackett URL field (it starts empty, and is not filled from the saved
-    address), address first and then the key, when it finishes with
-    TorrentPotato enabled and again before each press of its Sync button, so
-    typing the encoded address there is decoded the same way. Rows already
+    again. Both bind, and a parameterless sync is not refused. A value stored
+    either way is kept as it is when you upgrade to a later version, and the
+    caution not to save the field again no longer applies there. Rows already
     stored under the old spelling are matched by exact text, so a merge sync can
     add a second copy of each.
 - **A planted access flag defeats the start-up clear.** Someone who can write

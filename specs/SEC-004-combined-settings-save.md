@@ -169,6 +169,12 @@ onto the existing per-column save. The proposal:
   misalignment can no longer be written.
 - The second URL-decode in `getParams` for settings outside the combined
   groups. It is recorded as debt; the new save path must not depend on it.
+  *(Note 2026-11-23: the second decode was removed afterwards by
+  `specs/FIX-2026-11-23-api-param-double-decode.md`. The "refused after
+  decoding" tests of an encoded comma by bracket key and form body were
+  rewritten there to pin that `%2C` is now stored as three characters; a
+  literal comma is still refused by every transport. No criterion in this spec
+  was changed.)*
 - Preserving a comma inside a stored automation URL. The automation readers
   already split that column on commas (`imdb.py:81-82`, `itunes.py:25-26`,
   `letterboxd.py:38-39`, through `splitString`,

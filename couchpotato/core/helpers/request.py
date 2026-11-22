@@ -1,4 +1,3 @@
-from urllib.parse import unquote
 import re
 
 from couchpotato.core.helpers.encoding import toUnicode
@@ -27,7 +26,7 @@ def getParams(params):
 
             for item in nested:
                 if item is nested[-1]:
-                    current[item] = value if not isinstance(value, str) else toUnicode(unquote(value))
+                    current[item] = value if not isinstance(value, str) else toUnicode(value)
                 else:
                     try:
                         current[item]
@@ -40,7 +39,7 @@ def getParams(params):
                 # Pass non-string values (bool, int, etc.) through directly
                 temp[param] = value
             else:
-                temp[param] = toUnicode(unquote(value))
+                temp[param] = toUnicode(value)
                 if temp[param].lower() in ['true', 'false']:
                     temp[param] = temp[param].lower() != 'false'
 
