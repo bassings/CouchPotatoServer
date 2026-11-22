@@ -18,9 +18,14 @@ import {
   STILL_SAVING,
   SYNC_ROUTE,
   THEMES,
-  keyField,
+  holdKeySaves,
+  syncField,
   openTorrentCard,
+  pressEnded,
   pressSync,
+  typeKeyAndPress,
+  watchSyncRequests,
+  stubWizardSyncRefusal,
   refuseByAddressChange,
   resultRegion,
   saveThroughApi,
@@ -40,6 +45,9 @@ import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
  * Each test asserts its state is on screen first: a scan of a page without the message proves nothing.
  */
 
+const LOCKED = 'These rows are locked while the action runs.';
+const MASK_TOAST = 'Could not save Jackett API Key: That is the masked placeholder, not the real value. '
+  + 'Clear the field and paste the credential to change it.';
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 
 /** axe scoped to the TorrentPotato card: the card is marked, and only that subtree is scanned. */
@@ -129,63 +137,84 @@ for (const theme of THEMES) {
       await saveThroughApi(page, testServer.apiBase, 'jackett_url', SEEDED_URL);
       await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', KEY_ONE);
       const liveTexts = await watchLiveRegions(page);
-      const card = await openTorrentCard(page, { theme, fakeClock: true });
+      const card = await openTorrentCard(page, { theme });
       await expect(resultRegion(card)).toHaveText('');
-      const syncRequests: string[] = [];
-      page.on('request', (request) => { if (request.url().includes(SYNC_ROUTE)) syncRequests.push(request.url()); });
+      const syncUrls = watchSyncRequests(page);
 
       // The displayed mask of the stored key: refused by the server, so the save does not land.
-      await keyField(card).fill('*'.repeat(KEY_ONE.length));
-      await syncButton(card).click();
+      // Typed and pressed in one browser task so the press, not the field's timer, sends it.
+      await typeKeyAndPress(card, '*'.repeat(KEY_ONE.length));
 
       await expect(resultRegion(card)).toHaveText(DID_NOT_SAVE);
       await expect(resultRegion(card)).toHaveClass(/text-cp-danger/);
       await expect(syncButton(card)).toBeFocused();
       await expect(syncButton(card)).not.toHaveAttribute('aria-disabled', 'true');
-      expect((await liveTexts()).filter((text) => text === DID_NOT_SAVE)).toHaveLength(1);
-      expect(syncRequests).toEqual([]);
+      await pressEnded(card);
+      // Everything a refused press says to a screen reader, in full: the rows lock (pre-existing), the
+      // result, and the toast's alert. A fourth announcement cannot creep in. (The result and the alert
+      // are read in either order: both wait on a tick.)
+      const said = (await liveTexts()).filter((text) => text.length < 300 && !text.includes('\n'));
+      expect(said[0]).toBe(LOCKED);
+      expect(said.slice(1).sort()).toEqual([DID_NOT_SAVE, MASK_TOAST].sort());
+      expect(syncUrls).toEqual([]);
       await expectVisualTransitionsToSettle(page, `${theme} theme, did not save`);
       await expectReadable(resultRegion(card), 'did-not-save text', theme);
       expect(await cardViolations(page, card)).toEqual([]);
     });
 
-    test('AC-A11Y-11: "still saving" is in the same region and style, announced once, 4.5:1, axe clean, focus on the button', async ({ page, testServer }) => {
+    test('AC-A11Y-11: "not finished saving" is in the same region and style, announced once, 4.5:1, axe clean, focus on the button', async ({ page, testServer }) => {
       test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
       await saveThroughApi(page, testServer.apiBase, 'jackett_url', SEEDED_URL);
       await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', KEY_ONE);
       const liveTexts = await watchLiveRegions(page);
-      const card = await openTorrentCard(page, { theme, fakeClock: true });
-      let held!: () => void;
-      const keySaveSent = new Promise<void>((resolve) => { held = resolve; });
-      await page.route('**/settings.save/**', (route) => {
-        if (new URLSearchParams(route.request().postData() ?? '').get('name') === 'jackett_api_key') {
-          held();
-          return undefined;
-        }
-        return route.fallback();
-      });
+      const card = await openTorrentCard(page, { theme, fakeClock: 'running' });
+      const held = await holdKeySaves(page);
+      const syncUrls = watchSyncRequests(page);
 
-      await keyField(card).fill('placeholder-typed-key');
-      await syncButton(card).click();
-      await keySaveSent;
+      await typeKeyAndPress(card, 'placeholder-typed-key');
+      await held.firstSent;
       await page.clock.fastForward(10_000);
 
       await expect(resultRegion(card)).toHaveText(STILL_SAVING);
       await expect(resultRegion(card)).toHaveClass(/text-cp-danger/);
       await expect(syncButton(card)).toBeFocused();
-      expect((await liveTexts()).filter((text) => text === STILL_SAVING)).toHaveLength(1);
+      await pressEnded(card);
+      // In full: the rows lock, then the one result. No toast: the save was never answered.
+      expect((await liveTexts()).filter((text) => text.length < 300 && !text.includes('\n'))).toEqual([LOCKED, STILL_SAVING]);
+      expect(syncUrls).toEqual([]);
       await expectVisualTransitionsToSettle(page, `${theme} theme, still saving`);
       await expectReadable(resultRegion(card), 'still-saving text', theme);
       expect(await cardViolations(page, card)).toEqual([]);
+    });
+
+    test('a stop after an earlier success is in the danger style, at least 4.5:1', async ({ page, testServer }) => {
+      test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+      await saveThroughApi(page, testServer.apiBase, 'jackett_url', SEEDED_URL);
+      await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', KEY_ONE);
+      const card = await openTorrentCard(page, { theme });
+      // A success first, so the region carries the success class when the stop arrives. The seeded
+      // address is unreachable (.invalid), so this "success" is stood in for by the class the button
+      // sets on a successful answer, set through the component the page itself runs.
+      await syncField(card).evaluate((field) => {
+        const data = (window as any).Alpine.$data(field);
+        data.success = true;
+        data.result = 'Synced';
+      });
+      await expect(resultRegion(card)).toHaveClass(/text-cp-success/);
+
+      await typeKeyAndPress(card, '*'.repeat(KEY_ONE.length));
+
+      await expect(resultRegion(card)).toHaveText(DID_NOT_SAVE);
+      await expect(resultRegion(card)).toHaveClass(/text-cp-danger/);
+      await expectVisualTransitionsToSettle(page, `${theme} theme, stop after success`);
+      await expectReadable(resultRegion(card), 'stop after a success', theme);
     });
   });
 
   test.describe(`Wizard: the Jackett result line after a refused sync (${theme} theme)`, () => {
     test('the text is at least 4.5:1, the wizard has one URL field, one key field and one Sync button, and axe reports nothing', async ({ page }) => {
       await mockSettingsSave(page);
-      await page.route(`**/${SYNC_ROUTE}/**`, (route) => route.fulfill({
-        status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: REFUSAL }),
-      }));
+      await stubWizardSyncRefusal(page);
       await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
       await openProvidersStep(page, /^Torrents/);
       await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('light'))).toBe(theme === 'light');

@@ -14,6 +14,12 @@ import {
   saveThroughApi,
   STILL_SAVING,
   syncButton,
+  KEY_REJECTED,
+  holdKeySaves,
+  pressEnded,
+  refuseAddressSaves,
+  watchSyncRequests,
+  stubWizardSyncRefusal,
   syncField,
   urlField,
   keyField,
@@ -137,22 +143,42 @@ test.describe('Settings: recovery after the refusal is one step (SEC-005 AC-PROD
   });
 });
 
-test.describe('Settings: Sync does not run on top of a save that did not land (SEC-005 D7, AC-PROD-12, AC-QA-23)', () => {
+test.describe('Settings: a key Jackett does not accept says so (SEC-005 D9)', () => {
+  test.use({ seedConfig: 'fresh_defaults#jackett-display-key-rejected' });
+
+  test('a wrong key entered after the refusal is saved, sent, and Jackett\'s answer reads "did not accept"', async ({ page, testServer, fakeJackett }) => {
+    test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+    await refuseByAddressChange(page, testServer.apiBase, KEY_ONE, fakeJackett.url);
+    const card = await openTorrentCard(page);
+    await pressSync(page, card);
+    await expect(resultRegion(card)).toHaveText(REFUSAL);
+
+    // The key is entered again, and it is the wrong one: the fake answers it the way the app now recognises.
+    await keyField(card).fill('placeholder-wrong-key');
+    const answer = await pressSync(page, card);
+
+    expect(answer).toEqual({ success: false, error: KEY_REJECTED });
+    await expect(resultRegion(card)).toHaveText(KEY_REJECTED);
+    await expect(resultRegion(card)).toHaveClass(/text-cp-danger/);
+    expect(fakeJackett.requests).toEqual([{ path: '/torznab/all/api', query: 'indexers', keyAccepted: false }]);
+  });
+});
+
+test.describe('Settings: Sync does not run on top of a value that did not save (SEC-005 D7, AC-PROD-12, AC-QA-23)', () => {
   test.describe('refused by the server', () => {
     test.use({ seedConfig: 'fresh_defaults#jackett-display-save-refused' });
 
-    test('the key save is refused, Sync says so, and no sync request reaches the page, the server or the fake Jackett', async ({ page, testServer, fakeJackett }) => {
+    test('the key save is refused, Sync says so, again on Enter, and no sync request is made by the page or reaches the fake Jackett', async ({ page, testServer, fakeJackett }) => {
       test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
       await saveThroughApi(page, testServer.apiBase, 'jackett_url', fakeJackett.url);
       await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', FAKE_JACKETT_KEY);
-      // The fake clock keeps the page's own debounce from sending the save: only the press does.
+      // The clock is held: only the press sends the typed value.
       const card = await openTorrentCard(page, { fakeClock: true });
-      // Armed before the press, read after a bounded wait: a request the page started is seen
-      // whenever it was started, and the wait gives the server's side a window too.
-      const syncRequest = page.waitForRequest((request) => request.url().includes(SYNC_ROUTE), { timeout: 2000 });
-      syncRequest.catch(() => undefined);
-      const syncUrls: string[] = [];
-      page.on('request', (request) => { if (request.url().includes(SYNC_ROUTE)) syncUrls.push(request.url()); });
+      const syncUrls = watchSyncRequests(page);
+      const keySaves: string[] = [];
+      page.on('request', (request) => {
+        if (/settings\.save\//.test(request.url()) && new URLSearchParams(request.postData() ?? '').get('name') === 'jackett_api_key') keySaves.push('sent');
+      });
       const saveAnswer = keySaveAnswer(page);
 
       // The displayed mask of the stored key: the server refuses it (P1), so the save does not land.
@@ -163,47 +189,122 @@ test.describe('Settings: Sync does not run on top of a save that did not land (S
       await expect(resultRegion(card)).toHaveText(DID_NOT_SAVE);
       await expect(resultRegion(card)).toHaveClass(/text-cp-danger/);
       await expect(syncButton(card)).toBeFocused();
-      await expect(syncButton(card)).not.toHaveAttribute('aria-disabled', 'true');
-      await expect(syncRequest).rejects.toThrow(/Timeout/);
+      await pressEnded(card);
+      // The press is over: whatever it was going to send, it has sent.
       expect(syncUrls).toEqual([]);
       expect(fakeJackett.requests).toEqual([]);
       expect(configSection(testServer.configPath, SECTION).jackett_api_key).toBe(FAKE_JACKETT_KEY);
+
+      // A second press, from the keyboard, with nothing changed: the refused value is sent AGAIN, refused again.
+      await page.keyboard.press('Enter');
+      await expect.poll(() => keySaves.length).toBe(2);
+      await expect(resultRegion(card)).toHaveText(DID_NOT_SAVE);
+      await pressEnded(card);
+      expect(syncUrls).toEqual([]);
+      expect(fakeJackett.requests).toEqual([]);
     });
   });
 
   test.describe('unanswered at the end of the wait', () => {
     test.use({ seedConfig: 'fresh_defaults#jackett-display-save-unanswered' });
 
-    test('the key save is never answered, so after the 10 second wait Sync says it is still saving and sends nothing', async ({ page, testServer, fakeJackett }) => {
+    test('the key save is never answered: the button says it is busy during the wait, "not finished saving" after it, and again on Enter', async ({ page, testServer, fakeJackett }) => {
       test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
       await saveThroughApi(page, testServer.apiBase, 'jackett_url', fakeJackett.url);
       await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', FAKE_JACKETT_KEY);
       const card = await openTorrentCard(page, { fakeClock: true });
-      // The key save leaves the page and is never answered; nothing else is held.
-      let held!: () => void;
-      const keySaveSent = new Promise<void>((resolve) => { held = resolve; });
-      await page.route('**/settings.save/**', (route) => {
-        if (new URLSearchParams(route.request().postData() ?? '').get('name') === 'jackett_api_key') {
-          held();
-          return undefined;
-        }
-        return route.fallback();
-      });
-      const syncRequest = page.waitForRequest((request) => request.url().includes(SYNC_ROUTE), { timeout: 2000 });
-      syncRequest.catch(() => undefined);
+      const held = await holdKeySaves(page);
+      const syncUrls = watchSyncRequests(page);
 
       await keyField(card).fill('placeholder-typed-key');
       await syncButton(card).click();
-      await keySaveSent;
-      // Not yet: the wait is 10 seconds from the send, on the page's clock.
+      await held.firstSent;
+      // During the wait: busy (aria-disabled, not disabled), saying so, with the region still empty.
+      await expect(syncButton(card)).toHaveAttribute('aria-disabled', 'true');
+      await expect(syncButton(card)).toHaveAccessibleName(/^Saving… Sync Indexers$/);
       await expect(resultRegion(card)).toHaveText('');
       await page.clock.fastForward(10_000);
 
       await expect(resultRegion(card)).toHaveText(STILL_SAVING);
       await expect(resultRegion(card)).toHaveClass(/text-cp-danger/);
       await expect(syncButton(card)).toBeFocused();
-      await expect(syncRequest).rejects.toThrow(/Timeout/);
+      await pressEnded(card);
+      expect(syncUrls).toEqual([]);
+
+      // The value is still unsaved (no answer is not an acceptance): Enter sends it again, and waits again.
+      await page.keyboard.press('Enter');
+      await expect.poll(held.sent).toBe(2);
+      await expect(syncButton(card)).toHaveAttribute('aria-disabled', 'true');
+      await page.clock.fastForward(10_000);
+      await expect(resultRegion(card)).toHaveText(STILL_SAVING);
+      await pressEnded(card);
+      expect(syncUrls).toEqual([]);
       expect(fakeJackett.requests).toEqual([]);
+    });
+  });
+
+  test.describe('an address refused and answered earlier, then the key typed (the sequence review round 1 found)', () => {
+    test.use({ seedConfig: 'fresh_defaults#jackett-display-address-then-key' });
+
+    test('Sync sends the address again, never the key behind it, and nothing reaches the fake Jackett; the config is unchanged', async ({ page, testServer, fakeJackett }) => {
+      test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+      await saveThroughApi(page, testServer.apiBase, 'jackett_url', fakeJackett.url);
+      await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', FAKE_JACKETT_KEY);
+      const before = configSection(testServer.configPath, SECTION);
+      const card = await openTorrentCard(page, { fakeClock: true });
+      const addressRefusals = await refuseAddressSaves(page);
+      const steps = watchOrder(page);
+      const syncUrls = watchSyncRequests(page);
+
+      // The address is typed, its timer runs, its save is sent, refused and ANSWERED (a toast says so).
+      await urlField(card).fill(OTHER_URL);
+      await page.clock.runFor(500);
+      await expect.poll(addressRefusals.refused).toBe(1);
+      // The toast names the field by its label, not its key (a screen reader would spell out jackett_url).
+      // (Read from the toast's text, not its visibility: its transition waits on animation frames, which the held clock withholds.)
+      await expect(page.locator('div[x-text="message"]')).toHaveText('Could not save Jackett URL: The address was not accepted.');
+      // Then the key is typed, and Sync pressed with no wait.
+      await keyField(card).fill('placeholder-new-key');
+      await syncButton(card).click();
+
+      await expect(resultRegion(card)).toHaveText(DID_NOT_SAVE);
+      await pressEnded(card);
+      // The address was sent again by the press; the key was not sent at all.
+      expect(addressRefusals.refused()).toBe(2);
+      expect(steps.filter((step) => step.kind === 'request' && step.name === 'save:jackett_api_key')).toEqual([]);
+      expect(syncUrls).toEqual([]);
+      expect(fakeJackett.requests).toEqual([]);
+      expect(configSection(testServer.configPath, SECTION)).toEqual(before);
+
+      // Press again: the address is sent again, refused again, still no key and no sync.
+      await syncButton(card).click();
+      await expect.poll(addressRefusals.refused).toBe(3);
+      await expect(resultRegion(card)).toHaveText(DID_NOT_SAVE);
+      await pressEnded(card);
+      expect(steps.filter((step) => step.kind === 'request' && step.name === 'save:jackett_api_key')).toEqual([]);
+      expect(syncUrls).toEqual([]);
+      expect(fakeJackett.requests).toEqual([]);
+      expect(configSection(testServer.configPath, SECTION)).toEqual(before);
+    });
+  });
+
+  test.describe('a stop after an earlier success', () => {
+    test.use({ seedConfig: 'fresh_defaults#jackett-display-stop-after-success' });
+
+    test('shows the stop in the danger style, not the success green left by the earlier press', async ({ page, testServer, fakeJackett }) => {
+      test.info().annotations.push(...combineGroupWriter());
+      await saveThroughApi(page, testServer.apiBase, 'jackett_url', fakeJackett.url);
+      await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', FAKE_JACKETT_KEY);
+      const card = await openTorrentCard(page, { fakeClock: true });
+      await pressSync(page, card);
+      await expect(resultRegion(card)).toHaveClass(/text-cp-success/);
+
+      await keyField(card).fill('*'.repeat(FAKE_JACKETT_KEY.length));
+      await syncButton(card).click();
+
+      await expect(resultRegion(card)).toHaveText(DID_NOT_SAVE);
+      await expect(resultRegion(card)).toHaveClass(/text-cp-danger/);
+      await expect(resultRegion(card)).not.toHaveClass(/text-cp-success/);
     });
   });
 });
@@ -213,11 +314,7 @@ test.describe('Wizard: the refusal on the Jackett result line (SEC-005 AC-A11Y-4
     // The one stubbed sync route of SEC-005's tests: the wizard saves the address and key before every
     // sync, so it reaches the refusal only if the saved pair changes in between. Saves reach nothing.
     await mockSettingsSave(page);
-    let syncs = 0;
-    await page.route(`**/${SYNC_ROUTE}/**`, (route) => {
-      syncs += 1;
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: REFUSAL }) });
-    });
+    const stub = await stubWizardSyncRefusal(page);
     const liveTexts = await watchLiveRegions(page);
     await openProvidersStep(page, /^Torrents/);
     await page.getByRole('switch', { name: 'Enable Jackett / TorrentPotato' }).click();
@@ -229,7 +326,7 @@ test.describe('Wizard: the refusal on the Jackett result line (SEC-005 AC-A11Y-4
 
     await sync.click();
 
-    await expect.poll(() => syncs).toBe(1);
+    await expect.poll(stub.syncs).toBe(1);
     await expect(line).toHaveText(REFUSAL);
     expect(await line.evaluate((element) => element.textContent)).toBe(REFUSAL);
     await expect(line).toHaveClass(/text-cp-danger/);
@@ -238,7 +335,7 @@ test.describe('Wizard: the refusal on the Jackett result line (SEC-005 AC-A11Y-4
     await expect(sync).toBeFocused();
 
     await page.keyboard.press('Enter');
-    await expect.poll(() => syncs).toBe(2);
+    await expect.poll(stub.syncs).toBe(2);
     await expect.poll(announced).toEqual(['Syncing…', REFUSAL, 'Syncing…', REFUSAL]);
     // The visible line is not a live region as well, or it would be read twice.
     expect(await line.evaluate((element) => !!element.closest('[aria-live], [role="status"], [role="alert"], output'))).toBe(false);

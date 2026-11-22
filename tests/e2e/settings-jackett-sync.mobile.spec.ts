@@ -8,7 +8,10 @@ import {
   OTHER_URL,
   REFUSAL,
   SEEDED_URL,
+  STILL_SAVING,
   SYNC_ROUTE,
+  holdKeySaves,
+  stubWizardSyncRefusal,
   THEMES,
   keyField,
   openTorrentCard,
@@ -104,12 +107,34 @@ for (const theme of THEMES) {
       });
     });
 
+    test.describe('Settings, Sync that did not run, still saving', () => {
+      test.use({ seedConfig: `fresh_defaults#jackett-mobile-unanswered-${theme}` });
+
+      test('the "not finished saving" text reflows at 320px too, and overlaps neither the key input nor the Sync button', async ({ page, testServer }) => {
+        test.info().annotations.push({ type: SETTINGS_PERSISTENCE_ANNOTATION });
+        await page.setViewportSize({ width: WIDTH, height: 800 });
+        await saveThroughApi(page, testServer.apiBase, 'jackett_url', SEEDED_URL);
+        await saveThroughApi(page, testServer.apiBase, 'jackett_api_key', KEY_ONE);
+        const card = await openTorrentCard(page, { theme, fakeClock: true });
+        const held = await holdKeySaves(page);
+
+        await keyField(card).fill('placeholder-typed-key');
+        await syncButton(card).click();
+        await held.firstSent;
+        await page.clock.fastForward(10_000);
+
+        await expect(resultRegion(card)).toHaveText(STILL_SAVING);
+        await expectReflowed(page, resultRegion(card), `${theme} still-saving`);
+        const region = await boxOf(resultRegion(card));
+        expect(overlaps(region, await boxOf(keyField(card)))).toBe(false);
+        expect(overlaps(region, await boxOf(syncButton(card)))).toBe(false);
+      });
+    });
+
     test('Wizard: the refusal on the Jackett result line reflows and does not overlap the Sync button', async ({ page }) => {
       await page.setViewportSize({ width: WIDTH, height: 800 });
       await mockSettingsSave(page);
-      await page.route(`**/${SYNC_ROUTE}/**`, (route) => route.fulfill({
-        status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: REFUSAL }),
-      }));
+      await stubWizardSyncRefusal(page);
       await page.addInitScript((value) => localStorage.setItem('cp-theme', value), theme);
       await openProvidersStep(page, /^Torrents/);
       await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('light'))).toBe(theme === 'light');
