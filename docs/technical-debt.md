@@ -621,8 +621,11 @@ the old test stays green, the new one fails.
      `save_group`). The setup wizard re-reads before saving (AC-DATA-23), so
      for it only the window between that re-read and its save remains.
   Three Jackett items:
-  5. Closed by SEC-005: the saved key is only sent to the address it was saved for. The readable copy in synced rows is the separate open item "Credentials in combined rows are returned unmasked by the settings read".
-     Exception, open: with an outbound proxy configured and a plain-http Jackett address, the request, key included, goes through the proxy (SEC-005 gap (j)).
+  5. Closed by SEC-005: the saved key is only sent to the address it was saved
+     for. The readable copy in synced rows is the separate open item
+     "Credentials in combined rows are returned unmasked by the settings read".
+     Exception, open: with an outbound proxy configured and a plain-http Jackett
+     address, the request, key included, goes through the proxy (SEC-005 gap (j)).
   6. A redirect from the saved Jackett forwards the key, because it travels in
      the query string.
   7. A merge sync does not update the `pass_key` of indexers already stored
@@ -662,6 +665,14 @@ the old test stays green, the new one fails.
      2026-11-22 (spec gap (q)): a 401 no longer counts towards the cut-off for
      any caller. The other two parts of (q) stay open: D9 is unobserved against
      a real Jackett, and a proxy's 401 is reported as a rejected key.
+  14. `getParams` (`couchpotato/core/helpers/request.py`) decodes every request
+     parameter one more time (`unquote`), so a setting value that contains a
+     literal percent sign is rewritten on save (see also item c above).
+     Pre-existing and not fixed by SEC-005. Measured there: a Jackett address
+     with a percent-encoded path or userinfo (`jack%C3%A9tt`) cannot be saved as
+     typed, and cannot be bound to the saved key, by form post, JSON post or GET;
+     only the double-encoded spelling or a `config.ini` edit stores it (see the
+     Jackett section of `docs/reference/API.md`).
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
@@ -674,8 +685,11 @@ the old test stays green, the new one fails.
   every synced row, so the one key that `torrentpotato.jackett_api_key` masks
   is readable beside it; `newznab.api_key` holds every Newznab indexer key. A
   holder of the CouchPotato API key can read all of them in one request, so
-  once a sync has run SEC-005 does not protect the Jackett key from that
-  holder. It is not fixed by SEC-005: owner decision D3 (2026-11-21) narrowed that spec to
+  SEC-005 does not protect the Jackett key from that holder: they can read it
+  from `pass_key` after any sync, including one they start themselves. What it
+  stops is an actor who can cause a settings write but cannot read the reply
+  from having the saved key sent to an address of their choosing. It is not
+  fixed by SEC-005: owner decision D3 (2026-11-21) narrowed that spec to
   stopping a settings change from redirecting the saved Jackett key, and
   queued this as the NEXT spec, which is why it is recorded here. The fix
   needs masking on read together with a `settings.save_group` that never writes

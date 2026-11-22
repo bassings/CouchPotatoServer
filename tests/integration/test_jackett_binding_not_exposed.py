@@ -239,19 +239,46 @@ class TestTheDeclaration:
 class TestTheBindingStateIsNotAReadField:
     """AC-ARCH-8: the settings read carries no field that reports the binding's state.
 
-    The refusal reaches the user through the provider's own routes. If the read gained a key for
-    it (a "bound" flag, an address, a match result), a holder of the API key could learn which
-    address a key is bound to, and the page would be reading state the spec keeps server-side.
+    The refusal reaches the user through the provider's own routes. This pins three things about
+    the TorrentPotato part of the read, with the binding stored and the address since moved so a
+    read that reported binding state would have something to report: the top-level keys of the
+    answer; the option names in `values`; and the shape of `options` (the section's keys, the
+    option names rendered, and each rendered option's own keys). The expected sets are DERIVED from
+    what the provider registered and declared, not copied by hand, so a new real option does not
+    break the test, while a key that no registration explains (a "bound" flag, an address, a match
+    result) does. It does not guard the binding's name or value being absent from the read (that is
+    AC-SEC-5, above), nor other sections.
     """
 
-    def test_the_keys_of_the_read_are_exactly_options_values_and_combine_state(self, world):
+    @pytest.fixture
+    def read(self, world):
         settings, client = world
-        # A binding is stored and the address has since moved, so a read that reported
-        # binding state would have something to report.
         client.post(url(route=ROUTE), data={'section': SECTION, 'name': URL_OPTION, 'value': ADDRESS_B})
         assert held(settings, BINDING_OPTION) == ADDRESS_A
+        return settings, client.get(url(route='settings')).json()
 
-        payload = client.get(url(route='settings')).json()
+    def test_the_keys_of_the_read_are_exactly_options_values_and_combine_state(self, read):
+        settings, payload = read
 
         assert set(payload) == {'options', 'values', 'combine_state'}
         assert set(settings.view()) == {'options', 'values', 'combine_state'}
+
+    def test_the_values_of_the_section_are_exactly_its_registered_readable_options(self, read):
+        settings, payload = read
+        expected = {name for name in settings.registered_options[SECTION]
+                    if settings.isOptionReadable(SECTION, name) and not settings.isOptionMeta(SECTION, name)}
+
+        assert BINDING_OPTION in settings.registered_options[SECTION], 'the fixture must register it'
+        assert set(payload['values'][SECTION]) == expected
+
+    def test_the_options_of_the_section_are_exactly_what_the_provider_declared(self, read):
+        settings, payload = read
+        declared_section = settings.options[SECTION]
+        rendered_section = payload['options'][SECTION]
+        declared = {option['name']: option for group in declared_section['groups'] for option in group['options']}
+        rendered = {option['name']: option for group in rendered_section['groups'] for option in group['options']}
+
+        assert set(rendered_section) == set(declared_section)
+        assert set(rendered) == {name for name in declared if settings.isOptionReadable(SECTION, name)}
+        for name, option in rendered.items():
+            assert set(option) - {'readonly'} == set(declared[name]), name
