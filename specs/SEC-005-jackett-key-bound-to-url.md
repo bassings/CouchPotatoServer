@@ -59,7 +59,9 @@ form as open: item 5 of the "Newznab positional lists" entry in
 
 - An install that has a Jackett key saved but no synced rows: the key is in the
   masked field only, so the redirect is the only way out, and the binding
-  closes it.
+  closes it. [Corrected 2026-11-23, P4 review: not true against a holder of the
+  CouchPotato API key, who can start a sync and then read the key from
+  `pass_key`; see gap (u).]
 - An actor who can cause a settings write but cannot read the response (for
   example a page or script that can send a request but not see the answer),
   on any install: the key can no longer be redirected by that write, except through
@@ -725,8 +727,18 @@ lines, owner decision of 2026-11-22 on gap (q), written after AC-SIMP-11) and
 bent to fit and the criterion was not changed; the owner accepted the overrun on
 2026-11-23 (gap (t)). Every other P4 criterion was measured and is met; the one test the slice
 needed (AC-ARCH-8, `TestTheBindingStateIsNotAReadField` in
-`tests/integration/test_jackett_binding_not_exposed.py`) was added and proven by
-a mutation. AC-PROD-4's revisit condition was missing and is now in Question 1.
+`tests/integration/test_jackett_binding_not_exposed.py`) was added and then
+strengthened at P4 review round 2. It pins the top-level keys of the read, the
+option names in `values['torrentpotato']`, and the keys of the section and of
+each rendered option against the provider's declaration captured at collection
+(`PRISTINE_DECLARATION`), not read from live objects: `getOptions` writes into
+the provider's own dicts and an earlier test's read had already carried an in-place
+key into them, which let two in-place mutations survive the first version. Proven
+by six mutations, each of which fails a named test (a key written in place and
+on a copy at section level and at option level, a key in `values`, a top-level
+key), and a legitimate new readable option still passes. It guards the
+TorrentPotato section's read only, not the binding's name or value (AC-SEC-5) or
+other sections. AC-PROD-4's revisit condition was missing and is now in Question 1.
 Gap 3 in `docs/technical-debt.md` is NOT closed: the rollback is taken only for
 an option that has a value hook, not for every option (AC-DATA-1's own
 condition), so item 3 is narrowed and left open.
@@ -760,4 +772,4 @@ text was changed; each is a gap a planning lens could have caught.
 | (r) D8 text against its clauses | **Accepted by the owner, 2026-11-22: the D8 text stays exactly as it is.** Two clauses of AC-DESIGN-5 are only partly satisfied by it: (1) "says nothing untrue for either cause": "needed once after this update, or after the URL changes" is untrue for a key that is unbound for another reason (a restored older `config.ini`, or the wizard run with the key left blank, which clears the saved key); (2) for an API caller of `jackett_test`, "paste it above and press Sync" refers to a page the caller is not on (the spec already returned the same string to API callers; no page calls `jackett_test`). The wizard's button is labelled "Sync Trackers from Jackett", so "press Sync" is a short form there. | product | AC-DESIGN-5 |
 | (s) The order a press saves in | "In the order typed" in AC-PROD-12 is the order each value FIRST became unsaved: a retyped value keeps its place. Example: the key is refused and stays unsaved, then the address is typed, then the key is retyped; the press sends the key first (the server binds it to the old address), then the address, and the Sync that follows is refused with the D8 text, so nothing goes to the wrong place. Moving a retyped value to the end is a two-line change and was NOT made: it would make the order the true typing order but would put a corrected address behind a key typed after the first attempt (the common recovery), which is worse. Pinned by a unit case. Found at P3 review round 2. | qa, security | AC-PROD-12 |
 | (t) The file budget | AC-SIMP-11 says at most 8 files outside `tests/`. The change touches ten (P4 outcome): `couchpotato/core/http_client.py` was added by the owner's 2026-11-22 decision that a 401 stops counting towards the per-host cut-off (gap (q)), and `docs/development-process.md` by the soak-test note of P3 review round 3. Both are small, both predate P4, and neither is a new file under `couchpotato/` (AC-SIMP-4 holds). The criterion was written before either and was not amended. **Owner decision, 2026-11-23: accept the overrun.** AC-SIMP-11 stays at 8 and stands recorded as not met, at ten, accepted by the owner. | simplicity | AC-SIMP-11 |
-| (u) AC-SEC-12 understates the exposure | AC-SEC-12 says SEC-005 does not protect the key from an API-key holder "once a sync has run". Measured at P4 review, 2026-11-23: the holder can start the sync themselves (`torrentpotato.jackett_sync` with a matching `Origin`) and then read the key from `torrentpotato.pass_key`, so the protection is absent for any install whose key is bound and usable, not only one that has already synced. The criterion was not reworded. The docs (`docs/reference/API.md` Known limits, the "Credentials in combined rows" entry in `docs/technical-debt.md`) state the stronger fact and also carry the criterion's clauses (the read returns `pass_key` unmasked, every synced row carries the key, SEC-005 does not protect it from an API-key holder, the exposure is an open item with its condition for revisiting). The Problem section's "an install that has synced (the common case)" has the same understatement and is likewise unchanged. | security | AC-SEC-12 |
+| (u) AC-SEC-12 understates the exposure | AC-SEC-12 says SEC-005 does not protect the key from an API-key holder "once a sync has run". Measured at P4 review, 2026-11-23: the holder can start the sync themselves (`torrentpotato.jackett_sync` with a matching `Origin`) and then read the key from `torrentpotato.pass_key`, so the protection is absent for any install whose key is bound and usable, not only one that has already synced. The criterion was not reworded. The docs (`docs/reference/API.md` Known limits, the "Credentials in combined rows" entry in `docs/technical-debt.md`) state the stronger fact and also carry the criterion's clauses (the read returns `pass_key` unmasked, every synced row carries the key, SEC-005 does not protect it from an API-key holder, the exposure is an open item with its condition for revisiting). The Problem section has the same understatement in two places, both unchanged apart from a dated bracket at the first: the first bullet of "Who this spec protects" ("An install that has a Jackett key saved but no synced rows: the key is in the masked field only, so the redirect is the only way out, and the binding closes it", the strongest form of the claim, now carrying a correction pointing here) and "Who it does not protect" ("an install that has synced (the common case)"). Neither is a criterion. | security | AC-SEC-12 |

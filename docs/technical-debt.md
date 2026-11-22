@@ -599,10 +599,8 @@ the old test stays green, the new one fails.
      stopped. Revisit once no writer can leave a group misaligned: gaps 1 and 2
      below closed (or each indexer stored as one record), and item e repaired
      or aged out. Until then guarding these lookups is unsafe.
-  c. `getParams` (`couchpotato/core/helpers/request.py`) URL-decodes saved
-     values a second time for non-combined settings. So `%2C` typed on the
-     Settings page is stored as a comma, and any saved value containing a literal
-     `%xx` is rewritten.
+  c. Moved to its own entry, "Settings values are URL-decoded a second time on
+     save" (below), which also carries what was item 14.
   e. Installs that saved misaligned lists through the wizard before v3.278.0
      cannot be detected or repaired automatically.
   Four gaps the SEC-004 spec declined:
@@ -665,14 +663,8 @@ the old test stays green, the new one fails.
      2026-11-22 (spec gap (q)): a 401 no longer counts towards the cut-off for
      any caller. The other two parts of (q) stay open: D9 is unobserved against
      a real Jackett, and a proxy's 401 is reported as a rejected key.
-  14. `getParams` (`couchpotato/core/helpers/request.py`) decodes every request
-     parameter one more time (`unquote`), so a setting value that contains a
-     literal percent sign is rewritten on save (see also item c above).
-     Pre-existing and not fixed by SEC-005. Measured there: a Jackett address
-     with a percent-encoded path or userinfo (`jack%C3%A9tt`) cannot be saved as
-     typed, and cannot be bound to the saved key, by form post, JSON post or GET;
-     only the double-encoded spelling or a `config.ini` edit stores it (see the
-     Jackett section of `docs/reference/API.md`).
+  14. Moved to the entry "Settings values are URL-decoded a second time on
+     save" (below), together with item c.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
@@ -702,6 +694,34 @@ the old test stays green, the new one fails.
   read plus today's `save_group` would destroy stored keys, because the mask
   would be written back over them. Condition for revisiting: SEC-005 has now
   landed (P1 to P4), so this is the next spec.
+- **Settings values are URL-decoded a second time on save (open, 2026-11-23;
+  owner decision 2026-11-23: fix it next, as the change after SEC-005 P4 and
+  ahead of the proxy plan).** Every option saved through the API goes through
+  `callApiHandler` and then `getParams` (`couchpotato/api.py:62`,
+  `couchpotato/core/helpers/request.py:30,43`), which runs `unquote` on the value
+  after the web framework has already decoded it. This is pre-existing and was
+  found at the SEC-005 P4 review (it was first recorded as items c and 14 of the
+  "Newznab positional lists" entry, which now point here). It affects every
+  setting saved through the API, including API keys, downloader and proxy
+  passwords and `core.password`. Placeholder values only below.
+  Measured by a reviewer through the real `settings.save` route, by form and by
+  JSON:
+  - The trigger is a `%` followed by two hex digits. A lone `%` (`100%`) is
+    unchanged.
+  - `placeholder-pa%41ss` is stored as `placeholder-paAss`; `placeholder-p%25w`
+    is stored as `placeholder-p%w`; a `%FF`-style non-UTF-8 escape is replaced
+    by U+FFFD, so the value that was typed cannot be recovered from what is
+    stored.
+  - The save replies `success: true`, so nothing tells the user the value changed.
+  - Earlier note (item c): `%2C` typed on the Settings page is stored as a comma.
+  - Seen through SEC-005: a Jackett address with a percent-encoded path or
+    userinfo (`jack%C3%A9tt`) cannot be saved as typed, and so cannot be bound to
+    the saved key (see the Jackett section of `docs/reference/API.md`).
+  Reasoned, NOT driven: the login form reads the raw form value without this
+  second decode (`couchpotato/__init__.py`, `login_post`), so a UI password that
+  contains `%41`-style text and was saved through Settings would probably not
+  accept what the user typed; recovery would be to edit `config.ini`. Not
+  measured.
 - **A removed Settings row waits 8 seconds before it is saved (2026-11-18).**
   Owner decision: removing a row from a combined field shows "Row N removed."
   with an Undo button, and the group save that carries the removal is delayed

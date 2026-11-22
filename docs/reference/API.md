@@ -282,10 +282,10 @@ An HTTP 401 that does not come from Jackett (for example basic authentication
 on a reverse proxy in front of it) is also reported as the key being rejected,
 which re-copying the key will not fix. Neither the 401 nor the `code` 100 reply
 has been observed against a real Jackett: both come from Jackett's documented
-behaviour. CouchPotato's HTTP client stops calling a host it reached by name
-(not a loopback or private address) for 15 minutes after six failed requests;
-a 401 does not count towards that, so wrong keys do not pause the host (or the
-searches through it).
+behaviour. CouchPotato's HTTP client stops calling a host for 15 minutes after six
+failed requests, for any host other than `localhost`, a loopback address or a
+private (RFC 1918) address; a 401 does not count towards that, so wrong keys do
+not pause the host (or the searches through it).
 
 #### The saved key is only sent to the address it was saved for
 
@@ -331,11 +331,11 @@ address that is checked is the address that is used, from one read.
    do not know as asterisks of the same length.
 3. Rolling back and forward with no settings changed leaves a bound key bound to
    the same address. After restoring an older `config.ini` backup, or after
-   changing the Jackett address while running a build that writes the binding but
-   does not check it (the betas from v3.298.0-beta.1 up to the one before v3.306.0-beta.1), or while running v3.278.0
-   or earlier, the saved key is
-   unbound or mismatched and the next `jackett_test` or `jackett_sync` is refused
-   until the key is entered again. Nothing re-binds it automatically.
+   changing the Jackett address while running a build that writes the binding
+   but does not check it (the betas from v3.298.0-beta.1 up to the one before
+   v3.306.0-beta.1), or while running v3.278.0 or earlier, the saved key is
+   unbound or mismatched and the next `jackett_test` or `jackett_sync` is
+   refused until the key is entered again. Nothing re-binds it automatically.
 4. After upgrading, every existing install has a saved key and no binding, so its
    first `jackett_sync` (or `jackett_test`) is refused once with the text above:
    check the address, enter the key once, and it is bound. Searches and downloads
@@ -398,15 +398,20 @@ and the clear is logged once at INFO naming the section and option only.
     `jack%C3%A9tt` is stored as `jackétt` again and the binding stays empty
     (the same by form, JSON or GET). Two ways that do work. (a) Type the
     double-encoded spelling (`http://h:9117/jack%25C3%25A9tt`) in the Jackett URL
-    field; it is stored as `jack%C3%A9tt`; then enter the key again. (b) With
-    CouchPotato stopped, set `jackett_url` in `config.ini` to
-    `http://h:9117/jack%C3%A9tt`, start it, then enter the key again. Both bind,
-    and a parameterless sync is not refused. **Fragile:** the Settings page then
-    shows `jack%C3%A9tt`; if that field is saved again as shown, it is decoded to
-    `jackétt`, the saved address stops matching the binding, and the next sync
-    is refused (entering the key then leaves the binding empty) until (a) or (b)
-    is repeated. Rows already stored under the old spelling are matched by exact
-    text, so a merge sync can add a second copy of each.
+    field; it is stored as `jack%C3%A9tt`; then enter the key again. (b) Take a
+    copy of `config.ini` first. With CouchPotato stopped, set `jackett_url` in
+    `config.ini` to `http://h:9117/jack%C3%A9tt`, start it, then enter the key
+    again. Both bind, and a parameterless sync is not refused. **Fragile:** the
+    Settings page then shows `jack%C3%A9tt`; if that field is saved again as
+    shown, it is decoded to `jackétt`, which has no normal form, so the next
+    sync is refused as `unbound` (entering the key then leaves the binding
+    empty) until (a) or (b) is repeated. The setup wizard saves whatever is in
+    its Jackett URL field (it starts empty, and is not filled from the saved
+    address), address first and then the key, when it finishes with
+    TorrentPotato enabled and again before each press of its Sync button, so
+    typing the encoded address there is decoded the same way. Rows already
+    stored under the old spelling are matched by exact text, so a merge sync can
+    add a second copy of each.
 - **A planted access flag defeats the start-up clear.** Someone who can write
   settings on a release before the access-flag fix could also plant the
   binding's access flag (those releases accept it under a different letter

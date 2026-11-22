@@ -8,10 +8,12 @@ stored for address A and read the file and the parser afterwards.
 
 Hosts are ``.local`` or ``.invalid`` and every key is a ``placeholder-`` string.
 """
+import copy
 import json
 
 import pytest
 
+from couchpotato.core.media._base.providers.torrent.torrentpotato import config as torrentpotato_config
 from tests.helpers.combine_groups import sha
 from tests.helpers.jackett_binding import (
     BINDING_FLAG_OPTION,
@@ -236,6 +238,16 @@ class TestTheDeclaration:
         assert not settings.is_combine_option(SECTION, BINDING_OPTION)
 
 
+# The provider's declaration as it was when this module was collected, before any test ran. It is
+# copied here, and not read from `settings.options` at the test, for two reasons. `getOptions` hands
+# out the provider's own dicts and sets `readonly` on them in place, so a key added the same way
+# would appear on both sides of a comparison made after the read. And those dicts are module-level
+# objects shared by every test in the process, so a read made by an earlier test would already have
+# carried an in-place key into them (measured: two in-place mutations survived a copy taken just
+# before the read).
+PRISTINE_DECLARATION = copy.deepcopy(torrentpotato_config[0])
+
+
 class TestTheBindingStateIsNotAReadField:
     """AC-ARCH-8: the settings read carries no field that reports the binding's state.
 
@@ -246,7 +258,9 @@ class TestTheBindingStateIsNotAReadField:
     option names rendered, and each rendered option's own keys). The expected sets are DERIVED from
     what the provider registered and declared, not copied by hand, so a new real option does not
     break the test, while a key that no registration explains (a "bound" flag, an address, a match
-    result) does. It does not guard the binding's name or value being absent from the read (that is
+    result) does, whether it is added to the rendered copy or in place on the provider's own dicts
+    (the expected declaration is the one captured at collection, `PRISTINE_DECLARATION`).
+    It does not guard the binding's name or value being absent from the read (that is
     AC-SEC-5, above), nor other sections.
     """
 
@@ -255,16 +269,16 @@ class TestTheBindingStateIsNotAReadField:
         settings, client = world
         client.post(url(route=ROUTE), data={'section': SECTION, 'name': URL_OPTION, 'value': ADDRESS_B})
         assert held(settings, BINDING_OPTION) == ADDRESS_A
-        return settings, client.get(url(route='settings')).json()
+        return settings, PRISTINE_DECLARATION, client.get(url(route='settings')).json()
 
     def test_the_keys_of_the_read_are_exactly_options_values_and_combine_state(self, read):
-        settings, payload = read
+        settings, _, payload = read
 
         assert set(payload) == {'options', 'values', 'combine_state'}
         assert set(settings.view()) == {'options', 'values', 'combine_state'}
 
     def test_the_values_of_the_section_are_exactly_its_registered_readable_options(self, read):
-        settings, payload = read
+        settings, _, payload = read
         expected = {name for name in settings.registered_options[SECTION]
                     if settings.isOptionReadable(SECTION, name) and not settings.isOptionMeta(SECTION, name)}
 
@@ -272,8 +286,7 @@ class TestTheBindingStateIsNotAReadField:
         assert set(payload['values'][SECTION]) == expected
 
     def test_the_options_of_the_section_are_exactly_what_the_provider_declared(self, read):
-        settings, payload = read
-        declared_section = settings.options[SECTION]
+        settings, declared_section, payload = read
         rendered_section = payload['options'][SECTION]
         declared = {option['name']: option for group in declared_section['groups'] for option in group['options']}
         rendered = {option['name']: option for group in rendered_section['groups'] for option in group['options']}
@@ -281,4 +294,4 @@ class TestTheBindingStateIsNotAReadField:
         assert set(rendered_section) == set(declared_section)
         assert set(rendered) == {name for name in declared if settings.isOptionReadable(SECTION, name)}
         for name, option in rendered.items():
-            assert set(option) - {'readonly'} == set(declared[name]), name
+            assert set(option) - {'readonly'} == set(declared[name]) - {'readonly'}, name
