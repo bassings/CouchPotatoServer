@@ -1631,7 +1631,7 @@ describe('a button in a section with a combine group: the rows are locked from t
         expectPressOver(net, field, group);
       });
 
-      it('a refusal from BEFORE the press, answered and toasted, still blocks: the value is sent again, then the key, and the action runs only if all land', async () => {
+      it('a refusal from BEFORE the press, answered and toasted, still blocks: the address is sent again, the key behind it is not, and there is no action', async () => {
         const net = installFetch();
         net.replies.push({ body: { success: false, error: 'no' } });
         const { panel, group } = torrentPanel();
@@ -1730,6 +1730,46 @@ describe('a button in a section with a combine group: the rows are locked from t
         expect(saved(net).map((body) => body.name)).toEqual(['jackett_api_key', 'jackett_api_key']);
         expect(actionCalls(net)).toEqual([]);
         expect(field.result).toBe(STILL_SAVING);
+      });
+
+      it('shows the refusal, not the wait, when one save is refused and another is unanswered in the same press', async () => {
+        const net = installFetch();
+        net.replies.push(neverAnswered(), { body: { success: false, error: 'no' } }, SYNCED, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        // Two saves of the section in flight at the press: the first is never answered, the second goes
+        // out when the first has had its wait and is refused.
+        void panel.saveSingle('torrentpotato', 'seed_ratio', '2');
+        void panel.saveSingle('torrentpotato', 'seed_time', '3');
+        await vi.advanceTimersByTimeAsync(0);
+        const field = button(panel);
+
+        const running = field.execute();
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs());
+        await running;
+
+        expect(saved(net).map((body) => body.name)).toEqual(['seed_ratio', 'seed_time']);
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+      });
+
+      it('sends the values in the order each FIRST became unsaved: a retyped value keeps its place (spec gap (s))', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } });
+        const { panel } = torrentPanel();
+        // The key is refused and stays unsaved; the address is typed; the key is retyped.
+        panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-first-key');
+        await vi.advanceTimersByTimeAsync(500);
+        panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        net.replies.push({ body: { success: true } }, { body: { success: true } }, SYNCED, serverRows(HOSTS));
+        const field = button(panel);
+
+        await field.execute();
+
+        // The key goes first (it was unsaved first), then the address: the server binds that key to the
+        // old address, so the Sync that follows is refused with the D8 text and nothing goes elsewhere.
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_api_key', 'jackett_api_key', 'jackett_url']);
+        expect(saved(net)[1].value).toBe(TYPED_KEY);
       });
 
       it('a refusal that arrives while the press is still flushing its own group counts (the open saves are taken before the first await)', async () => {

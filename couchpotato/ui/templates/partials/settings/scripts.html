@@ -528,6 +528,9 @@ function settingsPanel() {
 
     setVal(section, name, value) {
       this.dirty[section + '.' + name] = value;
+      // NOT moved to the end when retyped: a value keeps the place it first became unsaved. A press sends
+      // in that order (SEC-005 D7, spec gap (s)); re-ordering by last typing would put a corrected address
+      // behind a key typed after the first attempt, which is the worse of the two.
       this.dirtyOpts[section + '.' + name] = { section, name };
       this.debounceSave(section, name, value);
     },
@@ -647,6 +650,8 @@ function settingsPanel() {
       const outcomes = await Promise.all([...batch.ahead, ...sent]);
       if (outcomes.some((outcome) => outcome === SAVE_REFUSED || outcome === SAVE_FAILED)) return 'refused';
       if (outcomes.includes(SAVE_UNANSWERED)) return 'unanswered';
+      // Never reached with a skip alone: a skipped save always comes with the refused, failed or unanswered
+      // one that stopped the batch, returned above. Kept so that a skip can never read as landed.
       return outcomes.includes(SAVE_SKIPPED) ? 'refused' : 'landed';
     },
 
@@ -1076,29 +1081,38 @@ function settingsPanel() {
     saveSingle(section, name, value, batch) {
       delete this.pendingSaves[section + '.' + name];
       const link = (this.saveChains[section] || Promise.resolve())
-        .then(async () => {
-          if (batch) {
-            // A button's batch stops at the first value that did not land, ahead of it or in it.
-            const ahead = await Promise.all(batch.ahead);
-            if (batch.stopped || ahead.some((outcome) => outcome !== SAVE_LANDED)) {
-              batch.stopped = true;
-              return SAVE_SKIPPED;
-            }
-          }
-          const outcome = await this.settledOrDeadline(this.sendSingleSave(section, name, value));
-          if (batch && outcome !== SAVE_LANDED) batch.stopped = true;
-          return outcome;
-        });
+        .then(() => this.sendInTurn(section, name, value, batch));
       link.saveKey = section + '.' + name;
       link.saveValue = value;
       this.saveChains[section] = link;
+      this.trackOpenSave(section, link);
+      return link;
+    },
+
+    /** One link of a section's chain, run when the save ahead has settled: sends the save and resolves
+     *  to how it ended. A button's batch stops at the first value that did not land, ahead of it or in
+     *  it, and its later saves resolve to SAVE_SKIPPED without being sent. */
+    async sendInTurn(section, name, value, batch) {
+      if (batch) {
+        const ahead = await Promise.all(batch.ahead);
+        if (batch.stopped || ahead.some((outcome) => outcome !== SAVE_LANDED)) {
+          batch.stopped = true;
+          return SAVE_SKIPPED;
+        }
+      }
+      const outcome = await this.settledOrDeadline(this.sendSingleSave(section, name, value));
+      if (batch && outcome !== SAVE_LANDED) batch.stopped = true;
+      return outcome;
+    },
+
+    /** Remember a chain link as open until it settles; the chain and the open set are dropped with the last. */
+    trackOpenSave(section, link) {
       (this.openSaves[section] = this.openSaves[section] || new Set()).add(link);
       link.then(() => {
         if (this.saveChains[section] === link) delete this.saveChains[section];
         this.openSaves[section].delete(link);
         if (this.openSaves[section].size === 0) delete this.openSaves[section];
       });
-      return link;
     },
 
     /** Resolves to how `sent` (a request that has just been sent) ended, or to

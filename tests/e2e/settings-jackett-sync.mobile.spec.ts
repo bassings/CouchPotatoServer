@@ -9,7 +9,6 @@ import {
   REFUSAL,
   SEEDED_URL,
   STILL_SAVING,
-  SYNC_ROUTE,
   holdKeySaves,
   stubWizardSyncRefusal,
   THEMES,

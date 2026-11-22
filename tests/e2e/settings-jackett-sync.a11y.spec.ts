@@ -16,7 +16,6 @@ import {
   REFUSAL,
   SEEDED_URL,
   STILL_SAVING,
-  SYNC_ROUTE,
   THEMES,
   holdKeySaves,
   syncField,
@@ -143,6 +142,7 @@ for (const theme of THEMES) {
 
       // The displayed mask of the stored key: refused by the server, so the save does not land.
       // Typed and pressed in one browser task so the press, not the field's timer, sends it.
+      const beforePress = (await liveTexts()).length;
       await typeKeyAndPress(card, '*'.repeat(KEY_ONE.length));
 
       await expect(resultRegion(card)).toHaveText(DID_NOT_SAVE);
@@ -153,7 +153,10 @@ for (const theme of THEMES) {
       // Everything a refused press says to a screen reader, in full: the rows lock (pre-existing), the
       // result, and the toast's alert. A fourth announcement cannot creep in. (The result and the alert
       // are read in either order: both wait on a tick.)
-      const said = (await liveTexts()).filter((text) => text.length < 300 && !text.includes('\n'));
+      // Only what the press made: the page's own load-time mutations came before it and are not announcements of it.
+      // The toast's alert is set on a tick after the result, so wait for all three before reading the list.
+      await expect.poll(async () => (await liveTexts()).slice(beforePress).length).toBeGreaterThanOrEqual(3);
+      const said = (await liveTexts()).slice(beforePress);
       expect(said[0]).toBe(LOCKED);
       expect(said.slice(1).sort()).toEqual([DID_NOT_SAVE, MASK_TOAST].sort());
       expect(syncUrls).toEqual([]);
@@ -171,6 +174,7 @@ for (const theme of THEMES) {
       const held = await holdKeySaves(page);
       const syncUrls = watchSyncRequests(page);
 
+      const beforePress = (await liveTexts()).length;
       await typeKeyAndPress(card, 'placeholder-typed-key');
       await held.firstSent;
       await page.clock.fastForward(10_000);
@@ -180,7 +184,7 @@ for (const theme of THEMES) {
       await expect(syncButton(card)).toBeFocused();
       await pressEnded(card);
       // In full: the rows lock, then the one result. No toast: the save was never answered.
-      expect((await liveTexts()).filter((text) => text.length < 300 && !text.includes('\n'))).toEqual([LOCKED, STILL_SAVING]);
+      expect((await liveTexts()).slice(beforePress)).toEqual([LOCKED, STILL_SAVING]);
       expect(syncUrls).toEqual([]);
       await expectVisualTransitionsToSettle(page, `${theme} theme, still saving`);
       await expectReadable(resultRegion(card), 'still-saving text', theme);
