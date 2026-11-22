@@ -199,8 +199,9 @@ class TestAnAddressChangeRefusesTheSavedKey:
         assert_refused(run(provider, operation))
         assert transport.requests == []
 
-        assert (sha(settings.file), memory(settings, KEY_OPTION), memory(settings, BINDING_OPTION),
-                [memory(settings, column) for column in columns]) == before
+        after = (sha(settings.file), memory(settings, KEY_OPTION), memory(settings, BINDING_OPTION),
+                 [memory(settings, column) for column in columns])
+        assert after == before
         assert save(client, URL_OPTION, ADDRESS_A).json()['success'] is True
 
         assert run(provider, operation)['success'] is True
@@ -292,7 +293,8 @@ class TestEquivalentAddressesAreTheSameAddress:
         assert len(transport.requests) == 1
         expected = parse_url(bound)
         scheme, host, port, path = reached(transport.requests[0])
-        assert (scheme, host, port, path) == (
+        actual = (scheme, host, port, path)
+        assert actual == (
             expected.scheme, expected.host, expected.port, (expected.path or '').rstrip('/'))
         assert (parse_url(transport.requests[0]).auth) == expected.auth
 
@@ -759,7 +761,8 @@ class TestConcurrentSaves:
 
         assert result['success'] is True
         assert len(reads) == 1
-        assert [reached(r)[1] for r in transport.requests] == [HOST_A]
+        hosts = [reached(r)[1] for r in transport.requests]
+        assert hosts == [HOST_A]
         if operation == 'jackettSync':
             assert on_disk(settings, 'host') == ADDRESS_A + '/potato/alpha/api'
 
@@ -919,7 +922,8 @@ class TestStoredRowsAreUntouchedByTheBinding:
             assert transport.requests[0].startswith(self.ROW_HOST + '?')
             assert 'passkey=' + self.ROW_KEY in transport.requests[0]
             assert PLACEHOLDER_KEY not in transport.requests[0]
-            assert [row['name'] for row in results] == ['Film.2020']
+            names = [row['name'] for row in results]
+            assert names == ['Film.2020']
             assert type(results).__name__ == 'ResultList'
             transport.requests.clear()
             assert_refused(provider.jackettSync())

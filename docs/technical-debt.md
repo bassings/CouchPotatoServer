@@ -794,6 +794,15 @@ the old test stays green, the new one fails.
   counting text changes in the live regions in Chromium only
   (`settings.spec.ts`, `settings-combined.a11y.spec.ts`). What a screen reader
   says, and how Firefox and WebKit render the field, has not been observed.
+- **A well-formed reply that is not Jackett's still reads as a Jackett success
+  (measured 2026-11-22).** `getJackettIndexers` treats an element named exactly
+  `error` as the failure. A well-formed non-Jackett reply served with a success
+  status (an HTML login page from a proxy in front of Jackett, or an `<error>`
+  root that is namespaced or differently cased) therefore still answers a
+  successful Jackett test with zero indexers; sync writes nothing in those
+  cases. Candidate fix: treat any root other than the expected one as an error,
+  once the real reply's root has been captured from a live Jackett. Not fixed
+  in `fix/jackett-root-error-reply`.
 
 ### Deferred at PR 1's review (2026-08-06)
 

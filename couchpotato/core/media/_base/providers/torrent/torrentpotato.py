@@ -328,9 +328,13 @@ class Base(TorrentProvider):
             # Parse XML response
             root = ET.fromstring(response)
 
-            # Check for Jackett error response
-            error = root.find('.//error')
-            if error is not None:
+            # Check for Jackett error response. `Element.iter` yields the root
+            # itself and then every descendant, so an `<error>` is found whether
+            # it is the whole reply or nested in one; `find('.//error')` searched
+            # descendants only, and a reply whose root was `<error>` read as
+            # success with no indexers. Nothing from the reply's `code` or
+            # `description` is returned or logged: the text below is fixed.
+            if next(root.iter('error'), None) is not None:
                 log.error('Jackett returned an error response')
                 return None, 'Jackett returned an error response'
 
@@ -498,7 +502,7 @@ class Base(TorrentProvider):
 
     def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
         """Test Jackett connection and return list of available indexers"""
-        jackett_url, jackett_api_key, row_base, refusal = self._jackettCredentials(
+        jackett_url, jackett_api_key, _, refusal = self._jackettCredentials(
             ROUTE_TEST, jackett_url, jackett_api_key)
         if refusal:
             return refusal
