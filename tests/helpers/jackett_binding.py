@@ -119,8 +119,9 @@ def jackett_settings(tmp_path, monkeypatch, stored=None):
 
 # --- SEC-005 P2: the guard ---------------------------------------------------
 
-REFUSAL = ('The saved Jackett API key cannot be used with this Jackett address. Check the '
-           'address is your Jackett server, then enter the API key again and press Sync again.')
+REFUSAL = ('Check the Jackett URL is right, then copy the API key from your Jackett dashboard, '
+           'paste it above and press Sync. This is needed once after this update, or after the URL changes.')
+KEY_REJECTED = 'Jackett did not accept the API key. Copy it again from your Jackett dashboard.'
 REQUIRED = 'Jackett URL and API key are required'
 INDEXERS_XML = ('<indexers><indexer id="alpha" configured="true"><title>Alpha</title></indexer>'
                 '</indexers>')
@@ -129,14 +130,22 @@ ROUTE_OF = {'jackettTest': 'torrentpotato.jackett_test', 'jackettSync': 'torrent
 
 
 class Reply:
-    """What the HTTP session hands back: enough of a ``requests.Response`` for ``HttpClient``."""
-    status_code = 200
+    """What the HTTP session hands back: enough of a ``requests.Response`` for ``HttpClient``.
 
-    def __init__(self, body):
+    A status other than 200 raises, as ``requests`` does, an ``HTTPError`` whose own text carries the
+    request URL (which carries the key): code that reports a failure must never use that text.
+    """
+
+    def __init__(self, body, status_code=200, url=''):
         self.content = body.encode('utf-8')
+        self.status_code = status_code
+        self.url = url
 
     def raise_for_status(self):
-        return None
+        if self.status_code >= 400:
+            import requests
+            raise requests.exceptions.HTTPError(
+                f'{self.status_code} Client Error: for url: {self.url}', response=self)
 
 
 class Transport:
@@ -146,13 +155,14 @@ class Transport:
     process would have put on the wire.
     """
 
-    def __init__(self, body=INDEXERS_XML):
+    def __init__(self, body=INDEXERS_XML, status=200):
         self.requests = []
         self.body = body
+        self.status = status
 
     def request(self, method, url, **kwargs):
         self.requests.append(url)
-        return Reply(self.body)
+        return Reply(self.body, self.status, url)
 
 
 @contextlib.contextmanager
