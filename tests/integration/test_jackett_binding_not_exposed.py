@@ -234,3 +234,24 @@ class TestTheDeclaration:
 
         assert BINDING_OPTION not in settings.combine_groups()[SECTION]
         assert not settings.is_combine_option(SECTION, BINDING_OPTION)
+
+
+class TestTheBindingStateIsNotAReadField:
+    """AC-ARCH-8: the settings read carries no field that reports the binding's state.
+
+    The refusal reaches the user through the provider's own routes. If the read gained a key for
+    it (a "bound" flag, an address, a match result), a holder of the API key could learn which
+    address a key is bound to, and the page would be reading state the spec keeps server-side.
+    """
+
+    def test_the_keys_of_the_read_are_exactly_options_values_and_combine_state(self, world):
+        settings, client = world
+        # A binding is stored and the address has since moved, so a read that reported
+        # binding state would have something to report.
+        client.post(url(route=ROUTE), data={'section': SECTION, 'name': URL_OPTION, 'value': ADDRESS_B})
+        assert held(settings, BINDING_OPTION) == ADDRESS_A
+
+        payload = client.get(url(route='settings')).json()
+
+        assert set(payload) == {'options', 'values', 'combine_state'}
+        assert set(settings.view()) == {'options', 'values', 'combine_state'}

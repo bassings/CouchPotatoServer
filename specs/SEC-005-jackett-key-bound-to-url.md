@@ -244,6 +244,10 @@ owner decisions.
    a combined save: that user gets the refusal and recovers by entering the key
    again. Both orders are pinned by a test. The wizard saves in order instead,
    and the Settings Sync button sends its own section's pending saves before it acts (C1).
+   Revisit if the Settings page gains one save for both fields (then the order
+   stops mattering and the refusal after a key-first entry goes away) [added at
+   P4, 2026-11-23, because AC-PROD-4 asks for what would have to be true to
+   revisit and nothing recorded it].
    AC-PROD-4, AC-QA-11, AC-SIMP-7, AC-ARCH-9, AC-QA-19.
 2. **Every use of the saved key.** The saved key is read in exactly one
    function, which does the check, and `jackett_test` and `jackett_sync` both
@@ -708,6 +712,25 @@ reader must check that.
 - The `_internal_meta` prerequisite is outside the slices (it lands on `master`
   first); AC-SEC-15 proves it for the binding in P1.
 
+**P4 outcome (2026-11-23).** Built on `master` at `b4096cbbf`, with P1, C1, P2 and
+P3 merged (#617, #618, #622, #623, #625, #626). Measured against the six SEC-005
+PRs only: the raw diff from `1aff3db45` (the parent of #617) to the tip also
+carries unrelated merges (dependency bumps, CI, the analyser table), which are
+not this change's. **AC-SIMP-11 is NOT MET.** The change touches ten files
+outside `tests/`, not eight: the eight the criterion lists (counting this
+slice's `docs/reference/API.md`), plus `couchpotato/core/http_client.py` (five
+lines, owner decision of 2026-11-22 on gap (q), written after AC-SIMP-11) and
+`docs/development-process.md` (five lines naming the seeded soak test of
+`tests/unit/ui/settings-save-model.spec.ts`, P3 review round 3). Neither was
+bent to fit and the criterion was not changed; it is recorded as gap (t) for the
+owner. Every other P4 criterion was measured and is met; the one test the slice
+needed (AC-ARCH-8, `TestTheBindingStateIsNotAReadField` in
+`tests/integration/test_jackett_binding_not_exposed.py`) was added and proven by
+a mutation. AC-PROD-4's revisit condition was missing and is now in Question 1.
+Gap 3 in `docs/technical-debt.md` is NOT closed: the rollback is taken only for
+an option that has a value hook, not for every option (AC-DATA-1's own
+condition), so item 3 is narrowed and left open.
+
 ---
 
 ## Spec gaps found at review
@@ -736,3 +759,4 @@ text was changed; each is a gap a planning lens could have caught.
 | (q) What D9 rests on, and what repeated mistyping does | Neither D9 trigger (HTTP 401; an `<error code="100">` reply) was observed against a real Jackett: both come from Jackett's documented behaviour as recalled by reviewers. The fake Jackett answers a wrong key with the `<error code="100">` document at HTTP 200. **A 401 used to count towards the HTTP client's per-host failure count (measured before the fix):** for a non-local host (any host name, including a Docker service name such as `jackett`, and any public address; loopback and RFC 1918 addresses are exempt) the sixth failed request disables the host for 15 minutes, and from the seventh attempt Sync answers "No response from Jackett" with no request made. The disabled host key is `host:port`, so searches through the same Jackett address are also refused for those 15 minutes. **Owner decision, 2026-11-22: a rejected key (HTTP 401) must stop counting towards that cut-off. Fixed, in its own small PR after this branch: a 401 no longer counts towards the per-host cut-off for every caller, neither adding to the count nor clearing it, and 403, 429, 5xx and connection errors are unchanged.** Also, an HTTP 401 that is not Jackett's (for example basic authentication on a reverse proxy in front of it) is reported as the key being rejected, which is untrue and which re-copying the key does not fix; accepted with D9 and recorded. | operability, qa | AC-PROD-13, AC-QA-24 |
 | (r) D8 text against its clauses | **Accepted by the owner, 2026-11-22: the D8 text stays exactly as it is.** Two clauses of AC-DESIGN-5 are only partly satisfied by it: (1) "says nothing untrue for either cause": "needed once after this update, or after the URL changes" is untrue for a key that is unbound for another reason (a restored older `config.ini`, or the wizard run with the key left blank, which clears the saved key); (2) for an API caller of `jackett_test`, "paste it above and press Sync" refers to a page the caller is not on (the spec already returned the same string to API callers; no page calls `jackett_test`). The wizard's button is labelled "Sync Trackers from Jackett", so "press Sync" is a short form there. | product | AC-DESIGN-5 |
 | (s) The order a press saves in | "In the order typed" in AC-PROD-12 is the order each value FIRST became unsaved: a retyped value keeps its place. Example: the key is refused and stays unsaved, then the address is typed, then the key is retyped; the press sends the key first (the server binds it to the old address), then the address, and the Sync that follows is refused with the D8 text, so nothing goes to the wrong place. Moving a retyped value to the end is a two-line change and was NOT made: it would make the order the true typing order but would put a corrected address behind a key typed after the first attempt (the common recovery), which is worse. Pinned by a unit case. Found at P3 review round 2. | qa, security | AC-PROD-12 |
+| (t) The file budget | AC-SIMP-11 says at most 8 files outside `tests/`. The change touches ten (P4 outcome): `couchpotato/core/http_client.py` was added by the owner's 2026-11-22 decision that a 401 stops counting towards the per-host cut-off (gap (q)), and `docs/development-process.md` by the soak-test note of P3 review round 3. Both are small, both predate P4, and neither is a new file under `couchpotato/` (AC-SIMP-4 holds). The criterion was written before either and was not amended. **Owner decision pending:** amend AC-SIMP-11 to ten, or accept the overrun as recorded. | simplicity | AC-SIMP-11 |

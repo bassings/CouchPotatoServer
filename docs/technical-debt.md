@@ -611,7 +611,9 @@ the old test stays green, the new one fails.
   2. The automation readers drop empty cells before pairing, so an empty cell
      shifts the rows after it (owner decision D6).
   3. A failed per-column save of a non-combine option stays in memory until the
-     next save writes it out.
+     next save writes it out. Narrowed, not closed, by SEC-005: an option that
+     has a value hook (the Jackett key, which sets its binding) is now put back
+     in memory when its save fails; every other option is as described.
   4. A save built from a stale read (a second tab or a Jackett sync landing
      between a page's read and its group save) overwrites the newer rows
      wholesale. It cannot mispair, because each group save comes from one
@@ -619,10 +621,8 @@ the old test stays green, the new one fails.
      `save_group`). The setup wizard re-reads before saving (AC-DATA-23), so
      for it only the window between that re-read and its save remains.
   Three Jackett items:
-  5. The saved Jackett key is not bound to the saved URL: `settings.save` can
-     change `jackett_url` alone, after which a parameterless `jackett_test` or
-     `jackett_sync` sends the saved key there. The same on master; it needs the
-     API key.
+  5. Closed by SEC-005: the saved key is only sent to the address it was saved for. The readable copy in synced rows is the separate open item "Credentials in combined rows are returned unmasked by the settings read".
+     Exception, open: with an outbound proxy configured and a plain-http Jackett address, the request, key included, goes through the proxy (SEC-005 gap (j)).
   6. A redirect from the saved Jackett forwards the key, because it travels in
      the query string.
   7. A merge sync does not update the `pass_key` of indexers already stored
@@ -673,8 +673,9 @@ the old test stays green, the new one fails.
   Jackett sync `torrentpotato.pass_key` holds the Jackett API key, copied into
   every synced row, so the one key that `torrentpotato.jackett_api_key` masks
   is readable beside it; `newznab.api_key` holds every Newznab indexer key. A
-  holder of the CouchPotato API key can read all of them in one request. It
-  is not fixed by SEC-005: owner decision D3 (2026-11-21) narrowed that spec to
+  holder of the CouchPotato API key can read all of them in one request, so
+  once a sync has run SEC-005 does not protect the Jackett key from that
+  holder. It is not fixed by SEC-005: owner decision D3 (2026-11-21) narrowed that spec to
   stopping a settings change from redirecting the saved Jackett key, and
   queued this as the NEXT spec, which is why it is recorded here. The fix
   needs masking on read together with a `settings.save_group` that never writes
@@ -685,7 +686,8 @@ the old test stays green, the new one fails.
   refused, and a per-column save of `host` is refused), so there is no second
   redirect path through the rows. The same measurement is the warning: a masked
   read plus today's `save_group` would destroy stored keys, because the mask
-  would be written back over them. Revisit when SEC-005 has landed.
+  would be written back over them. Condition for revisiting: SEC-005 has now
+  landed (P1 to P4), so this is the next spec.
 - **A removed Settings row waits 8 seconds before it is saved (2026-11-18).**
   Owner decision: removing a row from a combined field shows "Row N removed."
   with an Undo button, and the group save that carries the removal is delayed
