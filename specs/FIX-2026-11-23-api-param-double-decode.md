@@ -56,7 +56,8 @@ every other route and add a branch naming routes to shared plumbing.
    `directory.list?path=%2Ftmp%2Fa%20b` is handled as `/tmp/a b`.
    Example: a real folder named `a%41b` (or `p%25w`) holding a child folder is
    listed by `directory.list` when its name is sent encoded once (`a%2541b`);
-   before the fix that listed nothing, because the name was decoded to `aAb`.
+   before the fix the route replied `Unable to list directory`, because the
+   name was decoded to `aAb`.
 4. **AC-4 (unchanged behaviour).** Bracket-key nesting, natural key ordering,
    `dictToList`, the flat `true` / `false` coercion and the pass-through of
    non-string values behave as before; the existing tests for them pass
