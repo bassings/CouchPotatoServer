@@ -1868,7 +1868,7 @@ describe('a button in a section with a combine group: the rows are locked from t
         await failing;
         expect(panel.message).toBe('Failed to save Jackett API Key: network down');
         await panel.saveSingle('torrentpotato', 'seed_ratio', '2');
-        expect(panel.optionLabel('torrentpotato', 'seed_ratio')).toBe('seed ratio');
+        expect(panel.optionLabel('torrentpotato', 'seed_ratio')).toBe('seed_ratio');
       });
 
       it('sends the action exactly once, after the save, when the save lands', async () => {

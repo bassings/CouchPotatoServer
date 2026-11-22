@@ -1165,14 +1165,14 @@ function settingsPanel() {
     },
 
     /** What the user calls an option: its label, as the field shows it (a screen reader reads a raw
-     *  key such as `jackett_api_key` letter by letter), else its name with the underscores taken out. */
+     *  key such as `jackett_api_key` letter by letter), else the option's name as it is. */
     optionLabel(section, name) {
       for (const group of ((this.options[section] || {}).groups || [])) {
         for (const option of (group.options || [])) {
           if (option.name === name && option.label) return option.label;
         }
       }
-      return String(name).replace(/_/g, ' ');
+      return String(name);
     },
 
     async readSavePayload(resp) {
