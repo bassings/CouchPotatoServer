@@ -642,8 +642,13 @@ the old test stays green, the new one fails.
      fixed.
   11. After the SEC-005 guard (P2), a Settings press that follows a refused
      address save but a successful key save binds the key to the address the
-     server still holds, and Sync goes there (spec gap (b)). Owner decision
-     pending on a Settings follow-up. Found at the P2 review, 2026-11-22.
+     server still holds, and Sync goes there (spec gap (b)). Found at the P2
+     review, 2026-11-22. Closed for the Sync of the same press by owner
+     decision D7 (SEC-005 P3, 2026-11-22): a Settings button no longer sends
+     its action when a single-option save of its own section, pending or in
+     flight at the press, was refused, failed or unanswered at the end of its
+     wait. Not closed: a save refused before the press, and no longer pending
+     or in flight, does not block a later press.
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
