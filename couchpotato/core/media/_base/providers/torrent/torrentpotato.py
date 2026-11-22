@@ -35,10 +35,20 @@ _UNSAFE_ADDRESS = re.compile(
     r'[\x00-\x20\x7f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\\?#]')
 
 # What a Jackett route answers, as the API `error`, when the saved key may not be
-# used with the saved address (AC-DESIGN-5). It carries no address and no key.
-KEY_REFUSAL_TEXT = ('The saved Jackett API key cannot be used with this Jackett address. '
-                    'Check the address is your Jackett server, then enter the API key again '
-                    'and press Sync again.')
+# used with the saved address (AC-DESIGN-5, reworded by owner decision D8). It
+# carries no address and no key.
+KEY_REFUSAL_TEXT = ('Check the Jackett URL is right, then copy the API key from your Jackett '
+                    'dashboard, paste it above and press Sync. This is needed once after this '
+                    'update, or after the URL changes.')
+
+# What a Jackett route answers when Jackett itself did not accept the key (owner
+# decision D9): an HTTP 401, or an `<error code="100">` reply. Fixed text.
+KEY_REJECTED_TEXT = ('Jackett did not accept the API key. Copy it again from your Jackett '
+                     'dashboard.')
+REPLY_ERROR_TEXT = 'Jackett returned an error response'
+# The `code` Jackett puts on an `<error>` for an invalid API key. The only thing
+# read from an error reply, compared as a string and never returned or logged.
+INVALID_KEY_ERROR_CODE = '100'
 
 ROUTE_SYNC = 'torrentpotato.jackett_sync'
 ROUTE_TEST = 'torrentpotato.jackett_test'
@@ -332,11 +342,13 @@ class Base(TorrentProvider):
             # itself and then every descendant, so an `<error>` is found whether
             # it is the whole reply or nested in one; `find('.//error')` searched
             # descendants only, and a reply whose root was `<error>` read as
-            # success with no indexers. Nothing from the reply's `code` or
-            # `description` is returned or logged: the text below is fixed.
-            if next(root.iter('error'), None) is not None:
+            # success with no indexers. Nothing from the reply is returned or
+            # logged: the texts are fixed, and only `code` is read (see
+            # `_reply_error_text`).
+            reply_error = self._reply_error_text(root)
+            if reply_error:
                 log.error('Jackett returned an error response')
-                return None, 'Jackett returned an error response'
+                return None, reply_error
 
             indexers = []
             skipped_tv_only = []
@@ -383,7 +395,32 @@ class Base(TorrentProvider):
             return None, 'Failed to parse Jackett response XML'
         except Exception as e:
             log.error('Failed to fetch Jackett indexers: %s', type(e).__name__)
-            return None, f'Failed to connect to Jackett: {type(e).__name__}'
+            return None, self._connection_failure_text(e)
+
+    @staticmethod
+    def _reply_error_text(root):
+        """The text for an `<error>` anywhere in a Jackett reply, or None when there is none.
+
+        An error with the invalid-key code is the key being rejected (D9); any other error, with
+        any or no code, is the generic one. Only the `code` attribute is read.
+        """
+        errors = list(root.iter('error'))
+        if not errors:
+            return None
+        if any(error.get('code') == INVALID_KEY_ERROR_CODE for error in errors):
+            return KEY_REJECTED_TEXT
+        return REPLY_ERROR_TEXT
+
+    @staticmethod
+    def _connection_failure_text(error):
+        """The text for a request to Jackett that raised: the key being rejected (an HTTP 401, D9) or not.
+
+        Only the status code is read. The exception's own text carries the request URL, which
+        carries the key, so it is never used.
+        """
+        if getattr(getattr(error, 'response', None), 'status_code', None) == 401:
+            return KEY_REJECTED_TEXT
+        return f'Failed to connect to Jackett: {type(error).__name__}'
 
     def bind_saved_key(self, value):
         """Value hook for a save of `jackett_api_key`: bind the key to the saved address.

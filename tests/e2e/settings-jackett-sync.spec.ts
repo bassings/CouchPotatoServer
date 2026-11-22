@@ -12,8 +12,11 @@ import { SETTINGS_PERSISTENCE_ANNOTATION } from './settings_persistence';
  * Every Jackett address used is either a `.invalid` name or the loopback address with no listener
  * (`http://127.0.0.1:9`): a Sync that is not refused answers "Failed to connect to Jackett" and
  * nothing leaves the machine. The guard's refusal is the other answer, so the two are told apart. The sync route is NOT stubbed in any test of this
- * file, and the debounce is on the fake clock, so a value typed in the page can only reach the
- * server through the flush the button makes, never through the page's own 500 ms timer.
+ * file. The page clock is installed but NOT held (it keeps real time), so what stops a typed value
+ * reaching the server by the page's own 500 ms timer is only that the test presses Sync straight
+ * after typing: the field commits on blur when the button is clicked, and the press sends it. If the
+ * timer ever won, the value would simply be saved earlier and the press would find it saved; the order
+ * assertions below hold either way.
  *
  * The values are placeholders, not credentials.
  */
@@ -22,8 +25,8 @@ const LOOPBACK_URL = 'http://127.0.0.1:9';
 const KEY_ONE = 'placeholder-key-one';
 const KEY_TWO = 'placeholder-key-two';
 const CONNECT_FAILURE = /Failed to connect to Jackett/;
-const REFUSAL = 'The saved Jackett API key cannot be used with this Jackett address. Check the '
-  + 'address is your Jackett server, then enter the API key again and press Sync again.';
+const REFUSAL = 'Check the Jackett URL is right, then copy the API key from your Jackett dashboard, '
+  + 'paste it above and press Sync. This is needed once after this update, or after the URL changes.';
 const SYNC_ROUTE = 'torrentpotato.jackett_sync';
 const SECTION = 'torrentpotato';
 const SAVE_URL = 'save:jackett_url';
@@ -103,7 +106,7 @@ test.describe('Settings: Sync sends its own section\'s typed values first (SEC-0
     const card = await openTorrentCard(page);
     const steps = watchOrder(page);
 
-    // The fake clock stops the page's own debounce, so only the button's flush can send these.
+    // Typed and pressed straight away: the press sends the value (the clock is installed, not held).
     await urlField(card).fill(LOOPBACK_URL);
     const first = await pressSync(page, card);
 

@@ -126,6 +126,23 @@ const REMOVAL_UNDO_WINDOW_MS = 8000;
  *  is not aborted: it may still succeed on the server. */
 const SAVE_WAIT_DEADLINE_MS = 10000;
 
+/** How a single-option save ended (SEC-005 D7): what `sendSingleSave` resolves to, and what
+ *  a section's chain link resolves to once its wait is over. */
+const SAVE_LANDED = 'landed';
+const SAVE_REFUSED = 'refused';
+const SAVE_FAILED = 'failed';
+const SAVE_UNANSWERED = 'unanswered';
+
+/** The result region's text when a button did not run because a value of its own section is not
+ *  saved (SEC-005 AC-PROD-12). Fixed apart from the button's own label (shown as text by x-text);
+ *  no address, key or value goes into it. */
+const ACTION_NOT_RUN_TEXT = {
+  refused: (label) => label + ' did not run because a change above did not save. Fix it if needed, then press '
+    + label + ' to save and run again.',
+  unanswered: (label) => label + ' did not run: your changes have not finished saving. '
+    + 'If this happens again, check CouchPotato is still running.',
+};
+
 /* ── Settings panel (main) ── */
 function settingsPanel() {
   return {
@@ -154,6 +171,15 @@ function settingsPanel() {
     saveTimers: {},
     pendingSaves: {},
     saveChains: {},
+    // section -> the links of its single-option saves that have not settled (see saveSingle),
+    // which is what a button asks "did my section's saves land" of (SEC-005 D7).
+    openSaves: {},
+    // key -> {section, name} for every value typed and not yet accepted by the server. `dirty` holds the
+    // values; this says which section and option a key is (a section name could hold a dot), so a button
+    // can find its own section's unsaved values (SEC-005 D7). Cleared with `dirty`, in applyAcceptedSave.
+    dirtyOpts: {},
+    // key -> the number of the newest save queued for it, so a landing save can tell whether a newer one is behind it.
+    saveTickets: {},
     // Combine groups (SEC-004 P3). `combineState` is what the settings read says
     // about each group (`misaligned`, `rows`); the page never derives either.
     // `groupState` holds each group's rows, refusal and in-flight save at PANEL
@@ -502,6 +528,10 @@ function settingsPanel() {
 
     setVal(section, name, value) {
       this.dirty[section + '.' + name] = value;
+      // NOT moved to the end when retyped: a value keeps the place it first became unsaved. A press sends
+      // in that order (SEC-005 D7, spec gap (s)); re-ordering by last typing would put a corrected address
+      // behind a key typed after the first attempt, which is the worse of the two.
+      this.dirtyOpts[section + '.' + name] = { section, name };
       this.debounceSave(section, name, value);
     },
 
@@ -539,6 +569,9 @@ function settingsPanel() {
           }
           return this.saveSingle(s.section, s.name, s.value);
         }),
+        // A save whose request had already left is no longer in `pendingSaves`, so it
+        // is awaited through the section chains (the same bounded wait as the button's).
+        ...Object.values(this.saveChains),
         // A combine group is one pending save keyed by the group, not one per
         // column (SEC-004 AC-ARCH-8), so nothing awaiting this can run ahead
         // of an unsaved group.
@@ -546,44 +579,80 @@ function settingsPanel() {
       ]);
     },
 
+    /** The single-option saves of `section` that have been SENT and not settled, as the chain's links.
+     *  Taken synchronously by a button, before its first await (SEC-005 D7): a save answered while the
+     *  button waits on something else is still part of the press. */
+    openSavesOf(section) {
+      return [...(this.openSaves[section] || [])];
+    },
+
+    /** Every single-option value of `section` the page holds as unsaved, in the order each first became
+     *  unsaved: those accepted by no save yet (`dirty`, which a refused or failed value stays in, and which
+     *  includes a value still on its debounce timer: `setVal` writes `dirty` before it schedules the save).
+     *  A combine row is not one (it is a group, saved as rows). */
+    unsavedOf(section) {
+      return Object.entries(this.dirtyOpts)
+        .filter(([key, meta]) => meta.section === section && key in this.dirty)
+        .map(([key, meta]) => ({ key, name: meta.name, value: this.dirty[key] }));
+    },
+
+    /** Whether a button in `section` has anything to wait for: an unsaved single value, a save in
+     *  flight, or a group with rows not yet saved. */
+    hasUnsavedFor(section) {
+      const group = this.groupState[section];
+      return this.unsavedOf(section).length > 0 || (this.openSaves[section] || new Set()).size > 0
+        || !!(group && (group.timer || group.saving || group.dirty));
+    },
+
     /**
-     * Run the debounced single-option saves of ONE section NOW, one at a time in
-     * the order they were typed, and wait for them (SEC-005 C1).
+     * Save EVERY unsaved single-option value of ONE section NOW, one at a time in the order typed,
+     * wait for them, and say whether they all landed (SEC-005 C1, D7).
      *
-     * For a button that acts on the saved settings of its own section: a Sync
-     * pressed straight after the Jackett address or key is typed goes out after
-     * those saves, and after a save of the section already in flight, not before
-     * them. That wait is bounded: a save sent and not answered for
-     * SAVE_WAIT_DEADLINE_MS stops being waited for, so the saves behind it, and
-     * the action, then go out ahead of it (see saveSingle). Only this section's saves are sent. A
-     * combine group in another section keeps its 8-second Undo window (a panel
-     * wide flush would commit a removed row at once), and a section's own
-     * combine group is flushed by `flushGroupFor`. In order, not together, so
-     * the address typed first is stored before the key typed second, which is the
-     * order the key is bound in.
+     * For a button that acts on the saved settings of its own section: a Sync pressed straight after
+     * the Jackett address or key is typed goes out after those saves, and after a save of the section
+     * already in flight, not before them. The values sent are the pending ones AND every value the
+     * server has not accepted (a refused or failed value stays dirty), so a second press really tries
+     * again, and a refusal from before the press blocks the action until the value saves. A value
+     * already in flight is awaited, not sent twice. If a save does not land (refused, failed, or
+     * unanswered at its wait) the values behind it are NOT sent: a key must not be saved on top of an
+     * address that was not, or it would be bound to the old address. They stay unsaved for the next
+     * press. Only this section's values are sent. A combine group in another section keeps its
+     * 8-second Undo window (a panel wide flush would commit a removed row at once), and a section's
+     * own combine group is flushed by `flushGroupFor`.
      *
-     * Safe to call when nothing is pending: it resolves immediately.
+     * `captured` is the section's open saves as they stood when the button was pressed (see
+     * `openSavesOf`); each is awaited and counts.
+     *
+     * Resolves to 'landed' when every one landed (or there was nothing), 'refused' when one was
+     * refused or failed (a refusal is certain, so it wins), 'unanswered' when one was still
+     * unanswered when its wait ended. Never rejects.
      */
-    async flushPendingSavesFor(section) {
-      const pending = Object.entries(this.pendingSaves).filter(([, save]) => save.section === section);
-      for (const [key] of pending) {
-        if (this.saveTimers[key]) {
-          clearTimeout(this.saveTimers[key]);
-          delete this.saveTimers[key];
+    async flushPendingSavesFor(section, captured = this.openSavesOf(section)) {
+      const entries = this.unsavedOf(section);
+      const inFlight = this.openSavesOf(section);
+      // A value is already covered only when the LAST save of that option in flight or queued carries it:
+      // A in flight, B queued behind it, then A typed again must send A again, after B.
+      const lastOf = (key) => inFlight.filter((link) => link.saveKey === key).pop();
+      const toSend = entries.filter((entry) => {
+        const last = lastOf(entry.key);
+        return !(last && String(last.saveValue) === String(entry.value));
+      });
+      for (const entry of entries) {
+        if (this.saveTimers[entry.key]) {
+          clearTimeout(this.saveTimers[entry.key]);
+          delete this.saveTimers[entry.key];
         }
-        delete this.pendingSaves[key];
+        delete this.pendingSaves[entry.key];
       }
-      // Every save of a section joins one chain (see saveSingle), so these are sent
-      // in the order typed, one at a time, each after the save before it has been
-      // answered or has had its wait deadline. What is awaited here are the chain's
-      // links, which never reject and are bounded, so neither a refused save nor a
-      // request that never answers holds the button for ever (worst case, one
-      // deadline per save queued ahead). After a deadline a later save CAN be sent
-      // ahead of an earlier one that has not been answered.
-      await Promise.all([
-        ...pending.map(([, save]) => this.saveSingle(save.section, save.name, save.value)),
-        this.saveChains[section],
-      ]);
+      // Saves of the section already sent are ahead of these in the chain; if one of them did not
+      // land, these are not sent (see above).
+      const batch = { cause: null, ahead: [...new Set([...captured, ...inFlight])] };
+      const sent = toSend.map((entry) => this.saveSingle(section, entry.name, entry.value, batch));
+      const outcomes = await Promise.all([...batch.ahead, ...sent]);
+      if (outcomes.some((outcome) => outcome === SAVE_REFUSED || outcome === SAVE_FAILED)) return 'refused';
+      // A save that was not sent resolves to the outcome that stopped its batch (see `sendInTurn`), so a
+      // press whose saves were all held back still reads as what really went wrong, never as landed.
+      return outcomes.includes(SAVE_UNANSWERED) ? 'unanswered' : 'landed';
     },
 
     /* ── Combine groups: one save per group, as rows (SEC-004) ──────────────
@@ -1009,31 +1078,62 @@ function settingsPanel() {
      * the address from before the edit. The chain is dropped once its last link has
      * settled.
      */
-    saveSingle(section, name, value) {
+    saveSingle(section, name, value, batch) {
       delete this.pendingSaves[section + '.' + name];
+      const key = section + '.' + name;
+      const ticket = (this.saveTickets[key] = (this.saveTickets[key] || 0) + 1);
       const link = (this.saveChains[section] || Promise.resolve())
-        .then(() => this.settledOrDeadline(this.sendSingleSave(section, name, value)));
+        .then(() => this.sendInTurn(section, name, value, batch, ticket));
+      link.saveKey = section + '.' + name;
+      link.saveValue = value;
       this.saveChains[section] = link;
-      link.then(() => {
-        if (this.saveChains[section] === link) delete this.saveChains[section];
-      });
+      this.trackOpenSave(section, link);
       return link;
     },
 
-    /** Resolves when `sent` (a request that has just been sent) settles, or after
-     *  SAVE_WAIT_DEADLINE_MS from now, whichever is first. Never rejects. */
-    settledOrDeadline(sent) {
-      return new Promise((resolve) => {
-        const timer = setTimeout(resolve, SAVE_WAIT_DEADLINE_MS);
-        const done = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-        sent.then(done, done);
+    /** One link of a section's chain, run when the save ahead has settled: sends the save and resolves
+     *  to how it ended. A button's batch stops at the first value that did not land, ahead of it or in
+     *  it: its later saves are not sent and resolve to the outcome that stopped it (`batch.cause`), which
+     *  is what the press then reports. */
+    async sendInTurn(section, name, value, batch, ticket) {
+      if (batch) {
+        const ahead = await Promise.all(batch.ahead);
+        batch.cause = batch.cause || ahead.find((outcome) => outcome !== SAVE_LANDED) || null;
+        if (batch.cause) return batch.cause;
+      }
+      const outcome = await this.settledOrDeadline(this.sendSingleSave(section, name, value, ticket));
+      if (batch && outcome !== SAVE_LANDED) batch.cause = outcome;
+      return outcome;
+    },
+
+    /** Remember a chain link as open until it settles; the chain and the open set are dropped with the last. */
+    trackOpenSave(section, link) {
+      (this.openSaves[section] = this.openSaves[section] || new Set()).add(link);
+      link.then(() => {
+        if (this.saveChains[section] === link) delete this.saveChains[section];
+        this.openSaves[section].delete(link);
+        if (this.openSaves[section].size === 0) delete this.openSaves[section];
       });
     },
 
-    async sendSingleSave(section, name, value) {
+    /** Resolves to how `sent` (a request that has just been sent) ended, or to
+     *  SAVE_UNANSWERED after SAVE_WAIT_DEADLINE_MS from now, whichever is first.
+     *  Never rejects. */
+    settledOrDeadline(sent) {
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(SAVE_UNANSWERED), SAVE_WAIT_DEADLINE_MS);
+        const done = (outcome) => {
+          clearTimeout(timer);
+          resolve(outcome);
+        };
+        sent.then(done, () => done(SAVE_FAILED));
+      });
+    },
+
+    /** Sends one save. Resolves to SAVE_LANDED, SAVE_REFUSED (the server said no, in
+     *  any form) or SAVE_FAILED (the request itself failed); callers that ignore it
+     *  behave as before. */
+    async sendSingleSave(section, name, value, ticket) {
       this.saving = true;
       this.lastSaved = false;
       try {
@@ -1064,16 +1164,30 @@ function settingsPanel() {
         const payload = await this.readSavePayload(resp);
         if (!resp.ok || (payload && payload.success === false)) {
           const detail = (payload && payload.error) ? payload.error : ('HTTP ' + resp.status);
-          this.toast('Could not save ' + name + ': ' + detail, 'error');
+          this.toast('Could not save ' + this.optionLabel(section, name) + ': ' + detail, 'error');
           this.saving = false;
-          return;   // leave the value dirty and unchanged: it did NOT save
+          return SAVE_REFUSED;   // leave the value dirty and unchanged: it did NOT save
         }
 
-        this.applyAcceptedSave(section, name, payload);
+        this.applyAcceptedSave(section, name, payload, { ticket, value });
       } catch (e) {
-        this.toast('Failed to save: ' + e.message, 'error');
+        this.toast('Failed to save ' + this.optionLabel(section, name) + ': ' + e.message, 'error');
+        this.saving = false;
+        return SAVE_FAILED;
       }
       this.saving = false;
+      return SAVE_LANDED;
+    },
+
+    /** What the user calls an option: its label, as the field shows it (a screen reader reads a raw
+     *  key such as `jackett_api_key` letter by letter), else the option's name as it is. */
+    optionLabel(section, name) {
+      for (const group of ((this.options[section] || {}).groups || [])) {
+        for (const option of (group.options || [])) {
+          if (option.name === name && option.label) return option.label;
+        }
+      }
+      return String(name);
     },
 
     async readSavePayload(resp) {
@@ -1084,7 +1198,17 @@ function settingsPanel() {
       }
     },
 
-    applyAcceptedSave(section, name, payload) {
+    /** Whether the value that has just been accepted is still the page's latest for that option: no newer
+     *  save is queued behind it and the page holds no different value typed since. Only then is the option
+     *  no longer unsaved; otherwise an earlier A landing would hide that B, and the final A, are outstanding.
+     *  Called with no `landed` (a direct call) it is always true. */
+    stillLatest(key, landed) {
+      if (!landed) return true;
+      if (landed.ticket !== undefined && landed.ticket !== this.saveTickets[key]) return false;
+      return !(key in this.dirty) || String(this.dirty[key]) === String(landed.value);
+    },
+
+    applyAcceptedSave(section, name, payload, landed) {
       // Store what the SERVER stored, not what we submitted.
       //
       // A save hook may rewrite the value: `Core.guardAuthRequired` turns a
@@ -1116,7 +1240,10 @@ function settingsPanel() {
         if (!this.values[section]) this.values[section] = {};
         this.values[section][name] = payload.value;
       }
-      delete this.dirty[section + '.' + name];
+      if (this.stillLatest(section + '.' + name, landed)) {
+        delete this.dirty[section + '.' + name];
+        delete this.dirtyOpts[section + '.' + name];
+      }
 
       // Say so when the server did not take what was asked for. Silently
       // showing a different value than the one just typed is how the operator
@@ -1330,6 +1457,8 @@ function settingsPanel() {
 function buttonField(section, opt) {
   return {
     running: false,
+    // True while the press waits on saves, before the action itself is sent (the button says Saving…).
+    waitingOnSaves: false,
     result: '',
     success: false,
     section,
@@ -1350,6 +1479,10 @@ function buttonField(section, opt) {
       this.result = '';
       // Locked before the first await. False when the section has no combine group.
       const locked = !!panel && panel.lockGroup(this.section);
+      // The section's saves in flight, taken now and before the first await (SEC-005 D7): a save
+      // answered while the group flush below is awaited is still part of this press.
+      const captured = panel ? panel.openSavesOf(this.section) : [];
+      this.waitingOnSaves = !!panel && panel.hasUnsavedFor(this.section);
       // Whether the server may have written, for the lock's end: set before the
       // request is sent, so a throw or a non-JSON answer re-reads.
       let mayHaveWritten = false;
@@ -1361,7 +1494,19 @@ function buttonField(section, opt) {
         }
         // What the user has just typed in THIS section is saved before the action
         // reads it, and nothing in any other section is sent (SEC-005 C1).
-        if (panel) await panel.flushPendingSavesFor(this.section);
+        // A value of this section that did not save stops the press: the action would run on values
+        // the server does not hold (SEC-005 D7, AC-PROD-12). Every unsaved value of the section was
+        // sent again first, so a second press really tries again. Nothing is re-read: the fields keep
+        // what the user typed, for them to check.
+        if (panel) {
+          const verdict = await panel.flushPendingSavesFor(this.section, captured);
+          this.waitingOnSaves = false;
+          if (verdict !== 'landed') {
+            this.success = false;
+            this.result = ACTION_NOT_RUN_TEXT[verdict](this.opt.button_text || 'Execute');
+            return;
+          }
+        }
         // Set before the request is sent and never cleared by its answer: an action
         // that answered success false is re-read as well, so the fields show the
         // saved values (a refused Sync must not leave the page showing an address
@@ -1373,6 +1518,7 @@ function buttonField(section, opt) {
         this.result = 'Error: ' + e.message;
       } finally {
         // `running` is cleared even if ending the action throws.
+        this.waitingOnSaves = false;
         try {
           if (locked) await panel.endAction(this.section, mayHaveWritten);
         } finally {

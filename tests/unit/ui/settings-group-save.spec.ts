@@ -11,8 +11,6 @@
  *
  * Hosts are `.invalid` and every credential is a `placeholder-` string.
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -24,28 +22,22 @@ import {
   rowRemovedAnnouncement,
   rowRestoredAnnouncement,
 } from '../../../couchpotato/static/scripts/ui/settings-values.js';
-
-const TEMPLATE = path.resolve(__dirname, '../../../couchpotato/ui/templates/partials/settings/scripts.html');
+import { loadSettingsScript } from './settings-script';
 
 function loadComponents(): Record<string, (...args: any[]) => any> {
-  const html = fs.readFileSync(TEMPLATE, 'utf8');
-  const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-  return new Function(`${code}\nreturn { settingsPanel, combinedField, buttonField };`)();
+  const { settingsPanel, combinedField, buttonField } = loadSettingsScript();
+  return { settingsPanel, combinedField, buttonField };
 }
 
 /** The undo window of a removal, read from the page's own named constant (8 seconds, owner decision 2026-11-18). */
 function undoWindowMs(): number {
-  const html = fs.readFileSync(TEMPLATE, 'utf8');
-  const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-  return new Function(`${code}\nreturn REMOVAL_UNDO_WINDOW_MS;`)();
+  return loadSettingsScript().REMOVAL_UNDO_WINDOW_MS;
 }
 const UNDO_WINDOW = 8000;
 
 /** How long a later save of a section waits for an earlier, unanswered one, read from the page's own constant. */
 function saveWaitDeadlineMs(): number {
-  const html = fs.readFileSync(TEMPLATE, 'utf8');
-  const code = html.slice(html.indexOf('<script>') + '<script>'.length, html.lastIndexOf('</script>'));
-  return new Function(`${code}\nreturn SAVE_WAIT_DEADLINE_MS;`)();
+  return loadSettingsScript().SAVE_WAIT_DEADLINE_MS;
 }
 
 const NEWZNAB_COLUMNS = ['use', 'host', 'api_key', 'extra_score', 'custom_tag'];
@@ -987,7 +979,7 @@ describe('a button in a section with a combine group: the rows are locked from t
 
   function button(panel: any) {
     const { buttonField } = loadComponents();
-    const field = buttonField('torrentpotato', { button_action: 'torrentpotato.jackett_sync', name: 'jackett_sync' });
+    const field = buttonField('torrentpotato', { button_action: 'torrentpotato.jackett_sync', name: 'jackett_sync', button_text: 'Sync Indexers' });
     field.getPanel = () => panel;
     return field;
   }
@@ -1218,6 +1210,11 @@ describe('a button in a section with a combine group: the rows are locked from t
       .filter((call) => /settings\.save\//.test(call.url))
       .map((call) => Object.fromEntries(new URLSearchParams(String(call.init.body))));
 
+    // What the result region says when the button did not run (SEC-005 D7, AC-PROD-12).
+    const DID_NOT_SAVE = 'Sync Indexers did not run because a change above did not save. Fix it if needed, then press Sync Indexers to save and run again.';
+    const STILL_SAVING = 'Sync Indexers did not run: your changes have not finished saving. If this happens again, check CouchPotato is still running.';
+    const SYNCED_REPLY: Reply = { body: { success: true, message: 'Synced' } };
+
     it('sends the address and then the key, one at a time in the order typed, and only then the action', async () => {
       const net = installFetch();
       const first = deferred<Reply>();
@@ -1282,36 +1279,45 @@ describe('a button in a section with a combine group: the rows are locked from t
         expect(calls(net)).toEqual(['settings.save', 'torrentpotato.jackett_sync', 'settings']);
       });
 
-      it('still finishes, and sends the key and the action, when the address was refused', async () => {
+      // SEC-005 D7 and review round 1 (J) changed these: before them the button went on to the key and the
+      // action after a refused, failed or unanswered address. Now the values behind a save that did not land
+      // are not sent (a key must not be bound to the address that was not saved), and neither is the action.
+      it('still finishes, and sends neither the key nor the action, when the address was refused', async () => {
         const held = deferred<Reply>();
         const { net, panel } = await addressInFlight(held.promise);
+        const field = button(panel);
 
-        const running = button(panel).execute();
+        const running = field.execute();
         await vi.advanceTimersByTimeAsync(0);
         held.resolve({ status: 500, text: 'no' });
         await running;
 
-        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+        expect(calls(net)).toEqual(['settings.save']);
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url']);
+        expect(field.result).toBe(DID_NOT_SAVE);
       });
 
-      it('still finishes when the address request itself failed (the fetch rejects)', async () => {
+      it('still finishes, without the key or the action, when the address request itself failed (the fetch rejects)', async () => {
         const held = deferred<Reply>();
         const { net, panel } = await addressInFlight(held.promise);
+        const field = button(panel);
 
-        const running = button(panel).execute();
+        const running = field.execute();
         await vi.advanceTimersByTimeAsync(0);
         held.reject(new TypeError('network down'));
         await running;
 
-        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+        expect(calls(net)).toEqual(['settings.save']);
+        expect(field.result).toBe(DID_NOT_SAVE);
       });
 
-      it('sends the key and finishes once the wait deadline has passed, when the address is never answered', async () => {
+      it('finishes, without the key or the action, once the wait deadline has passed, when the address is never answered', async () => {
         const held = deferred<Reply>();
         const { net, panel } = await addressInFlight(held.promise);
+        const field = button(panel);
 
         let finished = false;
-        const running = button(panel).execute().then(() => { finished = true; });
+        const running = field.execute().then(() => { finished = true; });
         await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs() - 1);
 
         // Before the deadline nothing goes ahead of the unanswered address.
@@ -1320,12 +1326,13 @@ describe('a button in a section with a combine group: the rows are locked from t
         await vi.advanceTimersByTimeAsync(1);
         await running;
 
-        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_api_key']);
-        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url']);
+        expect(calls(net)).toEqual(['settings.save']);
+        expect(field.result).toBe(STILL_SAVING);
         held.resolve({ body: { success: true } });
       });
 
-      it('with no key waiting, the action goes out once the deadline has passed on an unanswered address', async () => {
+      it('with no key waiting, the action is not sent once the deadline has passed on an unanswered address', async () => {
         const net = installFetch();
         const held = deferred<Reply>();
         net.replies.push(held.promise, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
@@ -1333,11 +1340,13 @@ describe('a button in a section with a combine group: the rows are locked from t
         panel.setVal('torrentpotato', 'jackett_url', 'http://typed-jackett.invalid:9117');
         await vi.advanceTimersByTimeAsync(500);
 
-        const running = button(panel).execute();
+        const field = button(panel);
+        const running = field.execute();
         await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs());
         await running;
 
-        expect(calls(net)).toEqual(['settings.save', 'torrentpotato.jackett_sync', 'settings']);
+        expect(calls(net)).toEqual(['settings.save']);
+        expect(field.result).toBe(STILL_SAVING);
         held.resolve({ body: { success: true } });
       });
 
@@ -1381,29 +1390,27 @@ describe('a button in a section with a combine group: the rows are locked from t
         expect(saveWaitDeadlineMs()).toBe(10000);
       });
 
-      it('sends one save at a time behind a stalled one: at the deadline only the address goes, the key waits for it', async () => {
+      it('sends nothing behind a stalled save of the section: after its deadline neither the address, the key nor the action goes', async () => {
         const net = installFetch();
-        const address = deferred<Reply>();
-        net.replies.push(neverAnswered(), address.promise, { body: { success: true } }, { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
+        net.replies.push(neverAnswered(), { body: { success: true } }, { body: { success: true } }, SYNCED_REPLY, serverRows(HOSTS));
         const { panel } = torrentPanel();
         const sent = () => saved(net).map((body) => body.name);
         void panel.saveSingle('torrentpotato', 'seed_ratio', '2');
         panel.setVal('torrentpotato', 'jackett_url', 'http://typed-jackett.invalid:9117');
         panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
+        const field = button(panel);
 
-        const running = button(panel).execute();
+        const running = field.execute();
         await vi.advanceTimersByTimeAsync(5000);
         expect(sent()).toEqual(['seed_ratio']);
         await vi.advanceTimersByTimeAsync(5000);
-
-        // The stalled save has had its deadline: the address goes, and the key still waits for the address.
-        expect(sent()).toEqual(['seed_ratio', 'jackett_url']);
-        await vi.advanceTimersByTimeAsync(5000);
-        expect(sent()).toEqual(['seed_ratio', 'jackett_url']);
-        address.resolve({ body: { success: true } });
         await running;
-        expect(sent()).toEqual(['seed_ratio', 'jackett_url', 'jackett_api_key']);
-        expect(calls(net)).toEqual(['settings.save', 'settings.save', 'settings.save', 'torrentpotato.jackett_sync', 'settings']);
+
+        // The stalled save had its deadline and did not land: what is behind it is not sent, and stays unsaved.
+        expect(sent()).toEqual(['seed_ratio']);
+        expect(calls(net)).toEqual(['settings.save']);
+        expect(field.result).toBe(STILL_SAVING);
+        expect(Object.keys(panel.dirty).sort()).toEqual(['torrentpotato.jackett_api_key', 'torrentpotato.jackett_url']);
       });
 
       it('with several saves that never answer, one more goes out per deadline, not all together', async () => {
@@ -1421,19 +1428,21 @@ describe('a button in a section with a combine group: the rows are locked from t
         expect(sent()).toEqual(['one', 'two', 'three']);
       });
 
-      it('the button stops waiting on its own save that never answers, so it finishes at the deadline', async () => {
+      it('the button stops waiting on its own save that never answers, so it finishes at the deadline, without the action', async () => {
         const net = installFetch();
         net.replies.push(neverAnswered(), { body: { success: true, message: 'Synced' } }, serverRows(HOSTS));
         const { panel } = torrentPanel();
         panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
+        const field = button(panel);
 
-        const running = button(panel).execute();
+        const running = field.execute();
         await vi.advanceTimersByTimeAsync(5000);
         expect(calls(net)).toEqual(['settings.save']);
         await vi.advanceTimersByTimeAsync(5000);
         await running;
 
-        expect(calls(net)).toEqual(['settings.save', 'torrentpotato.jackett_sync', 'settings']);
+        expect(calls(net)).toEqual(['settings.save']);
+        expect(field.result).toBe(STILL_SAVING);
       });
 
       it('lets go of the section once its saves are answered, and leaves another section alone', async () => {
@@ -1489,6 +1498,598 @@ describe('a button in a section with a combine group: the rows are locked from t
       await button(panel).execute();
 
       expect(calls(net)).toEqual(['torrentpotato.jackett_sync', 'settings']);
+    });
+
+    describe('SEC-005 D7 (AC-PROD-12, AC-QA-23): the action does not run on top of a save of its own section that did not land', () => {
+      const ACTION = 'torrentpotato.jackett_sync';
+      const TYPED_ADDRESS = 'http://typed-jackett.invalid:9117';
+      const TYPED_KEY = 'placeholder-typed-key';
+      const SYNCED: Reply = { body: { success: true, message: 'Synced' } };
+      const actionCalls = (net: ReturnType<typeof installFetch>) => net.calls.filter((call) => call.url.includes(ACTION));
+
+      /** The panel, with the address and the key typed and still on their 500 ms timers. */
+      function typedPanel() {
+        const ctx = torrentPanel();
+        ctx.panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        ctx.panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        return ctx;
+      }
+
+      /** Nothing of the press may be left behind: not running, not locked, no re-read of the section. */
+      function expectPressOver(net: ReturnType<typeof installFetch>, field: any, group: any) {
+        expect(field.running).toBe(false);
+        expect(group.locked).toBe(false);
+        expect(group.actionRunning).toBe(false);
+        expect(calls(net)).not.toContain('settings');
+      }
+
+      it('does not send the action when a pending save is refused (success false), and says so', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: `no: ${TYPED_ADDRESS} ${TYPED_KEY}` } }, SYNCED, serverRows(HOSTS));
+        const { panel, group } = typedPanel();
+        const field = button(panel);
+
+        await field.execute();
+
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+        expect(field.success).toBe(false);
+        expectPressOver(net, field, group);
+      });
+
+      it('does not send the action when a pending save is refused with an HTTP error', async () => {
+        const net = installFetch();
+        net.replies.push({ status: 500, text: 'no' }, SYNCED, serverRows(HOSTS));
+        const { panel } = typedPanel();
+        const field = button(panel);
+
+        await field.execute();
+
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+      });
+
+      it('does not send the action when the pending save\'s request fails (the fetch rejects)', async () => {
+        const net = installFetch();
+        const held = deferred<Reply>();
+        net.replies.push(held.promise, SYNCED, serverRows(HOSTS));
+        const { panel, group } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        const field = button(panel);
+
+        const running = field.execute();
+        await vi.advanceTimersByTimeAsync(0);
+        held.reject(new TypeError('network down'));
+        await running;
+
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+        expectPressOver(net, field, group);
+      });
+
+      it('does not send the action when a save already in flight at the press is refused', async () => {
+        const net = installFetch();
+        const held = deferred<Reply>();
+        net.replies.push(held.promise, SYNCED, serverRows(HOSTS));
+        const { panel, group } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(calls(net)).toEqual(['settings.save']);
+        const field = button(panel);
+
+        const running = field.execute();
+        await vi.advanceTimersByTimeAsync(0);
+        held.resolve({ body: { success: false, error: 'no' } });
+        await running;
+
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+        expectPressOver(net, field, group);
+      });
+
+      it('does not send the action when a save is unanswered at the end of its wait, and says it is still saving', async () => {
+        const net = installFetch();
+        net.replies.push(neverAnswered(), SYNCED, serverRows(HOSTS));
+        const { panel, group } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        const field = button(panel);
+
+        const running = field.execute();
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs() - 1);
+        expect(field.result).toBe('');
+        await vi.advanceTimersByTimeAsync(1);
+        await running;
+
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(STILL_SAVING);
+        expect(field.success).toBe(false);
+        expectPressOver(net, field, group);
+      });
+
+      it('with two values, the first refused, sends neither the second nor the action, and keeps both unsaved', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } }, { body: { success: true } }, SYNCED, serverRows(HOSTS));
+        const { panel, group } = typedPanel();
+        const field = button(panel);
+
+        await field.execute();
+
+        // The key is not saved behind an address that was refused: it would be bound to the old address.
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url']);
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+        expect(Object.keys(panel.dirty)).toEqual(['torrentpotato.jackett_url', 'torrentpotato.jackett_api_key']);
+        expect(panel.pendingSaves).toEqual({});
+        expectPressOver(net, field, group);
+      });
+
+      it('a refusal from BEFORE the press, answered and toasted, still blocks: the address is sent again, the key behind it is not, and there is no action', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } });
+        const { panel, group } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(panel.openSaves).toEqual({});
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        net.replies.push({ body: { success: false, error: 'still no' } }, { body: { success: true } }, SYNCED, serverRows(HOSTS));
+        const field = button(panel);
+
+        await field.execute();
+
+        // Address (before the press), the address again (the press), and no key.
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_url']);
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+        expectPressOver(net, field, group);
+      });
+
+      it('a second press with nothing changed sends the refused value again, and still does not run the action', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } }, { body: { success: false, error: 'no' } }, SYNCED, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        const field = button(panel);
+
+        await field.execute();
+        expect(saved(net)).toHaveLength(1);
+        await field.execute();
+
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_url']);
+        expect(saved(net)[1].value).toBe(TYPED_ADDRESS);
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+      });
+
+      it('once the user corrects the address both save, in order, and the action runs exactly once', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } });
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        const field = button(panel);
+        await field.execute();
+        net.replies.push({ body: { success: true } }, { body: { success: true } }, SYNCED, serverRows(HOSTS));
+
+        panel.setVal('torrentpotato', 'jackett_url', 'http://fixed-jackett.invalid:9117');
+        await field.execute();
+
+        expect(saved(net).map((body) => [body.name, body.value])).toEqual([
+          ['jackett_url', TYPED_ADDRESS],
+          ['jackett_url', 'http://fixed-jackett.invalid:9117'],
+          ['jackett_api_key', TYPED_KEY],
+        ]);
+        expect(actionCalls(net)).toHaveLength(1);
+        expect(field.result).toBe('Synced');
+        expect(panel.dirty).toEqual({});
+      });
+
+      it('outside a press, a key saved on its own behind a refused address does not let a later press run: the address is sent again first', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } }, { body: { success: true } });
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        await vi.advanceTimersByTimeAsync(500);
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_api_key']);
+        net.replies.push({ body: { success: false, error: 'no' } }, SYNCED, serverRows(HOSTS));
+        const field = button(panel);
+
+        await field.execute();
+
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_url', 'jackett_api_key', 'jackett_url']);
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+      });
+
+      describe('a value changed and changed back while an earlier save of it is still unanswered (Codex P2 on #625)', () => {
+        const ADDRESS_A = 'http://address-a.invalid:9117';
+        const ADDRESS_B = 'http://address-b.invalid:9117';
+        const urlKey = 'torrentpotato.jackett_url';
+
+        /** A is in flight and unanswered, B is typed and queued behind it, then A is typed again: the page shows A. */
+        async function aThenBThenA(replies: Array<Reply | Promise<Reply>>) {
+          const net = installFetch();
+          net.replies.push(...replies);
+          const ctx = torrentPanel();
+          ctx.panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          await vi.advanceTimersByTimeAsync(500);
+          ctx.panel.setVal('torrentpotato', 'jackett_url', ADDRESS_B);
+          await vi.advanceTimersByTimeAsync(500);
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A]);
+          ctx.panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          return { net, ...ctx };
+        }
+
+        it('sends the final A after B, runs the action only after it lands, and the server ends holding A', async () => {
+          const firstA = deferred<Reply>();
+          const queuedB = deferred<Reply>();
+          const { net, panel } = await aThenBThenA([firstA.promise, queuedB.promise, { body: { success: true } }, SYNCED, serverRows(HOSTS)]);
+          const field = button(panel);
+
+          const running = field.execute();
+          await vi.advanceTimersByTimeAsync(0);
+          firstA.resolve({ body: { success: true } });
+          await vi.advanceTimersByTimeAsync(0);
+          // The first A landed, but B and the final A are still outstanding: the page still holds A as unsaved.
+          expect(panel.dirty[urlKey]).toBe(ADDRESS_A);
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A, ADDRESS_B]);
+          queuedB.resolve({ body: { success: true } });
+          await running;
+
+          // A, B, A: the last value saved is the value on the page, and the action went out after it.
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A, ADDRESS_B, ADDRESS_A]);
+          expect(calls(net)).toEqual(['settings.save', 'settings.save', 'settings.save', ACTION, 'settings']);
+          expect(actionCalls(net)).toHaveLength(1);
+          expect(panel.dirty).toEqual({});
+        });
+
+        it('keeps the value unsaved when the final A is refused after the earlier saves landed, so the next press sees it', async () => {
+          const firstA = deferred<Reply>();
+          const { net, panel } = await aThenBThenA([
+            firstA.promise, { body: { success: true } }, { body: { success: false, error: 'no' } },
+            { body: { success: true } }, SYNCED, serverRows(HOSTS)]);
+          const field = button(panel);
+
+          const running = field.execute();
+          await vi.advanceTimersByTimeAsync(0);
+          firstA.resolve({ body: { success: true } });
+          await running;
+
+          expect(actionCalls(net)).toEqual([]);
+          expect(field.result).toBe(DID_NOT_SAVE);
+          expect(panel.dirty[urlKey]).toBe(ADDRESS_A);
+          await field.execute();
+
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A, ADDRESS_B, ADDRESS_A, ADDRESS_A]);
+          expect(actionCalls(net)).toHaveLength(1);
+        });
+
+        it('keeps a value typed after the save left as unsaved when that save lands, so it is not read as saved', async () => {
+          const net = installFetch();
+          const held = deferred<Reply>();
+          net.replies.push(held.promise, { body: { success: true } });
+          const { panel } = torrentPanel();
+          panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          await vi.advanceTimersByTimeAsync(500);
+          panel.setVal('torrentpotato', 'jackett_url', ADDRESS_B);
+
+          held.resolve({ body: { success: true } });
+          await vi.advanceTimersByTimeAsync(0);
+
+          // A landed; B was typed after it left and is still on its timer: it is still unsaved.
+          expect(panel.dirty[urlKey]).toBe(ADDRESS_B);
+          await vi.advanceTimersByTimeAsync(500);
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A, ADDRESS_B]);
+          expect(panel.dirty).toEqual({});
+        });
+
+        it('does not send a duplicate when the value typed again is the LAST one in flight', async () => {
+          const net = installFetch();
+          const held = deferred<Reply>();
+          net.replies.push(held.promise, SYNCED, serverRows(HOSTS));
+          const { panel } = torrentPanel();
+          panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          await vi.advanceTimersByTimeAsync(500);
+          panel.setVal('torrentpotato', 'jackett_url', ADDRESS_A);
+          const field = button(panel);
+
+          const running = field.execute();
+          await vi.advanceTimersByTimeAsync(0);
+          held.resolve({ body: { success: true } });
+          await running;
+
+          expect(saved(net).map((body) => body.value)).toEqual([ADDRESS_A]);
+          expect(actionCalls(net)).toHaveLength(1);
+        });
+      });
+
+      it('a value whose save has had no answer stays unsaved: the next press sends it again and stops again', async () => {
+        const net = installFetch();
+        net.replies.push(neverAnswered(), neverAnswered(), SYNCED, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        const field = button(panel);
+
+        const first = field.execute();
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs());
+        await first;
+        expect(field.result).toBe(STILL_SAVING);
+        expect(panel.dirty['torrentpotato.jackett_api_key']).toBe(TYPED_KEY);
+
+        const second = field.execute();
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs());
+        await second;
+
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_api_key', 'jackett_api_key']);
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(STILL_SAVING);
+      });
+
+      it('shows the refusal, not the wait, when one save is refused and another is unanswered in the same press', async () => {
+        const net = installFetch();
+        net.replies.push(neverAnswered(), { body: { success: false, error: 'no' } }, SYNCED, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        // Two saves of the section in flight at the press: the first is never answered, the second goes
+        // out when the first has had its wait and is refused.
+        void panel.saveSingle('torrentpotato', 'seed_ratio', '2');
+        void panel.saveSingle('torrentpotato', 'seed_time', '3');
+        await vi.advanceTimersByTimeAsync(0);
+        const field = button(panel);
+
+        const running = field.execute();
+        await vi.advanceTimersByTimeAsync(saveWaitDeadlineMs());
+        await running;
+
+        expect(saved(net).map((body) => body.name)).toEqual(['seed_ratio', 'seed_time']);
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+      });
+
+      it('sends the values in the order each FIRST became unsaved: a retyped value keeps its place (spec gap (s))', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } });
+        const { panel } = torrentPanel();
+        // The key is refused and stays unsaved; the address is typed; the key is retyped.
+        panel.setVal('torrentpotato', 'jackett_api_key', 'placeholder-first-key');
+        await vi.advanceTimersByTimeAsync(500);
+        panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        net.replies.push({ body: { success: true } }, { body: { success: true } }, SYNCED, serverRows(HOSTS));
+        const field = button(panel);
+
+        await field.execute();
+
+        // The key goes first (it was unsaved first), then the address: the server binds that key to the
+        // old address, so the Sync that follows is refused with the D8 text and nothing goes elsewhere.
+        expect(saved(net).map((body) => body.name)).toEqual(['jackett_api_key', 'jackett_api_key', 'jackett_url']);
+        expect(saved(net)[1].value).toBe(TYPED_KEY);
+      });
+
+      it('a refusal that arrives while the press is still flushing its own group counts (the open saves are taken before the first await)', async () => {
+        const net = installFetch();
+        const address = deferred<Reply>();
+        const groupSave = deferred<Reply>();
+        net.replies.push(address.promise, groupSave.promise, SYNCED, serverRows(HOSTS));
+        const { panel, group } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_url', TYPED_ADDRESS);
+        await vi.advanceTimersByTimeAsync(500);
+        group.rows[0][1] = 'https://placeholder-edited.invalid/api';
+        panel.editGroup('torrentpotato');
+        const field = button(panel);
+
+        const running = field.execute();
+        await vi.advanceTimersByTimeAsync(0);
+        // The address is answered "no" while the button waits for its group's save.
+        address.resolve({ body: { success: false, error: 'no' } });
+        await vi.advanceTimersByTimeAsync(0);
+        groupSave.resolve({ body: { success: true } });
+        await running;
+
+        expect(actionCalls(net)).toEqual([]);
+        expect(field.result).toBe(DID_NOT_SAVE);
+      });
+
+      it('a refused value in ANOTHER section does not block, and is not sent', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } });
+        const { panel } = torrentPanel();
+        panel.setVal('newznab', 'enabled', '0');
+        await vi.advanceTimersByTimeAsync(500);
+        net.replies.push(SYNCED, serverRows(HOSTS));
+        const field = button(panel);
+
+        await field.execute();
+
+        expect(saved(net).map((body) => body.section)).toEqual(['newznab']);
+        expect(calls(net)).toEqual(['settings.save', ACTION, 'settings']);
+        expect(field.result).toBe('Synced');
+      });
+
+      it('a dirty combine row of the same section is no single-option value: it does not block and no per-column save is made for it', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: true } }, SYNCED, serverRows(HOSTS));
+        const { panel, group } = torrentPanel();
+        group.rows[0][1] = 'https://placeholder-edited.invalid/api';
+        panel.editGroup('torrentpotato');
+        const field = button(panel);
+
+        await field.execute();
+
+        // The group is the button's own and is saved by its own path (flushGroupFor, as before); no column save.
+        expect(net.columnSaves()).toEqual([]);
+        expect(net.groupSaves()).toHaveLength(1);
+        expect(actionCalls(net)).toHaveLength(1);
+        expect(field.result).toBe('Synced');
+      });
+
+      it('names the button by its own label in both texts, and by "Execute" when it has none', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } });
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        const { buttonField } = loadComponents();
+        const field = buttonField('torrentpotato', { button_action: ACTION, name: 'x' });
+        field.getPanel = () => panel;
+
+        await field.execute();
+
+        expect(field.result).toBe('Execute did not run because a change above did not save. Fix it if needed, then press Execute to save and run again.');
+      });
+
+      it('says Saving… while the press waits on saves, and not once the action itself runs', async () => {
+        const net = installFetch();
+        const held = deferred<Reply>();
+        const action = deferred<Reply>();
+        net.replies.push(held.promise, action.promise, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        const field = button(panel);
+
+        const running = field.execute();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(field.waitingOnSaves).toBe(true);
+        held.resolve({ body: { success: true } });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(field.waitingOnSaves).toBe(false);
+        expect(field.running).toBe(true);
+        action.resolve(SYNCED.body as any);
+        await running;
+        expect(field.waitingOnSaves).toBe(false);
+      });
+
+      it('shows a stop in the danger state even after an earlier press succeeded', async () => {
+        const net = installFetch();
+        net.replies.push(SYNCED, serverRows(HOSTS), { body: { success: false, error: 'no' } });
+        const { panel } = torrentPanel();
+        const field = button(panel);
+        await field.execute();
+        expect(field.success).toBe(true);
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+
+        await field.execute();
+
+        expect(field.result).toBe(DID_NOT_SAVE);
+        expect(field.success).toBe(false);
+      });
+
+      it('a save whose request fails clears the saving flag, so the header does not say Saving… for ever', async () => {
+        const net = installFetch();
+        const held = deferred<Reply>();
+        net.replies.push(held.promise);
+        const { panel } = torrentPanel();
+        const saving = panel.saveSingle('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(panel.saving).toBe(true);
+        held.reject(new TypeError('network down'));
+        await saving;
+
+        expect(panel.saving).toBe(false);
+      });
+
+      it('names a refused or failed save by the option\'s label in the toast, not its key', async () => {
+        const net = installFetch();
+        const held = deferred<Reply>();
+        net.replies.push({ body: { success: false, error: 'no' } }, held.promise);
+        const { panel } = torrentPanel();
+        panel.options.torrentpotato.groups[0].options.push({ name: 'jackett_api_key', label: 'Jackett API Key', type: 'password' });
+
+        await panel.saveSingle('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        expect(panel.message).toBe('Could not save Jackett API Key: no');
+        const failing = panel.saveSingle('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        await vi.advanceTimersByTimeAsync(0);
+        held.reject(new TypeError('network down'));
+        await failing;
+        expect(panel.message).toBe('Failed to save Jackett API Key: network down');
+        await panel.saveSingle('torrentpotato', 'seed_ratio', '2');
+        expect(panel.optionLabel('torrentpotato', 'seed_ratio')).toBe('seed_ratio');
+      });
+
+      it('sends the action exactly once, after the save, when the save lands', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: true } }, SYNCED, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        panel.setVal('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        const field = button(panel);
+
+        await field.execute();
+
+        expect(calls(net)).toEqual(['settings.save', ACTION, 'settings']);
+        expect(actionCalls(net)).toHaveLength(1);
+        expect(field.result).toBe('Synced');
+        expect(field.success).toBe(true);
+      });
+
+      it('sends the action when nothing is pending', async () => {
+        const net = installFetch();
+        net.replies.push(SYNCED, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        const field = button(panel);
+
+        await field.execute();
+
+        expect(calls(net)).toEqual([ACTION, 'settings']);
+        expect(field.result).toBe('Synced');
+      });
+
+      it('does not block on a refusal for a value the page no longer holds as unsaved (a direct save, nothing typed)', async () => {
+        const net = installFetch();
+        net.replies.push({ body: { success: false, error: 'no' } }, SYNCED, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        await panel.saveSingle('torrentpotato', 'jackett_api_key', TYPED_KEY);
+        await settle();
+        const field = button(panel);
+
+        await field.execute();
+
+        expect(calls(net)).toEqual(['settings.save', ACTION, 'settings']);
+        expect(field.result).toBe('Synced');
+      });
+
+      it('does not consider a save of another section, refused or still unanswered', async () => {
+        const net = installFetch();
+        const other = deferred<Reply>();
+        net.replies.push(other.promise, SYNCED, serverRows(HOSTS));
+        const { panel } = torrentPanel();
+        void panel.saveSingle('newznab', 'enabled', '0');
+        await vi.advanceTimersByTimeAsync(0);
+        const field = button(panel);
+
+        const running = field.execute();
+        await vi.advanceTimersByTimeAsync(0);
+        other.resolve({ body: { success: false, error: 'no' } });
+        await running;
+
+        expect(calls(net)).toEqual(['settings.save', ACTION, 'settings']);
+        expect(field.result).toBe('Synced');
+      });
+
+      it('names no address, key or typed value in either text', () => {
+        for (const text of [DID_NOT_SAVE, STILL_SAVING]) {
+          expect(text).not.toMatch(/invalid|placeholder|http|key/i);
+        }
+      });
+    });
+
+    describe('the panel-wide flush (the Trakt Start button) waits for a save already sent', () => {
+      it('does not finish while a save whose request has left is unanswered, and finishes when it is answered', async () => {
+        const net = installFetch();
+        const held = deferred<Reply>();
+        net.replies.push(held.promise);
+        const { panel } = torrentPanel();
+        void panel.saveSingle('torrentpotato', 'jackett_api_key', 'placeholder-typed-key');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(net.columnSaves()).toHaveLength(1);
+
+        let finished = false;
+        const flushing = panel.flushPendingSaves().then(() => { finished = true; });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(finished).toBe(false);
+        held.resolve({ body: { success: true } });
+        await flushing;
+
+        expect(finished).toBe(true);
+      });
     });
   });
 

@@ -230,9 +230,14 @@ class TestTheRefusalOverTheRealRoutes:
         assert transport.requests == []
 
     def test_the_text_asks_for_the_address_check_first_and_names_nothing_internal(self):
-        assert REFUSAL.index('Check the address') < REFUSAL.index('enter the API key again')
-        for word in ('binding', 'fingerprint', 'normalis', 'Settings'):
+        assert REFUSAL.index('Check the Jackett URL') < REFUSAL.index('copy the API key')
+        for word in ('binding', 'fingerprint', 'normalis', 'Settings', 'tamper'):
             assert word not in REFUSAL
+
+    def test_the_text_says_where_the_key_is_and_that_it_is_needed_once(self):
+        assert 'Jackett dashboard' in REFUSAL
+        assert 'once' in REFUSAL
+        assert REFUSAL.index('once') > REFUSAL.index('press Sync')
 
     def test_the_provider_serves_the_same_text_as_the_spec_fixes(self):
         assert torrentpotato_module.KEY_REFUSAL_TEXT == REFUSAL

@@ -876,6 +876,11 @@ exist to prevent, so they do not get to be the untested part of the suite.
   `adapter.create(str(tmp_path / 'name'))`.
 - `test_api_auth.py`, `test_fastapi_web.py`, `test_security.py` run locally too —
   `httpx` is installed in `.venv`, so run them via `.venv/bin/python -m pytest`.
+- The Settings page's save bookkeeping (`partials/settings/scripts.html`) also has a seeded, model-based
+  randomised test, `tests/unit/ui/settings-save-model.spec.ts` (fixed seeds in the gate, a few seconds). For
+  a long soak after a change to that code: `MODEL_RUNS=20000 npx vitest run tests/unit/ui/settings-save-model.spec.ts`
+  (also `MODEL_SEED`, `MODEL_GROUP`, `MODEL_TWO_BUTTONS`; see the file's header). A failure prints its seed
+  and a minimal script.
 - CI matrix: Python 3.15 only — exactly the interpreter the Dockerfile ships, enforced by `test_ci_matrix_tests_exactly_the_dockerfile_version`. Narrowed from 3.10-3.14 on 2026-08-09: 59 consecutive runs showed no leg ever failing and no two legs disagreeing, and the four extra legs cost 15.6 runner-minutes a push on the critical path.
 - Note: a bare `pytest tests/unit/ -q` may hit import errors for tests touching
   vendored `libs/` — `make test-py` sets `PYTHONPATH=libs`. Prefer `make verify`

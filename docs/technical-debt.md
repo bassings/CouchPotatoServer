@@ -642,8 +642,27 @@ the old test stays green, the new one fails.
      fixed.
   11. After the SEC-005 guard (P2), a Settings press that follows a refused
      address save but a successful key save binds the key to the address the
-     server still holds, and Sync goes there (spec gap (b)). Owner decision
-     pending on a Settings follow-up. Found at the P2 review, 2026-11-22.
+     server still holds, and Sync goes there (spec gap (b)). Found at the P2
+     review, 2026-11-22. Closed for a press by owner decision D7 (SEC-005 P3,
+     as amended at its review round 1, 2026-11-22): a Settings action button
+     sends again every unsaved single-option value of its own section (a
+     refused, failed or unanswered value stays unsaved), sends nothing behind
+     one that did not land, and runs only if all of them land. Not closed:
+     outside a press the fields still save independently, so a key saved on
+     its own behind a refused address is bound to the old address until the
+     address is fixed and the key saved again; a later press never runs a Sync
+     on that mismatch.
+  12. The Settings action button (Sync Indexers) is about 32 px tall at phone
+     width: above WCAG 2.2's 24 px minimum for target size (2.5.8), below the
+     project's 44 px floor. It predates SEC-005 and is not touched there.
+     Owner decision, 2026-11-22: fix later (spec gap (o)).
+  13. A rejected Jackett key (HTTP 401) counts towards the HTTP client's per-host
+     failure cut-off: against a Jackett reached by a host name (including a
+     Docker service name; loopback and private addresses are exempt), six wrong
+     keys in a row disable the host for 15 minutes, so Sync answers "No response
+     from Jackett" and searches through that Jackett are refused too. Owner
+     decision, 2026-11-22: stop a 401 counting, fixed BEFORE THE RELEASE in its
+     own small PR after the SEC-005 P3 branch (spec gap (q)).
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
