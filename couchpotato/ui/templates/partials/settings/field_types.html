@@ -157,7 +157,12 @@
         Running…
       </span>
     </button>
-    <div x-show="result" class="mt-2 text-xs" :class="success ? 'text-cp-success' : 'text-cp-danger'" x-text="result" role="status"></div>
+    {#- A persistent status region with dynamic text, not one that appears together with its
+        text: a live region created holding its content is often not announced at all. It is in
+        the page, empty, before the action runs, so the answer is announced once when the text
+        arrives. The text is bound with x-text (the API `error` verbatim is text, never markup).
+        The margin comes with the text so an empty region takes no room. -#}
+    <div role="status" class="text-xs" :class="[result ? 'mt-2' : '', success ? 'text-cp-success' : 'text-cp-danger']" x-text="result"></div>
     <p class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
   </div>
 </template>
