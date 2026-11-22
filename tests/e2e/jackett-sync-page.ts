@@ -77,8 +77,11 @@ export const urlField = (card: Locator) => card.getByLabel('Jackett URL', { exac
 export const keyField = (card: Locator) => card.getByLabel('Jackett API Key', { exact: true });
 /** The Sync button's own field (the button, its result and its description). */
 export const syncField = (card: Locator) => syncButton(card).locator('xpath=..');
-/** The Sync result: the button's persistent status region. (The card has other status regions, for its provider test.) */
-export const resultRegion = (card: Locator) => syncField(card).locator('[role="status"]');
+/**
+ * The Sync result: the button's persistent status region, an `<output>` (implicit role=status).
+ * The card has other status regions, for its provider test, so it is found through the button's field.
+ */
+export const resultRegion = (card: Locator) => syncField(card).getByRole('status');
 
 /** Press Sync and return what the server answered, read from the response the press caused. */
 export async function pressSync(page: Page, card: Locator) {

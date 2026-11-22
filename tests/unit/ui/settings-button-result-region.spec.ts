@@ -5,9 +5,10 @@
  * The behaviour (the region is in the accessibility tree before the answer, its text changes once,
  * focus stays) is the E2E suite's, in tests/e2e/settings-jackett-display.spec.ts. This pins the
  * three properties of the markup that behaviour rests on, and that no later edit should trade away
- * quietly: it is a `role="status"` element, it is never hidden with `x-show` (a live region created
- * together with its text is often not announced), and its text is bound with `x-text`, never
- * `x-html` (the API `error` is shown as text, not parsed as markup).
+ * quietly: it is a status element (an `<output>`, whose implicit role is status, or an element with
+ * `role="status"`), it is never hidden with `x-show` (a live region created together with its text is
+ * often not announced), and its text is bound with `x-text`, never `x-html` (the API `error` is shown
+ * as text, not parsed as markup).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,14 +22,15 @@ function resultRegionTag(): string {
   const start = html.indexOf(`<template x-if="opt.type === 'button'">`);
   expect(start, 'the button field template was not found').toBeGreaterThanOrEqual(0);
   const block = html.slice(start, html.indexOf('</template>', start));
-  const tags = block.match(/<div\b[^>]*>/g)?.filter((tag) => /x-(text|html)="result"/.test(tag)) ?? [];
+  const tags = block.match(/<(?:div|output|p|span)\b[^>]*>/g)?.filter((tag) => /x-(text|html)="result"/.test(tag)) ?? [];
   expect(tags, 'exactly one element shows the button result').toHaveLength(1);
   return tags[0];
 }
 
 describe('the Settings button result region', () => {
-  it('is a role="status" element', () => {
-    expect(resultRegionTag()).toMatch(/\brole="status"/);
+  it('is a status element: an <output>, or an element with role="status"', () => {
+    const tag = resultRegionTag();
+    expect(/^<output\b/.test(tag) || /\brole="status"/.test(tag), tag).toBe(true);
   });
 
   it('is never hidden with x-show or x-if, so it is in the page before its text arrives', () => {

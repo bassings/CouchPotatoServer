@@ -70,14 +70,16 @@ test.describe('Settings: the refusal is shown on the Sync result (SEC-005 P3, AC
     await expect(syncButton(card)).not.toHaveAttribute('aria-disabled', 'true');
 
     // Enter and Space press it again; each press announces the refusal once more, no more.
-    for (const [index, key] of ['Enter', 'Space'].entries()) {
+    const pressWith = async (key: 'Enter' | 'Space', announcements: number) => {
       const answered = page.waitForResponse((response) => response.url().includes(SYNC_ROUTE));
       await page.keyboard.press(key);
       expect((await (await answered).json()).error).toBe(REFUSAL);
-      await expect.poll(async () => (await liveTexts()).filter((text) => text === REFUSAL).length).toBe(index + 2);
+      await expect.poll(async () => (await liveTexts()).filter((text) => text === REFUSAL).length).toBe(announcements);
       await expect(syncButton(card)).toBeFocused();
       await expect(syncButton(card)).not.toHaveAttribute('aria-disabled', 'true');
-    }
+    };
+    await pressWith('Enter', 2);
+    await pressWith('Space', 3);
     expect((await liveTexts()).filter((text) => text === REFUSAL)).toHaveLength(3);
   });
 });
