@@ -38,7 +38,7 @@ FORWARDED = {'origin': LISTED, 'x-forwarded-host': 'dash.invalid'}
 
 
 @contextlib.contextmanager
-def world_with(tmp_path, monkeypatch, cors=LISTED):
+def world_with(tmp_path, monkeypatch, cors=LISTED, **settings_values):
     with group_settings(tmp_path, monkeypatch) as settings:
         monkeypatch.setattr(Env, '_settings', settings)
         monkeypatch.setattr(Env, '_web_base', '/', raising=False)
@@ -48,7 +48,7 @@ def world_with(tmp_path, monkeypatch, cors=LISTED):
             os.path.abspath(__file__)))), raising=False)
         monkeypatch.setattr(Env, '_dev', False, raising=False)
         values = {'api_key': API_KEY, 'username': '', 'password': '', 'dark_theme': False,
-                  'rate_limit_max': 0, 'rate_limit_window': 60, 'cors_origins': cors}
+                  'rate_limit_max': 0, 'rate_limit_window': 60, 'cors_origins': cors, **settings_values}
         with patch.object(Env, 'setting', side_effect=lambda key=None, *a, **kw: values.get(
                 key, kw.get('default', ''))):
             app = create_app(api_key=API_KEY, web_base='/')

@@ -3,7 +3,7 @@
 The in-memory log tests prove a record's text; the criteria say "reading the log
 file", and the file goes through the real handler and `PrivacyFilter`. This test sets
 up the real logging to a file (`setup_logging`), drives every outcome of the group
-save through the real route (and the reveal route, once it exists), then reads the
+save through the real route and the reveal route, then reads the
 FILE and asserts that none of these appears in it: a fixture key, a row host or name,
 any token issued during the run, the token key's hex, or a canary placed in the
 message of every exception forced into the hold and into a log call.
@@ -139,6 +139,16 @@ def drive_every_outcome(run, monkeypatch):
             run.save(with_forms(keyed_rows(settings, tag='z' + method)[:2],
                                 {0: keep(0), 1: restore(reference[2], reference[3])}), run.token())
             run.save(with_forms(keyed_rows(settings, tag='w' + method)[:1], {0: keep(0)}), 'f' * 64)
+    current = run.token()
+    body = {'section': 'newznab', 'column': 'api_key', 'row': 0, 'token': current}
+    assert run.raw('settings.reveal_cell', body).json()['success'] is True          # a reveal (answered)
+    for refusal in ({**body, 'column': 'host'}, {**body, 'row': 99}, {**body, 'token': '0' * 64},
+                    {**body, 'section': 'core', 'column': 'password'}, {**body, 'section': 'evil\nforged'}):
+        assert run.raw('settings.reveal_cell', refusal).json()['success'] is False
+    assert run.raw('settings.reveal_cell', body, headers=HOSTILE).status_code == 403
+    with monkeypatch.context() as patched:                                    # a handler that raises
+        patched.setattr(settings_module.Settings, 'group_cells', raising)
+        assert run.raw('settings.reveal_cell', body).json()['success'] is False
     real_info = settings.log.info
 
     def info_that_fails_for_the_key_lines(message, *args, **kwargs):
@@ -163,11 +173,13 @@ def test_the_log_file_holds_no_key_host_name_token_or_canary_after_every_outcome
     assert 'Refused a settings group save' in text, 'the file must have caught the refusals'
     assert 'Kept a stored key on a changed address' in text
     assert 'Restored a removed key' in text
+    assert 'Revealed a stored key' in text
+    assert 'Refused a settings reveal' in text
     assert 'RuntimeError' in text, 'the forced failures must have been logged by type'
     secrets_in_play = {key.strip() for key in KEYS} | {TYPED} | {TYPED + str(n) for n in range(6)}
     for label, values in (('key', secrets_in_play), ('host', run.hosts), ('name', run.names),
                           ('token', run.tokens), ('token key', {settings._token_key.hex()}),
-                          ('canary', {CANARY})):
+                          ('canary', {CANARY}), ('caller string', {'forged'})):
         assert values, 'nothing was collected for %s' % label
         for value in values:
             assert value.strip() not in text, '%s %r reached the log file' % (label, value[:12])

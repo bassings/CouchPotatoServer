@@ -728,6 +728,19 @@ the old test stays green, the new one fails.
   read plus today's `save_group` would destroy stored keys, because the mask
   would be written back over them. Condition for revisiting: SEC-005 has now
   landed (P1 to P4), so this is the next spec.
+  [Corrected 2026-11-23, SEC-006 P1: the measurement above holds for a
+  `save_group` that sends strings, but it is no longer true that there is no
+  second redirect path through the rows. A `save_group` that carries a token may
+  send `{"keep": i}` for a key cell, which stores the key already held in cell
+  `i` beside whatever address the same row carries, so it CAN place a stored key
+  beside a new host. Who can send one: the same-origin Settings page, or a script
+  holding the CouchPotato API key. Not a blind actor, and not a page on another
+  origin in a browser, an origin listed in `cors_origins` included (such a page is
+  refused 403), although a page on a listed origin can learn the API key and pass
+  it to a script. A removed or replaced key now also stays in the server's memory
+  (up to 16 per section, until a restart) and can be put back with a `restore` by
+  a holder of the API key and the token of the settings as they stood at the
+  removal. The settings read is still unmasked in this release.]
 - **Settings values are URL-decoded a second time on save (closed 2026-11-23;
   spec `specs/FIX-2026-11-23-api-param-double-decode.md`).** Every API argument
   went through `callApiHandler` and then `getParams`

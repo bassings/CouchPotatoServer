@@ -110,6 +110,18 @@ _GROUP_REFUSAL_TEXT = {
 }
 GROUP_REFUSAL_REASONS = frozenset(_GROUP_REFUSAL_TEXT)
 
+#: The text a refused reveal is told, per reason. The reasons are codes of
+#: `_GROUP_REFUSAL_TEXT`; the text says nothing was revealed rather than saved.
+_REVEAL_REFUSAL_TEXT = {
+    'unknown_section': 'That is not a group of settings saved as rows. Nothing was revealed.',
+    'bad_reference': 'That cell cannot be revealed. Nothing was revealed.',
+    'token_missing': 'A token is required. Nothing was revealed.',
+    'stale': 'The rows changed after this page loaded them. Nothing was revealed. '
+             'Reload to see the current rows.',
+    'malformed': 'The request was not a reveal of one cell. Nothing was revealed.',
+}
+_REVEAL_FAILED_TEXT = 'The settings could not be read. Nothing was revealed.'
+
 
 #: What a per-column save of a combine column is told. It names the registered
 #: column (never the caller's spelling or value), the group-save route, and what
@@ -331,6 +343,22 @@ class Settings:
                 'token': {'desc': 'Optional. The group\'s token from the settings read'},
             },
             'return': {'type': 'object', 'example': '{"success": true}'},
+        })
+
+        addApiView('settings.reveal_cell', self.reveal_cell_view, docs={
+            'desc': 'Return the stored text of ONE credential cell of a multi-row group '
+                    '(a column the group declares secret). POST only, with an '
+                    'application/json body of exactly {"section": name, "column": name, '
+                    '"row": integer, "token": the group\'s token from the settings read}. '
+                    'Gated by the API key and the Origin check. A refusal never carries '
+                    'a value.',
+            'params': {
+                'section': {'desc': 'The section of the group'},
+                'column': {'desc': 'A column the group declares secret'},
+                'row': {'desc': 'The cell index within that column (a JSON integer)'},
+                'token': {'desc': 'The group\'s current token'},
+            },
+            'return': {'type': 'object', 'example': '{"success": true, "value": "..."}'},
         })
 
         addEvent('database.setup', self.databaseSetup)
@@ -1132,6 +1160,50 @@ class Settings:
                 if option.get('name') == column and 'default' in option:
                     return str(option['default']).split(',')
         return None
+
+    def reveal_cell_view(self, section=None, column=None, row=None, token=None, **kwargs):
+        """The API view of `reveal_cell`. Anything beyond the four members is malformed."""
+        if kwargs:
+            return self._refuse_reveal(None, 'malformed')
+        return self.reveal_cell(section, column, row, token)
+
+    def reveal_cell(self, section, column, row, token):
+        """The stored text of secret cell `row` of `column`, or a refusal with no value.
+
+        The one place a stored credential leaves the settings. `row` is the cell index of
+        the secret column itself, whether or not the group is aligned. A refusal is, in
+        this order: a section that is not a registered group; a column the group does not
+        declare secret; no token; a stale token; a row that is not a JSON integer or is
+        outside the column. The hold is never read. Reply: `{'success': True, 'value':
+        text}` and nothing else; an empty stored cell is an empty `value`.
+        """
+        try:
+            with _PASSWORD_SAVE_LOCK:
+                if not isinstance(section, str) or section not in self.combine_groups():
+                    return self._refuse_reveal(None, 'unknown_section')
+                if not isinstance(column, str) or column not in self.combine_secrets().get(section, ()):
+                    return self._refuse_reveal(section, 'bad_reference')
+                if token is None:
+                    return self._refuse_reveal(section, 'token_missing')
+                if not self._token_is_current(section, token):
+                    return self._refuse_reveal(section, 'stale')
+                cells = self.group_cells(section)[column]
+                if type(row) is not int or not 0 <= row < len(cells):
+                    return self._refuse_reveal(section, 'bad_reference')
+                value = cells[row]
+                self.log.info('Revealed a stored key: section=%s column=%s row=%d', section, column, row)
+                return {'success': True, 'value': value}
+        except Exception as error:
+            # The type only: nothing read, held or sent is in the log or the reply.
+            self.log.error('Could not reveal a stored key (%s).', type(error).__name__)
+            return {'success': False, 'error': _REVEAL_FAILED_TEXT}
+
+    def _refuse_reveal(self, section, reason):
+        # A caller's section string is never logged: only a registered name is.
+        self.log.warning('Refused a settings reveal: section=%s reason=%s',
+                         section or 'unregistered', reason)
+        return {'success': False, 'error': _REVEAL_REFUSAL_TEXT[reason],
+                'invalid': [_invalid(None, None, reason)]}
 
     def save_group_view(self, section=None, rows=None, token=None, **kwargs):
         """The API view: a thin relay to `save_group` that adds the INFO line.

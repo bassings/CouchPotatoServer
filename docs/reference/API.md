@@ -185,6 +185,7 @@ API key in the `X-Api-Key` header or the URL. Other routes are unchanged.
 | `settings` | Get all settings |
 | `settings.save` | Save one setting. Refuses the columns of a multi-row group, and option names the config file cannot hold, such as an empty one (see below) |
 | `settings.save_group` | Save every column of one multi-row group in one request |
+| `settings.reveal_cell` | Return the stored text of one credential cell of a multi-row group (POST, JSON, needs the group's token) |
 
 #### Multi-row groups: `settings.save_group`
 
@@ -305,6 +306,38 @@ with no value, in one of four forms:
 > apply to `core.PASSWORD` as to `core.password`. A script that sent an
 > upper-case name and relied on it skipping one of those steps no longer can. A
 > section name is still matched exactly.
+
+#### Revealing one credential cell: `settings.reveal_cell`
+
+`POST /api/<api_key>/settings.reveal_cell/` with `Content-Type: application/json` and a
+body of exactly four keys, `section` (string), `column` (string), `row` (a JSON integer,
+not a boolean or a decimal) and `token` (the group's token from the settings read):
+
+```json
+{"section": "newznab", "column": "api_key", "row": 1, "token": "<token>"}
+```
+
+It returns `{"success": true, "value": "<the stored text of that cell>"}` and nothing
+else: no fresh token and no other cell. An empty stored cell returns an empty `value`,
+which is not a refusal. `row` is the cell's index in that column, whether or not the
+group's columns line up. The gate is the API key and the Origin check: a request whose
+`Origin` or `Referer` names another origin (an origin listed in `cors_origins`
+included), or that carries neither header, is refused 403. A web-interface password is
+not required, so the API key alone is enough. Any query parameter other than the
+cache-buster `t`, and any `callback_func`, is refused 400; a reveal is never offered
+as JSONP.
+
+A refusal is `{"success": false, "error": "...", "invalid": [{"row": null, "column":
+null, "reason": "..."}]}` with no value. The reasons are `unknown_section` (not a
+registered group), `bad_reference` (a column the group does not declare secret, or a row
+outside the column), `token_missing`, and `stale` (the group has changed since the token
+was issued). Each success writes one INFO line and each refusal one WARNING, naming the
+section, column and row and never a value.
+
+**The settings read is still unmasked in this release.** `GET /api/<api_key>/settings`
+returns `newznab.api_key` and `torrentpotato.pass_key` in the clear until a later release
+masks them, so the reveal route does not yet add or remove any exposure for a holder of
+the API key.
 
 ### Jackett
 

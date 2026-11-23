@@ -994,6 +994,9 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
     # another origin (a plain GET carries no Origin at all).
     'torrentpotato.jackett_sync',
     'torrentpotato.jackett_test',
+    # SEC-006: the reveal returns a stored credential, so a page on another origin
+    # (and a request carrying no origin evidence at all) must not reach it.
+    'settings.reveal_cell',
 })
 
 
@@ -1010,11 +1013,16 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
 # the key whose value must be a JSON ARRAY of JSON OBJECTS (or is None for a
 # route with no rows). The parser turns an object with numeric-looking keys
 # (`{"0": {...}, "7": {...}}`, also `""`, `"."`, `"1.5"`) into a list, so without
-# this check such a body would reach the writer looking like rows. Each optional
-# key maps to the one JSON type its value must have; a body may carry any subset
-# of them and no key that is neither required nor optional.
+# this check such a body would reach the writer looking like rows. The third
+# element maps a key to the one JSON type its value must have (a boolean is not an
+# integer); a key in it that is not required is optional. A body carries every
+# required key and no key that is neither required nor typed.
 STRICT_JSON_API_ROUTES = {
     'settings.save_group': (frozenset({'section', 'rows'}), 'rows', {'token': str}),
+    # SEC-006: reveal one stored credential cell. No rows; every member is typed, and
+    # `type(...) is int` keeps a boolean from standing in for the row number.
+    'settings.reveal_cell': (frozenset({'section', 'column', 'row', 'token'}), None,
+                             {'section': str, 'column': str, 'row': int, 'token': str}),
 }
 
 
@@ -1024,7 +1032,11 @@ STRICT_JSON_API_ROUTES = {
 # stored setting, including indexer keys and hosts, and nothing in the app asks
 # for it as JSONP. JSONP stays available on every other GET route (recorded in
 # docs/technical-debt.md).
-JSONP_REFUSED_API_ROUTES = frozenset({'settings'})
+# `settings.reveal_cell` returns a stored credential. It is POST-only and the
+# strict-JSON step refuses a `callback_func` before this table is consulted, so this
+# entry is a second layer: should the transport ever be loosened, the reply still
+# cannot be a script another origin can run.
+JSONP_REFUSED_API_ROUTES = frozenset({'settings', 'settings.reveal_cell'})
 
 
 # Routes whose rows may carry a cell that is not text (SEC-006: a stored key
@@ -1043,10 +1055,10 @@ def _rows_carry_non_text(route, body):
 
 
 def _strict_json_body_ok(route, body):
-    required, rows_key, optional = STRICT_JSON_API_ROUTES[route]
-    if not isinstance(body, dict) or not required <= set(body) <= required | set(optional):
+    required, rows_key, types = STRICT_JSON_API_ROUTES[route]
+    if not isinstance(body, dict) or not required <= set(body) <= required | set(types):
         return False
-    if any(type(body[key]) is not kind for key, kind in optional.items() if key in body):
+    if any(type(body[key]) is not kind for key, kind in types.items() if key in body):
         return False
     if rows_key is None:
         return True
