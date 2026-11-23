@@ -24,10 +24,21 @@ way the CORS middleware matches it, and the list is the one read when the server
 started.
 
 If you list this app's own public address in `cors_origins` and your reverse
-proxy rewrites `Host` to the upstream address (nginx's default `proxy_pass`),
-sign-out and those routes are now refused from that address, and the log says so.
-Either remove the entry (same-origin use does not need it) or make the proxy pass
-the original host (`proxy_set_header Host $host;` in nginx).
+proxy rewrites `Host` to the upstream address while sending `X-Forwarded-Host`
+(for example Apache `mod_proxy` without `ProxyPreserveHost On`, or nginx
+configured to add that header without preserving `Host`), sign-out and those
+routes are now refused from that address, and the log says why. Either remove the
+entry (same-origin use does not need it) or make the proxy preserve `Host` (for
+example `ProxyPreserveHost On`, or `proxy_set_header Host $host;` in nginx). A
+proxy that rewrites `Host` and sends no `X-Forwarded-Host`, which includes nginx's
+default `proxy_pass`, was refused before this change, listed or not.
+
+**What listing an origin still allows.** Listing an origin in `cors_origins` lets
+pages served from it read this app's pages, and so its API key, and with the key
+call every API route that is not origin-checked: read and change settings, delete
+library records. This change only stops such a page, in a browser, from reaching
+sign-out and the origin-checked routes. List only origins you trust as much as
+this app itself.
 
 ## Changed: parameters are decoded once
 

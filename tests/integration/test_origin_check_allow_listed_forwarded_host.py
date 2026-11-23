@@ -11,7 +11,7 @@ Hosts end in `.invalid`.
 import pytest
 
 from couchpotato import SESSION_SECRET_PROPERTY
-from couchpotato.api import addApiView
+from couchpotato.api import addApiView, api, api_locks
 from tests.unit.test_session_revocation import API_KEY, _build_env, log_in
 
 pytestmark = pytest.mark.integration
@@ -37,11 +37,34 @@ def unlisted(tmp_path):
     yield from _build_env(tmp_path, {'cors_origins': ''})
 
 
+_ABSENT = object()
+
+
+@pytest.fixture(scope='module', autouse=True)
+def the_route_registry_is_left_as_found():
+    """The stand-in handler must not outlive this module as the real route."""
+    before = (api.get(ROUTE, _ABSENT), api_locks.get(ROUTE, _ABSENT))
+    yield
+    assert (api.get(ROUTE, _ABSENT), api_locks.get(ROUTE, _ABSENT)) == before
+
+
 @pytest.fixture
 def spy():
+    """Register a spy under the real route name and put back what was there.
+
+    Restores the exact previous entries itself, because it may be set up before
+    the environment fixture snapshots the registry (that snapshot would then
+    contain the spy and "restore" it).
+    """
+    previous = (api.get(ROUTE, _ABSENT), api_locks.get(ROUTE, _ABSENT))
     calls = []
     addApiView(ROUTE, lambda **kwargs: calls.append(kwargs) or {'success': True})
-    return calls
+    yield calls
+    for registry, value in zip((api, api_locks), previous):
+        if value is _ABSENT:
+            registry.pop(ROUTE, None)
+        else:
+            registry[ROUTE] = value
 
 
 def client_for(env):
@@ -232,3 +255,75 @@ class TestTheCheckFollowsTheValueTheMiddlewareWasBuiltWith:
         response = client.get(ROUTE_URL, headers=HOSTILE)
         assert response.status_code == 200
         assert len(spy) == 1
+
+
+class TestTheRefusalLogExplainsAListedOrigin:
+    """The warning for a listed origin names the real cause and both remedies."""
+
+    LISTED_TEXT = 'is listed in cors_origins'
+
+    def messages(self, caplog):
+        return ' '.join(r.getMessage() for r in caplog.records if r.levelname == 'WARNING')
+
+    def test_sign_out_for_a_listed_origin(self, listed, caplog):
+        client, _ = log_in(listed)
+        with caplog.at_level('WARNING'):
+            client.post('/logout/', headers=HOSTILE)
+        text = self.messages(caplog)
+        assert self.LISTED_TEXT in text
+        assert 'X-Forwarded-Host is not trusted' in text
+        assert 'remove the entry' in text.lower()
+        assert 'preserve Host' in text
+
+    def test_route_for_a_listed_origin(self, listed, spy, caplog):
+        with caplog.at_level('WARNING'):
+            client_for(listed).get(ROUTE_URL, headers=HOSTILE)
+        text = self.messages(caplog)
+        assert self.LISTED_TEXT in text
+        assert 'X-Forwarded-Host is not trusted' in text
+        assert 'remove the entry' in text.lower()
+        assert 'preserve Host' in text
+
+    def test_sign_out_for_an_unlisted_origin_keeps_the_old_advice(self, listed, caplog):
+        client, _ = log_in(listed)
+        with caplog.at_level('WARNING'):
+            client.post('/logout/', headers={'origin': 'http://evil.invalid', 'host': 'cp.invalid:5050'})
+        text = self.messages(caplog)
+        assert 'Refused a sign-out' in text
+        assert self.LISTED_TEXT not in text
+        assert 'set it to forward the original host' in text
+
+    def test_route_for_an_unlisted_origin_keeps_the_old_advice(self, listed, spy, caplog):
+        with caplog.at_level('WARNING'):
+            client_for(listed).get(ROUTE_URL, headers={
+                'origin': 'http://evil.invalid', 'host': 'cp.invalid:5050'})
+        text = self.messages(caplog)
+        assert 'Refused a cross-origin request' in text
+        assert self.LISTED_TEXT not in text
+        assert 'set it to forward the original host' in text
+
+    def test_the_log_adds_no_new_header_value(self, listed, caplog):
+        client, _ = log_in(listed)
+        with caplog.at_level('WARNING'):
+            client.post('/logout/', headers={**HOSTILE, 'x-forwarded-for': 'secret-hop.invalid'})
+        assert 'secret-hop.invalid' not in self.messages(caplog)
+
+
+@pytest.mark.parametrize('path', ['/', '/settings/', '/wizard/'])
+class TestRecordedLimitAListedOriginCanReadUiPagesAndSoTheApiKey:
+    """RECORDED LIMIT, not desired behaviour (docs/technical-debt.md).
+
+    Listing an origin in `cors_origins` makes the CORS middleware answer its
+    credentialled GET of a UI page with the allow-origin header, and those pages
+    embed the API key. A page there can therefore learn the key and call every
+    route that is not origin-checked. This pins the fact so the debt entry is
+    backed; if a fix lands this test should be rewritten, not "fixed".
+    """
+
+    def test_a_listed_origin_reads_the_key_from_a_page(self, listed, path):
+        client, _ = log_in(listed)
+        response = client.get(path, headers={'origin': LISTED})
+        assert response.status_code == 200, response.status_code
+        assert response.headers.get('access-control-allow-origin') == LISTED
+        assert response.headers.get('access-control-allow-credentials') == 'true'
+        assert API_KEY in response.text

@@ -34,11 +34,14 @@ comma-split of both headers is unchanged.
 
 **Consequence, documented and not fixed.** An operator who lists this app's OWN
 public origin in `cors_origins` AND runs behind a reverse proxy that rewrites
-`Host` to the upstream address (nginx's default `proxy_pass` without
-`proxy_set_header Host $host`) will have sign-out and the origin-checked routes
+`Host` to the upstream address while sending `X-Forwarded-Host` (for example Apache
+`mod_proxy` without `ProxyPreserveHost On`, or nginx configured to add that header
+without preserving `Host`) will have sign-out and the origin-checked routes
 refused from that origin. Remedy: remove the entry (it is not needed for
-same-origin use) or make the proxy preserve `Host`. With `Host` preserved, or with
-`cors_origins` empty (the default), nothing changes.
+same-origin use) or make the proxy preserve `Host`. A proxy that rewrites `Host`
+and sends no `X-Forwarded-Host` (nginx's default `proxy_pass`) was refused before
+this change, listed or not. With `Host` preserved, or with `cors_origins` empty
+(the default), nothing changes.
 
 ## Design
 
@@ -105,6 +108,19 @@ same-origin use) or make the proxy preserve `Host`. With `Host` preserved, or wi
    this fix) with the behaviour, the own-origin-behind-proxy consequence and its
    remedy.
 
+9. **AC-9 (refusal log).** When the stated origin is on the list, both refusal
+   warnings (sign-out and the origin-checked routes) say that the origin is
+   listed in `cors_origins`, so `X-Forwarded-Host` is not trusted for it, and name
+   both remedies (remove the entry, or have the proxy preserve `Host`). For an
+   unlisted origin the original advice is unchanged and the listed-origin text
+   does not appear. No header value is logged beyond the three already logged.
+10. **AC-10 (recorded limit).** A listed origin's credentialled GET of a UI page is
+    answered with the allow-origin header and the page holds the API key. This
+    is pinned by a test named as a recorded limit, backed by an open entry in
+    `docs/technical-debt.md`, and stated in the API.md note: this change stops
+    such a page reaching sign-out and the origin-checked routes, not reading the
+    key and calling the other routes.
+
 ## Also
 
 A reviewer noted that `tests/integration/test_settings_jsonp_refused.py`
@@ -117,7 +133,8 @@ stopping the helper restoring `api`.
 ## Not in scope
 
 - Giving `X-Forwarded-Host` a trusted-proxy list.
-- Changing `allow_headers=["*"]`.
+- Changing `allow_headers=["*"]`, or limiting credentialled CORS to `/api/`
+  routes (recorded as debt, AC-10).
 
 ## Affected files
 
@@ -125,7 +142,7 @@ stopping the helper restoring `api`.
 - `tests/unit/test_origin_check_allow_listed_forwarded_host.py`
 - `tests/integration/test_origin_check_allow_listed_forwarded_host.py`
 - `tests/integration/test_settings_jsonp_refused.py`
-- `docs/reference/API.md`
+- `docs/reference/API.md`, `docs/technical-debt.md`
 
 ## Verification
 
