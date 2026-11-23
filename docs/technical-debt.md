@@ -599,8 +599,9 @@ the old test stays green, the new one fails.
      stopped. Revisit once no writer can leave a group misaligned: gaps 1 and 2
      below closed (or each indexer stored as one record), and item e repaired
      or aged out. Until then guarding these lookups is unsafe.
-  c. Moved to its own entry, "Settings values are URL-decoded a second time on
-     save" (below), which also carries what was item 14.
+  c. Fixed 2026-11-23: the second URL-decode is gone. See the closed entry
+     "Settings values are URL-decoded a second time on save" (below), which
+     also carries what was item 14.
   e. Installs that saved misaligned lists through the wizard before v3.278.0
      cannot be detected or repaired automatically.
   Four gaps the SEC-004 spec declined:
@@ -663,8 +664,9 @@ the old test stays green, the new one fails.
      2026-11-22 (spec gap (q)): a 401 no longer counts towards the cut-off for
      any caller. The other two parts of (q) stay open: D9 is unobserved against
      a real Jackett, and a proxy's 401 is reported as a rejected key.
-  14. Moved to the entry "Settings values are URL-decoded a second time on
-     save" (below), together with item c.
+  14. Fixed 2026-11-23, together with item c: the second URL-decode is gone.
+     See the closed entry "Settings values are URL-decoded a second time on
+     save" (below).
   Direction for the durable fix: store each indexer as one record instead of
   parallel lists, which would remove b and gaps 1 and 2; the group save is the
   stopgap that keeps the lists aligned until then.
@@ -694,34 +696,56 @@ the old test stays green, the new one fails.
   read plus today's `save_group` would destroy stored keys, because the mask
   would be written back over them. Condition for revisiting: SEC-005 has now
   landed (P1 to P4), so this is the next spec.
-- **Settings values are URL-decoded a second time on save (open, 2026-11-23;
-  owner decision 2026-11-23: fix it next, as the change after SEC-005 P4 and
-  ahead of the proxy plan).** Every option saved through the API goes through
-  `callApiHandler` and then `getParams` (`couchpotato/api.py:62`,
-  `couchpotato/core/helpers/request.py:30,43`), which runs `unquote` on the value
-  after the web framework has already decoded it. This is pre-existing and was
-  found at the SEC-005 P4 review (it was first recorded as items c and 14 of the
-  "Newznab positional lists" entry, which now point here). It affects every
-  setting saved through the API, including API keys, downloader and proxy
-  passwords and `core.password`. Placeholder values only below.
-  Measured by a reviewer through the real `settings.save` route, by form and by
-  JSON:
-  - The trigger is a `%` followed by two hex digits. A lone `%` (`100%`) is
-    unchanged.
-  - `placeholder-pa%41ss` is stored as `placeholder-paAss`; `placeholder-p%25w`
-    is stored as `placeholder-p%w`; a `%FF`-style non-UTF-8 escape is replaced
-    by U+FFFD, so the value that was typed cannot be recovered from what is
-    stored.
-  - The save replies `success: true`, so nothing tells the user the value changed.
-  - Earlier note (item c): `%2C` typed on the Settings page is stored as a comma.
-  - Seen through SEC-005: a Jackett address with a percent-encoded path or
-    userinfo (`jack%C3%A9tt`) cannot be saved as typed, and so cannot be bound to
-    the saved key (see the Jackett section of `docs/reference/API.md`).
-  Reasoned, NOT driven: the login form reads the raw form value without this
-  second decode (`couchpotato/__init__.py`, `login_post`), so a UI password that
-  contains `%41`-style text and was saved through Settings would probably not
-  accept what the user typed; recovery would be to edit `config.ini`. Not
-  measured.
+- **Settings values are URL-decoded a second time on save (closed 2026-11-23;
+  spec `specs/FIX-2026-11-23-api-param-double-decode.md`).** Every API argument
+  went through `callApiHandler` and then `getParams`
+  (`couchpotato/core/helpers/request.py`), which ran `unquote` on each string
+  after the web framework had already decoded the query string and the form
+  body (a JSON body was never encoded). A `%` followed by two hex digits was
+  therefore changed before any handler saw it: `placeholder-pa%41ss` was stored
+  as `placeholder-paAss`, `placeholder-p%25w` as `placeholder-p%w`, and a
+  `%FF`-style escape became U+FFFD, with the save replying `success: true`. It
+  reached every setting (API keys, downloader and proxy passwords,
+  `core.password`) and every other route that takes text (folder paths, search
+  terms, `userscript.add_via_url`). It was inherited from the original
+  CouchPotato, where the helper ran after Tornado had decoded the arguments.
+  Fixed by removing both `unquote` calls from `getParams` and nothing else; no
+  route gained a decode of its own. One decode now remains, the framework's, so
+  a client that percent-encodes once (every page of the UI does) is unaffected.
+  Driven through the real routes, including the login form: a UI password or
+  username containing `%41`-style text, saved through Settings, is now accepted
+  when typed. Measured with the old decode restored: the stored password was the
+  hash of the decoded spelling (`placeholder-paAss`), so typing that spelling
+  logged in and typing what was saved (`placeholder-pa%41ss`) did not, and
+  nothing told the user. The stored username was decoded the same way
+  (`placeholder-usAer`), and the login compares the raw form text with the
+  stored name.
+  What remains:
+  - Values that earlier versions stored in changed form are not repaired. They
+    cannot be told apart from values the user meant, so a setting that was
+    saved with a `%41`-style sequence in it must be entered again.
+  - Upgrading does not touch a stored password hash, so someone who has been
+    logging in with the decoded spelling keeps doing so, and must save the
+    password again to use the spelling they originally typed. The same goes for
+    a username.
+  - A third-party client that percent-encoded its values twice to work around
+    the old behaviour now has one layer of encoding stored. None is known.
+  - The flat `true` / `false` coercion in `getParams` is a separate debt (next
+    entry).
+- **A setting whose value is exactly `true` or `false` is stored as a boolean
+  (open, 2026-11-23).** `getParams` turns a flat string value whose text is
+  `true` or `false`, in any letter case, into a boolean, for every route. Measured
+  through the real `settings.save` route, by form, JSON and query string, on a
+  free-text option (`core.proxy_password`): a value of `true` is held in memory
+  as the boolean and written to `config.ini` as `True`; `False` is written as
+  `False`. The save replies `success: true`. It affects a password, key or name
+  that is exactly that word, and nothing else; a nested bracket value is not
+  coerced. Found while closing the second-decode entry above, which left it
+  alone on purpose (it is the intended conversion for checkbox and `bool`
+  options). Fixing it means converting by the option's declared type in the
+  settings route instead of by the text in shared plumbing. Condition for
+  revisiting: a user reports it, or a route is added whose text argument can
+  legitimately be `true`.
 - **A removed Settings row waits 8 seconds before it is saved (2026-11-18).**
   Owner decision: removing a row from a combined field shows "Row N removed."
   with an Undo button, and the group save that carries the removal is delayed

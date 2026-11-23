@@ -924,9 +924,10 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
 
 # Routes that take their whole payload as ONE JSON object holding exactly these
 # top-level keys (SEC-004). A cell value must never travel in a URL, and the
-# shared parameter parser URL-decodes form and query values a second time and
-# turns a bracket key into nesting, either of which would change a cell after
-# its comma had been checked. Requiring `application/json` is also this route's
+# shared parameter parser turns a bracket key into nesting, which would change
+# the shape of the rows after their commas had been checked. (It used to
+# URL-decode form and query values a second time as well; that was removed in
+# FIX-2026-11-23.) Requiring `application/json` is also this route's
 # cross-site defence: a page on another origin cannot send that content type
 # without a preflight, and `cors_origins` defaults to empty, so none is allowed.
 #
@@ -952,7 +953,7 @@ async def _strict_json_refusal(route, request):
 
     Judged on the raw body, before `getParams` runs: after parsing, a
     bracket-keyed member (`"rows[0][host]"`) is indistinguishable from a nested
-    one and its value has been decoded once.
+    one.
     """
     content_type = request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
     acceptable = (request.method == 'POST'
