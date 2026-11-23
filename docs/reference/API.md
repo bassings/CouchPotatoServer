@@ -10,6 +10,23 @@ When running, FastAPI provides automatic OpenAPI documentation:
 - **ReDoc**: `http://localhost:5050/redoc`
 - **OpenAPI JSON**: `http://localhost:5050/openapi.json`
 
+## Changed: settings group saves accept a token; a new reveal route
+
+In versions after v3.314.0-beta.1 the settings read adds `token` to
+`combine_state.newznab` and `combine_state.torrentpotato`; `settings.save_group`
+accepts an optional `token` and two new forms for a credential cell (described under
+that route below); a save whose cells are not all text is refused with HTTP 403 when
+its `Origin` or `Referer` names another origin; and `settings.reveal_cell` is new and
+origin-checked, as the `renamer.operator_*` and Jackett routes are. An all-string save
+without a token behaves and replies as before. The WARNING for a malformed group-save
+request now reads `Refused a request to "settings.save_group": it was not a JSON POST
+of exactly the expected keys`. **Keys are still returned unmasked by the settings
+read in these versions**, and no page of this app uses the new forms yet: this is the
+server half of the work that will hide them. One limit applies from these versions: a
+stored Newznab or TorrentPotato key that already contains eight consecutive U+2022
+bullets (which nothing in this app writes) has every save of its group refused as
+`masked_value` until it is corrected in `config.ini`.
+
 ## Changed: an origin on the CORS list cannot vouch for itself with `X-Forwarded-Host`
 
 In versions after v3.313.0-beta.1, when a request's `Origin` (or, without one, the
@@ -213,7 +230,9 @@ cache-buster `t`, or an extra or missing top-level key is refused with HTTP 400.
 `token` (a string) is the group's `combine_state[section].token` from the
 settings read, present only for a group that holds a credential (`newznab`,
 `torrentpotato`). A save that carries one is refused as `stale`, with nothing
-written, when the group has changed since that token was issued. A save with no
+written, when the group's stored values differ from those the token was issued for,
+or when the server has restarted since (the token's key is made afresh at each
+start). Read the settings again for a fresh token. A save with no
 `token` is accepted as it always was. Any string that contains the mask text
 (eight U+2022 bullets) is refused as the value of a credential column
 (`masked_value`).
@@ -226,9 +245,10 @@ always the cell's own index in that column. The server remembers up to 16 such k
 per section, in memory only, until it restarts. Every non-empty key a token-carrying
 save does not keep, a key replaced by typing included, stays restorable by a holder of
 the API key and that save's token until the server restarts or 16 later entries in that
-section push it out. Either form without a `token`, or in
-any other column, is refused (`token_missing`, `bad_reference`); a restore nobody
-holds is `restore_unknown`; a stale refusal also lists `held`, the `{column, row}`
+section push it out. A `keep` without a `token`, or a
+`restore` without one whose entry is held, is refused as `token_missing`; either form
+in any other column is `bad_reference`. A restore nobody holds is `restore_unknown`,
+decided before the token is checked; a stale refusal also lists `held`, the `{column, row}`
 pairs held under the token it carried. A save in which ANY member of any row is not a
 string (a `keep` or `restore` among them) is refused with HTTP 403 when its `Origin` or
 `Referer` header names another origin, an origin listed in `cors_origins` included. A
@@ -252,8 +272,12 @@ A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 registered for any column of these groups today.
 
 **Where an operator finds a refusal.** One WARNING per refused save in the log,
-with no value, in one of four forms:
+with no value, in one of five forms:
 
+- a save whose cells are not all text, sent with an `Origin` or `Referer` naming
+  another origin (HTTP 403): `Refused a cross-origin save to "settings.save_group"
+  carrying cells that are not text whose Origin/Referer (...) ...`, which names the
+  `Origin` or `Referer`, `Host` and `X-Forwarded-Host` values and no cell;
 - a refused group save: `Refused a settings group save: section=... first_row=...
   first_column=... reason=... offences=N`;
 - a request that was not a JSON POST of `section` and `rows` (and, optionally, a
@@ -332,8 +356,12 @@ null, "reason": "..."}]}` with no value. The reasons are `unknown_section` (not 
 registered group), `bad_reference` (a column the group does not declare secret, or a row
 outside the column), `token_missing`, and `stale` (the group has changed since the token
 was issued). Each success writes one INFO line naming the section, column and row; each
-refusal writes one WARNING naming the section and the reason. Neither ever carries a value
-or a token, and a section or column the caller made up is logged as `unregistered`.
+refusal made after the request is accepted writes one WARNING naming the section and the
+reason. Neither ever carries a value or a token, and a section or column the caller made up
+is logged as `unregistered`. A 403 (another origin, or no `Origin` and no `Referer`) and a
+400 (not the four members) each write the route-level WARNING instead, and a failure while
+reading writes one ERROR and replies `{"success": false, "error": "..."}` with no `invalid`.
+A token from before a restart is `stale`.
 A request that is not a JSON POST of exactly those four members is refused 400 with the
 text "The request was not a reveal of one cell. Nothing was revealed."
 

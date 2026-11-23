@@ -728,6 +728,8 @@ the old test stays green, the new one fails.
   read plus today's `save_group` would destroy stored keys, because the mask
   would be written back over them. Condition for revisiting: SEC-005 has now
   landed (P1 to P4), so this is the next spec.
+  Being closed by SEC-006: its server slice (P1) has landed with the read still
+  unmasked; masking arrives with its last slice (P3).
   [Corrected 2026-11-23, SEC-006 P1: the measurement above holds for a
   `save_group` that sends strings, but it is no longer true that there is no
   second redirect path through the rows. A `save_group` that carries a token may
@@ -753,6 +755,16 @@ the old test stays green, the new one fails.
   raises, so the exposure is small. Condition for revisiting: the next change to
   `save_group_view` or to `callApiHandler`'s error path, which should make the
   INFO line unable to change the reply.
+- **A stored indexer key that already contains the mask text blocks its group's
+  saves (open, 2026-11-24; SEC-006 P1).** From the SEC-006 server slice, any
+  credential cell containing eight consecutive U+2022 bullets is refused as
+  `masked_value`, so that a page showing dots can never write them over a key.
+  A stored Newznab or TorrentPotato key that ALREADY contains that text
+  therefore has every save of its group, and a Jackett merge sync, refused
+  until the key is corrected in `config.ini`. Nothing in this app writes that
+  text, so it would have to have been typed. Pinned by
+  `TestRecordedLimitAStoredKeyThatAlreadyContainsTheMask`. Condition for
+  revisiting: SEC-006 P3, which writes the closing entry for the whole change.
 - **Settings values are URL-decoded a second time on save (closed 2026-11-23;
   spec `specs/FIX-2026-11-23-api-param-double-decode.md`).** Every API argument
   went through `callApiHandler` and then `getParams`

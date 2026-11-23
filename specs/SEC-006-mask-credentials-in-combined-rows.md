@@ -1,6 +1,6 @@
 # SEC-006: credentials in combined rows are masked on the settings read
 
-Status: planned, lean version adopted 2026-11-23 (D13); ready to build P1 once the forwarded-host fix is merged. This is one fresh rewrite, not an amendment: criteria are renumbered per lens and no old number is cited. The 144-criteria draft it replaces is preserved in the branch history (`spec/sec-006-mask-combined-credentials`). Follows SEC-004 (group save) and SEC-005 (Jackett key bound to its address).
+Status: lean version adopted 2026-11-23 (D13). P1 (server) is built on `feat/sec-006-p1-server` with the settings read still unmasked; P2 (Settings page) and P3 (wizard, masking on, docs) are not started. This is one fresh rewrite, not an amendment: criteria are renumbered per lens and no old number is cited. The 144-criteria draft it replaces is preserved in the branch history (`spec/sec-006-mask-combined-credentials`). Follows SEC-004 (group save) and SEC-005 (Jackett key bound to its address).
 
 ## Problem
 
@@ -103,7 +103,7 @@ Dated notes recording what P1 implemented where the plan was silent. No criterio
 Both must be on `master` before P1 merges. This spec builds neither and asserts the effect of each once (AC-SEC-2), so a regression of either fails here.
 
 - **JSONP refused on the settings read (D10).** Merged as #630 (`dd80c7574`), verified an ancestor of `master`.
-- **`X-Forwarded-Host` cannot vouch for an origin on the CORS allow-list.** `specs/FIX-2026-11-23-origin-check-allow-listed-forwarded-host.md`, commit `a75b8af15` on `fix/origin-check-allow-listed-xfh`, in review; measured 2026-11-23 as not an ancestor of `master`. Without it D9 and the reveal gate do not hold against a listed origin, and P1's doc text would be false in a published beta.
+- **`X-Forwarded-Host` cannot vouch for an origin on the CORS allow-list.** `specs/FIX-2026-11-23-origin-check-allow-listed-forwarded-host.md`, merged as #631 (`72034c1a9`), an ancestor of `master` and the merge base of the P1 branch. Without it D9 and the reveal gate do not hold against a listed origin, and P1's doc text would be false in a published beta.
 
 ## Acceptance criteria
 
