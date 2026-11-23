@@ -11,6 +11,7 @@ and ``Settings.types`` are class attributes, ``addApiView`` writes a module
 registry, ``Settings.setFile`` subscribes to the event bus), so
 ``group_settings`` isolates all of it and puts it back on exit.
 """
+import ast
 import configparser
 import contextlib
 import hashlib
@@ -58,6 +59,47 @@ def combined_declaring_modules():
     return names
 
 
+def config_declaring_modules():
+    """The dotted name of every module under `couchpotato/` with a module-level `config = ...`.
+
+    Found from the syntax tree, not by matching text, so it does not care how a module
+    spells its option types. A package's `__init__` is named as the package.
+    """
+    names = []
+    for path in sorted((REPO_ROOT / 'couchpotato').rglob('*.py')):
+        if '__pycache__' in path.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding='utf-8'))
+        except SyntaxError:
+            continue
+        if any(isinstance(node, ast.Assign)
+               and any(isinstance(target, ast.Name) and target.id == 'config' for target in node.targets)
+               for node in tree.body):
+            parts = list(path.relative_to(REPO_ROOT).with_suffix('').parts)
+            names.append('.'.join(parts[:-1] if parts[-1] == '__init__' else parts))
+    return names
+
+
+def runtime_combined_options():
+    """Every (section, option) whose `type` EVALUATES to 'combined' in a loaded module's `config`.
+
+    The independent check beside the source search: it imports each module that defines
+    a `config` and walks the evaluated structure, so a type written through a constant or
+    `dict(type=...)` is still found.
+    """
+    found = set()
+    for name in config_declaring_modules():
+        module = importlib.import_module(name)
+        configs = module.config if isinstance(module.config, list) else []
+        for section in configs:
+            for group in section.get('groups', []):
+                for option in group.get('options', []):
+                    if option.get('type') == 'combined':
+                        found.add((section['name'], option['name']))
+    return found
+
+
 def provider_configs():
     """The `config` of every module that declares a combined option, found by search.
 
@@ -77,6 +119,10 @@ def provider_configs():
     assert found == set(EXPECTED_COMBINED), (
         'the combined options under couchpotato/ are not the expected five: new %s, lost %s'
         % (sorted(found - set(EXPECTED_COMBINED)), sorted(set(EXPECTED_COMBINED) - found)))
+    runtime = runtime_combined_options()
+    assert runtime == set(EXPECTED_COMBINED), (
+        'the combined options a loaded `config` evaluates to are not the expected five: runtime new %s, '
+        'lost %s' % (sorted(runtime - set(EXPECTED_COMBINED)), sorted(set(EXPECTED_COMBINED) - runtime)))
     order = [section for section, _ in EXPECTED_COMBINED]
     return sorted(configs, key=lambda config: order.index(config[0]['name']))
 

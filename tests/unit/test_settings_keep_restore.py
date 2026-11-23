@@ -894,6 +894,31 @@ class TestNothingTheHoldDoesLeaksOrDisagrees:
         assert token not in logs.text()
         assert 'RuntimeError' in logs.text()
 
+    @pytest.mark.parametrize('scenario', ['kept on a changed address', 'restore'])
+    def test_a_failing_log_call_after_the_write_leaves_an_accepted_reply_and_consumes_the_entry(
+            self, settings, monkeypatch, scenario):
+        rows, token = seeded(settings, keys=['placeholder-p0', 'placeholder-p1', 'placeholder-p2'])
+        removed = settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)
+        sent = three_rows(settings, 'newznab', tag='n')[:2]     # a different host: the keep logs
+        sent[0]['api_key'] = keep(0)
+        sent[1]['api_key'] = restore(token, 1) if scenario == 'restore' else 'typed-new'
+
+        def raising(*args, **kwargs):
+            raise RuntimeError(self.CANARY)
+
+        monkeypatch.setattr(settings.log, 'info', raising)
+
+        with LogCapture() as logs:
+            result = settings.save_group('newznab', sent, removed['token'])
+
+        assert result['success'] is True
+        self.agree(settings, expect_new=True)
+        if scenario == 'restore':
+            assert settings._hold.peek('newznab', 'api_key', token, 1) is None, (
+                'the restored entry must be consumed even when a log call fails')
+        assert 'RuntimeError' in logs.text()
+        assert self.CANARY not in logs.text() + repr(result)
+
     def test_a_failing_take_after_the_write_leaves_an_accepted_reply_and_one_state(self, settings, monkeypatch):
         rows, token = seeded(settings, keys=['placeholder-p0', 'placeholder-p1', 'placeholder-p2'])
         removed = settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)

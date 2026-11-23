@@ -913,6 +913,7 @@ class TestTheLiteralsLiveInExactlyOnePlace:
     #: Every way the standard library computes a MAC. Matching one spelling only
     #: (`hmac.new(`) lets a second signing path step around the guard with another.
     MAC_CALLS = ('hmac.new(', 'hmac.digest(', 'hmac.HMAC(')
+    MAC_NAMES = ('new', 'digest', 'HMAC')
 
     def test_a_mac_is_computed_only_where_a_reason_is_recorded(self, sources):
         """Session signing (`__init__.py`) and the SEC-006 group freshness token (`core/settings.py`).
@@ -924,6 +925,51 @@ class TestTheLiteralsLiveInExactlyOnePlace:
                        if any(call in text for call in self.MAC_CALLS))
 
         assert files == ['couchpotato/__init__.py', 'couchpotato/core/settings.py'], files
+
+    def test_no_other_file_reaches_a_mac_through_any_import_form(self, sources):
+        """`from hmac import digest as mac`, `import hmac as h; h.new(...)`, `from hmac import *`.
+
+        The text match above sees only the literal call; this reads the syntax tree, so
+        an alias or a from-import cannot step around it. Comparing digests
+        (`hmac.compare_digest`) is not computing one and stays allowed everywhere.
+        """
+        allowed = {'couchpotato/__init__.py', 'couchpotato/core/settings.py'}
+        found = []
+        for path, text in sources.items():
+            relative = str(path.relative_to(REPO_ROOT))
+            if relative in allowed:
+                continue
+            found += [relative for _ in self.mac_uses(ast.parse(text))]
+
+        assert found == [], found
+
+    @staticmethod
+    def mac_uses(tree):
+        macs = set(TestTheLiteralsLiveInExactlyOnePlace.MAC_NAMES)
+        module_names, direct_names, uses = set(), set(), []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                module_names |= {(alias.asname or alias.name) for alias in node.names if alias.name == 'hmac'}
+            elif isinstance(node, ast.ImportFrom) and node.module == 'hmac':
+                for alias in node.names:
+                    if alias.name in macs or alias.name == '*':
+                        direct_names.add(alias.asname or alias.name)
+                        uses.append(node)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in macs:
+                if isinstance(node.value, ast.Name) and node.value.id in module_names:
+                    uses.append(node)
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in direct_names:
+                uses.append(node)
+        return uses
+
+    def test_the_syntax_guard_sees_every_import_form(self):
+        for source in ('from hmac import digest as mac\nmac(b"k", b"m", "sha256")',
+                       'import hmac as h\nh.new(b"k")', 'import hmac\nhmac.HMAC(b"k")',
+                       'from hmac import *', 'from hmac import new'):
+            assert self.mac_uses(ast.parse(source)), source
+        for source in ('import hmac\nhmac.compare_digest(a, b)', 'from hmac import compare_digest'):
+            assert not self.mac_uses(ast.parse(source)), source
 
     def test_the_session_mac_itself_still_appears_in_one_file(self, sources):
         files = sorted(str(path.relative_to(REPO_ROOT)) for path, text in sources.items()

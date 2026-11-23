@@ -1481,8 +1481,10 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 return refusal
             if (route in STRUCTURED_ROWS_API_ROUTES and _cross_origin_post(request)
                     and _rows_carry_non_text(route, request.state.strict_json_body)):
-                # Decided on the object the strict check parsed: no second parser.
-                # The WARNING names the route and the reason, never a cell or token.
+                # Decided on the object the strict-JSON step parsed. The handler
+                # parses the same bytes again with the same `json.loads` (`getParams`
+                # leaves `rows` untouched), so the two cannot differ. The WARNING
+                # names the route and the reason, never a cell or token.
                 _log_origin_refusal('a cross-origin save to "%s" carrying cells that are '
                                     'not text' % route, request)
                 return JSONResponse(

@@ -222,11 +222,16 @@ a credential column (`api_key`, `pass_key`) only: `{"keep": i}` stores what cell
 of that column holds now, and `{"restore": {"token": "<token>", "row": i}}` stores the
 key that was held when the save that carried that token left cell `i` out. `i` is
 always the cell's own index in that column. The server remembers up to 16 such keys
-per section, in memory only, until it restarts. Either form without a `token`, or in
+per section, in memory only, until it restarts. Every non-empty key a token-carrying
+save does not keep, a key replaced by typing included, stays restorable by a holder of
+the API key and that save's token until the server restarts or 16 later entries in that
+section push it out. Either form without a `token`, or in
 any other column, is refused (`token_missing`, `bad_reference`); a restore nobody
 holds is `restore_unknown`; a stale refusal also lists `held`, the `{column, row}`
-pairs held under the token it carried. A save with any such cell is refused with HTTP
-403 when it comes from another origin (an origin listed in `cors_origins` included).
+pairs held under the token it carried. A save in which ANY member of any row is not a
+string (a `keep` or `restore` among them) is refused with HTTP 403 when its `Origin` or
+`Referer` header names another origin, an origin listed in `cors_origins` included. A
+request with neither header is not refused by this rule.
 
 **Success.** `{"success": true}`, or `{"success": true, "token": "<fresh token>"}`
 for a save that carried a token. The body never carries a cell value.

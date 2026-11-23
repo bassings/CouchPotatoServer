@@ -140,6 +140,24 @@ class TestDiscoveryDoesNotDependOnAList:
         with pytest.raises(AssertionError, match=r"new \[\('zz_fake', 'api_key'\)\]"):
             provider_configs()
 
+    def test_a_combined_type_written_through_a_constant_is_still_found_at_runtime(self, tmp_path, monkeypatch):
+        """The source search matches the literal spelling; the runtime check does not care."""
+        (tmp_path / 'zz_constant_provider.py').write_text(
+            "COMBINED = 'combined'\n"
+            "config = [{'name': 'zz_const', 'groups': [{'options': [dict(name='api_key', type=COMBINED,"
+            " combine=['use', 'api_key'], pairing=['api_key', 'use'])]}]}]\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setattr(combine_groups, 'config_declaring_modules',
+                            lambda: [*real_config_modules, 'zz_constant_provider'])
+        # The source search sees nothing wrong, which is exactly why the runtime check exists.
+        monkeypatch.setattr(combine_groups, 'combined_declaring_modules', lambda: list(real_modules))
+
+        with pytest.raises(AssertionError, match=r"runtime new \[\('zz_const', 'api_key'\)\]"):
+            provider_configs()
+
+    def test_the_runtime_check_finds_the_same_five(self):
+        assert combine_groups.runtime_combined_options() == set(EXPECTED_COMBINED)
+
     def test_a_lost_group_fails_discovery_too(self, monkeypatch):
         monkeypatch.setattr(combine_groups, 'combined_declaring_modules',
                             lambda: [name for name in real_modules if not name.endswith('.imdb')])
@@ -149,6 +167,7 @@ class TestDiscoveryDoesNotDependOnAList:
 
 
 real_modules = combine_groups.combined_declaring_modules()
+real_config_modules = combine_groups.config_declaring_modules()
 
 
 class TestTheSweepCanFail:
