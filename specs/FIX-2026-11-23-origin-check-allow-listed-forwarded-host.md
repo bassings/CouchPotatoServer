@@ -115,11 +115,20 @@ this change, listed or not. With `Host` preserved, or with `cors_origins` empty
    unlisted origin the original advice is unchanged and the listed-origin text
    does not appear. No header value is logged beyond the three already logged.
 10. **AC-10 (recorded limit).** A listed origin's credentialled GET of a UI page is
-    answered with the allow-origin header and the page holds the API key. This
-    is pinned by a test named as a recorded limit, backed by an open entry in
-    `docs/technical-debt.md`, and stated in the API.md note: this change stops
-    such a page reaching sign-out and the origin-checked routes, not reading the
-    key and calling the other routes.
+    answered with the allow-origin header and the page holds the API key. The pages
+    include `/`, `/settings/`, `/wizard/`, `/logs/` and `/add/` (not a closed list),
+    all pinned by a test named as a recorded limit. On an install without a
+    password no session is needed (tested with no cookie sent); with a password the
+    request must carry the session cookie, which a browser attaches only when the
+    origin is same-site with this app (`SameSite=Lax`, from
+    `session_cookie_attributes`, not from a browser run). It is backed by an open
+    entry in `docs/technical-debt.md` and stated in the API.md note: this change
+    stops such a page reaching sign-out and the origin-checked routes, not reading
+    the key and calling the other routes.
+11. **AC-11 (log tests).** The listed-origin refusal log is tested for both
+    evidence kinds (Origin; Referer only) at both refusal sites, and no header
+    value beyond Host, X-Forwarded-Host and the stated origin reaches any log
+    record (a session cookie and a decoy `User-Agent` are asserted absent).
 
 ## Also
 

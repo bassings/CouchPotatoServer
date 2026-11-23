@@ -96,11 +96,16 @@ the old test stays green, the new one fails.
   owner's request, or when a route is added that returns stored data.
 - **An origin listed in `cors_origins` can learn the API key (2026-11-23).**
   The CORS middleware answers a listed origin's credentialled GET of a UI page
-  (`/`, `/settings/`, `/wizard/`) with the allow-origin header, and those pages
-  embed the API key, so a page on that origin can read the key and call every API
+  with the allow-origin header, and those pages embed the API key. The pages
+  include `/`, `/settings/`, `/wizard/`, `/logs/` and `/add/` (not a closed
+  list). A page on that origin can therefore read the key and call every API
   route that is not origin-checked (read and change settings, delete library
-  records). FIX-2026-11-23 only stops such a page reaching sign-out and the
-  origin-checked routes. Pinned by
+  records). On an install without a password this needs no session at all. With
+  a password the request must carry the session cookie, which a browser attaches
+  to such a request only when that origin is same-site with this app (the
+  cookie is `SameSite=Lax`, set in `session_cookie_attributes`; this is read from
+  the cookie attribute, not from a browser run). FIX-2026-11-23 only stops such a
+  page reaching sign-out and the origin-checked routes. Pinned by
   `TestRecordedLimitAListedOriginCanReadUiPagesAndSoTheApiKey`
   (`tests/integration/test_origin_check_allow_listed_forwarded_host.py`), which is
   a recorded limit, not desired behaviour. A fix would be to limit credentialled

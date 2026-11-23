@@ -34,9 +34,14 @@ proxy that rewrites `Host` and sends no `X-Forwarded-Host`, which includes nginx
 default `proxy_pass`, was refused before this change, listed or not.
 
 **What listing an origin still allows.** Listing an origin in `cors_origins` lets
-pages served from it read this app's pages, and so its API key, and with the key
-call every API route that is not origin-checked: read and change settings, delete
-library records. This change only stops such a page, in a browser, from reaching
+pages served from it read this app's pages, and so its API key. The pages include
+`/`, `/settings/`, `/wizard/`, `/logs/` and `/add/`; that is not a closed list.
+With the key a page can call every API route that is not origin-checked: read and
+change settings, delete library records. On an install without a password this
+needs no session. With a password, the request must carry the session cookie,
+which a browser attaches only when that origin is same-site with this app (the
+session cookie is `SameSite=Lax`; this follows from that attribute, not from a
+browser test). This change only stops such a page, in a browser, from reaching
 sign-out and the origin-checked routes. List only origins you trust as much as
 this app itself.
 

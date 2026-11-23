@@ -10,7 +10,7 @@ Hosts end in `.invalid`.
 """
 import pytest
 
-from couchpotato import SESSION_SECRET_PROPERTY
+from couchpotato import SESSION_COOKIE_NAME, SESSION_SECRET_PROPERTY
 from couchpotato.api import addApiView, api, api_locks
 from tests.unit.test_session_revocation import API_KEY, _build_env, log_in
 
@@ -265,19 +265,21 @@ class TestTheRefusalLogExplainsAListedOrigin:
     def messages(self, caplog):
         return ' '.join(r.getMessage() for r in caplog.records if r.levelname == 'WARNING')
 
-    def test_sign_out_for_a_listed_origin(self, listed, caplog):
+    @pytest.mark.parametrize('kind', ['origin', 'referer'])
+    def test_sign_out_for_a_listed_origin(self, listed, caplog, kind):
         client, _ = log_in(listed)
         with caplog.at_level('WARNING'):
-            client.post('/logout/', headers=HOSTILE)
+            client.post('/logout/', headers=evidence(kind))
         text = self.messages(caplog)
         assert self.LISTED_TEXT in text
         assert 'X-Forwarded-Host is not trusted' in text
         assert 'remove the entry' in text.lower()
         assert 'preserve Host' in text
 
-    def test_route_for_a_listed_origin(self, listed, spy, caplog):
+    @pytest.mark.parametrize('kind', ['origin', 'referer'])
+    def test_route_for_a_listed_origin(self, listed, spy, caplog, kind):
         with caplog.at_level('WARNING'):
-            client_for(listed).get(ROUTE_URL, headers=HOSTILE)
+            client_for(listed).get(ROUTE_URL, headers=evidence(kind))
         text = self.messages(caplog)
         assert self.LISTED_TEXT in text
         assert 'X-Forwarded-Host is not trusted' in text
@@ -303,27 +305,59 @@ class TestTheRefusalLogExplainsAListedOrigin:
         assert 'set it to forward the original host' in text
 
     def test_the_log_adds_no_new_header_value(self, listed, caplog):
-        client, _ = log_in(listed)
-        with caplog.at_level('WARNING'):
-            client.post('/logout/', headers={**HOSTILE, 'x-forwarded-for': 'secret-hop.invalid'})
-        assert 'secret-hop.invalid' not in self.messages(caplog)
+        client, token = log_in(listed)
+        assert token
+        assert client.cookies.get(SESSION_COOKIE_NAME) == token
+        decoys = ('secret-hop.invalid', 'decoy-agent/9.9')
+        with caplog.at_level('DEBUG'):
+            response = client.post('/logout/', headers={
+                **HOSTILE, 'x-forwarded-for': decoys[0], 'user-agent': decoys[1]})
+        assert response.status_code == 403
+        assert any('Refused a sign-out' in r.getMessage() for r in caplog.records)
+        everything = ' '.join(
+            '%s %r %r' % (r.getMessage(), r.args, r.__dict__.get('exc_text'))
+            for r in caplog.records)
+        for value in (token,) + decoys:
+            assert value not in everything
 
 
-@pytest.mark.parametrize('path', ['/', '/settings/', '/wizard/'])
+PAGES = ['/', '/settings/', '/wizard/', '/logs/', '/add/']
+
+
+@pytest.mark.parametrize('path', PAGES)
 class TestRecordedLimitAListedOriginCanReadUiPagesAndSoTheApiKey:
     """RECORDED LIMIT, not desired behaviour (docs/technical-debt.md).
 
     Listing an origin in `cors_origins` makes the CORS middleware answer its
     credentialled GET of a UI page with the allow-origin header, and those pages
     embed the API key. A page there can therefore learn the key and call every
-    route that is not origin-checked. This pins the fact so the debt entry is
-    backed; if a fix lands this test should be rewritten, not "fixed".
+    route that is not origin-checked. The pages listed here are a sample, not a
+    closed list. This pins the fact so the debt entry is backed; if a fix lands
+    this test should be rewritten, not "fixed".
+
+    With a password the request must carry the session cookie (the test client
+    sends it; a browser attaches it to a script request only when the origin is
+    same-site with this app, because the cookie is `SameSite=Lax`). Without a
+    password no cookie is needed at all.
     """
 
-    def test_a_listed_origin_reads_the_key_from_a_page(self, listed, path):
-        client, _ = log_in(listed)
-        response = client.get(path, headers={'origin': LISTED})
+    def assert_key_is_readable(self, response):
         assert response.status_code == 200, response.status_code
         assert response.headers.get('access-control-allow-origin') == LISTED
         assert response.headers.get('access-control-allow-credentials') == 'true'
         assert API_KEY in response.text
+
+    def test_a_listed_origin_reads_the_key_from_a_page(self, listed, path):
+        client, _ = log_in(listed)
+        self.assert_key_is_readable(client.get(path, headers={'origin': LISTED}))
+
+    def test_with_no_password_a_listed_origin_needs_no_cookie(self, tmp_path, path):
+        env_iter = _build_env(tmp_path, {
+            'cors_origins': LISTED, 'password': '', 'auth_required': 0})
+        env = next(env_iter)
+        try:
+            client = client_for(env)
+            assert not client.cookies
+            self.assert_key_is_readable(client.get(path, headers={'origin': LISTED}))
+        finally:
+            list(env_iter)
