@@ -94,9 +94,12 @@ class TestATokenBearingBody:
         with LogCapture() as logs:
             first = read_token(client)
             accepted = client.post(url(), json=body(settings, first)).json()
-            client.post(url(), json=body(settings, first, tag='b'))  # stale
+            # `first` is stale: the accepted save above changed the group.
+            stale = client.post(url(), json=body(settings, first, tag='b')).json()
+            assert stale['invalid'][0]['reason'] == 'stale'
 
         text = logs.text()
+        assert 'reason=stale' in text
         assert first not in text
         assert accepted['token'] not in text
         assert settings._token_key.hex() not in text

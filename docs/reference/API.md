@@ -225,7 +225,7 @@ for a save that carried a token. The body never carries a cell value.
 `column` the column name; both are `null` when the whole request is at fault.
 `reason` is one of `comma`, `control_character`, `not_string`, `not_encodable`,
 `missing_column`, `unknown_column`, `not_writable`, `unknown_section`,
-`malformed`, `misaligned`, `stale`, `masked_value`. The response names rows and columns and never a
+`malformed`, `misaligned`, `stale`, `token_unexpected`, `masked_value`. The response names rows and columns and never a
 value. A refused save leaves `config.ini` and the in-memory settings unchanged.
 A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 

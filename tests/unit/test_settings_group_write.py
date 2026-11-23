@@ -109,14 +109,14 @@ def test_the_class_under_test_is_the_real_settings(settings):
 
 PAIRS = [(section, column) for section in SECTIONS for column in declared_groups()[section]]
 
-#: The reason codes AC-ARCH-11(iii) froze (ten), plus the two SEC-006 added
-#: (`stale`, reachable only with a token; `masked_value`, only in a secret column).
+#: The reason codes AC-ARCH-11(iii) froze (ten), plus the SEC-006 ones
+#: (`stale` and `token_unexpected`, reachable only with a token; `masked_value`, only in a secret column).
 #: `misaligned` is reachable only from a builder callable, never from rows the
 #: writer is handed.
 REASON_CODES = frozenset({
     'comma', 'control_character', 'not_string', 'not_encodable', 'missing_column',
     'unknown_column', 'not_writable', 'unknown_section', 'malformed', 'misaligned',
-    'stale', 'masked_value',
+    'stale', 'masked_value', 'token_unexpected',
 })
 
 
@@ -452,6 +452,7 @@ class TestRefusalContract:
             seen.update(e['reason'] for e in settings.save_group(section, payload)['invalid'])
 
         seen.update(e['reason'] for e in settings.save_group('newznab', rows, 'not-a-token')['invalid'])
+        seen.update(e['reason'] for e in settings.save_group('imdb', three_rows(settings, 'imdb'), 'x')['invalid'])
 
         settings.p.set('newznab', 'host_internal_meta', 'ro')
         seen.update(e['reason'] for e in settings.save_group('newznab', rows)['invalid'])

@@ -193,3 +193,53 @@ class TestNoRealKeyFormatIsLockedOut:
         rows = with_secret(settings, 'newznab', 'api_key', '•')
 
         assert settings.save_group('newznab', rows) == {'success': True}
+
+
+class TestRecordedLimitAStoredKeyThatAlreadyContainsTheMask:
+    """A recorded limit (SEC-006, hard constraint 1), pinned so it cannot change unseen.
+
+    Nothing on master writes eight consecutive U+2022, so no install should hold one.
+    An install whose STORED key does has every save of that group, and a Jackett merge
+    sync, refused as `masked_value` until the key is corrected in `config.ini`.
+    """
+
+    BAD = 'before' + SECRET_MASK + 'after'
+
+    def test_every_save_of_that_group_is_refused_until_the_key_is_corrected(self, tmp_path, monkeypatch):
+        stored = {'newznab': {'use': '1,1', 'host': 'https://a.invalid,https://b.invalid',
+                              'api_key': self.BAD + ',placeholder-key-b', 'extra_score': '0,0',
+                              'custom_tag': ','}}
+        with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
+            rows = settings.group_stored_rows('newznab')
+            assert rows[0]['api_key'] == self.BAD
+            before = snapshot(settings, 'newznab')
+
+            result = settings.save_group('newznab', rows)
+
+            assert result['success'] is False
+            assert result['invalid'] == [{'row': 0, 'column': 'api_key', 'reason': 'masked_value'}]
+            assert_nothing_changed(settings, 'newznab', before)
+
+            settings.set('newznab', 'api_key', 'placeholder-key-a,placeholder-key-b')
+            settings.save()
+            assert settings.save_group('newznab', settings.group_stored_rows('newznab')) == {'success': True}
+
+    def test_a_jackett_merge_sync_is_refused_too(self, tmp_path, monkeypatch):
+        from couchpotato.environment import Env
+        from tests.helpers.jackett_binding import bind_saved_pair
+        stored = {'torrentpotato': {'use': '1', 'host': 'https://s.invalid/api', 'pass_key': self.BAD,
+                                    'name': 's', 'seed_ratio': '1', 'seed_time': '40', 'extra_score': '0'}}
+        with group_settings(tmp_path, monkeypatch, stored=stored) as settings:
+            monkeypatch.setattr(Env, '_settings', settings)
+            bind_saved_pair(settings, 'http://jackett.invalid:9117', 'placeholder-jackett-key')
+            from couchpotato.core.media.movie.providers.torrent.torrentpotato import TorrentPotato
+            provider = TorrentPotato.__new__(TorrentPotato)
+            monkeypatch.setattr(provider, 'getJackettIndexers', lambda url, key, movies_only=True: ([
+                {'id': 'alpha', 'title': 'Alpha', 'configured': True, 'supports_movies': True,
+                 'potato_url': url + '/potato/alpha/api'}], None))
+            before = snapshot(settings, 'torrentpotato')
+
+            result = provider.jackettSync()
+
+            assert result['success'] is False
+            assert_nothing_changed(settings, 'torrentpotato', before)

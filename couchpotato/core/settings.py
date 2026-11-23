@@ -57,6 +57,7 @@ _GROUP_REFUSAL_TEXT = {
     'malformed': 'The request was not a list of rows. Nothing was saved.',
     'misaligned': 'The stored rows do not line up. Fix them in Settings first. '
                   'Nothing was saved.',
+    'token_unexpected': 'This group does not use a token. Nothing was saved.',
     'stale': 'The rows changed after this page loaded them. Nothing was saved. '
              'Reload to see the current rows.',
     'masked_value': 'A saved key was sent back as the dots shown in its place. '
@@ -921,7 +922,19 @@ class Settings:
         with _PASSWORD_SAVE_LOCK:
             texts = [self._stored_text(section, column) for column in columns]
         message = self._group_token_input(section, columns, texts)
+        # The SEC-006 group freshness token, under its own per-process key. It is
+        # unrelated to session signing, which lives only in couchpotato/__init__.py.
         return hmac.digest(self._token_key, message, 'sha256').hex()
+
+    def _token_problems(self, section, token):
+        """The refusal for a token that cannot be honoured, as a problem list."""
+        if token is None:
+            return []
+        if section not in self.combine_secrets():
+            return [_invalid(None, None, 'token_unexpected')]
+        if not self._token_is_current(section, token):
+            return [_invalid(None, None, 'stale')]
+        return []
 
     def _token_is_current(self, section, token):
         expected = self._group_token(section)
@@ -1130,8 +1143,7 @@ class Settings:
         snapshot = self._group_snapshot(section, columns)
         try:
             rows = rows() if callable(rows) else rows
-            problems = [_invalid(None, None, 'stale')] if (
-                token is not None and not self._token_is_current(section, token)) else []
+            problems = self._token_problems(section, token)
             if not problems:
                 problems = [_invalid(None, column, 'not_writable') for column in columns
                             if not self.isOptionWritable(section, column)]
@@ -1140,9 +1152,6 @@ class Settings:
                 result = self._refuse_group(section, problems)
             else:
                 result = self._write_group(section, columns, rows)
-                if token is not None:
-                    # Computed under the same hold of the lock as the write.
-                    result['token'] = self._group_token(section)
         except GroupMisaligned:
             result = self._refuse_group(section, [_invalid(None, None, 'misaligned')])
         except Exception as error:
@@ -1152,6 +1161,22 @@ class Settings:
             raise
         if not result['success']:
             self._restore_group(section, snapshot)
+            return result
+        # The group is written. Nothing from here on may restore it or report a
+        # failure: the file holds the new rows, so a failure reply would be a lie
+        # and a restore would put the old rows back over a later unrelated save.
+        # Still under the caller's hold of the lock.
+        return self._after_group_written(section, token, result)
+
+    def _after_group_written(self, section, token, result):
+        if token is not None:
+            try:
+                result['token'] = self._group_token(section)
+            except Exception as error:
+                # The reply simply carries no token: the page keeps its old one and
+                # gets a clean stale refusal next time. The type only is logged.
+                self.log.error('Saved the settings group "%s" but could not compute '
+                               'its token (%s).', section, type(error).__name__)
         return result
 
     def _refuse_group(self, section, problems):

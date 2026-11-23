@@ -12,7 +12,8 @@ because a sweep that cannot fail guards nothing.
 """
 import pytest
 
-from tests.helpers.combine_groups import group_settings, provider_configs
+from tests.helpers import combine_groups
+from tests.helpers.combine_groups import EXPECTED_COMBINED, group_settings, provider_configs
 
 CREDENTIAL_WORDS = ('key', 'pass', 'token', 'secret')
 
@@ -115,6 +116,39 @@ class TestRealDeclarations:
             for column in option['combine']:
                 if credential_shaped(column):
                     assert column in option['secret'], '%s.%s' % (section, column)
+
+
+class TestDiscoveryDoesNotDependOnAList:
+    """The groups are found by searching `couchpotato/`, so a provider nobody listed is still swept."""
+
+    def test_the_discovered_options_are_exactly_the_expected_five(self):
+        found = {(config['name'], option['name'])
+                 for configs in provider_configs() for config in configs
+                 for group in config['groups'] for option in group['options']
+                 if option.get('type') == 'combined'}
+
+        assert found == set(EXPECTED_COMBINED)
+
+    def test_a_new_provider_with_a_combined_column_fails_discovery(self, tmp_path, monkeypatch):
+        (tmp_path / 'zz_fake_provider.py').write_text(
+            "config = [{'name': 'zz_fake', 'groups': [{'options': [{'name': 'api_key', 'type': 'combined',"
+            " 'combine': ['use', 'api_key'], 'pairing': ['api_key', 'use']}]}]}]\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.setattr(combine_groups, 'combined_declaring_modules',
+                            lambda: [*real_modules, 'zz_fake_provider'])
+
+        with pytest.raises(AssertionError, match=r"new \[\('zz_fake', 'api_key'\)\]"):
+            provider_configs()
+
+    def test_a_lost_group_fails_discovery_too(self, monkeypatch):
+        monkeypatch.setattr(combine_groups, 'combined_declaring_modules',
+                            lambda: [name for name in real_modules if not name.endswith('.imdb')])
+
+        with pytest.raises(AssertionError, match=r"lost \[\('imdb', 'automation_urls'\)\]"):
+            provider_configs()
+
+
+real_modules = combine_groups.combined_declaring_modules()
 
 
 class TestTheSweepCanFail:

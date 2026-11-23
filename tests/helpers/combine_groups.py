@@ -14,7 +14,9 @@ registry, ``Settings.setFile`` subscribes to the event bus), so
 import configparser
 import contextlib
 import hashlib
+import importlib
 import logging
+import re
 import threading
 from pathlib import Path
 
@@ -28,14 +30,55 @@ NUMERIC_COLUMNS = ('extra_score', 'seed_ratio', 'seed_time')
 HOST_COLUMNS = ('host', 'automation_urls')
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: Every (section, option) that is declared `'type': 'combined'` anywhere under
+#: `couchpotato/`. Discovery below is independent of any list of modules, so a NEW
+#: group and a LOST group both fail the equality check: a combined credential column
+#: added in a provider nobody listed here can no longer pass unnoticed.
+EXPECTED_COMBINED = (
+    ('newznab', 'api_key'),
+    ('torrentpotato', 'pass_key'),
+    ('imdb', 'automation_urls'),
+    ('itunes', 'automation_urls'),
+    ('letterboxd', 'automation_urls'),
+)
+_COMBINED_DECLARATION = re.compile(r"""['"]type['"]\s*:\s*['"]combined['"]""")
+
+
+def combined_declaring_modules():
+    """The dotted name of every module under `couchpotato/` whose source declares a combined option."""
+    root = REPO_ROOT / 'couchpotato'
+    names = []
+    for path in sorted(root.rglob('*.py')):
+        if '__pycache__' in path.parts:
+            continue
+        if _COMBINED_DECLARATION.search(path.read_text(encoding='utf-8')):
+            names.append('.'.join(path.relative_to(REPO_ROOT).with_suffix('').parts))
+    return names
+
+
 def provider_configs():
-    """The five real ``config`` declarations, imported lazily."""
-    from couchpotato.core.media._base.providers.nzb.newznab import config as newznab
-    from couchpotato.core.media._base.providers.torrent.torrentpotato import config as torrentpotato
-    from couchpotato.core.media.movie.providers.automation.imdb import config as imdb
-    from couchpotato.core.media.movie.providers.automation.itunes import config as itunes
-    from couchpotato.core.media.movie.providers.automation.letterboxd import config as letterboxd
-    return [newznab, torrentpotato, imdb, itunes, letterboxd]
+    """The `config` of every module that declares a combined option, found by search.
+
+    Fails if the discovered (section, option) set is not exactly `EXPECTED_COMBINED`.
+    """
+    configs = []
+    found = set()
+    for name in combined_declaring_modules():
+        module = importlib.import_module(name)
+        assert hasattr(module, 'config'), '%s declares a combined option but has no `config`' % name
+        configs.append(module.config)
+        for config in module.config:
+            for group in config['groups']:
+                for option in group['options']:
+                    if option.get('type') == 'combined':
+                        found.add((config['name'], option['name']))
+    assert found == set(EXPECTED_COMBINED), (
+        'the combined options under couchpotato/ are not the expected five: new %s, lost %s'
+        % (sorted(found - set(EXPECTED_COMBINED)), sorted(set(EXPECTED_COMBINED) - found)))
+    order = [section for section, _ in EXPECTED_COMBINED]
+    return sorted(configs, key=lambda config: order.index(config[0]['name']))
 
 
 def register_providers(settings):

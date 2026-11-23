@@ -910,9 +910,33 @@ class TestTheLiteralsLiveInExactlyOnePlace:
         return {path: path.read_text(encoding='utf-8')
                 for path in (REPO_ROOT / 'couchpotato').rglob('*.py')}
 
-    def test_the_hmac_computation_appears_in_one_file(self, sources):
+    #: Every way the standard library computes a MAC. Matching one spelling only
+    #: (`hmac.new(`) lets a second signing path step around the guard with another.
+    MAC_CALLS = ('hmac.new(', 'hmac.digest(', 'hmac.HMAC(')
+
+    def test_a_mac_is_computed_only_where_a_reason_is_recorded(self, sources):
+        """Session signing (`__init__.py`) and the SEC-006 group freshness token (`core/settings.py`).
+
+        The second is a different MAC under its own per-process key, unrelated to
+        session cookies; any third file computing one fails here until it is argued.
+        """
+        files = sorted(str(path.relative_to(REPO_ROOT)) for path, text in sources.items()
+                       if any(call in text for call in self.MAC_CALLS))
+
+        assert files == ['couchpotato/__init__.py', 'couchpotato/core/settings.py'], files
+
+    def test_the_session_mac_itself_still_appears_in_one_file(self, sources):
         files = sorted(str(path.relative_to(REPO_ROOT)) for path, text in sources.items()
                        if 'hmac.new(' in text)
+
+        assert files == ['couchpotato/__init__.py'], files
+
+    @pytest.mark.parametrize('symbol', ['_sign_session_payload', 'get_session_secret',
+                                        'mint_session_token', 'verify_session_token'])
+    def test_the_session_signing_symbols_are_defined_and_used_only_in_the_package_init(
+            self, sources, symbol):
+        files = sorted(str(path.relative_to(REPO_ROOT)) for path, text in sources.items()
+                       if symbol in text)
 
         assert files == ['couchpotato/__init__.py'], files
 

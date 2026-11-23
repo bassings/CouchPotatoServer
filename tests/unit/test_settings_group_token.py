@@ -24,6 +24,7 @@ from couchpotato.environment import Env
 from tests.helpers.combine_groups import (
     LogCapture,
     assert_nothing_changed,
+    memory_group,
     group_settings,
     placeholder_rows,
     sha,
@@ -141,6 +142,7 @@ class TestTheTokenIsKeyedAndUnambiguous:
         saved(settings)
         columns = settings.combine_groups()['newznab']
         stored = [settings._stored_text('newznab', column) for column in columns]
+        framed = settings._group_token_input('newznab', columns, stored)
         guesses = ['newznab' + ''.join(stored), 'newznab' + ','.join(stored),
                    'newznab\n' + '\n'.join(stored), ','.join(stored), ''.join(stored),
                    json.dumps(['newznab', *stored]), json.dumps(['newznab', list(columns), stored])]
@@ -149,6 +151,10 @@ class TestTheTokenIsKeyedAndUnambiguous:
         for guess in guesses:
             for digest in (hashlib.sha256, hashlib.sha1, hashlib.md5, hashlib.sha512):
                 assert digest(guess.encode()).hexdigest() != token
+        # The strongest guess: the exact framed message, hashed with no key.
+        for digest in (hashlib.sha256, hashlib.sha1, hashlib.md5, hashlib.sha512, hashlib.blake2b):
+            assert digest(framed).hexdigest() != token
+        assert hmac.digest(b'', framed, 'sha256').hex() != token
 
     def test_the_key_is_per_instance_and_never_on_disk_or_in_the_read(self, settings):
         saved(settings)
@@ -193,6 +199,31 @@ class TestTheTokenIsKeyedAndUnambiguous:
         assert state('ab', 'c') != state('a', 'bc')
         assert state('', 'abc') != state('abc', '')
         assert state('a1', 'b') != state('a', '1b')
+
+    def test_texts_that_collide_when_unframed_do_not_collide(self, settings):
+        encode = settings._group_token_input
+        # Unframed, both are `s` `a` `b` `b`: the boundary between the texts moved.
+        assert encode('s', ['a', 'b'], ['b', '']) != encode('s', ['a', 'b'], ['', 'b'])
+        assert encode('s', ['a', 'b'], ['bc', '']) != encode('s', ['a', 'b'], ['b', 'c'])
+        assert encode('s', ['a', 'b'], ['x', 'yz']) != encode('sx', ['a', 'b'], ['', 'yz'])
+
+    def test_a_text_that_contains_the_next_columns_name_does_not_collide_through_a_real_group(
+            self, settings):
+        columns = ['use', 'host', 'secret_cell']
+        settings.addOptions('zz_name', {'name': 'zz_name', 'groups': [{'options': [
+            {'name': 'use'}, {'name': 'host'}, {'name': 'secret_cell'},
+            {'name': 'cells', 'type': 'combined', 'combine': columns,
+             'pairing': ['host', 'secret_cell', 'use'], 'secret': ['secret_cell'],
+             'address': ['host']}]}]})
+        settings.addSection('zz_name')
+
+        def state(use, host, key):
+            for column, text in zip(columns, (use, host, key)):
+                settings.set('zz_name', column, text)
+            return token_of(settings, 'zz_name')
+
+        # Unframed, both read use, 1, host, secret_cell, secret_cellz.
+        assert state('1', '', 'secret_cellz') != state('1', 'secret_cell', 'z')
 
     def test_the_column_names_are_part_of_the_input(self, settings):
         # Same section, same texts, different names: not reachable on one instance, so
@@ -271,12 +302,14 @@ class TestASaveThatCarriesAToken:
 
         assert result['invalid'][0]['reason'] == 'stale'
 
-    def test_a_group_with_no_secret_column_never_matches_a_token(self, settings):
+    def test_a_token_for_a_group_with_no_secret_column_is_refused_with_its_own_reason(self, settings):
         before = snapshot(settings, 'imdb')
 
         result = settings.save_group('imdb', three_rows(settings, 'imdb'), 'a' * 64)
 
-        assert result['invalid'][0]['reason'] == 'stale'
+        assert result['invalid'] == [{'row': None, 'column': None, 'reason': 'token_unexpected'}]
+        assert result['error'] == 'This group does not use a token. Nothing was saved.'
+        assert 'Reload' not in result['error']
         assert_nothing_changed(settings, 'imdb', before)
 
     def test_a_validation_refusal_is_reported_with_a_current_token_and_carries_no_token(self, settings):
@@ -342,6 +375,43 @@ class TestASaveThatCarriesAToken:
             assert sorted(outcomes) == [False, True], 'attempt %d: %r' % (attempt, outcomes)
 
 
+class TestNothingAfterTheWriteCanReportFailure:
+    """A step after `_write_group` must never restore the group or say it failed."""
+
+    def test_a_failing_reply_token_leaves_a_success_reply_and_one_state_in_memory_and_on_disk(
+            self, settings, monkeypatch):
+        saved(settings)
+        token = token_of(settings)
+        columns = settings.combine_groups()['newznab']
+        real = Settings._group_token
+        calls = []
+
+        def flaky(self, section):
+            calls.append(section)
+            if len(calls) > 1:  # the first call is the freshness check, the second the reply
+                raise RuntimeError('canary-held-text')
+            return real(self, section)
+
+        monkeypatch.setattr(Settings, '_group_token', flaky)
+
+        with LogCapture() as logs:
+            result = settings.save_group('newznab', three_rows(settings, 'newznab', tag='b'), token)
+
+        assert result == {'success': True}
+        assert len(calls) == 2
+        on_disk = stored_group(settings.file, 'newznab', columns)
+        assert memory_group(settings, 'newznab', columns) == on_disk
+        assert on_disk['host'].split(',')[0] == 'https://placeholder-b-0.invalid/path'
+        assert 'RuntimeError' in logs.text()
+        assert 'canary-held-text' not in logs.text()
+        monkeypatch.setattr(Settings, '_group_token', real)
+        settings.addSection('core')
+        settings.set('core', 'zz_later_unrelated', '1')
+        settings.save()
+        assert stored_group(settings.file, 'newznab', columns) == on_disk, (
+            'a later unrelated save wrote the old rows back')
+
+
 class TestASaveWithNoTokenIsAsOnMaster:
     def test_the_reply_is_exactly_success_true(self, settings):
         assert settings.save_group('newznab', three_rows(settings, 'newznab')) == {'success': True}
@@ -402,13 +472,18 @@ class TestTheTokenIsNeverLogged:
         with LogCapture() as logs:
             rows = saved(settings)
             first = token_of(settings)
-            accepted = settings.save_group('newznab', rows, first)
-            settings.save_group('newznab', rows, first)  # now stale
+            changed = [dict(row, custom_tag='changed') for row in rows]
+            accepted = settings.save_group('newznab', changed, first)  # changes the group
+            assert accepted['success'] is True
+            # `first` is now stale because the SERVER's own save changed the group.
+            stale = settings.save_group('newznab', rows, first)
+            assert stale['invalid'][0]['reason'] == 'stale'
             settings.save_group('newznab', rows, 'caller-supplied-token\nforged line')
             tokens = {first, accepted['token'], token_of(settings), token_of(settings, 'torrentpotato'),
                       'caller-supplied-token', 'forged line'}
 
         text = logs.text()
+        assert 'reason=stale' in text
         assert all(token not in text for token in tokens)
         assert settings._token_key.hex() not in text
         assert not any('\n' in record.getMessage() for record in logs.at_or_above(logging.WARNING))
