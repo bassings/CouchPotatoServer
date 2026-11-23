@@ -1,7 +1,8 @@
 # API parameters are URL-decoded a second time
 
 Owner decision 2026-11-23: fix this as the change after SEC-005 P4, ahead of
-the outbound-proxy plan.
+the outbound-proxy plan. (Later the same day the owner decided to leave the
+proxy gap documented, so no proxy plan follows; see Not in scope.)
 
 ## Problem
 

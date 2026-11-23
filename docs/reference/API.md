@@ -389,8 +389,14 @@ and the clear is logged once at INFO naming the section and option only.
   `core.proxy_server` are ordinary writable options, so a settings write can
   route an http request to Jackett, key included, through a host the writer
   chose. This affects every credential sent over http and is not closed here.
-  No fix is planned (owner decision 2026-11-23): use `https://` for Jackett,
-  or no outbound proxy, if this matters to you.
+  No fix is planned (owner decision 2026-11-23). What protects the key is an
+  `https://` Jackett address: the proxy then sees only the host and port.
+  Running without a proxy protects against a proxy you set up yourself, but
+  not against a settings write, which can switch one on. Two limits on
+  `https://`: Jackett's certificate must pass verification (a self-signed one
+  fails every request), and indexer rows synced under the old `http://`
+  address keep that address and their copy of the key until they are removed
+  or a sync is run with `replace=true`.
 - **A redirect from Jackett that keeps the query forwards the key**, because it
   travels in the query string. Not closed here.
 - **A merge sync does not update the `pass_key` of indexers already stored** when
