@@ -188,6 +188,16 @@ def group_transport_refusal():
     return _group_refusal([_invalid(None, None, 'malformed')])
 
 
+def reveal_transport_refusal():
+    """The refusal body for a request that was not a JSON POST of one reveal.
+
+    The strict-JSON table names this for the reveal route, so a malformed reveal is told
+    that nothing was revealed rather than the group save's "nothing was saved".
+    """
+    return {'success': False, 'error': _REVEAL_REFUSAL_TEXT['malformed'],
+            'invalid': [_invalid(None, None, 'malformed')]}
+
+
 def _cell_problem(cell):
     """Why this cell cannot be stored as a row's cell, or None.
 
@@ -1177,12 +1187,15 @@ class Settings:
         outside the column. The hold is never read. Reply: `{'success': True, 'value':
         text}` and nothing else; an empty stored cell is an empty `value`.
         """
+        named = ['unregistered', 'unregistered']      # registered names only, never the caller's strings
         try:
             with _PASSWORD_SAVE_LOCK:
                 if not isinstance(section, str) or section not in self.combine_groups():
                     return self._refuse_reveal(None, 'unknown_section')
+                named[0] = section
                 if not isinstance(column, str) or column not in self.combine_secrets().get(section, ()):
                     return self._refuse_reveal(section, 'bad_reference')
+                named[1] = column
                 if token is None:
                     return self._refuse_reveal(section, 'token_missing')
                 if not self._token_is_current(section, token):
@@ -1195,7 +1208,8 @@ class Settings:
                 return {'success': True, 'value': value}
         except Exception as error:
             # The type only: nothing read, held or sent is in the log or the reply.
-            self.log.error('Could not reveal a stored key (%s).', type(error).__name__)
+            self.log.error('Could not reveal a stored key: section=%s column=%s (%s).',
+                           named[0], named[1], type(error).__name__)
             return {'success': False, 'error': _REVEAL_FAILED_TEXT}
 
     def _refuse_reveal(self, section, reason):
@@ -1426,7 +1440,12 @@ class Settings:
         """
         try:
             addresses = self.combine_addresses().get(section, {})
-            for position, column, index in plan['kept']:
+        except Exception as error:
+            self.log.error('Could not log kept keys: section=%s (%s).', section, type(error).__name__)
+            addresses = {}
+        for position, column, index in plan['kept']:
+            # One line at a time: a failure in one never drops the others.
+            try:
                 where = addresses.get(column)
                 if where is None:
                     continue
@@ -1435,11 +1454,16 @@ class Settings:
                 if rows[position].get(where, '') != before:
                     self.log.info('Kept a stored key on a changed address: section=%s '
                                   'column=%s row=%d', section, column, position)
-            for position, column, _ in plan['restored']:
+            except Exception as error:
+                self.log.error('Could not log a kept key: section=%s column=%s (%s).',
+                               section, column, type(error).__name__)
+        for position, column, _ in plan['restored']:
+            try:
                 self.log.info('Restored a removed key: section=%s column=%s row=%d',
                               section, column, position)
-        except Exception as error:
-            self.log.error('Could not log a kept or restored key (%s).', type(error).__name__)
+            except Exception as error:
+                self.log.error('Could not log a restored key: section=%s column=%s (%s).',
+                               section, column, type(error).__name__)
         return None
 
     def _refuse_group(self, section, problems, held=None):

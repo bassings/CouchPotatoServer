@@ -8,7 +8,9 @@ cell `i` of this secret column holds now) or `{"restore": {"token": T, "row": i}
 Real `Settings` over a temporary `config.ini` with the real declarations. Every key
 is a placeholder; hosts are `.invalid`.
 """
+import json
 import logging
+import os
 import threading
 
 import pytest
@@ -207,11 +209,42 @@ class TestKeepOnAMisalignedGroup:
         assert 'group_misaligned' not in source
 
 
+class Untouched:
+    """A seeded group with one held entry, and a way to send a save that must refuse and change nothing.
+
+    AC-DATA-1: a refused save leaves the file's bytes AND mtime, the parser, the hold and
+    the log free of every fixture key and free of anything about the group it was refused for.
+    """
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.rows, self.token = seeded(settings)
+        settings._hold.add('newznab', 'api_key', 'earlier-save', 0, 'held-earlier-text')
+        self.before = snapshot(settings, 'newznab')
+        self.held = dict(settings._hold._entries)
+        self.mtime = os.stat(settings.file).st_mtime_ns
+
+    def refused(self, section, rows, token, reason, row=None, column=None):
+        before = snapshot(self.settings, section) if section != 'newznab' else self.before
+        held, mtime = dict(self.settings._hold._entries), os.stat(self.settings.file).st_mtime_ns
+        with LogCapture() as logs:
+            result = self.settings.save_group(section, rows, token)
+        assert result['success'] is False, result
+        assert result['invalid'][0]['reason'] == reason, result
+        if row != 'any':
+            assert result['invalid'][0]['row'] == row
+            assert result['invalid'][0]['column'] == column
+        assert self.settings._hold._entries == held, 'a refused save changed the hold'
+        assert os.stat(self.settings.file).st_mtime_ns == mtime, 'a refused save touched the file'
+        assert all(key.strip() not in json.dumps(result) + logs.text() for key in KEYS), 'a key leaked'
+        assert_nothing_changed(self.settings, section, before)
+        return result
+
+
 class TestEveryShapeOfASecretCellRefusesTheWholeSave:
     @pytest.fixture
     def world(self, settings):
-        rows, token = seeded(settings)
-        return settings, rows, token, snapshot(settings, 'newznab')
+        return Untouched(settings)
 
     @pytest.mark.parametrize('bad', [
         {'keep': True}, {'keep': False}, {'keep': 1.5}, {'keep': '0'}, {'keep': None}, {'keep': -1},
@@ -223,53 +256,45 @@ class TestEveryShapeOfASecretCellRefusesTheWholeSave:
         {'restore': 'x'}, {'restore': None},
     ])
     def test_a_malformed_form_is_bad_reference_with_nothing_changed(self, world, bad):
-        settings, rows, token, before = world
+        result = world.refused('newznab', with_forms(world.rows, {1: bad}), world.token,
+                               'bad_reference', 1, 'api_key')
 
-        result = settings.save_group('newznab', with_forms(rows, {1: bad}), token)
-
-        refusal(result, 1, 'api_key', 'bad_reference')
         assert 'held' not in result
-        assert_nothing_changed(settings, 'newznab', before)
 
     @pytest.mark.parametrize('index', [3, 4, 99, 2 ** 40])
     def test_an_index_at_or_beyond_the_secret_columns_cell_count_is_bad_reference(self, world, index):
-        settings, rows, token, before = world
-
-        refusal(settings.save_group('newznab', with_forms(rows, {0: keep(index)}), token),
-                0, 'api_key', 'bad_reference')
-        assert_nothing_changed(settings, 'newznab', before)
+        world.refused('newznab', with_forms(world.rows, {0: keep(index)}), world.token,
+                      'bad_reference', 0, 'api_key')
 
     def test_the_last_cell_is_in_range_and_one_past_it_is_not(self, world):
-        settings, rows, token, before = world
+        settings, rows, token = world.settings, world.rows, world.token
 
         assert settings.save_group('newznab', with_forms(rows, {0: keep(2)}), token)['success'] is True
 
     def test_two_cells_naming_the_same_index_are_refused(self, world):
-        settings, rows, token, before = world
+        world.refused('newznab', with_forms(world.rows, {0: keep(1), 1: keep(1)}), world.token,
+                      'bad_reference', 1, 'api_key')
 
-        refusal(settings.save_group('newznab', with_forms(rows, {0: keep(1), 1: keep(1)}), token),
-                1, 'api_key', 'bad_reference')
-        assert_nothing_changed(settings, 'newznab', before)
+    def test_two_cells_carrying_the_same_restore_reference_are_refused(self, world):
+        world.settings._hold.add('newznab', 'api_key', 'earlier-save', 1, 'held-second-text')
+        sent = with_forms(world.rows, {0: restore('earlier-save', 0), 1: restore('earlier-save', 0)})
+
+        world.refused('newznab', sent, world.token, 'bad_reference', 1, 'api_key')
 
     def test_a_keep_in_a_non_secret_column_is_bad_reference(self, world):
-        settings, rows, token, before = world
-        rows[0]['host'] = keep(0)
+        world.rows[0]['host'] = keep(0)
 
-        refusal(settings.save_group('newznab', rows, token), 0, 'host', 'bad_reference')
-        assert_nothing_changed(settings, 'newznab', before)
+        world.refused('newznab', world.rows, world.token, 'bad_reference', 0, 'host')
 
     def test_a_restore_in_a_non_secret_column_is_bad_reference(self, world):
-        settings, rows, token, before = world
-        rows[0]['custom_tag'] = restore(token, 0)
+        world.rows[0]['custom_tag'] = restore(world.token, 0)
 
-        refusal(settings.save_group('newznab', rows, token), 0, 'custom_tag', 'bad_reference')
-        assert_nothing_changed(settings, 'newznab', before)
+        world.refused('newznab', world.rows, world.token, 'bad_reference', 0, 'custom_tag')
 
     def test_a_non_form_object_in_a_non_secret_column_is_still_not_string(self, world):
-        settings, rows, token, before = world
-        rows[0]['host'] = {'anything': 1}
+        world.rows[0]['host'] = {'anything': 1}
 
-        refusal(settings.save_group('newznab', rows, token), 0, 'host', 'not_string')
+        world.refused('newznab', world.rows, world.token, 'not_string', 0, 'host')
 
     def test_a_keep_in_a_group_with_no_secret_column_is_bad_reference(self, settings):
         rows = three_rows(settings, 'imdb')
@@ -283,43 +308,29 @@ class TestEveryShapeOfASecretCellRefusesTheWholeSave:
         assert_nothing_changed(settings, 'imdb', before)
 
     def test_a_keep_with_no_token_is_token_missing(self, world):
-        settings, rows, token, before = world
-
-        result = settings.save_group('newznab', with_forms(rows, {0: keep(0)}))
-
-        refusal(result, None, None, 'token_missing')
-        assert_nothing_changed(settings, 'newznab', before)
+        world.refused('newznab', with_forms(world.rows, {0: keep(0)}), None, 'token_missing')
 
     def test_a_restore_with_no_token_is_token_missing_when_the_entry_exists(self, world):
-        settings, rows, token, before = world
-        removed = settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)
-        held_under = token
+        world.settings._hold.add('newznab', 'api_key', 'earlier-save', 1, 'held-second-text')
 
-        result = settings.save_group('newznab', with_forms(rows, {1: restore(held_under, 1)}))
-
-        refusal(result, None, None, 'token_missing')
+        world.refused('newznab', with_forms(world.rows, {1: restore('earlier-save', 1)}), None, 'token_missing')
 
     def test_a_keep_under_a_stale_token_is_refused_as_stale(self, world):
-        settings, rows, token, before = world
+        settings, rows, token = world.settings, world.rows, world.token
         changed = with_forms(rows, {0: keep(0), 1: keep(1), 2: keep(2)})
         changed[0]['custom_tag'] = 'intervening'
         assert settings.save_group('newznab', changed, token)['success'] is True
-        after_intervening = snapshot(settings, 'newznab')
+        world.before = snapshot(settings, 'newznab')
+        world.held = dict(settings._hold._entries)
 
-        result = settings.save_group('newznab', with_forms(rows, {0: keep(0)}), token)
-
-        assert result['success'] is False
-        assert result['invalid'] == [{'row': None, 'column': None, 'reason': 'stale'}]
-        assert_nothing_changed(settings, 'newznab', after_intervening)
+        world.refused('newznab', with_forms(rows, {0: keep(0)}), token, 'stale')
 
     def test_a_keep_under_another_groups_token_is_stale(self, world):
-        settings, rows, token, before = world
-        seeded(settings, section='torrentpotato', column='pass_key')
+        seeded(world.settings, section='torrentpotato', column='pass_key')
+        world.before = snapshot(world.settings, 'newznab')
 
-        result = settings.save_group('newznab', with_forms(rows, {0: keep(0)}),
-                                     token_of(settings, 'torrentpotato'))
-
-        assert result['invalid'][0]['reason'] == 'stale'
+        world.refused('newznab', with_forms(world.rows, {0: keep(0)}),
+                      token_of(world.settings, 'torrentpotato'), 'stale')
 
     def test_the_mask_inside_a_kept_cells_stored_text_is_refused_not_stored(self, settings):
         # The recorded limit: a stored key that already contains the mask text.
@@ -330,6 +341,29 @@ class TestEveryShapeOfASecretCellRefusesTheWholeSave:
         result = settings.save_group('newznab', with_forms(rows, {0: keep(0)}), token_of(settings))
 
         assert result['invalid'] == [{'row': 0, 'column': 'api_key', 'reason': 'masked_value'}]
+
+
+class TestTheOrderOfRefusalsIsPinned:
+    """Documented in the spec: shape, `restore_unknown`, `token_missing`, `token_unexpected`/`stale`, range last.
+
+    Range is last so that a caller without the group's current token cannot learn how many
+    cells a column holds.
+    """
+
+    def test_an_out_of_range_keep_is_token_missing_then_stale_then_bad_reference(self, settings):
+        rows, token = seeded(settings)
+        sent = with_forms(rows, {0: keep(99)})
+
+        assert settings.save_group('newznab', sent)['invalid'][0]['reason'] == 'token_missing'
+        assert settings.save_group('newznab', sent, 'f' * 64)['invalid'][0]['reason'] == 'stale'
+        assert settings.save_group('newznab', sent, token)['invalid'][0]['reason'] == 'bad_reference'
+
+    def test_a_restore_nobody_holds_is_decided_before_any_token_question(self, settings):
+        rows, token = seeded(settings)
+        sent = with_forms(rows, {0: restore('0' * 64, 0)})
+
+        for presented in (None, 'f' * 64, token):
+            assert settings.save_group('newznab', sent, presented)['invalid'][0]['reason'] == 'restore_unknown'
 
 
 class TestWhatTheHoldRecords:
@@ -390,13 +424,22 @@ class TestWhatTheHoldRecords:
         rows, token = seeded(settings)
         assert settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)['success']
         earlier = dict(settings._hold._entries)
+        again = keyed_rows(settings, tag='b')          # a different state, so a different token
+        assert settings.save_group('newznab', again)['success']
         fresh = token_of(settings)
+        # Rows 0 and 1 kept, row 2's key left out: this body WOULD hold row 2's key if accepted.
+        body = with_forms(again[:2], {0: keep(0), 1: keep(1)})
+        refused_body = [dict(row) for row in body]
+        refused_body[0]['host'] = 'a,b'
 
-        bad = with_forms(rows[:1], {0: keep(0)})
-        bad[0]['host'] = 'a,b'
-        assert settings.save_group('newznab', bad, fresh)['success'] is False
+        result = settings.save_group('newznab', refused_body, fresh)
 
-        assert settings._hold._entries == earlier
+        assert result['invalid'][0]['reason'] == 'comma'
+        assert settings._hold._entries == earlier, 'a refused save made or removed an entry'
+        # The accepted twin, same token (the refusal changed nothing): it does hold.
+        assert settings.save_group('newznab', body, fresh)['success'] is True
+        assert settings._hold.peek('newznab', 'api_key', fresh, 2) == KEYS[2], (
+            'the twin must create the entry the refused body would have')
 
     def test_a_save_whose_write_fails_holds_nothing_and_leaves_earlier_entries(self, settings, monkeypatch):
         rows, token = seeded(settings)
@@ -478,9 +521,9 @@ class TestTheBound:
     def test_the_hold_is_process_memory_only(self, settings):
         rows, token = seeded(settings)
         settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)
+        assert settings._hold.peek('newznab', 'api_key', token, 1) == KEYS[1]
 
-        assert 'placeholder key one' not in open(settings.file, encoding='utf-8').read().replace(
-            ' placeholder key one ,', '', 1)
+        assert KEYS[1].strip() not in open(settings.file, encoding='utf-8').read()
 
 
 class TestRestore:
@@ -560,28 +603,40 @@ class TestRestore:
 
         refusal(settings.save_group('newznab', sent, current), 2, 'api_key', 'bad_reference')
 
-    @pytest.mark.parametrize('mutate', ['never issued', 'other token', 'other row', 'other section'])
+    @pytest.mark.parametrize('mutate', ['never issued', 'other token', 'other row'])
     def test_a_reference_that_is_not_held_is_restore_unknown_whatever_differs(self, settings, mutate):
+        """Each case differs from the held entry in ONE respect (the section and column have their own tests)."""
         rows, removed_under, current = self.removed_row_world(settings)
         reference = {'never issued': restore('0' * 64, 1), 'other token': restore(current, 1),
-                     'other row': restore(removed_under, 0), 'other section': restore(removed_under, 1)}[mutate]
-        section = 'newznab'
+                     'other row': restore(removed_under, 0)}[mutate]
         sent = with_forms([rows[0], rows[2], rows[1]], {0: keep(0), 1: keep(1), 2: reference})
-        if mutate == 'other section':
-            settings.save_group('torrentpotato', keyed_rows(settings, section='torrentpotato', column='pass_key'))
-            section = 'torrentpotato'
-            sent = with_forms(keyed_rows(settings, section='torrentpotato', column='pass_key'), {})
-            sent[0]['pass_key'] = restore(removed_under, 1)
-            current = token_of(settings, 'torrentpotato')
-            column = 'pass_key'
-        else:
-            column = 'api_key'
 
-        result = settings.save_group(section, sent, current)
+        result = settings.save_group('newznab', sent, current)
 
         assert result['success'] is False
         assert [p['reason'] for p in result['invalid']] == ['restore_unknown']
-        assert result['invalid'][0]['column'] == column
+        assert result['invalid'][0]['column'] == 'api_key'
+
+    def test_a_restore_is_bound_to_its_section_when_only_the_section_differs(self, settings):
+        """Two sections whose secret column is BOTH `api_key`: the held entry is in newznab only."""
+        rows, token = seeded(settings)
+        removed = settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)
+        assert removed['success'] is True
+        other_section_with_api_key(settings)
+        other_rows = [{'use': '1', 'host': 'https://o%d.invalid' % n, 'api_key': 'placeholder-o%d' % n}
+                      for n in range(2)]
+        assert settings.save_group('zz_other', other_rows)['success']
+        before = snapshot(settings, 'zz_other')
+        held = dict(settings._hold._entries)
+        assert settings._hold.peek('newznab', 'api_key', token, 1) == KEYS[1]
+
+        sent = [dict(other_rows[0], api_key=keep(0)), dict(other_rows[1], api_key=restore(token, 1))]
+        result = settings.save_group('zz_other', sent, token_of(settings, 'zz_other'))
+
+        refusal(result, 1, 'api_key', 'restore_unknown')
+        assert settings._hold._entries == held
+        assert settings._hold.peek('newznab', 'api_key', token, 1) == KEYS[1]
+        assert_nothing_changed(settings, 'zz_other', before)
 
     def test_an_evicted_entry_is_restore_unknown(self, settings):
         rows, removed_under, current = self.removed_row_world(settings)
@@ -607,17 +662,38 @@ class TestRestore:
 
         assert settings.save_group('newznab', sent, current)['invalid'][0]['reason'] == 'comma'
 
-    def test_two_threads_restoring_one_entry_land_exactly_one(self, settings):
-        for attempt in range(20):
+    def test_two_threads_restoring_one_entry_land_exactly_one(self, settings, monkeypatch):
+        """Thread one is held INSIDE its lookup until thread two is inside its own.
+
+        With the writer lock, thread two cannot get that far, so thread one waits out the
+        timeout, finishes and consumes the entry, and thread two is then refused. Without
+        the lock both pass the lookup and both land, which is the defect this guards.
+        """
+        real_peek = settings_module._RemovedKeyHold.peek
+        for attempt in range(8):
             rows, token = seeded(settings, keys=['p-a%d' % attempt, 'p-b%d' % attempt])
             removed = settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)
             current = removed['token']
-            barrier = threading.Barrier(2)
+            local = threading.local()
+            meet = threading.Barrier(2)
+
+            def peek(self, *args, _local=local, _meet=meet):
+                # Each save looks the entry up twice: once to decide `restore_unknown` and
+                # once, AFTER the token check, to take its text. Both threads meet there.
+                _local.count = getattr(_local, 'count', 0) + 1
+                found = real_peek(self, *args)
+                if _local.count == 2:
+                    try:
+                        _meet.wait(0.25)
+                    except threading.BrokenBarrierError:
+                        pass
+                return found
+
+            monkeypatch.setattr(settings_module._RemovedKeyHold, 'peek', peek)
             outcomes = []
 
             def send():
                 sent = with_forms([rows[0], rows[1]], {0: keep(0), 1: restore(token, 1)})
-                barrier.wait(5)
                 outcomes.append(settings.save_group('newznab', sent, current)['success'])
 
             threads = [threading.Thread(target=send) for _ in range(2)]
@@ -625,6 +701,7 @@ class TestRestore:
                 thread.start()
             for thread in threads:
                 thread.join(10)
+            monkeypatch.setattr(settings_module._RemovedKeyHold, 'peek', real_peek)
 
             assert sorted(outcomes) == [False, True], 'attempt %d: %r' % (attempt, outcomes)
             assert api_key_cells(settings).count('p-b%d' % attempt) == 1
@@ -646,6 +723,18 @@ class TestRestore:
         refusal(result, 0, 'key_b', 'restore_unknown')
         assert settings._hold.peek('zz_two', 'key_a', token, 1) == 'placeholder-c'
         assert_nothing_changed(settings, 'zz_two', before)
+
+
+def other_section_with_api_key(settings):
+    """A second registered group whose secret column is ALSO called `api_key`."""
+    config = {'name': 'zz_other', 'groups': [{'name': 'g', 'options': [
+        {'name': 'use'}, {'name': 'host'}, {'name': 'api_key'},
+        {'name': 'cells', 'type': 'combined', 'combine': ['use', 'host', 'api_key'],
+         'pairing': ['host', 'api_key', 'use'], 'secret': ['api_key'], 'address': ['host']}]}]}
+    settings.addOptions('zz_other', config)
+    options = {option['name']: option for group in config['groups'] for option in group['options']}
+    settings.registerDefaults('zz_other', options, save=False)
+    settings.save()
 
 
 def two_secret_group(settings):
@@ -673,6 +762,16 @@ class TestTheStaleRefusalListsWhatIsHeldUnderItsToken:
         assert stale['invalid'] == [{'row': None, 'column': None, 'reason': 'stale'}]
         assert stale['held'] == [{'column': 'api_key', 'row': 1}, {'column': 'api_key', 'row': 2}]
         assert result['success'] is True
+
+    def test_it_lists_only_the_refused_saves_own_section_even_when_the_token_string_matches(self, settings):
+        rows, token = seeded(settings)
+        settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)
+        # An entry in ANOTHER section under the very same token string.
+        settings._hold.add('torrentpotato', 'pass_key', token, 0, 'placeholder-other-section')
+
+        stale = settings.save_group('newznab', rows, token)
+
+        assert stale['held'] == [{'column': 'api_key', 'row': 1}, {'column': 'api_key', 'row': 2}]
 
     def test_it_lists_nothing_when_nothing_is_held_under_that_token(self, settings):
         rows, token = seeded(settings)
@@ -849,13 +948,24 @@ class TestTheInfoLines:
 
         assert not [m for m in plain(infos) if m.startswith('Restored')]
 
-    def test_a_builder_and_a_token_less_save_log_neither_line(self, settings):
-        seeded(settings)
+    def test_a_builder_and_a_token_less_save_never_reach_the_key_lines_and_a_token_save_does(
+            self, settings, monkeypatch):
+        rows, token = seeded(settings)
+        reached = []
+        real = Settings._log_kept_and_restored
+        monkeypatch.setattr(Settings, '_log_kept_and_restored',
+                            lambda self, *args: reached.append(args[0]) or real(self, *args))
 
-        _, infos, _ = self.run(settings, 'newznab', lambda: keyed_rows(settings, tag='b'), None)
-        _, more, _ = self.run(settings, 'newznab', keyed_rows(settings, tag='c'), None)
+        self.run(settings, 'newznab', lambda: keyed_rows(settings, tag='b'), None)
+        self.run(settings, 'newznab', keyed_rows(settings, tag='c'), None)
+        assert reached == [], 'a builder or token-less save reached the kept/restored lines'
 
-        assert not [m for m in plain(infos + more) if m.startswith(('Kept a stored key', 'Restored'))]
+        again = settings.group_stored_rows('newznab')
+        sent = with_forms(again, {0: keep(0), 1: keep(1), 2: keep(2)})
+        sent[0]['host'] = 'https://moved.invalid'
+        _, infos, _ = self.run(settings, 'newznab', sent, token_of(settings))
+        assert reached == ['newznab'], 'the twin (a token save) must reach them'
+        assert len(self.kept(infos)) == 1
 
 
 class TestNothingTheHoldDoesLeaksOrDisagrees:
@@ -918,6 +1028,32 @@ class TestNothingTheHoldDoesLeaksOrDisagrees:
                 'the restored entry must be consumed even when a log call fails')
         assert 'RuntimeError' in logs.text()
         assert self.CANARY not in logs.text() + repr(result)
+
+    def test_one_failing_key_line_does_not_drop_the_others_and_the_error_names_the_group(
+            self, settings, monkeypatch):
+        rows, token = seeded(settings, keys=['placeholder-p0', 'placeholder-p1', 'placeholder-p2'])
+        removed = settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)
+        sent = three_rows(settings, 'newznab', tag='n')[:2]      # a different host: the keep logs first
+        sent[0]['api_key'] = keep(0)
+        sent[1]['api_key'] = restore(token, 1)
+        real_info = settings.log.info
+
+        def fail_the_keep_line(message, *args, **kwargs):
+            if message.startswith('Kept a stored key'):
+                raise RuntimeError(self.CANARY)
+            return real_info(message, *args, **kwargs)
+
+        monkeypatch.setattr(settings.log, 'info', fail_the_keep_line)
+
+        with LogCapture() as logs:
+            result = settings.save_group('newznab', sent, removed['token'])
+
+        assert result['success'] is True
+        text = plain([r.getMessage() for r in logs.records])
+        assert 'Restored a removed key: section=newznab column=api_key row=1' in text
+        errors = [m for m in plain([r.getMessage() for r in logs.at_or_above(logging.ERROR)])]
+        assert errors == ['Could not log a kept key: section=newznab column=api_key (RuntimeError).']
+        assert self.CANARY not in logs.text()
 
     def test_a_failing_take_after_the_write_leaves_an_accepted_reply_and_one_state(self, settings, monkeypatch):
         rows, token = seeded(settings, keys=['placeholder-p0', 'placeholder-p1', 'placeholder-p2'])

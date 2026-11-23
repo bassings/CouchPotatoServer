@@ -19,7 +19,7 @@ from couchpotato.api import api_nonblock, callApiHandler
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt
 from couchpotato.core.logger import CPLog, log_suppressed
-from couchpotato.core.settings import _PASSWORD_SAVE_LOCK, group_transport_refusal
+from couchpotato.core.settings import _PASSWORD_SAVE_LOCK, group_transport_refusal, reveal_transport_refusal
 from couchpotato.environment import Env
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
@@ -1016,13 +1016,17 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
 # this check such a body would reach the writer looking like rows. The third
 # element maps a key to the one JSON type its value must have (a boolean is not an
 # integer); a key in it that is not required is optional. A body carries every
-# required key and no key that is neither required nor typed.
+# required key and no key that is neither required nor typed. The fourth element builds
+# the refusal body for a request that fails these rules, so each route says what it
+# did not do (`nothing was saved`, `nothing was revealed`) with no route-name branch.
 STRICT_JSON_API_ROUTES = {
-    'settings.save_group': (frozenset({'section', 'rows'}), 'rows', {'token': str}),
+    'settings.save_group': (frozenset({'section', 'rows'}), 'rows', {'token': str},
+                            group_transport_refusal),
     # SEC-006: reveal one stored credential cell. No rows; every member is typed, and
     # `type(...) is int` keeps a boolean from standing in for the row number.
     'settings.reveal_cell': (frozenset({'section', 'column', 'row', 'token'}), None,
-                             {'section': str, 'column': str, 'row': int, 'token': str}),
+                             {'section': str, 'column': str, 'row': int, 'token': str},
+                             reveal_transport_refusal),
 }
 
 
@@ -1050,12 +1054,15 @@ STRUCTURED_ROWS_API_ROUTES = frozenset({'settings.save_group'})
 
 def _rows_carry_non_text(route, body):
     """Does any member of any row of this already-parsed strict-JSON body fail to be a string?"""
-    rows = body[STRICT_JSON_API_ROUTES[route][1]]
+    rows_key = STRICT_JSON_API_ROUTES[route][1]
+    if rows_key is None:
+        return False      # a route with no rows has no cells to be non-text
+    rows = body[rows_key]
     return any(not isinstance(value, str) for row in rows for value in row.values())
 
 
 def _strict_json_body_ok(route, body):
-    required, rows_key, types = STRICT_JSON_API_ROUTES[route]
+    required, rows_key, types, _ = STRICT_JSON_API_ROUTES[route]
     if not isinstance(body, dict) or not required <= set(body) <= required | set(types):
         return False
     if any(type(body[key]) is not kind for key, kind in types.items() if key in body):
@@ -1091,7 +1098,7 @@ async def _strict_json_refusal(route, request):
     # The reason only: nothing the caller sent is logged.
     log.warning('Refused a request to "%s": it was not a JSON POST of exactly the '
                 'expected keys', route)
-    return JSONResponse(content=group_transport_refusal(), status_code=400)
+    return JSONResponse(content=STRICT_JSON_API_ROUTES[route][3](), status_code=400)
 
 
 def session_cookie_attributes() -> dict:

@@ -107,6 +107,10 @@ class TestTheJackettSyncAndTheHold:
 
         assert result['success'] is True
         assert live._hold._entries == earlier
+        if replace:
+            keys = live._stored_text('torrentpotato', 'pass_key').split(',')
+            hosts = live._stored_text('torrentpotato', 'host').split(',')
+            assert keys == ['placeholder-jackett-key'] * len(hosts), 'a replace sync writes the Jackett key into every row'
         current = token_of(live, 'torrentpotato')
         stored = live.group_stored_rows('torrentpotato')
         restoring = [dict(stored[0], pass_key=keep(0)), dict(rows[1], pass_key=restore(token, 1))]

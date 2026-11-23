@@ -176,6 +176,34 @@ class TestTheTransportIsStrictJson:
         assert ok.status_code == 200
         assert other.status_code == 400
 
+    def test_a_transport_refusal_says_nothing_was_revealed_not_nothing_was_saved(self, world):
+        settings, client = world
+        rows, token = seeded(settings)
+
+        for response in (reveal(client, token=token, extra='x'), client.get(URL, headers=OWN),
+                         reveal(client, row=True, token=token)):
+            assert response.status_code == 400
+            assert response.json() == {
+                'success': False,
+                'error': 'The request was not a reveal of one cell. Nothing was revealed.',
+                'invalid': [{'row': None, 'column': None, 'reason': 'malformed'}]}
+
+    def test_the_refusal_text_is_chosen_through_the_table_not_by_a_route_name(self):
+        import inspect
+
+        import couchpotato
+        source = inspect.getsource(couchpotato._strict_json_refusal) + inspect.getsource(
+            couchpotato._strict_json_body_ok)
+
+        assert 'reveal' not in source
+        assert 'save_group' not in source
+        assert all(len(entry) == 4 and callable(entry[3]) for entry in couchpotato.STRICT_JSON_API_ROUTES.values())
+
+    def test_the_cross_origin_cell_check_has_a_safe_path_for_a_route_with_no_rows(self):
+        import couchpotato
+
+        assert couchpotato._rows_carry_non_text(ROUTE, {'section': 'newznab', 'row': 0}) is False
+
     @pytest.mark.parametrize('drop', ['section', 'column', 'row', 'token'])
     def test_a_missing_key_is_400(self, world, drop):
         settings, client = world
@@ -307,6 +335,16 @@ class TestWhatItReturns:
 
         assert response.status_code == 200
         assert response.json()['invalid'] == [{'row': None, 'column': None, 'reason': 'stale'}]
+        refused_without_value(response, *KEYS)
+
+    def test_another_groups_token_is_stale_for_a_reveal(self, world):
+        settings, client = world
+        rows, token = seeded(settings)
+        other = seeded(settings, keys=['placeholder-pk-0'], section='torrentpotato', column='pass_key')[1]
+
+        response = reveal(client, row=0, token=other)
+
+        assert response.json()['invalid'][0]['reason'] == 'stale'
         refused_without_value(response, *KEYS)
 
     def test_a_forged_token_is_refused_without_a_value(self, world):
@@ -447,6 +485,7 @@ class TestLogging:
                                    'error': 'The settings could not be read. Nothing was revealed.'}
         assert 'canary-stored-text-or-token' not in logs.text() + response.text
         assert 'RuntimeError' in logs.text()
+        assert 'Could not reveal a stored key: section=newznab column=api_key (RuntimeError).' in logs.text()
         assert token not in logs.text()
 
 

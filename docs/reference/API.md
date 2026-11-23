@@ -331,8 +331,11 @@ A refusal is `{"success": false, "error": "...", "invalid": [{"row": null, "colu
 null, "reason": "..."}]}` with no value. The reasons are `unknown_section` (not a
 registered group), `bad_reference` (a column the group does not declare secret, or a row
 outside the column), `token_missing`, and `stale` (the group has changed since the token
-was issued). Each success writes one INFO line and each refusal one WARNING, naming the
-section, column and row and never a value.
+was issued). Each success writes one INFO line naming the section, column and row; each
+refusal writes one WARNING naming the section and the reason. Neither ever carries a value
+or a token, and a section or column the caller made up is logged as `unregistered`.
+A request that is not a JSON POST of exactly those four members is refused 400 with the
+text "The request was not a reveal of one cell. Nothing was revealed."
 
 **The settings read is still unmasked in this release.** `GET /api/<api_key>/settings`
 returns `newznab.api_key` and `torrentpotato.pass_key` in the clear until a later release

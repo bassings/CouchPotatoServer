@@ -741,6 +741,18 @@ the old test stays green, the new one fails.
   (up to 16 per section, until a restart) and can be put back with a `restore` by
   a holder of the API key and the token of the settings as they stood at the
   removal. The settings read is still unmasked in this release.]
+- **A failing INFO line after a landed group save is reported as a failed save
+  (open, 2026-11-23; found at the SEC-006 whole-branch review, present on
+  `master`).** `Settings.save_group_view` writes its INFO line "Saved a settings
+  group" after `save_group` has written and saved the file. If that log call
+  raises, `callApiHandler` catches it and returns `{"success": false, "error":
+  "Failed returning results"}` for a save that landed, so a page that trusts the
+  reply shows a failure for rows that are stored. The post-write steps inside
+  `save_group` itself (the hold, the key INFO lines, the reply token) are guarded
+  separately and cannot do this; only this view-level line can. Logging rarely
+  raises, so the exposure is small. Condition for revisiting: the next change to
+  `save_group_view` or to `callApiHandler`'s error path, which should make the
+  INFO line unable to change the reply.
 - **Settings values are URL-decoded a second time on save (closed 2026-11-23;
   spec `specs/FIX-2026-11-23-api-param-double-decode.md`).** Every API argument
   went through `callApiHandler` and then `getParams`
