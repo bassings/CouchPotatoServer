@@ -10,6 +10,25 @@ When running, FastAPI provides automatic OpenAPI documentation:
 - **ReDoc**: `http://localhost:5050/redoc`
 - **OpenAPI JSON**: `http://localhost:5050/openapi.json`
 
+## Changed: an origin on the CORS list cannot vouch for itself with `X-Forwarded-Host`
+
+In versions after v3.313.0-beta.1, when a request's `Origin` (or, without one, the
+origin of its `Referer`) is one of the origins in the `cors_origins` setting, the
+sign-out POST and the origin-checked routes (the `renamer.operator_*` routes, and
+`torrentpotato.jackett_sync` and `torrentpotato.jackett_test`) compare it with the
+`Host` header only. `X-Forwarded-Host` is ignored for that origin, because a page
+on a listed origin can send that header. Origins not on the list are judged as
+before, and nothing changes while `cors_origins` is empty, which is the default.
+An origin is listed when its `scheme://host[:port]` equals an entry exactly, the
+way the CORS middleware matches it, and the list is the one read when the server
+started.
+
+If you list this app's own public address in `cors_origins` and your reverse
+proxy rewrites `Host` to the upstream address (nginx's default `proxy_pass`),
+sign-out and those routes are now refused from that address, and the log says so.
+Either remove the entry (same-origin use does not need it) or make the proxy pass
+the original host (`proxy_set_header Host $host;` in nginx).
+
 ## Changed: parameters are decoded once
 
 In versions after v3.311.0-beta.1 an API parameter reaches its handler exactly as the

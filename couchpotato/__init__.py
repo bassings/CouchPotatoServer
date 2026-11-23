@@ -778,6 +778,25 @@ def _expire_legacy_root_cookie(response) -> None:
     )
 
 
+def _parse_cors_origins(raw) -> list:
+    """The `cors_origins` setting as the list of origins it allows.
+
+    The one parse behind both the CORS middleware and the origin checks, so the
+    two cannot disagree about what is listed. Entries are comma separated and
+    stripped of surrounding spaces; empties and `*` are dropped, because
+    credentialled CORS must never treat a wildcard as an allowed origin
+    (Starlette reflects any Origin when both are enabled). Nothing else is
+    normalised: Starlette matches an origin by exact string, so a trailing-slash
+    entry simply never matches, here or there.
+    """
+    if not raw:
+        return []
+    return [
+        origin for part in raw.split(',')
+        if (origin := part.strip()) and origin != '*'
+    ]
+
+
 def _cross_origin_request(request, *, refuse_on_absent_evidence: bool) -> bool:
     """Shared evidence check behind `_cross_origin_post` and
     `_cross_origin_guarded_route` (T7d item 2, round two on C1). Is this
@@ -827,15 +846,32 @@ def _cross_origin_request(request, *, refuse_on_absent_evidence: bool) -> bool:
     # repeatable annoyance from an app that already shares their host. The
     # spec's rule is that nothing here may produce a lockout.
     #
-    # A malicious sibling cannot forge this header. The attack shape is a
-    # plain cross-site form POST, which cannot set custom headers at all, and
-    # a `fetch` that tried would trigger a CORS preflight it cannot satisfy.
+    # Whether a hostile page can send this header depends on `cors_origins`.
+    # A plain cross-site form POST cannot set custom headers at all, and a
+    # `fetch` that tried would need a CORS preflight to succeed. With the
+    # setting empty (the default) no origin is allowed, so it cannot. An origin
+    # the operator LISTED is different: its preflight for `x-forwarded-host`
+    # succeeds (`allow_headers=["*"]`, credentials allowed), so a page there
+    # CAN send any value. For a stated origin that is on the list, only `Host`
+    # therefore counts as this app's identity. The list is matched the way the
+    # CORS middleware matches it (exact `scheme://host[:port]`, see
+    # `_parse_cors_origins`), so an origin the middleware would refuse is not
+    # treated as listed. Consequence: an operator who lists this app's own
+    # public origin AND whose proxy rewrites `Host` has sign-out and these
+    # routes refused from it until the entry is removed or `Host` is preserved.
+    #
     # `X-Forwarded-Host` is split on commas: a chain of proxies APPENDS to it,
     # so a two-hop deployment sends `media.example.com, inner.local` and a
     # whole-string compare matches neither -- refusing a legitimate sign-out on
     # exactly the topology this header exists to describe.
+    #
+    # The list is the one `create_app` built the middleware with, kept on
+    # `app.state` so the check cannot see a different value from the middleware
+    # (a later settings change moves neither until restart).
+    cors_origins = request.app.state.cors_origins
+    identity_headers = ('host',) if stated in cors_origins else ('host', 'x-forwarded-host')
     known = set()
-    for header in ('host', 'x-forwarded-host'):
+    for header in identity_headers:
         value = request.headers.get(header)
         if not value:
             continue
@@ -1308,10 +1344,8 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     cors_origins = Env.setting('cors_origins', default='')
     # Credentialled CORS must never treat a wildcard as an allowed origin:
     # Starlette reflects any Origin when both settings are enabled.
-    allowed_origins = [
-        origin for raw in cors_origins.split(',')
-        if (origin := raw.strip()) and origin != '*'
-    ] if cors_origins else []
+    allowed_origins = _parse_cors_origins(cors_origins)
+    app.state.cors_origins = allowed_origins
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,

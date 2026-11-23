@@ -9,7 +9,7 @@ still calls the real one. Values are placeholders and hosts are `.invalid`.
 """
 import pytest
 
-from couchpotato.api import api
+from couchpotato.api import api, api_docs, api_docs_missing, api_locks, api_nonblock
 from tests.integration.test_settings_group_save_route import API_KEY, live_world, url
 
 pytestmark = pytest.mark.integration
@@ -20,6 +20,23 @@ STORED = {'newznab': {'api_key': SENTINEL, 'host': SENTINEL_HOST}}
 SAME_ORIGIN = 'http://testserver'
 ORIGINS = {'none': None, 'same-origin': SAME_ORIGIN, 'foreign': 'http://evil.invalid'}
 REFUSAL = {'success': False, 'error': 'JSONP is not available for this route'}
+
+
+REGISTRIES = (api, api_locks, api_nonblock, api_docs)
+
+
+@pytest.fixture(scope='module', autouse=True)
+def registry_is_left_as_found():
+    """A route a test registers (`test.jsonp_other`) must not outlive the module.
+
+    `group_settings`, which `live_world` builds on, restores the registries on
+    teardown; this makes that a checked fact rather than an assumption.
+    """
+    before = [dict(registry) for registry in REGISTRIES]
+    missing_before = list(api_docs_missing)
+    yield
+    assert [dict(registry) for registry in REGISTRIES] == before
+    assert api_docs_missing == missing_before
 
 
 @pytest.fixture
