@@ -778,6 +778,64 @@ def _expire_legacy_root_cookie(response) -> None:
     )
 
 
+def _parse_cors_origins(raw) -> list:
+    """The `cors_origins` setting as the list of origins it allows.
+
+    The one parse behind both the CORS middleware and the origin checks, so the
+    two cannot disagree about what is listed. Entries are comma separated and
+    stripped of surrounding spaces; empties and `*` are dropped, because
+    credentialled CORS must never treat a wildcard as an allowed origin
+    (Starlette reflects any Origin when both are enabled). Nothing else is
+    normalised: Starlette matches an origin by exact string, so a trailing-slash
+    entry simply never matches, here or there.
+    """
+    if not raw:
+        return []
+    return [
+        origin for part in raw.split(',')
+        if (origin := part.strip()) and origin != '*'
+    ]
+
+
+def _stated_origin(request) -> str:
+    """The origin a request claims to come from: its `Origin` header, or the
+    `scheme://netloc` of its `Referer`. Empty when it states none."""
+    stated = request.headers.get('origin')
+    if stated:
+        return stated
+    referer = request.headers.get('referer')
+    if not referer:
+        return ''
+    parsed = urlparse(referer)
+    return '%s://%s' % (parsed.scheme, parsed.netloc) if parsed.netloc else ''
+
+
+def _log_origin_refusal(subject: str, request) -> None:
+    """WARNING for a refused origin check, naming the values that were compared.
+
+    A bare 403 is how a stripped or rewritten proxy header becomes a silent
+    lockout. When the stated origin is on the `cors_origins` list the cause is
+    different (`X-Forwarded-Host` is not trusted for it), and the usual advice
+    to forward the host would send the operator the wrong way, so say why. The
+    values logged are the same three as always.
+    """
+    stated = request.headers.get('origin') or request.headers.get('referer')
+    host = request.headers.get('host')
+    forwarded = request.headers.get('x-forwarded-host')
+    if _stated_origin(request) in request.app.state.cors_origins:
+        log.warning('Refused %s whose Origin/Referer (%s) is listed in '
+                    'cors_origins, so X-Forwarded-Host is not trusted for it '
+                    'and it does not match this server\'s Host (Host %s, '
+                    'X-Forwarded-Host %s). Remove the entry from cors_origins, '
+                    'or have your reverse proxy preserve Host.',
+                    subject, stated, host, forwarded)
+        return
+    log.warning('Refused %s whose Origin/Referer (%s) does not match this '
+                'server (Host %s, X-Forwarded-Host %s). If this is your own '
+                'reverse proxy, set it to forward the original host.',
+                subject, stated, host, forwarded)
+
+
 def _cross_origin_request(request, *, refuse_on_absent_evidence: bool) -> bool:
     """Shared evidence check behind `_cross_origin_post` and
     `_cross_origin_guarded_route` (T7d item 2, round two on C1). Is this
@@ -802,40 +860,57 @@ def _cross_origin_request(request, *, refuse_on_absent_evidence: bool) -> bool:
       `Referer` once the client actually asked for the page carrying it, so
       absent evidence there IS the attack, not an innocent proxy.
     """
-    stated = request.headers.get('origin')
+    stated = _stated_origin(request)
     if not stated:
-        referer = request.headers.get('referer')
-        if not referer:
-            return refuse_on_absent_evidence
-        parsed = urlparse(referer)
-        stated = '%s://%s' % (parsed.scheme, parsed.netloc) if parsed.netloc else ''
-        if not stated:
-            return refuse_on_absent_evidence
+        return refuse_on_absent_evidence
 
     # `X-Forwarded-Host` counts as this app's identity too, and that is a
     # deliberate trade rather than laxity.
     #
-    # nginx's default `proxy_pass` rewrites `Host` to the UPSTREAM address
-    # unless the config overrides it. On an install at
-    # `https://media.example.com` proxied to `127.0.0.1:5050` the app sees
-    # `Origin: https://media.example.com` against `Host: 127.0.0.1:5050`, and
-    # comparing those verbatim refuses every legitimate sign-out forever --
-    # while D1 makes secret rotation the ONLY revocation this design has.
+    # A proxy that rewrites `Host` to the UPSTREAM address AND adds
+    # `X-Forwarded-Host` (for example Apache `mod_proxy` without
+    # `ProxyPreserveHost On`, or nginx configured to add the header without
+    # preserving `Host`) presents `Origin: https://media.example.com` against
+    # `Host: 127.0.0.1:5050` with `X-Forwarded-Host: media.example.com`.
+    # Comparing `Host` alone would refuse every legitimate sign-out forever.
+    # (A proxy that rewrites `Host` and sends no `X-Forwarded-Host` is refused
+    # either way; nginx's default `proxy_pass` is one, so it needs `Host`
+    # preserved regardless.)
     #
-    # The asymmetry decides it: a false refusal costs the operator their only
-    # revocation mechanism, permanently and silently; a false accept costs a
-    # repeatable annoyance from an app that already shares their host. The
-    # spec's rule is that nothing here may produce a lockout.
+    # The asymmetry decides it: a false refusal costs the operator the cleanest
+    # way to end sessions (sign-out rotates the signing secret, as does
+    # changing the password; there is no per-session revocation), permanently
+    # and silently; a false accept costs a repeatable annoyance from an app
+    # that already shares their host. The spec's rule is that nothing here may
+    # produce a lockout.
     #
-    # A malicious sibling cannot forge this header. The attack shape is a
-    # plain cross-site form POST, which cannot set custom headers at all, and
-    # a `fetch` that tried would trigger a CORS preflight it cannot satisfy.
+    # Whether a hostile page can send this header depends on `cors_origins`.
+    # A plain cross-site form POST cannot set custom headers at all, and a
+    # `fetch` that tried would need a CORS preflight to succeed. With the
+    # setting empty (the default) no origin is allowed, so it cannot. An origin
+    # the operator LISTED is different: its preflight for `x-forwarded-host`
+    # succeeds (`allow_headers=["*"]`, credentials allowed), so a page there
+    # CAN send any value. For a stated origin that is on the list, only `Host`
+    # therefore counts as this app's identity. The list is matched the way the
+    # CORS middleware matches it (exact `scheme://host[:port]`, see
+    # `_parse_cors_origins`), so an origin the middleware would refuse is not
+    # treated as listed. Consequence: an operator who lists this app's own
+    # public origin AND whose proxy rewrites `Host` while sending
+    # `X-Forwarded-Host` has sign-out and these routes refused from it until
+    # the entry is removed or `Host` is preserved.
+    #
     # `X-Forwarded-Host` is split on commas: a chain of proxies APPENDS to it,
     # so a two-hop deployment sends `media.example.com, inner.local` and a
     # whole-string compare matches neither -- refusing a legitimate sign-out on
     # exactly the topology this header exists to describe.
+    #
+    # The list is the one `create_app` built the middleware with, kept on
+    # `app.state` so the check cannot see a different value from the middleware
+    # (a later settings change moves neither until restart).
+    cors_origins = request.app.state.cors_origins
+    identity_headers = ('host',) if stated in cors_origins else ('host', 'x-forwarded-host')
     known = set()
-    for header in ('host', 'x-forwarded-host'):
+    for header in identity_headers:
         value = request.headers.get(header)
         if not value:
             continue
@@ -1308,10 +1383,8 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     cors_origins = Env.setting('cors_origins', default='')
     # Credentialled CORS must never treat a wildcard as an allowed origin:
     # Starlette reflects any Origin when both settings are enabled.
-    allowed_origins = [
-        origin for raw in cors_origins.split(',')
-        if (origin := raw.strip()) and origin != '*'
-    ] if cors_origins else []
+    allowed_origins = _parse_cors_origins(cors_origins)
+    app.state.cors_origins = allowed_origins
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
@@ -1368,19 +1441,11 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             return RedirectResponse(url=web_base + 'docs/')
 
         if route in ORIGIN_CHECKED_API_ROUTES and _cross_origin_guarded_route(request):
-            # WARNING, and it names both values, matching the logout route:
+            # WARNING naming the values compared (see `_log_origin_refusal`):
             # a bare 403 with nothing in the log is how a stripped or
             # rewritten proxy header turns into a silent, unexplained
             # refusal for the operator.
-            log.warning('Refused a cross-origin request to "%s" whose '
-                        'Origin/Referer (%s) does not match this server '
-                        '(Host %s, X-Forwarded-Host %s). If this is your '
-                        'own reverse proxy, set it to forward the original '
-                        'host.',
-                        route,
-                        request.headers.get('origin') or request.headers.get('referer'),
-                        request.headers.get('host'),
-                        request.headers.get('x-forwarded-host'))
+            _log_origin_refusal('a cross-origin request to "%s"' % route, request)
             return JSONResponse(
                 content={'success': False, 'error': 'Cross-origin request refused'},
                 status_code=403,
@@ -1678,17 +1743,9 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             # scopes to a site rather than an origin. Refuse before rotating:
             # otherwise any app sharing the host can sign the operator out at
             # will, and keep doing it.
-            # WARNING, and it names both values. A bare 403 is how this
-            # becomes a silent lockout: an operator whose proxy strips or
-            # rewrites these headers would see sign-out fail with nothing
-            # anywhere to explain it.
-            log.warning('Refused a sign-out whose Origin/Referer (%s) does not '
-                        'match this server (Host %s, X-Forwarded-Host %s). If '
-                        'this is your own reverse proxy, set it to forward the '
-                        'original host.',
-                        request.headers.get('origin') or request.headers.get('referer'),
-                        request.headers.get('host'),
-                        request.headers.get('x-forwarded-host'))
+            # WARNING naming the values compared (see `_log_origin_refusal`).
+            # A bare 403 is how this becomes a silent lockout.
+            _log_origin_refusal('a sign-out', request)
             raise HTTPException(status_code=403, detail='Cross-origin sign-out refused')
 
         # NOTHING TO REVOKE, SO NOTHING IS WRITTEN.

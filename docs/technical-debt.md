@@ -94,6 +94,22 @@ the old test stays green, the new one fails.
   `logging.partial` (log text), and `directory.list` (the server's folder
   names). Nothing in the app requests any route as JSONP. Revisit on the
   owner's request, or when a route is added that returns stored data.
+- **An origin listed in `cors_origins` can learn the API key (2026-11-23).**
+  The CORS middleware answers a listed origin's credentialled GET of a UI page
+  with the allow-origin header, and those pages embed the API key. The pages
+  include `/`, `/settings/`, `/wizard/`, `/logs/` and `/add/` (not a closed
+  list). A page on that origin can therefore read the key and call every API
+  route that is not origin-checked (read and change settings, delete library
+  records). On an install without a password this needs no session at all. With
+  a password the request must carry the session cookie, which a browser attaches
+  to such a request only when that origin is same-site with this app (the
+  cookie is `SameSite=Lax`, set in `session_cookie_attributes`; this is read from
+  the cookie attribute, not from a browser run). FIX-2026-11-23 only stops such a
+  page reaching sign-out and the origin-checked routes. Pinned by
+  `TestRecordedLimitAListedOriginCanReadUiPagesAndSoTheApiKey`
+  (`tests/integration/test_origin_check_allow_listed_forwarded_host.py`), which is
+  a recorded limit, not desired behaviour. A fix would be to limit credentialled
+  CORS to `/api/` routes and never UI pages. Revisit on the owner's request.
 - **API auth via URL key.** Rate limiting now exists
   (`couchpotato/core/rate_limit.py`; the old "no rate limiting" note is stale);
   the api_key is still the URL-embedded bearer.

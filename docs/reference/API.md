@@ -10,6 +10,41 @@ When running, FastAPI provides automatic OpenAPI documentation:
 - **ReDoc**: `http://localhost:5050/redoc`
 - **OpenAPI JSON**: `http://localhost:5050/openapi.json`
 
+## Changed: an origin on the CORS list cannot vouch for itself with `X-Forwarded-Host`
+
+In versions after v3.313.0-beta.1, when a request's `Origin` (or, without one, the
+origin of its `Referer`) is one of the origins in the `cors_origins` setting, the
+sign-out POST and the origin-checked routes (the `renamer.operator_*` routes, and
+`torrentpotato.jackett_sync` and `torrentpotato.jackett_test`) compare it with the
+`Host` header only. `X-Forwarded-Host` is ignored for that origin, because a page
+on a listed origin can send that header. Origins not on the list are judged as
+before, and nothing changes while `cors_origins` is empty, which is the default.
+An origin is listed when its `scheme://host[:port]` equals an entry exactly, the
+way the CORS middleware matches it, and the list is the one read when the server
+started.
+
+If you list this app's own public address in `cors_origins` and your reverse
+proxy rewrites `Host` to the upstream address while sending `X-Forwarded-Host`
+(for example Apache `mod_proxy` without `ProxyPreserveHost On`, or nginx
+configured to add that header without preserving `Host`), sign-out and those
+routes are now refused from that address, and the log says why. Either remove the
+entry (same-origin use does not need it) or make the proxy preserve `Host` (for
+example `ProxyPreserveHost On`, or `proxy_set_header Host $host;` in nginx). A
+proxy that rewrites `Host` and sends no `X-Forwarded-Host`, which includes nginx's
+default `proxy_pass`, was refused before this change, listed or not.
+
+**What listing an origin still allows.** Listing an origin in `cors_origins` lets
+pages served from it read this app's pages, and so its API key. The pages include
+`/`, `/settings/`, `/wizard/`, `/logs/` and `/add/`; that is not a closed list.
+With the key a page can call every API route that is not origin-checked: read and
+change settings, delete library records. On an install without a password this
+needs no session. With a password, the request must carry the session cookie,
+which a browser attaches only when that origin is same-site with this app (the
+session cookie is `SameSite=Lax`; this follows from that attribute, not from a
+browser test). This change only stops such a page, in a browser, from reaching
+sign-out and the origin-checked routes. List only origins you trust as much as
+this app itself.
+
 ## Changed: parameters are decoded once
 
 In versions after v3.311.0-beta.1 an API parameter reaches its handler exactly as the
