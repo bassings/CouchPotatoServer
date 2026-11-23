@@ -625,6 +625,8 @@ the old test stays green, the new one fails.
      "Credentials in combined rows are returned unmasked by the settings read".
      Exception, open: with an outbound proxy configured and a plain-http Jackett
      address, the request, key included, goes through the proxy (SEC-005 gap (j)).
+     Owner decision 2026-11-23: left documented, no fix planned; reopen on the
+     owner's request.
   6. A redirect from the saved Jackett forwards the key, because it travels in
      the query string.
   7. A merge sync does not update the `pass_key` of indexers already stored
