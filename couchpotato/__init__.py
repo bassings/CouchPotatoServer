@@ -1027,6 +1027,21 @@ STRICT_JSON_API_ROUTES = {
 JSONP_REFUSED_API_ROUTES = frozenset({'settings'})
 
 
+# Routes whose rows may carry a cell that is not text (SEC-006: a stored key
+# kept or restored by reference). A page in a browser on another origin, an
+# origin listed in `cors_origins` included, must not be able to move a stored
+# key, so a request to one of these that carries any such cell is refused when
+# it is demonstrably cross-origin. A save made only of text is unchanged, and a
+# request with neither Origin nor Referer (a script) is not refused by this rule.
+STRUCTURED_ROWS_API_ROUTES = frozenset({'settings.save_group'})
+
+
+def _rows_carry_non_text(route, body):
+    """Does any member of any row of this already-parsed strict-JSON body fail to be a string?"""
+    rows = body[STRICT_JSON_API_ROUTES[route][1]]
+    return any(not isinstance(value, str) for row in rows for value in row.values())
+
+
 def _strict_json_body_ok(route, body):
     required, rows_key, optional = STRICT_JSON_API_ROUTES[route]
     if not isinstance(body, dict) or not required <= set(body) <= required | set(optional):
@@ -1058,6 +1073,8 @@ async def _strict_json_refusal(route, request):
             body = None
         acceptable = _strict_json_body_ok(route, body)
     if acceptable:
+        # The one parse of the body, kept for the dispatch's cross-origin rule.
+        request.state.strict_json_body = body
         return None
     # The reason only: nothing the caller sent is logged.
     log.warning('Refused a request to "%s": it was not a JSON POST of exactly the '
@@ -1462,6 +1479,16 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             refusal = await _strict_json_refusal(route, request)
             if refusal is not None:
                 return refusal
+            if (route in STRUCTURED_ROWS_API_ROUTES and _cross_origin_post(request)
+                    and _rows_carry_non_text(route, request.state.strict_json_body)):
+                # Decided on the object the strict check parsed: no second parser.
+                # The WARNING names the route and the reason, never a cell or token.
+                _log_origin_refusal('a cross-origin save to "%s" carrying cells that are '
+                                    'not text' % route, request)
+                return JSONResponse(
+                    content={'success': False, 'error': 'Cross-origin request refused'},
+                    status_code=403,
+                )
 
         # Serve cached files (posters, etc.) directly
         if route.startswith('file.cache/'):

@@ -217,6 +217,17 @@ written, when the group has changed since that token was issued. A save with no
 (eight U+2022 bullets) is refused as the value of a credential column
 (`masked_value`).
 
+A save that carries a `token` may also name a stored key instead of sending it, in
+a credential column (`api_key`, `pass_key`) only: `{"keep": i}` stores what cell `i`
+of that column holds now, and `{"restore": {"token": "<token>", "row": i}}` stores the
+key that was held when the save that carried that token left cell `i` out. `i` is
+always the cell's own index in that column. The server remembers up to 16 such keys
+per section, in memory only, until it restarts. Either form without a `token`, or in
+any other column, is refused (`token_missing`, `bad_reference`); a restore nobody
+holds is `restore_unknown`; a stale refusal also lists `held`, the `{column, row}`
+pairs held under the token it carried. A save with any such cell is refused with HTTP
+403 when it comes from another origin (an origin listed in `cors_origins` included).
+
 **Success.** `{"success": true}`, or `{"success": true, "token": "<fresh token>"}`
 for a save that carried a token. The body never carries a cell value.
 
@@ -225,7 +236,8 @@ for a save that carried a token. The body never carries a cell value.
 `column` the column name; both are `null` when the whole request is at fault.
 `reason` is one of `comma`, `control_character`, `not_string`, `not_encodable`,
 `missing_column`, `unknown_column`, `not_writable`, `unknown_section`,
-`malformed`, `misaligned`, `stale`, `token_unexpected`, `masked_value`. The response names rows and columns and never a
+`malformed`, `misaligned`, `stale`, `token_unexpected`, `token_missing`, `bad_reference`, `restore_unknown`,
+`masked_value`. The response names rows and columns and never a
 value. A refused save leaves `config.ini` and the in-memory settings unchanged.
 A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 
