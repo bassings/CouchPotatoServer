@@ -330,6 +330,8 @@ config = [{
                     'type': 'combined',
                     'combine': ['use', 'host', 'api_key', 'extra_score', 'custom_tag'],
                     'pairing': ['host', 'api_key', 'use'],
+                    'secret': ['api_key'],
+                    'address': ['host'],
                 },
             ],
         },

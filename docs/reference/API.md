@@ -10,6 +10,23 @@ When running, FastAPI provides automatic OpenAPI documentation:
 - **ReDoc**: `http://localhost:5050/redoc`
 - **OpenAPI JSON**: `http://localhost:5050/openapi.json`
 
+## Changed: settings group saves accept a token; a new reveal route
+
+In versions after v3.314.0-beta.1 the settings read adds `token` to
+`combine_state.newznab` and `combine_state.torrentpotato`; `settings.save_group`
+accepts an optional `token` and two new forms for a credential cell (described under
+that route below); a save whose cells are not all text is refused with HTTP 403 when
+its `Origin` or `Referer` names another origin; and `settings.reveal_cell` is new and
+origin-checked, as the `renamer.operator_*` and Jackett routes are. An all-string save
+without a token behaves and replies as before. The WARNING for a malformed group-save
+request now reads `Refused a request to "settings.save_group": it was not a JSON POST
+of exactly the expected keys`. **Keys are still returned unmasked by the settings
+read in these versions**, and no page of this app uses the new forms yet: this is the
+server half of the work that will hide them. One limit applies from these versions: a
+stored Newznab or TorrentPotato key that already contains eight consecutive U+2022
+bullets (which nothing in this app writes) has every save of its group refused as
+`masked_value` until it is corrected in `config.ini`.
+
 ## Changed: an origin on the CORS list cannot vouch for itself with `X-Forwarded-Host`
 
 In versions after v3.313.0-beta.1, when a request's `Origin` (or, without one, the
@@ -185,6 +202,7 @@ API key in the `X-Api-Key` header or the URL. Other routes are unchanged.
 | `settings` | Get all settings |
 | `settings.save` | Save one setting. Refuses the columns of a multi-row group, and option names the config file cannot hold, such as an empty one (see below) |
 | `settings.save_group` | Save every column of one multi-row group in one request |
+| `settings.reveal_cell` | Return the stored text of one credential cell of a multi-row group (POST, JSON, needs the group's token) |
 
 #### Multi-row groups: `settings.save_group`
 
@@ -196,7 +214,8 @@ providers register (`settings` returns each group's columns and state), not from
 a list kept here.
 
 **Request.** `POST /api/<api_key>/settings.save_group/` with
-`Content-Type: application/json` and a body of exactly two keys:
+`Content-Type: application/json` and a body of two keys, plus an optional third,
+`token`:
 
 ```json
 {"section": "newznab", "rows": [{"use": "1", "host": "https://indexer.example", "api_key": "...", "extra_score": "0", "custom_tag": ""}]}
@@ -208,14 +227,43 @@ every column from the rows and saves once, or saves nothing. Any other method,
 any content type but `application/json`, any query parameter other than the
 cache-buster `t`, or an extra or missing top-level key is refused with HTTP 400.
 
-**Success.** `{"success": true}`. The body never carries a cell value.
+`token` (a string) is the group's `combine_state[section].token` from the
+settings read, present only for a group that holds a credential (`newznab`,
+`torrentpotato`). A save that carries one is refused as `stale`, with nothing
+written, when the group's stored values differ from those the token was issued for,
+or when the server has restarted since (the token's key is made afresh at each
+start). Read the settings again for a fresh token. A save with no
+`token` is accepted as it always was. Any string that contains the mask text
+(eight U+2022 bullets) is refused as the value of a credential column
+(`masked_value`).
+
+A save that carries a `token` may also name a stored key instead of sending it, in
+a credential column (`api_key`, `pass_key`) only: `{"keep": i}` stores what cell `i`
+of that column holds now, and `{"restore": {"token": "<token>", "row": i}}` stores the
+key that was held when the save that carried that token left cell `i` out. `i` is
+always the cell's own index in that column. The server remembers up to 16 such keys
+per section, in memory only, until it restarts. Every non-empty key a token-carrying
+save does not keep, a key replaced by typing included, stays restorable by a holder of
+the API key and that save's token until the server restarts or 16 later entries in that
+section push it out. A `keep` without a `token`, or a
+`restore` without one whose entry is held, is refused as `token_missing`; either form
+in any other column is `bad_reference`. A restore nobody holds is `restore_unknown`,
+decided before the token is checked; a stale refusal also lists `held`, the `{column, row}`
+pairs held under the token it carried. A save in which ANY member of any row is not a
+string (a `keep` or `restore` among them) is refused with HTTP 403 when its `Origin` or
+`Referer` header names another origin, an origin listed in `cors_origins` included. A
+request with neither header is not refused by this rule.
+
+**Success.** `{"success": true}`, or `{"success": true, "token": "<fresh token>"}`
+for a save that carried a token. The body never carries a cell value.
 
 **Refusal.** `{"success": false, "error": "<fixed text>", "invalid": [{"row": 1,
 "column": "host", "reason": "comma"}]}`. `row` is the 0-based row as sent and
 `column` the column name; both are `null` when the whole request is at fault.
 `reason` is one of `comma`, `control_character`, `not_string`, `not_encodable`,
 `missing_column`, `unknown_column`, `not_writable`, `unknown_section`,
-`malformed`, `misaligned`. The response names rows and columns and never a
+`malformed`, `misaligned`, `stale`, `token_unexpected`, `token_missing`, `bad_reference`, `restore_unknown`,
+`masked_value`. The response names rows and columns and never a
 value. A refused save leaves `config.ini` and the in-memory settings unchanged.
 A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 
@@ -224,13 +272,18 @@ A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 registered for any column of these groups today.
 
 **Where an operator finds a refusal.** One WARNING per refused save in the log,
-with no value, in one of four forms:
+with no value, in one of five forms:
 
+- a save whose cells are not all text, sent with an `Origin` or `Referer` naming
+  another origin (HTTP 403): `Refused a cross-origin save to "settings.save_group"
+  carrying cells that are not text whose Origin/Referer (...) ...`, which names the
+  `Origin` or `Referer`, `Host` and `X-Forwarded-Host` values and no cell;
 - a refused group save: `Refused a settings group save: section=... first_row=...
   first_column=... reason=... offences=N`;
-- a request that was not a JSON POST of exactly `section` and `rows` (HTTP 400):
-  `Refused a settings group save: the request was not a JSON POST of exactly the
-  expected keys`, which names nothing the caller sent;
+- a request that was not a JSON POST of `section` and `rows` (and, optionally, a
+  string `token`) (HTTP 400): `Refused a request to "settings.save_group": it was
+  not a JSON POST of exactly the expected keys`, which names the route and
+  nothing the caller sent;
 - a per-column save through `settings.save` that was refused: `Refused a
   per-column save of "section.option": it is saved with its group, not on its
   own` (the registered column, never the caller's spelling), or `Refused a
@@ -277,6 +330,45 @@ with no value, in one of four forms:
 > apply to `core.PASSWORD` as to `core.password`. A script that sent an
 > upper-case name and relied on it skipping one of those steps no longer can. A
 > section name is still matched exactly.
+
+#### Revealing one credential cell: `settings.reveal_cell`
+
+`POST /api/<api_key>/settings.reveal_cell/` with `Content-Type: application/json` and a
+body of exactly four keys, `section` (string), `column` (string), `row` (a JSON integer,
+not a boolean or a decimal) and `token` (the group's token from the settings read):
+
+```json
+{"section": "newznab", "column": "api_key", "row": 1, "token": "<token>"}
+```
+
+It returns `{"success": true, "value": "<the stored text of that cell>"}` and nothing
+else: no fresh token and no other cell. An empty stored cell returns an empty `value`,
+which is not a refusal. `row` is the cell's index in that column, whether or not the
+group's columns line up. The gate is the API key and the Origin check: a request whose
+`Origin` or `Referer` names another origin (an origin listed in `cors_origins`
+included), or that carries neither header, is refused 403. A web-interface password is
+not required, so the API key alone is enough. Any query parameter other than the
+cache-buster `t`, and any `callback_func`, is refused 400; a reveal is never offered
+as JSONP.
+
+A refusal is `{"success": false, "error": "...", "invalid": [{"row": null, "column":
+null, "reason": "..."}]}` with no value. The reasons are `unknown_section` (not a
+registered group), `bad_reference` (a column the group does not declare secret, or a row
+outside the column), `token_missing`, and `stale` (the group has changed since the token
+was issued). Each success writes one INFO line naming the section, column and row; each
+refusal made after the request is accepted writes one WARNING naming the section and the
+reason. Neither ever carries a value or a token, and a section or column the caller made up
+is logged as `unregistered`. A 403 (another origin, or no `Origin` and no `Referer`) and a
+400 (not the four members) each write the route-level WARNING instead, and a failure while
+reading writes one ERROR and replies `{"success": false, "error": "..."}` with no `invalid`.
+A token from before a restart is `stale`.
+A request that is not a JSON POST of exactly those four members is refused 400 with the
+text "The request was not a reveal of one cell. Nothing was revealed."
+
+**The settings read is still unmasked in this release.** `GET /api/<api_key>/settings`
+returns `newznab.api_key` and `torrentpotato.pass_key` in the clear until a later release
+masks them, so the reveal route does not yet add or remove any exposure for a holder of
+the API key.
 
 ### Jackett
 

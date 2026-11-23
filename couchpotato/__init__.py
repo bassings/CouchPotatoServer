@@ -19,7 +19,7 @@ from couchpotato.api import api_nonblock, callApiHandler
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt
 from couchpotato.core.logger import CPLog, log_suppressed
-from couchpotato.core.settings import _PASSWORD_SAVE_LOCK, group_transport_refusal
+from couchpotato.core.settings import _PASSWORD_SAVE_LOCK, group_transport_refusal, reveal_transport_refusal
 from couchpotato.environment import Env
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
@@ -994,6 +994,9 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
     # another origin (a plain GET carries no Origin at all).
     'torrentpotato.jackett_sync',
     'torrentpotato.jackett_test',
+    # SEC-006: the reveal returns a stored credential, so a page on another origin
+    # (and a request carrying no origin evidence at all) must not reach it.
+    'settings.reveal_cell',
 })
 
 
@@ -1006,12 +1009,24 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
 # cross-site defence: a page on another origin cannot send that content type
 # without a preflight, and `cors_origins` defaults to empty, so none is allowed.
 #
-# Each route also names the key whose value must be a JSON ARRAY of JSON
-# OBJECTS. The parser turns an object with numeric-looking keys (`{"0": {...},
-# "7": {...}}`, also `""`, `"."`, `"1.5"`) into a list, so without this check
-# such a body would reach the writer looking like rows.
+# Each entry is `(required keys, rows key, optional keys)`. The rows key names
+# the key whose value must be a JSON ARRAY of JSON OBJECTS (or is None for a
+# route with no rows). The parser turns an object with numeric-looking keys
+# (`{"0": {...}, "7": {...}}`, also `""`, `"."`, `"1.5"`) into a list, so without
+# this check such a body would reach the writer looking like rows. The third
+# element maps a key to the one JSON type its value must have (a boolean is not an
+# integer); a key in it that is not required is optional. A body carries every
+# required key and no key that is neither required nor typed. The fourth element builds
+# the refusal body for a request that fails these rules, so each route says what it
+# did not do (`nothing was saved`, `nothing was revealed`) with no route-name branch.
 STRICT_JSON_API_ROUTES = {
-    'settings.save_group': (frozenset({'section', 'rows'}), 'rows'),
+    'settings.save_group': (frozenset({'section', 'rows'}), 'rows', {'token': str},
+                            group_transport_refusal),
+    # SEC-006: reveal one stored credential cell. No rows; every member is typed, and
+    # `type(...) is int` keeps a boolean from standing in for the row number.
+    'settings.reveal_cell': (frozenset({'section', 'column', 'row', 'token'}), None,
+                             {'section': str, 'column': str, 'row': int, 'token': str},
+                             reveal_transport_refusal),
 }
 
 
@@ -1021,13 +1036,39 @@ STRICT_JSON_API_ROUTES = {
 # stored setting, including indexer keys and hosts, and nothing in the app asks
 # for it as JSONP. JSONP stays available on every other GET route (recorded in
 # docs/technical-debt.md).
-JSONP_REFUSED_API_ROUTES = frozenset({'settings'})
+# `settings.reveal_cell` returns a stored credential. It is POST-only and the
+# strict-JSON step refuses a `callback_func` before this table is consulted, so this
+# entry is a second layer: should the transport ever be loosened, the reply still
+# cannot be a script another origin can run.
+JSONP_REFUSED_API_ROUTES = frozenset({'settings', 'settings.reveal_cell'})
+
+
+# Routes whose rows may carry a cell that is not text (SEC-006: a stored key
+# kept or restored by reference). A page in a browser on another origin, an
+# origin listed in `cors_origins` included, must not be able to move a stored
+# key, so a request to one of these that carries any such cell is refused when
+# it is demonstrably cross-origin. A save made only of text is unchanged, and a
+# request with neither Origin nor Referer (a script) is not refused by this rule.
+STRUCTURED_ROWS_API_ROUTES = frozenset({'settings.save_group'})
+
+
+def _rows_carry_non_text(route, body):
+    """Does any member of any row of this already-parsed strict-JSON body fail to be a string?"""
+    rows_key = STRICT_JSON_API_ROUTES[route][1]
+    if rows_key is None:
+        return False      # a route with no rows has no cells to be non-text
+    rows = body[rows_key]
+    return any(not isinstance(value, str) for row in rows for value in row.values())
 
 
 def _strict_json_body_ok(route, body):
-    keys, rows_key = STRICT_JSON_API_ROUTES[route]
-    if not isinstance(body, dict) or set(body) != keys:
+    required, rows_key, types, _ = STRICT_JSON_API_ROUTES[route]
+    if not isinstance(body, dict) or not required <= set(body) <= required | set(types):
         return False
+    if any(type(body[key]) is not kind for key, kind in types.items() if key in body):
+        return False
+    if rows_key is None:
+        return True
     rows = body[rows_key]
     return isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
 
@@ -1051,11 +1092,13 @@ async def _strict_json_refusal(route, request):
             body = None
         acceptable = _strict_json_body_ok(route, body)
     if acceptable:
+        # The one parse of the body, kept for the dispatch's cross-origin rule.
+        request.state.strict_json_body = body
         return None
     # The reason only: nothing the caller sent is logged.
-    log.warning('Refused a settings group save: the request was not a JSON POST '
-                'of exactly the expected keys')
-    return JSONResponse(content=group_transport_refusal(), status_code=400)
+    log.warning('Refused a request to "%s": it was not a JSON POST of exactly the '
+                'expected keys', route)
+    return JSONResponse(content=STRICT_JSON_API_ROUTES[route][3](), status_code=400)
 
 
 def session_cookie_attributes() -> dict:
@@ -1455,6 +1498,18 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             refusal = await _strict_json_refusal(route, request)
             if refusal is not None:
                 return refusal
+            if (route in STRUCTURED_ROWS_API_ROUTES and _cross_origin_post(request)
+                    and _rows_carry_non_text(route, request.state.strict_json_body)):
+                # Decided on the object the strict-JSON step parsed. The handler
+                # parses the same bytes again with the same `json.loads` (`getParams`
+                # leaves `rows` untouched), so the two cannot differ. The WARNING
+                # names the route and the reason, never a cell or token.
+                _log_origin_refusal('a cross-origin save to "%s" carrying cells that are '
+                                    'not text' % route, request)
+                return JSONResponse(
+                    content={'success': False, 'error': 'Cross-origin request refused'},
+                    status_code=403,
+                )
 
         # Serve cached files (posters, etc.) directly
         if route.startswith('file.cache/'):

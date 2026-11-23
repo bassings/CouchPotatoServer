@@ -863,6 +863,8 @@ config = [{
                     'type': 'combined',
                     'combine': ['use', 'host', 'pass_key', 'name', 'seed_ratio', 'seed_time', 'extra_score'],
                     'pairing': ['host', 'pass_key', 'use', 'name'],
+                    'secret': ['pass_key'],
+                    'address': ['host'],
                 },
             ],
         },

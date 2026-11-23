@@ -687,7 +687,8 @@ class TestTheSettingsReadCarriesGroupState:
 
             payload = self.read(client)
 
-            assert payload['combine_state']['newznab'] == {'misaligned': True, 'rows': 3}
+            newznab = payload['combine_state']['newznab']
+            assert {k: v for k, v in newznab.items() if k != 'token'} == {'misaligned': True, 'rows': 3}
             assert payload['combine_state']['torrentpotato']['misaligned'] is False
             assert sha(settings.file) == before
 

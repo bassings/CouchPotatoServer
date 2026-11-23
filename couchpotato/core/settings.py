@@ -1,5 +1,7 @@
 import configparser as ConfigParser
+import hmac
 import os
+import secrets
 import tempfile
 import threading
 import traceback
@@ -27,6 +29,55 @@ _type_adapters = {
 # state, and a later password save cannot lose its marker to an older callback.
 _PASSWORD_SAVE_LOCK = threading.RLock()
 
+#: What the settings read will show in place of a stored credential cell
+#: (SEC-006). It equals its own `strip()` and its JavaScript `trim()`, holds no
+#: whitespace, comma or control character, is longer than any trim could touch
+#: and contains a character no key alphabet uses, so a page that sends it back
+#: cannot have altered it and no real key contains it. A save of any secret cell
+#: containing it is refused (`masked_value`).
+SECRET_MASK = '\u2022' * 8
+
+#: How many removed or replaced keys the server remembers per section (SEC-006
+#: Design 4): process memory only, oldest first out. The one bound on the hold.
+_HOLD_LIMIT_PER_SECTION = 16
+
+
+class _RemovedKeyHold:
+    """Keys a token-carrying save left out, kept so that one Undo can put them back.
+
+    Keyed `(section, column, token the save carried, cell index)`; the value is the
+    cell's stored text exactly. Insertion-ordered, bounded per section, never
+    written anywhere and gone with the `Settings` that owns it. Callers hold
+    `_PASSWORD_SAVE_LOCK`. No method formats a key or a token into anything, so no
+    exception it raises can carry one.
+    """
+
+    def __init__(self):
+        self._entries = {}
+
+    def add(self, section, column, token, row, text):
+        key = (section, column, token, row)
+        # An existing entry is moved to the newest position, so the order stays one
+        # record per key and the oldest is always the first to go.
+        self._entries.pop(key, None)
+        self._entries[key] = text
+        self.evict(section)
+
+    def peek(self, section, column, token, row):
+        return self._entries.get((section, column, token, row))
+
+    def take(self, section, column, token, row):
+        return self._entries.pop((section, column, token, row), None)
+
+    def list_by_token(self, section, token):
+        return sorted((column, row) for (held_section, column, held_token, row) in self._entries
+                      if held_section == section and held_token == token)
+
+    def evict(self, section):
+        mine = [key for key in self._entries if key[0] == section]
+        for key in mine[:max(0, len(mine) - _HOLD_LIMIT_PER_SECTION)]:
+            self._entries.pop(key, None)
+
 
 #: Why a group save can be refused. The writer returns these codes and no
 #: others (AC-ARCH-11(iii)); a client composes the text a person reads from the
@@ -47,8 +98,29 @@ _GROUP_REFUSAL_TEXT = {
     'malformed': 'The request was not a list of rows. Nothing was saved.',
     'misaligned': 'The stored rows do not line up. Fix them in Settings first. '
                   'Nothing was saved.',
+    'token_unexpected': 'This group does not use a token. Nothing was saved.',
+    'stale': 'The rows changed after this page loaded them. Nothing was saved. '
+             'Reload to see the current rows.',
+    'token_missing': 'This save keeps or restores a saved key but carries no token. '
+                     'Nothing was saved.',
+    'bad_reference': 'A kept or restored key was not named correctly. Nothing was saved.',
+    'restore_unknown': 'A removed row can no longer be restored. Nothing was saved.',
+    'masked_value': 'A saved key was sent back as the dots shown in its place. '
+                    'Nothing was saved.',
 }
 GROUP_REFUSAL_REASONS = frozenset(_GROUP_REFUSAL_TEXT)
+
+#: The text a refused reveal is told, per reason. The reasons are codes of
+#: `_GROUP_REFUSAL_TEXT`; the text says nothing was revealed rather than saved.
+_REVEAL_REFUSAL_TEXT = {
+    'unknown_section': 'That is not a group of settings saved as rows. Nothing was revealed.',
+    'bad_reference': 'That cell cannot be revealed. Nothing was revealed.',
+    'token_missing': 'A token is required. Nothing was revealed.',
+    'stale': 'The rows changed after this page loaded them. Nothing was revealed. '
+             'Reload to see the current rows.',
+    'malformed': 'The request was not a reveal of one cell. Nothing was revealed.',
+}
+_REVEAL_FAILED_TEXT = 'The settings could not be read. Nothing was revealed.'
 
 
 #: What a per-column save of a combine column is told. It names the registered
@@ -93,14 +165,18 @@ def _invalid(row, column, reason):
     return {'row': row, 'column': column, 'reason': reason}
 
 
-def _group_refusal(problems):
+def _group_refusal(problems, held=None):
     """The refusal body: the first reason's fixed text, then every offending cell.
 
     The text is fixed per reason so that it can never carry a submitted value.
+    `held` is set only on a stale refusal: the cells held under the token it carried.
     """
-    return {'success': False,
+    body = {'success': False,
             'error': _GROUP_REFUSAL_TEXT[problems[0]['reason']],
             'invalid': problems}
+    if held is not None:
+        body['held'] = held
+    return body
 
 
 def group_transport_refusal():
@@ -110,6 +186,16 @@ def group_transport_refusal():
     answers with this, so it shares the one refusal shape the writer returns.
     """
     return _group_refusal([_invalid(None, None, 'malformed')])
+
+
+def reveal_transport_refusal():
+    """The refusal body for a request that was not a JSON POST of one reveal.
+
+    The strict-JSON table names this for the reveal route, so a malformed reveal is told
+    that nothing was revealed rather than the group save's "nothing was saved".
+    """
+    return {'success': False, 'error': _REVEAL_REFUSAL_TEXT['malformed'],
+            'invalid': [_invalid(None, None, 'malformed')]}
 
 
 def _cell_problem(cell):
@@ -147,7 +233,7 @@ def unstorable_cell(cell):
     return _cell_problem(cell)
 
 
-def _row_problems(index, row, columns):
+def _row_problems(index, row, columns, secrets=()):
     if not isinstance(row, dict):
         return [_invalid(index, None, 'malformed')]
     problems = [_invalid(index, column, 'missing_column') for column in columns if column not in row]
@@ -155,18 +241,21 @@ def _row_problems(index, row, columns):
     problems += [_invalid(index, None, 'unknown_column') for key in row if key not in columns]
     for column in columns:
         reason = _cell_problem(row[column]) if column in row else None
+        if reason is None and column in secrets and column in row and SECRET_MASK in row[column]:
+            # Only a secret column: another column may hold any text it could before.
+            reason = 'masked_value'
         if reason:
             problems.append(_invalid(index, column, reason))
     return problems
 
 
-def _group_problems(rows, columns):
+def _group_problems(rows, columns, secrets=()):
     """Every reason `rows` cannot be written as the group `columns`."""
     if not isinstance(rows, list) or not rows:
         return [_invalid(None, None, 'malformed')]
     problems = []
     for index, row in enumerate(rows):
-        problems.extend(_row_problems(index, row, columns))
+        problems.extend(_row_problems(index, row, columns, secrets))
     return problems
 
 
@@ -252,14 +341,34 @@ class Settings:
         addApiView('settings.save_group', self.save_group_view, docs={
             'desc': 'Save every column of one multi-row settings group in one request, '
                     'or save nothing. POST only, with an application/json body of '
-                    '{"section": name, "rows": [{column: text, ...}, ...]}. A refusal '
-                    'lists each offending cell by row and column, never by value.',
+                    '{"section": name, "rows": [{column: text, ...}, ...]} and, '
+                    'optionally, "token": the group\'s token from the settings read. A '
+                    'save carrying a token is refused when the group has changed since '
+                    'that token was issued, and its reply carries the fresh one. A '
+                    'refusal lists each offending cell by row and column, never by value.',
             'params': {
                 'section': {'desc': 'The section whose rows are saved'},
                 'rows': {'desc': 'A JSON array of objects, one per row, each holding '
                                  'every column of the group as a string'},
+                'token': {'desc': 'Optional. The group\'s token from the settings read'},
             },
             'return': {'type': 'object', 'example': '{"success": true}'},
+        })
+
+        addApiView('settings.reveal_cell', self.reveal_cell_view, docs={
+            'desc': 'Return the stored text of ONE credential cell of a multi-row group '
+                    '(a column the group declares secret). POST only, with an '
+                    'application/json body of exactly {"section": name, "column": name, '
+                    '"row": integer, "token": the group\'s token from the settings read}. '
+                    'Gated by the API key and the Origin check. A refusal never carries '
+                    'a value.',
+            'params': {
+                'section': {'desc': 'The section of the group'},
+                'column': {'desc': 'A column the group declares secret'},
+                'row': {'desc': 'The cell index within that column (a JSON integer)'},
+                'token': {'desc': 'The group\'s current token'},
+            },
+            'return': {'type': 'object', 'example': '{"success": true, "value": "..."}'},
         })
 
         addEvent('database.setup', self.databaseSetup)
@@ -279,6 +388,12 @@ class Settings:
         # one test's registration would make an unrelated Settings() think an
         # orphan section was registered.
         self.registered_options = {}
+
+        # The key the per-group token is computed under (SEC-006). Random per
+        # instance, held in memory only: it is never written, logged or returned,
+        # so a token cannot be forged or carried across a restart.
+        self._token_key = secrets.token_bytes(32)
+        self._hold = _RemovedKeyHold()
 
     def setFile(self, config_file):
         self.file = config_file
@@ -857,9 +972,63 @@ class Settings:
         `group_misaligned` and `rows` is the Definitions' row count, the number of
         rows `group_stored_rows` returns. Nothing here names a section or a column.
         """
-        return {section: {'misaligned': self.group_misaligned(section),
-                          'rows': len(self.group_stored_rows(section))}
-                for section in self.combine_groups()}
+        state = {section: {'misaligned': self.group_misaligned(section),
+                           'rows': len(self.group_stored_rows(section))}
+                 for section in self.combine_groups()}
+        # Only a group that holds a credential has a token; the others are saved as
+        # they always were and send and receive none.
+        for section in self.combine_secrets():
+            state[section]['token'] = self._group_token(section)
+        return state
+
+    def _group_token_input(self, section, columns, texts):
+        """An unambiguous encoding of a group: section, then each column's name and text.
+
+        Every string is framed by its byte length and the column count comes first,
+        so no two different (section, names, texts) can encode to the same bytes:
+        moving a character from one column's text to the next changes the framing.
+        """
+        def frame(text):
+            data = text.encode('utf-8', 'surrogatepass')
+            return len(data).to_bytes(8, 'big') + data
+
+        parts = [frame(section), len(columns).to_bytes(8, 'big')]
+        for column, text in zip(columns, texts):
+            parts += [frame(column), frame(text)]
+        return b''.join(parts)
+
+    def _group_token(self, section):
+        """The freshness token of a group that holds a credential, else None.
+
+        A MAC under this instance's random key over the group as stored now. It
+        changes when any column changes and for no other reason, and it is
+        computed from the same stored text the group is read and written as.
+        """
+        if section not in self.combine_secrets():
+            return None
+        columns = self.combine_groups()[section]
+        with _PASSWORD_SAVE_LOCK:
+            texts = [self._stored_text(section, column) for column in columns]
+        message = self._group_token_input(section, columns, texts)
+        # The SEC-006 group freshness token, under its own per-process key. It is
+        # unrelated to session signing, which lives only in couchpotato/__init__.py.
+        return hmac.digest(self._token_key, message, 'sha256').hex()
+
+    def _token_problems(self, section, token):
+        """The refusal for a token that cannot be honoured, as a problem list."""
+        if token is None:
+            return []
+        if section not in self.combine_secrets():
+            return [_invalid(None, None, 'token_unexpected')]
+        if not self._token_is_current(section, token):
+            return [_invalid(None, None, 'stale')]
+        return []
+
+    def _token_is_current(self, section, token):
+        expected = self._group_token(section)
+        if expected is None or not isinstance(token, str):
+            return False
+        return hmac.compare_digest(token.encode('utf-8', 'replace'), expected.encode('ascii'))
 
     def combine_groups(self):
         """Map each section that stores rows to its ordered column names.
@@ -889,6 +1058,26 @@ class Settings:
         """
         return {section: tuple(option.get('pairing') or option['combine'])
                 for section, option in self._combined_options()}
+
+    def combine_secrets(self):
+        """Map each combine group that holds credentials to its secret columns.
+
+        Declared once as a `secret` list on the same `combined` option as
+        `combine`, and derived the way `combine_groups` is. A group that declares
+        none is not listed, so it carries no token and is saved as it always was.
+        """
+        return {section: tuple(option['secret'])
+                for section, option in self._combined_options() if option.get('secret')}
+
+    def combine_addresses(self):
+        """Map each secret column to the column its value is sent to, per group.
+
+        The `address` list on the `combined` option runs parallel to `secret`
+        (`address[n]` is where `secret[n]` is sent). A secret with no address is
+        absent here; a unit sweep over the declarations fails for it.
+        """
+        return {section: dict(zip(option['secret'], option.get('address') or ()))
+                for section, option in self._combined_options() if option.get('secret')}
 
     def _combined_options(self):
         """Each `(section, option)` whose option is a registered combine group."""
@@ -982,20 +1171,69 @@ class Settings:
                     return str(option['default']).split(',')
         return None
 
-    def save_group_view(self, section=None, rows=None, **kwargs):
+    def reveal_cell_view(self, section=None, column=None, row=None, token=None, **kwargs):
+        """The API view of `reveal_cell`. Anything beyond the four members is malformed."""
+        if kwargs:
+            return self._refuse_reveal(None, 'malformed')
+        return self.reveal_cell(section, column, row, token)
+
+    def reveal_cell(self, section, column, row, token):
+        """The stored text of secret cell `row` of `column`, or a refusal with no value.
+
+        The one place a stored credential leaves the settings. `row` is the cell index of
+        the secret column itself, whether or not the group is aligned. A refusal is, in
+        this order: a section that is not a registered group; a column the group does not
+        declare secret; no token; a stale token; a row that is not a JSON integer or is
+        outside the column. The hold is never read. Reply: `{'success': True, 'value':
+        text}` and nothing else; an empty stored cell is an empty `value`.
+        """
+        named = ['unregistered', 'unregistered']      # registered names only, never the caller's strings
+        try:
+            with _PASSWORD_SAVE_LOCK:
+                if not isinstance(section, str) or section not in self.combine_groups():
+                    return self._refuse_reveal(None, 'unknown_section')
+                named[0] = section
+                if not isinstance(column, str) or column not in self.combine_secrets().get(section, ()):
+                    return self._refuse_reveal(section, 'bad_reference')
+                named[1] = column
+                if token is None:
+                    return self._refuse_reveal(section, 'token_missing')
+                if not self._token_is_current(section, token):
+                    return self._refuse_reveal(section, 'stale')
+                cells = self.group_cells(section)[column]
+                if type(row) is not int or not 0 <= row < len(cells):
+                    return self._refuse_reveal(section, 'bad_reference')
+                value = cells[row]
+                self.log.info('Revealed a stored key: section=%s column=%s row=%d', section, column, row)
+                return {'success': True, 'value': value}
+        except Exception as error:
+            # The type only: nothing read, held or sent is in the log or the reply.
+            self.log.error('Could not reveal a stored key: section=%s column=%s (%s).',
+                           named[0], named[1], type(error).__name__)
+            return {'success': False, 'error': _REVEAL_FAILED_TEXT}
+
+    def _refuse_reveal(self, section, reason):
+        # A caller's section string is never logged: only a registered name is.
+        self.log.warning('Refused a settings reveal: section=%s reason=%s',
+                         section or 'unregistered', reason)
+        return {'success': False, 'error': _REVEAL_REFUSAL_TEXT[reason],
+                'invalid': [_invalid(None, None, reason)]}
+
+    def save_group_view(self, section=None, rows=None, token=None, **kwargs):
         """The API view: a thin relay to `save_group` that adds the INFO line.
 
         The transport (a JSON POST of exactly `section` and `rows`) is enforced
-        in the API dispatch. Anything else reaching here is refused as malformed.
+        in the API dispatch (plus an optional `token`). Anything else reaching here
+        is refused as malformed.
         """
         if kwargs:
             return self._refuse_group(None, [_invalid(None, None, 'malformed')])
-        result = self.save_group(section, rows)
+        result = self.save_group(section, rows, token)
         if result.get('success'):
             self.log.info('Saved a settings group: section=%s rows=%d', section, len(rows))
         return result
 
-    def save_group(self, section, rows):
+    def save_group(self, section, rows, token=None):
         """Write one combine group from rows: every column, or nothing.
 
         `rows` is a list of dicts, each holding exactly the group's columns as
@@ -1007,6 +1245,11 @@ class Settings:
         write it makes to them is undone on a refusal or a failure. It must
         never call `save()` (a write to disk cannot be undone) or write outside
         the group.
+
+        `token`, when given, is the group's token from the settings read: a save
+        built on a group that has since changed is refused as `stale`, nothing
+        written, and an accepted one returns `{'success': True, 'token': fresh}`.
+        With no token the save behaves, and replies, exactly as it always did.
 
         Returns `{'success': True}`, or `{'success': False, 'error': text,
         'invalid': [{'row', 'column', 'reason'}, ...]}` for a refusal, or
@@ -1026,21 +1269,24 @@ class Settings:
         groups.
         """
         with _PASSWORD_SAVE_LOCK:
-            return self._save_group(section, rows)
+            return self._save_group(section, rows, token)
 
-    def _save_group(self, section, rows):
+    def _save_group(self, section, rows, token=None):
         columns = self.combine_groups().get(section) if isinstance(section, str) else None
         if columns is None:
             # The caller's text is not logged: it is not a registered name.
             return self._refuse_group(None, [_invalid(None, None, 'unknown_section')])
         snapshot = self._group_snapshot(section, columns)
+        plan = None
         try:
             rows = rows() if callable(rows) else rows
-            problems = [_invalid(None, column, 'not_writable') for column in columns
-                        if not self.isOptionWritable(section, column)]
-            problems += _group_problems(rows, columns)
+            problems, held, rows, plan = self._resolve_group_cells(section, columns, rows, token)
+            if not problems:
+                problems = [_invalid(None, column, 'not_writable') for column in columns
+                            if not self.isOptionWritable(section, column)]
+                problems += _group_problems(rows, columns, self.combine_secrets().get(section, ()))
             if problems:
-                result = self._refuse_group(section, problems)
+                result = self._refuse_group(section, problems, held)
             else:
                 result = self._write_group(section, columns, rows)
         except GroupMisaligned:
@@ -1052,15 +1298,181 @@ class Settings:
             raise
         if not result['success']:
             self._restore_group(section, snapshot)
+            return result
+        # The group is written. Nothing from here on may restore it or report a
+        # failure: the file holds the new rows, so a failure reply would be a lie
+        # and a restore would put the old rows back over a later unrelated save.
+        # Still under the caller's hold of the lock.
+        return self._after_group_written(section, token, result, plan, rows)
+
+    @staticmethod
+    def _cell_form(cell):
+        """`('keep', i)`, `('restore', (token, row))` or None for a dict that is neither."""
+        def index(value):
+            return type(value) is int and value >= 0
+
+        if set(cell) == {'keep'} and index(cell['keep']):
+            return 'keep', cell['keep']
+        reference = cell.get('restore') if set(cell) == {'restore'} else None
+        if (isinstance(reference, dict) and set(reference) == {'token', 'row'}
+                and isinstance(reference['token'], str) and index(reference['row'])):
+            return 'restore', (reference['token'], reference['row'])
+        return None
+
+    def _resolve_group_cells(self, section, columns, rows, token):
+        """Turn `keep` and `restore` cells into the text they stand for, or say why not.
+
+        Returns `(problems, held, rows, plan)`. `rows` is the list to validate and
+        write (a copy, with each form replaced by its text); `plan` is what to do
+        once the write has landed. A save with no form in it passes through
+        untouched: a token-less all-string save and a builder save behave as they
+        always did. Order of refusals: a form that is malformed, in the wrong column
+        or repeated; a restore nobody holds (decided BEFORE the token, so a restore
+        whose reply was lost is not taken for a stale save); a form with no token; a
+        bad token; an index outside the column. `i` is always cell `i` of the secret
+        column, so a keep follows the pairing the providers already use.
+        """
+        secrets_ = self.combine_secrets().get(section, ())
+        plan = {'kept': [], 'restored': [], 'candidates': [], 'cells': None}
+        if not isinstance(rows, list):
+            return (*self._token_failure(section, token), rows, plan)
+        forms = []
+        problems = []
+        seen = set()
+        for position, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            for column in columns:
+                cell = row.get(column)
+                if not isinstance(cell, dict):
+                    continue
+                if column not in secrets_:
+                    if 'keep' in cell or 'restore' in cell:
+                        problems.append(_invalid(position, column, 'bad_reference'))
+                    continue
+                form = self._cell_form(cell)
+                if form is None or (column,) + form in seen:
+                    problems.append(_invalid(position, column, 'bad_reference'))
+                    continue
+                seen.add((column,) + form)
+                forms.append((position, column) + form)
+        if problems:
+            return problems, None, rows, plan
+        unknown = [_invalid(position, column, 'restore_unknown')
+                   for position, column, kind, value in forms
+                   if kind == 'restore' and self._hold.peek(section, column, value[0], value[1]) is None]
+        if unknown:
+            return unknown, None, rows, plan
+        if forms and token is None:
+            return [_invalid(None, None, 'token_missing')], None, rows, plan
+        failure, listing = self._token_failure(section, token)
+        if failure:
+            return failure, listing, rows, plan
+        if token is None:
+            return [], None, rows, plan
+        cells = self.group_cells(section)
+        plan['cells'] = cells
+        out = [dict(row) if isinstance(row, dict) else row for row in rows]
+        kept = {column: set() for column in secrets_}
+        for position, column, kind, value in forms:
+            if kind == 'keep':
+                if value >= len(cells[column]):
+                    problems.append(_invalid(position, column, 'bad_reference'))
+                    continue
+                out[position][column] = cells[column][value]
+                kept[column].add(value)
+                plan['kept'].append((position, column, value))
+            else:
+                out[position][column] = self._hold.peek(section, column, value[0], value[1])
+                plan['restored'].append((position, column, value))
+        if problems:
+            return problems, None, rows, plan
+        plan['candidates'] = [(column, index, text) for column in secrets_
+                              for index, text in enumerate(cells[column])
+                              if text != '' and index not in kept[column]]
+        return [], None, out, plan
+
+    def _token_failure(self, section, token):
+        """`(problems, held)` for a token that cannot be honoured; `held` only for `stale`."""
+        problems = self._token_problems(section, token)
+        if problems and problems[0]['reason'] == 'stale':
+            return problems, self._stale_listing(section, token)
+        return problems, None
+
+    def _stale_listing(self, section, token):
+        """The cells held under `token`, as column and index only (none for a forged token)."""
+        if not isinstance(token, str):
+            return []
+        return [{'column': column, 'row': row} for column, row in self._hold.list_by_token(section, token)]
+
+    def _after_group_written(self, section, token, result, plan, rows):
+        """Everything that follows a landed write: the INFO lines, the hold and the reply token.
+
+        Each step is guarded on its own and logs the exception TYPE only, so no
+        failure here can turn an accepted save into a failure reply, restore the old
+        rows, or put a key or token into a log. The hold is made and consumed only
+        here, after the write.
+        """
+        if plan and plan['cells'] is not None:
+            self._log_kept_and_restored(section, plan, rows)
+            try:
+                for _, column, (held_token, row) in plan['restored']:
+                    self._hold.take(section, column, held_token, row)
+                for column, index, text in plan['candidates']:
+                    self._hold.add(section, column, token, index, text)
+            except Exception as error:
+                self.log.error('Saved the settings group "%s" but could not update the '
+                               'record of removed keys (%s).', section, type(error).__name__)
+        if token is not None:
+            try:
+                result['token'] = self._group_token(section)
+            except Exception as error:
+                # The reply simply carries no token: the page keeps its old one and
+                # gets a clean stale refusal next time. The type only is logged.
+                self.log.error('Saved the settings group "%s" but could not compute '
+                               'its token (%s).', section, type(error).__name__)
         return result
 
-    def _refuse_group(self, section, problems):
+    def _log_kept_and_restored(self, section, plan, rows):
+        """INFO lines for a landed save: a key kept on a changed address, a key restored.
+
+        Section, column and row only: never an address, a key or a token.
+        """
+        try:
+            addresses = self.combine_addresses().get(section, {})
+        except Exception as error:
+            self.log.error('Could not log kept keys: section=%s (%s).', section, type(error).__name__)
+            addresses = {}
+        for position, column, index in plan['kept']:
+            # One line at a time: a failure in one never drops the others.
+            try:
+                where = addresses.get(column)
+                if where is None:
+                    continue
+                stored = plan['cells'][where]
+                before = stored[index] if index < len(stored) else ''
+                if rows[position].get(where, '') != before:
+                    self.log.info('Kept a stored key on a changed address: section=%s '
+                                  'column=%s row=%d', section, column, position)
+            except Exception as error:
+                self.log.error('Could not log a kept key: section=%s column=%s (%s).',
+                               section, column, type(error).__name__)
+        for position, column, _ in plan['restored']:
+            try:
+                self.log.info('Restored a removed key: section=%s column=%s row=%d',
+                              section, column, position)
+            except Exception as error:
+                self.log.error('Could not log a restored key: section=%s column=%s (%s).',
+                               section, column, type(error).__name__)
+        return None
+
+    def _refuse_group(self, section, problems, held=None):
         first = problems[0]
         self.log.warning('Refused a settings group save: section=%s first_row=%s '
                          'first_column=%s reason=%s offences=%d',
                          section or 'unregistered', first['row'], first['column'],
                          first['reason'], len(problems))
-        return _group_refusal(problems)
+        return _group_refusal(problems, held)
 
     def _group_write_failed(self, section, error):
         self.log.error('Could not save the settings group "%s" (%s). '

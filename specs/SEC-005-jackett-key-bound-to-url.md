@@ -66,7 +66,13 @@ form as open: item 5 of the "Newznab positional lists" entry in
   example a page or script that can send a request but not see the answer),
   on any install: the key can no longer be redirected by that write, except through
   the outbound proxy settings, for a Jackett on plain http; see gap (j).
-  [Amended 2026-11-22, P2 review round 2.]
+  [Amended 2026-11-22, P2 review round 2.] [Corrected 2026-11-23, SEC-006 P1: a
+  `save_group` that carries a `keep` can place a stored key beside a new host, so
+  this is true of a blind actor and of a page on another origin in a browser (an
+  origin listed in `cors_origins` included, which is refused 403) but not of the
+  same-origin page or a script holding the API key; such a page can still learn
+  the API key and pass it to a script. A removed or replaced key also stays in the
+  server's memory until a restart (SEC-006 Design 4).]
 
 **Who it does not protect:** an install that has synced (the common case),
 against a holder of the CouchPotato API key who can read the settings. That
@@ -273,7 +279,13 @@ owner decisions.
    A per-column `settings.save` of `host` is also refused. So `save_group`
    cannot carry the stored key to a new host unless the caller already knows
    the key: there is no second redirect path through the rows, and the stored
-   rows stay out of scope and unchanged (AC-SIMP-8, AC-SEC-12). A cross-origin
+   rows stay out of scope and unchanged (AC-SIMP-8, AC-SEC-12). [Corrected
+   2026-11-23, SEC-006 P1: true of the `save_group` measured here, which sent
+   strings only. A `save_group` carrying a `keep` (SEC-006) can place a stored key
+   beside a new host; it can be sent by the same-origin page or a script holding
+   the API key, not by a blind actor or by a page on another origin in a browser.
+   A removed or replaced key now stays in memory as SEC-006 Design 4 states.]
+   A cross-origin
    `text/plain` `save_group` returned 400; the `application/json` preflight
    was read, not measured in a browser. **Warning for the next spec:** a masked
    read plus today's `save_group` would destroy stored keys (the mask is

@@ -728,6 +728,43 @@ the old test stays green, the new one fails.
   read plus today's `save_group` would destroy stored keys, because the mask
   would be written back over them. Condition for revisiting: SEC-005 has now
   landed (P1 to P4), so this is the next spec.
+  Being closed by SEC-006: its server slice (P1) has landed with the read still
+  unmasked; masking arrives with its last slice (P3).
+  [Corrected 2026-11-23, SEC-006 P1: the measurement above holds for a
+  `save_group` that sends strings, but it is no longer true that there is no
+  second redirect path through the rows. A `save_group` that carries a token may
+  send `{"keep": i}` for a key cell, which stores the key already held in cell
+  `i` beside whatever address the same row carries, so it CAN place a stored key
+  beside a new host. Who can send one: the same-origin Settings page, or a script
+  holding the CouchPotato API key. Not a blind actor, and not a page on another
+  origin in a browser, an origin listed in `cors_origins` included (such a page is
+  refused 403), although a page on a listed origin can learn the API key and pass
+  it to a script. A removed or replaced key now also stays in the server's memory
+  (up to 16 per section, until a restart) and can be put back with a `restore` by
+  a holder of the API key and the token of the settings as they stood at the
+  removal. The settings read is still unmasked in this release.]
+- **A failing INFO line after a landed group save is reported as a failed save
+  (open, 2026-11-23; found at the SEC-006 whole-branch review, present on
+  `master`).** `Settings.save_group_view` writes its INFO line "Saved a settings
+  group" after `save_group` has written and saved the file. If that log call
+  raises, `callApiHandler` catches it and returns `{"success": false, "error":
+  "Failed returning results"}` for a save that landed, so a page that trusts the
+  reply shows a failure for rows that are stored. The post-write steps inside
+  `save_group` itself (the hold, the key INFO lines, the reply token) are guarded
+  separately and cannot do this; only this view-level line can. Logging rarely
+  raises, so the exposure is small. Condition for revisiting: the next change to
+  `save_group_view` or to `callApiHandler`'s error path, which should make the
+  INFO line unable to change the reply.
+- **A stored indexer key that already contains the mask text blocks its group's
+  saves (open, 2026-11-24; SEC-006 P1).** From the SEC-006 server slice, any
+  credential cell containing eight consecutive U+2022 bullets is refused as
+  `masked_value`, so that a page showing dots can never write them over a key.
+  A stored Newznab or TorrentPotato key that ALREADY contains that text
+  therefore has every save of its group, and a Jackett merge sync, refused
+  until the key is corrected in `config.ini`. Nothing in this app writes that
+  text, so it would have to have been typed. Pinned by
+  `TestRecordedLimitAStoredKeyThatAlreadyContainsTheMask`. Condition for
+  revisiting: SEC-006 P3, which writes the closing entry for the whole change.
 - **Settings values are URL-decoded a second time on save (closed 2026-11-23;
   spec `specs/FIX-2026-11-23-api-param-double-decode.md`).** Every API argument
   went through `callApiHandler` and then `getParams`
