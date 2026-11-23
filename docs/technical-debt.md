@@ -80,6 +80,20 @@ the old test stays green, the new one fails.
 - **CSRF protection absent.** (CORS middleware now exists —
   `couchpotato/__init__.py`; the old "no CORS" note is stale.)
 - Passwords bcrypt-hashed (was plaintext before PR #44).
+- **JSONP remains available on API routes other than `settings`
+  (2026-11-23).** A request, GET or POST, with a non-empty, valid
+  `callback_func` is answered as `text/javascript` (an invalid callback name is
+  refused, the long-poll routes ignore the parameter, and
+  `settings.save_group` refuses any query parameter), so a page on another origin that knows the API
+  key can read those replies from the visitor's browser with a `<script>` tag.
+  Only the settings read was closed (`JSONP_REFUSED_API_ROUTES` in
+  `couchpotato/__init__.py`), by owner decision, because its reply holds
+  credentials. No other registered route returns stored credentials, but three
+  return private data and stay readable this way: `database.list_documents`
+  (the library and release records, file paths included), `logging.get` and
+  `logging.partial` (log text), and `directory.list` (the server's folder
+  names). Nothing in the app requests any route as JSONP. Revisit on the
+  owner's request, or when a route is added that returns stored data.
 - **API auth via URL key.** Rate limiting now exists
   (`couchpotato/core/rate_limit.py`; the old "no rate limiting" note is stale);
   the api_key is still the URL-embedded bearer.

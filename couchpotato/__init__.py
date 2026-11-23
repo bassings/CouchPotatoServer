@@ -940,6 +940,15 @@ STRICT_JSON_API_ROUTES = {
 }
 
 
+# Routes whose reply is never offered as JSONP. A JSONP reply is a script a
+# `<script src>` on ANY origin can run, so a page that knows the API key could
+# read the reply from the visitor's browser. The settings read returns every
+# stored setting, including indexer keys and hosts, and nothing in the app asks
+# for it as JSONP. JSONP stays available on every other GET route (recorded in
+# docs/technical-debt.md).
+JSONP_REFUSED_API_ROUTES = frozenset({'settings'})
+
+
 def _strict_json_body_ok(route, body):
     keys, rows_key = STRICT_JSON_API_ROUTES[route]
     if not isinstance(body, dict) or set(body) != keys:
@@ -1456,6 +1465,13 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                         return JSONResponse(content={'success': False, 'error': 'Invalid JSON body'}, status_code=400)
                 if isinstance(body, dict):
                     kwargs.update(body)
+        if route in JSONP_REFUSED_API_ROUTES and kwargs.get('callback_func'):
+            # The route only: no parameter value, Origin or key is logged.
+            log.warning('Refused a JSONP request to "%s"', route)
+            return JSONResponse(
+                content={'success': False, 'error': 'JSONP is not available for this route'},
+                status_code=400,
+            )
         # Dispatched in the threadpool (REG-002): callApiHandler is
         # synchronous and can block for a long time (e.g. the chart
         # scrapers hitting IMDB/Blu-ray.com over the network). Running it
