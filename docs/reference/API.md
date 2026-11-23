@@ -23,6 +23,15 @@ repaired and must be entered again. That includes the UI password: one that
 was saved with `%41`-style text in it was stored in its decoded spelling, which
 is still what logs in after upgrading, until the password is saved again.
 
+## Changed: the settings read is not available as JSONP
+
+In versions after v3.312.0 a request to `settings` that carries a `callback_func`
+parameter, in the query string, a form body or a JSON body, is refused with
+HTTP 400 and `{"success": false, "error": "JSONP is not available for this route"}`.
+A JSONP reply is a script that a page on any origin can load, and this reply holds
+every stored setting, including indexer keys and hosts. Read it as JSON, with the
+API key in the `X-Api-Key` header or the URL. Other routes are unchanged.
+
 ## Core Endpoints
 
 ### Application
