@@ -1055,6 +1055,46 @@ class TestNothingTheHoldDoesLeaksOrDisagrees:
         assert errors == ['Could not log a kept key: section=newznab column=api_key (RuntimeError).']
         assert self.CANARY not in logs.text()
 
+    def test_every_kept_and_restored_line_is_guarded_on_its_own(self, settings, monkeypatch):
+        """Two kept rows on changed addresses and two restores; the FIRST call of each kind raises.
+
+        A single `try` around a whole loop would drop every line after the first failure.
+        """
+        keys = ['placeholder-p0', 'placeholder-p1', 'placeholder-p2', 'placeholder-p3']
+        rows, token = seeded(settings, keys=keys)
+        removed = settings.save_group('newznab', with_forms(rows[:2], {0: keep(0), 1: keep(1)}), token)
+        assert removed['success'] is True            # rows 2 and 3 are held under `token`
+        sent = three_rows(settings, 'newznab', tag='n') + three_rows(settings, 'newznab', tag='m')[:1]
+        sent = sent[:4]
+        sent[0]['api_key'], sent[1]['api_key'] = keep(0), keep(1)          # hosts differ: both log
+        sent[2]['api_key'], sent[3]['api_key'] = restore(token, 2), restore(token, 3)
+        real_info = settings.log.info
+        failed = set()
+
+        def first_of_each_kind_fails(message, *args, **kwargs):
+            for kind in ('Kept a stored key', 'Restored a removed key'):
+                if message.startswith(kind) and kind not in failed:
+                    failed.add(kind)
+                    raise RuntimeError(self.CANARY)
+            return real_info(message, *args, **kwargs)
+
+        monkeypatch.setattr(settings.log, 'info', first_of_each_kind_fails)
+
+        with LogCapture() as logs:
+            result = settings.save_group('newznab', sent, removed['token'])
+
+        assert result['success'] is True
+        mine = [r for r in logs.records if r.name == 'couchpotato.core.settings']
+        written = plain([r.getMessage() for r in mine if r.levelno == logging.INFO])
+        assert 'Kept a stored key on a changed address: section=newznab column=api_key row=1' in written
+        assert 'Restored a removed key: section=newznab column=api_key row=3' in written
+        assert not [m for m in written if m.endswith('row=0') or m.endswith('row=2')], (
+            'the first line of each kind was made to fail')
+        errors = plain([r.getMessage() for r in mine if r.levelno == logging.ERROR])
+        assert errors == ['Could not log a kept key: section=newznab column=api_key (RuntimeError).',
+                          'Could not log a restored key: section=newznab column=api_key (RuntimeError).']
+        assert self.CANARY not in logs.text()
+
     def test_a_failing_take_after_the_write_leaves_an_accepted_reply_and_one_state(self, settings, monkeypatch):
         rows, token = seeded(settings, keys=['placeholder-p0', 'placeholder-p1', 'placeholder-p2'])
         removed = settings.save_group('newznab', with_forms(rows[:1], {0: keep(0)}), token)

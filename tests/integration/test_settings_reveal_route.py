@@ -489,6 +489,35 @@ class TestLogging:
         assert token not in logs.text()
 
 
+    @pytest.mark.parametrize('field, patched, expected', [
+        ('column', 'combine_secrets', 'section=newznab column=unregistered'),
+        ('section', 'combine_groups', 'section=unregistered column=unregistered')])
+    def test_a_failed_reveal_logs_placeholders_never_the_callers_strings(
+            self, world, monkeypatch, field, patched, expected):
+        """A made-up section or column, then a read that fails: the ERROR must name neither."""
+        settings, client = world
+        rows, token = seeded(settings)
+        injected = 'evil\nINFO forged %s'
+
+        def explode(self, *args, **kwargs):
+            raise RuntimeError('canary-stored-text-or-token')
+
+        monkeypatch.setattr(settings_module.Settings, patched, explode)
+        body = {'section': 'newznab', 'column': 'api_key', 'row': 0, 'token': token, field: injected}
+
+        with LogCapture() as logs:
+            response = client.post(URL, json=body, headers=OWN)
+
+        mine = [r for r in logs.records if r.name == 'couchpotato.core.settings']
+        assert [r.getMessage().split('] ', 1)[-1] for r in mine] == [
+            'Could not reveal a stored key: %s (RuntimeError).' % expected]
+        assert response.json() == {'success': False,
+                                   'error': 'The settings could not be read. Nothing was revealed.'}
+        assert 'evil' not in logs.text()
+        assert 'forged' not in logs.text()
+        assert 'canary-stored-text-or-token' not in logs.text() + response.text
+
+
 class TestThePerColumnSaveStillRefusesASecretColumn:
     @pytest.mark.parametrize('value', ['{"keep": 0}', '{"restore": {"token": "x", "row": 0}}',
                                        'new-key', '', 'x' * 40])
