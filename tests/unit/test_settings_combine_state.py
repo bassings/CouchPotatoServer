@@ -38,9 +38,15 @@ def test_every_registered_group_has_an_entry_and_nothing_else(settings):
     assert set(settings.combine_state()) == set(settings.combine_groups())
 
 
-def test_an_entry_is_exactly_the_flag_and_the_row_count(settings):
-    for entry in settings.combine_state().values():
-        assert set(entry) == {'misaligned', 'rows'}
+def flag_and_rows(entry):
+    """An entry without the SEC-006 token, which is tested in test_settings_group_token.py."""
+    return {key: value for key, value in entry.items() if key != 'token'}
+
+
+def test_an_entry_is_exactly_the_flag_and_the_row_count_and_a_token_only_for_a_credential_group(settings):
+    for section, entry in settings.combine_state().items():
+        assert flag_and_rows(entry).keys() == {'misaligned', 'rows'}
+        assert ('token' in entry) == (section in settings.combine_secrets())
 
 
 def test_the_read_view_includes_it(settings):
@@ -50,8 +56,8 @@ def test_the_read_view_includes_it(settings):
 def test_a_fresh_install_reads_aligned_with_the_rows_the_definitions_give(settings):
     state = settings.combine_state()
 
-    assert state['newznab'] == {'misaligned': False, 'rows': 6}
-    assert state['torrentpotato'] == {'misaligned': False, 'rows': 2}
+    assert flag_and_rows(state['newznab']) == {'misaligned': False, 'rows': 6}
+    assert flag_and_rows(state['torrentpotato']) == {'misaligned': False, 'rows': 2}
     assert state['itunes'] == {'misaligned': False, 'rows': 2}
     assert state['imdb'] == {'misaligned': False, 'rows': 1}
 
@@ -66,7 +72,7 @@ def test_a_misaligned_stored_group_reads_misaligned_and_aligned_ones_do_not(tmp_
 def test_the_wizard_written_shape_is_aligned_with_surplus_default_cells_not_counted(tmp_path, monkeypatch):
     state = state_of(tmp_path, monkeypatch, 'newznab_wizard_written')
 
-    assert state['newznab'] == {'misaligned': False, 'rows': 3}
+    assert flag_and_rows(state['newznab']) == {'misaligned': False, 'rows': 3}
 
 
 def test_the_flag_is_whatever_group_misaligned_says(settings, monkeypatch):

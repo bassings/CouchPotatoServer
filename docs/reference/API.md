@@ -196,7 +196,8 @@ providers register (`settings` returns each group's columns and state), not from
 a list kept here.
 
 **Request.** `POST /api/<api_key>/settings.save_group/` with
-`Content-Type: application/json` and a body of exactly two keys:
+`Content-Type: application/json` and a body of two keys, plus an optional third,
+`token`:
 
 ```json
 {"section": "newznab", "rows": [{"use": "1", "host": "https://indexer.example", "api_key": "...", "extra_score": "0", "custom_tag": ""}]}
@@ -208,14 +209,23 @@ every column from the rows and saves once, or saves nothing. Any other method,
 any content type but `application/json`, any query parameter other than the
 cache-buster `t`, or an extra or missing top-level key is refused with HTTP 400.
 
-**Success.** `{"success": true}`. The body never carries a cell value.
+`token` (a string) is the group's `combine_state[section].token` from the
+settings read, present only for a group that holds a credential (`newznab`,
+`torrentpotato`). A save that carries one is refused as `stale`, with nothing
+written, when the group has changed since that token was issued. A save with no
+`token` is accepted as it always was. Any string that contains the mask text
+(eight U+2022 bullets) is refused as the value of a credential column
+(`masked_value`).
+
+**Success.** `{"success": true}`, or `{"success": true, "token": "<fresh token>"}`
+for a save that carried a token. The body never carries a cell value.
 
 **Refusal.** `{"success": false, "error": "<fixed text>", "invalid": [{"row": 1,
 "column": "host", "reason": "comma"}]}`. `row` is the 0-based row as sent and
 `column` the column name; both are `null` when the whole request is at fault.
 `reason` is one of `comma`, `control_character`, `not_string`, `not_encodable`,
 `missing_column`, `unknown_column`, `not_writable`, `unknown_section`,
-`malformed`, `misaligned`. The response names rows and columns and never a
+`malformed`, `misaligned`, `stale`, `masked_value`. The response names rows and columns and never a
 value. A refused save leaves `config.ini` and the in-memory settings unchanged.
 A write failure returns `{"success": false, "error": "..."}` with no `invalid`.
 
@@ -228,9 +238,10 @@ with no value, in one of four forms:
 
 - a refused group save: `Refused a settings group save: section=... first_row=...
   first_column=... reason=... offences=N`;
-- a request that was not a JSON POST of exactly `section` and `rows` (HTTP 400):
-  `Refused a settings group save: the request was not a JSON POST of exactly the
-  expected keys`, which names nothing the caller sent;
+- a request that was not a JSON POST of `section` and `rows` (and, optionally, a
+  string `token`) (HTTP 400): `Refused a request to "settings.save_group": it was
+  not a JSON POST of exactly the expected keys`, which names the route and
+  nothing the caller sent;
 - a per-column save through `settings.save` that was refused: `Refused a
   per-column save of "section.option": it is saved with its group, not on its
   own` (the registered column, never the caller's spelling), or `Refused a

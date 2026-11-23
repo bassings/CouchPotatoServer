@@ -1006,12 +1006,15 @@ ORIGIN_CHECKED_API_ROUTES = frozenset({
 # cross-site defence: a page on another origin cannot send that content type
 # without a preflight, and `cors_origins` defaults to empty, so none is allowed.
 #
-# Each route also names the key whose value must be a JSON ARRAY of JSON
-# OBJECTS. The parser turns an object with numeric-looking keys (`{"0": {...},
-# "7": {...}}`, also `""`, `"."`, `"1.5"`) into a list, so without this check
-# such a body would reach the writer looking like rows.
+# Each entry is `(required keys, rows key, optional keys)`. The rows key names
+# the key whose value must be a JSON ARRAY of JSON OBJECTS (or is None for a
+# route with no rows). The parser turns an object with numeric-looking keys
+# (`{"0": {...}, "7": {...}}`, also `""`, `"."`, `"1.5"`) into a list, so without
+# this check such a body would reach the writer looking like rows. Each optional
+# key maps to the one JSON type its value must have; a body may carry any subset
+# of them and no key that is neither required nor optional.
 STRICT_JSON_API_ROUTES = {
-    'settings.save_group': (frozenset({'section', 'rows'}), 'rows'),
+    'settings.save_group': (frozenset({'section', 'rows'}), 'rows', {'token': str}),
 }
 
 
@@ -1025,9 +1028,13 @@ JSONP_REFUSED_API_ROUTES = frozenset({'settings'})
 
 
 def _strict_json_body_ok(route, body):
-    keys, rows_key = STRICT_JSON_API_ROUTES[route]
-    if not isinstance(body, dict) or set(body) != keys:
+    required, rows_key, optional = STRICT_JSON_API_ROUTES[route]
+    if not isinstance(body, dict) or not required <= set(body) <= required | set(optional):
         return False
+    if any(type(body[key]) is not kind for key, kind in optional.items() if key in body):
+        return False
+    if rows_key is None:
+        return True
     rows = body[rows_key]
     return isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
 
@@ -1053,8 +1060,8 @@ async def _strict_json_refusal(route, request):
     if acceptable:
         return None
     # The reason only: nothing the caller sent is logged.
-    log.warning('Refused a settings group save: the request was not a JSON POST '
-                'of exactly the expected keys')
+    log.warning('Refused a request to "%s": it was not a JSON POST of exactly the '
+                'expected keys', route)
     return JSONResponse(content=group_transport_refusal(), status_code=400)
 
 

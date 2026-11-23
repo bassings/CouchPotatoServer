@@ -15,7 +15,7 @@ import os
 
 import pytest
 
-from couchpotato.core.settings import Settings
+from couchpotato.core.settings import SECRET_MASK, Settings
 from tests.helpers.combine_groups import (
     SECTIONS,
     assert_nothing_changed,
@@ -109,11 +109,14 @@ def test_the_class_under_test_is_the_real_settings(settings):
 
 PAIRS = [(section, column) for section in SECTIONS for column in declared_groups()[section]]
 
-#: The ten reason codes AC-ARCH-11(iii) freezes. `misaligned` is reachable only
-#: from a builder callable, never from rows the writer is handed.
+#: The reason codes AC-ARCH-11(iii) froze (ten), plus the two SEC-006 added
+#: (`stale`, reachable only with a token; `masked_value`, only in a secret column).
+#: `misaligned` is reachable only from a builder callable, never from rows the
+#: writer is handed.
 REASON_CODES = frozenset({
     'comma', 'control_character', 'not_string', 'not_encodable', 'missing_column',
     'unknown_column', 'not_writable', 'unknown_section', 'malformed', 'misaligned',
+    'stale', 'masked_value',
 })
 
 
@@ -428,7 +431,7 @@ class TestRefusalContract:
         assert a['error'] == b['error']
         assert 'canary' not in a['error']
 
-    def test_the_writer_can_return_no_reason_outside_the_ten_codes(self, settings):
+    def test_the_writer_can_return_no_reason_outside_the_registered_codes(self, settings):
         from couchpotato.core.settings import GROUP_REFUSAL_REASONS
         assert GROUP_REFUSAL_REASONS == REASON_CODES
 
@@ -443,9 +446,12 @@ class TestRefusalContract:
             ('newznab', [{'host': 'x'}]),
             ('newznab', [dict(rows[0], enabled='1')]),
             ('newznab', ['x']),
+            ('newznab', [dict(rows[0], api_key=SECRET_MASK)]),
         ]
         for section, payload in hostile:
             seen.update(e['reason'] for e in settings.save_group(section, payload)['invalid'])
+
+        seen.update(e['reason'] for e in settings.save_group('newznab', rows, 'not-a-token')['invalid'])
 
         settings.p.set('newznab', 'host_internal_meta', 'ro')
         seen.update(e['reason'] for e in settings.save_group('newznab', rows)['invalid'])
